@@ -1,0 +1,7 @@
+.env
+app.zip
+.venv/*
+*.pyc
+logs/*
+Migrations/*
+create_struct.cmd
