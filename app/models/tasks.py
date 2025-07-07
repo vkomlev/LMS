@@ -36,7 +36,7 @@ class Tasks(Base):
 
     id: Mapped[int] = mapped_column(
         Integer,
-        text("nextval('assignments_id_seq')"),
+        server_default=text("nextval('assignments_id_seq')"),
         primary_key=True,
         comment="ID задания"
     )

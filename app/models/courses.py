@@ -8,9 +8,10 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.association_tables import t_course_dependencies
 
 if TYPE_CHECKING:
-    from app.models.association_tables import t_course_dependencies
+    
     from app.models.materials import Materials
     from app.models.social_posts import SocialPosts
     from app.models.study_plan_courses import StudyPlanCourses

@@ -40,7 +40,7 @@ class TaskResults(Base):
 
     id: Mapped[int] = mapped_column(
         Integer,
-        text("nextval('assignment_results_id_seq')"),
+        server_default=text("nextval('assignment_results_id_seq')"),
         primary_key=True,
         comment="ID результата"
     )

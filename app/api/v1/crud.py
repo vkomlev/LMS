@@ -2,9 +2,10 @@
 
 import logging
 from typing import Any, Dict, List, Type
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Body
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+import json
 
 from app.api.deps import get_db
 from app.services.base import BaseService
@@ -27,16 +28,18 @@ def create_crud_router(
         "/", response_model=read_schema, status_code=status.HTTP_201_CREATED
     )
     async def create_item(
-        obj_in: Any,
+        *,
+        obj_in: create_schema  = Body(..., description="Данные для создания"),
         db: AsyncSession = Depends(get_db),
     ) -> Any:
-        logger.info(f"[{prefix}] create: %s", obj_in.json())
+        payload = obj_in.json() if hasattr(obj_in, "json") else json.dumps(obj_in)
+        logger.info(f"[{prefix}] create payload: %s", payload)
         try:
             result = await service.create(db, obj_in.dict())
-            logger.info(f"[{prefix}] created id={getattr(result, 'id', None)}")
+            logger.info(f"[{prefix}] created id=%s", getattr(result, "id", None))
             return result
         except Exception as e:
-            logger.error(f"[{prefix}] create failed: {e}", exc_info=True)
+            logger.exception(f"[{prefix}] create failed")
             raise
 
     @router.get("/", response_model=List[read_schema])
@@ -69,18 +72,19 @@ def create_crud_router(
 
     @router.put("/{item_id}", response_model=read_schema)
     async def update_item(
-        item_id: Any,
-        obj_in: Any,
+        *,
+        item_id: pk_type,
+        obj_in: update_schema  = Body(..., description="Данные для создания"),
         db: AsyncSession = Depends(get_db),
     ) -> Any:
-        logger.info(f"[{prefix}] update id={item_id}: %s", obj_in.json())
+        logger.info(f"[{prefix}] update id=%s payload: %s", item_id, obj_in.json())
         db_obj = await service.get_by_id(db, item_id)
         if not db_obj:
             logger.warning(f"[{prefix}] update id={item_id} not found")
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
         try:
             updated = await service.update(db, db_obj, obj_in.dict(exclude_unset=True))
-            logger.info(f"[{prefix}] update id={item_id} success")
+            logger.info(f"[{prefix}] update id=%s success", item_id)
             return updated
         except Exception as e:
             logger.error(f"[{prefix}] update id={item_id} failed: {e}", exc_info=True)
