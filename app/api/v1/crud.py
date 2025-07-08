@@ -59,7 +59,7 @@ def create_crud_router(
 
     @router.get("/{item_id}", response_model=read_schema)
     async def get_item(
-        item_id: Any,
+        item_id: pk_type,
         db: AsyncSession = Depends(get_db),
     ) -> Any:
         logger.info(f"[{prefix}] get id={item_id}")
@@ -92,7 +92,7 @@ def create_crud_router(
 
     @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_item(
-        item_id: Any,
+        item_id: pk_type,
         db: AsyncSession = Depends(get_db),
     ) -> Response:
         logger.info(f"[{prefix}] delete id={item_id}")
