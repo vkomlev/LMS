@@ -25,6 +25,38 @@ class BaseService(Generic[ModelType]):
     ) -> Optional[ModelType]:
         """Получить по PK."""
         return await self.repo.get(db, id)
+    
+    async def get_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+    ) -> ModelType | None:
+        """
+        Достаёт объект по ключам через репозиторий.
+        """
+        return await self.repo.get_by_keys(db, keys)
+
+    async def update_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+        data: dict[str, Any],
+    ) -> ModelType | None:
+        """
+        Обновляет объект по ключам через репозиторий.
+        """
+        return await self.repo.update_by_keys(db, keys, data)
+
+    async def delete_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+    ) -> bool:
+        """
+        Удаляет объект по ключам через репозиторий.
+        """
+        return await self.repo.delete_by_keys(db, keys)
+
 
     async def list(
         self, db: AsyncSession, skip: int = 0, limit: int = 100

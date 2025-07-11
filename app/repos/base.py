@@ -25,6 +25,54 @@ class BaseRepository(Generic[ModelType]):
     async def get(self, db: AsyncSession, id: Any) -> Optional[ModelType]:
         """Получить объект по первичному ключу."""
         return await db.get(self.model, id)
+    
+    async def get_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+    ) -> ModelType | None:
+        """
+        Универсальный поиск по составному или одиночному ключу.
+        `keys` — словарь вида {'field1': value1, 'field2': value2, …}.
+        """
+        stmt = select(self.model).filter_by(**keys)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+        data: dict[str, Any],
+    ) -> ModelType | None:
+        """
+        Обновление записи, найденной по ключам.
+        Возвращает обновлённый объект или None, если не найден.
+        """
+        obj = await self.get_by_keys(db, keys)
+        if not obj:
+            return None
+        for field, value in data.items():
+            setattr(obj, field, value)
+        await db.commit()
+        await db.refresh(obj)
+        return obj
+
+    async def delete_by_keys(
+        self,
+        db: AsyncSession,
+        keys: dict[str, Any],
+    ) -> bool:
+        """
+        Удаляет запись по ключам.
+        Возвращает True, если удалил, False, если не нашёл.
+        """
+        obj = await self.get_by_keys(db, keys)
+        if not obj:
+            return False
+        await db.delete(obj)
+        await db.commit()
+        return True
 
     async def list(
         self,

@@ -7,7 +7,11 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.logger import setup_logging
-from app.api.v1.crud import create_crud_router
+
+# Роутеры
+from app.api.v1.crud import create_crud_router, create_composite_router
+from app.api.v1.user_achievements import router as user_achievements_router
+from app.api.v1.study_plan_courses import router as study_plan_courses_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -207,23 +211,14 @@ app.include_router(
     prefix=API_PREFIX,
 )
 
-app.include_router(
-    create_crud_router(
-        prefix="/user-achievements", tags=["user_achievements"],
-        service=UserAchievementsService(),
-        create_schema=UserAchievementCreate, read_schema=UserAchievementRead, update_schema=UserAchievementUpdate,
-    ),
-    prefix=API_PREFIX,
-)
 
-app.include_router(
-    create_crud_router(
-        prefix="/study-plan-courses", tags=["study_plan_courses"],
-        service=StudyPlanCoursesService(),
-        create_schema=StudyPlanCourseCreate, read_schema=StudyPlanCourseRead, update_schema=StudyPlanCourseUpdate,
-    ),
-    prefix=API_PREFIX,
-)
+# UserAchievements (composite PK: user_id + achievement_id)
+app.include_router(user_achievements_router, prefix=API_PREFIX)
+
+
+# StudyPlanCourses (composite PK: study_plan_id + course_id)
+app.include_router(study_plan_courses_router, prefix=API_PREFIX)
+
 
 app.include_router(
     create_crud_router(
