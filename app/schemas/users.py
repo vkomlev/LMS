@@ -23,5 +23,13 @@ class UserRead(BaseModel):
     tg_id: Optional[int]
     created_at: datetime
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+class UserID(BaseModel):
+    """
+    Только идентификатор пользователя.
+    """
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+class Config:
+    model_config = ConfigDict(from_attributes=True)

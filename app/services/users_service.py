@@ -15,8 +15,9 @@ class UsersService(BaseService[Users]):
     def __init__(self, repo: UsersRepository = UsersRepository()):
         super().__init__(repo)
 
-    async def get_by_tg_id(
-        self, db: AsyncSession, tg_id: int
-    ) -> Optional[Users]:
-        """Найти пользователя по Telegram ID."""
-        return await self.repo.get_by_tg_id(db, tg_id)
+    async def get_id_by_tg_id(self, db: AsyncSession, tg_id: int) -> int | None:
+        """
+        Вернуть integer id пользователя по tg_id, либо None.
+        """
+        user = await self.get_by_keys(db, {"tg_id": tg_id})
+        return user.id if user else None

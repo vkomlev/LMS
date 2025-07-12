@@ -13,12 +13,3 @@ class UsersRepository(BaseRepository[Users]):
     def __init__(self) -> None:
         super().__init__(Users)
 
-    async def get_by_tg_id(
-        self,
-        db: AsyncSession,
-        tg_id: int
-    ) -> Optional[Users]:
-        """Найти пользователя по Telegram ID."""
-        q = select(self.model).where(self.model.tg_id == tg_id)
-        result = await db.execute(q)
-        return result.scalars().first()
