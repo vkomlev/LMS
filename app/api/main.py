@@ -12,6 +12,7 @@ from app.core.logger import setup_logging
 from app.api.v1.crud import create_crud_router, create_composite_router
 from app.api.v1.user_achievements import router as user_achievements_router
 from app.api.v1.study_plan_courses import router as study_plan_courses_router
+from app.api.v1.user_roles import router as user_roles_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -71,6 +72,7 @@ from app.schemas.task_results import (
     TaskResultCreate, TaskResultRead, TaskResultUpdate
 )
 from app.services.task_results_service import TaskResultsService
+
 
 
 # Настраиваем логи (файлы + консоль)
@@ -228,3 +230,6 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
+
+# User ←→ Roles
+app.include_router(user_roles_router, prefix=API_PREFIX)
