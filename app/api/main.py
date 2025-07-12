@@ -15,7 +15,7 @@ from app.api.v1.study_plan_courses import router as study_plan_courses_router
 from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.users import router as users_router
-
+from app.api.v1.access_requests import router as access_requests_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -240,3 +240,5 @@ app.include_router(user_roles_router, prefix=API_PREFIX)
 
 # ... после подключения study_plan_courses и user_roles:
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
+
+app.include_router(access_requests_router, prefix=API_PREFIX)

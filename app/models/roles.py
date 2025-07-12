@@ -7,6 +7,8 @@ from Migrations.models import Users
 from app.db.base import Base
 from app.models.association_tables import t_user_roles
 
+if TYPE_CHECKING:
+    from app.models.access_requests import AccessRequests
 
 class Roles(Base):
     """
@@ -24,4 +26,8 @@ class Roles(Base):
 
     user: Mapped[List["Users"]] = relationship(
         "Users", secondary=t_user_roles, back_populates="role"
+    )
+
+    access_requests: Mapped[List["AccessRequests"]] = relationship(
+        "AccessRequests", back_populates="role"
     )

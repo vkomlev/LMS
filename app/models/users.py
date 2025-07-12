@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from app.models.study_plans import StudyPlans
     from app.models.task_results import TaskResults
     from app.models.user_achievements import UserAchievements
+    from app.models.access_requests import AccessRequests
     
 class Users(Base):
     """
@@ -55,6 +56,8 @@ class Users(Base):
     notifications: Mapped[List["Notifications"]] = relationship("Notifications", back_populates="users")
     social_posts: Mapped[List["SocialPosts"]] = relationship("SocialPosts", back_populates="user")
     study_plans: Mapped[List["StudyPlans"]] = relationship("StudyPlans", back_populates="user")
+    access_requests: Mapped[List["AccessRequests"]] = relationship(
+        "AccessRequests", back_populates="user")
     user_achievements: Mapped[List["UserAchievements"]] = relationship(
         "UserAchievements", back_populates="user"
     )
