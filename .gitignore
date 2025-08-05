@@ -6,3 +6,4 @@ logs/*
 Migrations/*
 create_struct.cmd
 app/tests/*
+*.zip

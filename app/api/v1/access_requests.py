@@ -12,6 +12,7 @@ from app.schemas.access_requests import (
     AccessRequestRead,
     AccessRequestUpdate,
     AccessRequestFlag,
+    AccessRequestReadDetailed,
 )
 from app.services.access_requests_service import AccessRequestsService
 
@@ -37,18 +38,18 @@ router.include_router(
 # 4.2 Кастомный GET /access_requests/flag/{flag}
 @router.get(
     "/flag/{flag}",
-    response_model=List[AccessRequestRead],
-    summary="Список запросов по статусу",
+    response_model=List[AccessRequestReadDetailed],
+    summary="Список запросов по статусу с именем пользователя и роли",
 )
 async def list_by_flag(
     flag: AccessRequestFlag,
     db: AsyncSession = Depends(get_db),
-) -> List[AccessRequestRead]:
+) -> List[AccessRequestReadDetailed]:
     """
     Вернуть все AccessRequests с заданным `flag`, отсортированные по времени запроса.
     """
     try:
-        return await service.list_by_flag(db, flag.value)
+        return await service.list_detailed_by_flag(db, flag.value)
     except Exception as e:
         logger.error("list_by_flag failed: %s", e, exc_info=True)
         raise HTTPException(

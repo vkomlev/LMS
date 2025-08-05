@@ -42,3 +42,12 @@ class AccessRequestRead(AccessRequestBase):
     requested_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class AccessRequestReadDetailed(AccessRequestRead):
+    """
+    Все поля AccessRequestRead + full_name пользователя и name роли.
+    """
+    user_full_name: str
+    role_name: str
+
+    model_config = ConfigDict(from_attributes=True)

@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.access_requests import AccessRequests
 from app.repos.base import BaseRepository
+from app.models.users import Users
+from app.models.roles import Roles
 
 
 class AccessRequestsRepository(BaseRepository[AccessRequests]):
@@ -23,3 +25,22 @@ class AccessRequestsRepository(BaseRepository[AccessRequests]):
         )
         res = await db.execute(stmt)
         return res.scalars().all()
+    
+    async def list_detailed_by_flag(self, db: AsyncSession, flag: str) -> list[tuple[AccessRequests, str, str]]:
+        """
+        Select AccessRequests + Users.full_name + Roles.name по заданному флагу.
+        """
+        stmt = (
+            select(
+                AccessRequests,
+                Users.full_name.label("user_full_name"),
+                Roles.name.label("role_name"),
+            )
+            .join(Users, AccessRequests.user_id == Users.id)
+            .join(Roles, AccessRequests.role_id == Roles.id)
+            .where(AccessRequests.flag == flag)
+            .order_by(AccessRequests.requested_at)
+        )
+        result = await db.execute(stmt)
+        return result.all()
+
