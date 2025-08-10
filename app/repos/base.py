@@ -1,10 +1,13 @@
 # app/repos/base.py
 
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
-from sqlalchemy import delete, func, select, update, cast
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Iterable, Sequence, Mapping
+from sqlalchemy import delete, func, select, update, cast, or_, inspect
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.sql.sqltypes import String, Text
 from app.db.base import Base
+
 
 ModelType = TypeVar("ModelType", bound=Base)
 
@@ -18,6 +21,7 @@ class BaseRepository(Generic[ModelType]):
       - работа с JSONB: фильтрация и обновление ключей
     Наследники передают модель в конструктор и добавляют domain-specific методы.
     """
+    protected_update_fields: set[str] = set()  # можно переопределить в наследниках
 
     def __init__(self, model: Type[ModelType]):
         self.model = model
@@ -215,3 +219,111 @@ class BaseRepository(Generic[ModelType]):
         await db.execute(stmt)
         await db.commit()
         return await self.get(db, id)
+
+    async def search_text(
+        self,
+        db: AsyncSession,
+        *,
+        field: str | InstrumentedAttribute | Sequence[str],
+        query: str,
+        mode: str = "contains",         # "contains" | "prefix" | "suffix" | "exact"
+        case_insensitive: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+        order_by: InstrumentedAttribute | None = None,
+    ) -> List[ModelType]:
+        """
+        Универсальный LIKE/ILIKE-поиск по одному или нескольким текстовым полям модели.
+
+        :param field: имя поля, сам столбец (InstrumentedAttribute) или список имён полей
+        :param query: фрагмент строки для поиска
+        :param mode: стратегия сопоставления: contains/prefix/suffix/exact
+        :param case_insensitive: использовать ILIKE (PostgreSQL) вместо LIKE
+        :param limit: лимит результатов
+        :param offset: смещение
+        :param order_by: столбец для сортировки
+        """
+        if not query:
+            return []
+
+        def _as_columns(f: str | InstrumentedAttribute | Sequence[str]) -> list[InstrumentedAttribute]:
+            if isinstance(f, (list, tuple)):
+                cols: list[InstrumentedAttribute] = []
+                for name in f:
+                    col = getattr(self.model, name, None)
+                    if col is None:
+                        raise ValueError(f"Column '{name}' not found on {self.model.__name__}")
+                    cols.append(col)
+                return cols
+            if hasattr(f, "type"):  # InstrumentedAttribute
+                return [f]  # type: ignore[return-value]
+            # str
+            col = getattr(self.model, f, None)
+            if col is None:
+                raise ValueError(f"Column '{f}' not found on {self.model.__name__}")
+            return [col]
+
+        def _ensure_text_columns(cols: Iterable[InstrumentedAttribute]) -> None:
+            for c in cols:
+                if not isinstance(getattr(c, "type", None), (String, Text)):
+                    raise ValueError(f"Column '{c.key}' is not a text column")
+
+        def _escape_like(val: str) -> str:
+            # экранируем спецсимволы шаблона
+            return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+        cols = _as_columns(field)
+        _ensure_text_columns(cols)
+
+        q = _escape_like(query)
+        if mode == "exact":
+            pattern = q
+        elif mode == "prefix":
+            pattern = f"{q}%"
+        elif mode == "suffix":
+            pattern = f"%{q}"
+        else:  # contains
+            pattern = f"%{q}%"
+
+        # строим OR по нескольким полям
+        conds = []
+        for c in cols:
+            if case_insensitive and hasattr(c, "ilike"):
+                conds.append(c.ilike(pattern, escape="\\"))
+            else:
+                conds.append(c.like(pattern, escape="\\"))
+
+        stmt = select(self.model).where(or_(*conds))
+        if order_by is not None:
+            stmt = stmt.order_by(order_by)
+        stmt = stmt.offset(offset).limit(limit)
+
+        res = await db.execute(stmt)
+        return res.scalars().all()
+    
+    @property
+    def _pk_names(self) -> set[str]:
+        """Имена PK-колонок модели."""
+        return {col.key for col in inspect(self.model).primary_key}
+
+    async def update_fields(
+        self,
+        db: AsyncSession,
+        db_obj: ModelType,
+        fields: Mapping[str, Any],
+    ) -> ModelType:
+        """
+        Частичное обновление (PATCH): меняем только переданные поля.
+        PK и защищённые поля игнорируются.
+        """
+        if not fields:
+            return db_obj
+
+        for k, v in fields.items():
+            if k in self._pk_names or k in self.protected_update_fields:
+                continue
+            setattr(db_obj, k, v)
+
+        await db.flush()
+        await db.refresh(db_obj)
+        return db_obj

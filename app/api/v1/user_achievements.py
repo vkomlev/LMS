@@ -69,3 +69,16 @@ async def delete_user_achievement(
     if not deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.patch("/{user_id}/{achievement_id}", response_model=UserAchievementRead)
+async def patch_user_achievement(
+    user_id: int,
+    achievement_id: int,
+    obj_in: UserAchievementUpdate = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    payload = obj_in.model_dump(exclude_unset=True)
+    db_obj = await service.get_by_keys(db, {"user_id": user_id, "achievement_id": achievement_id})
+    if not db_obj:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return await service.update(db, db_obj, payload)

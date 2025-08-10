@@ -9,12 +9,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.logger import setup_logging
 
 # Роутеры
+from app.api.v1.users import router as users_router
 from app.api.v1.crud import create_crud_router, create_composite_router
 from app.api.v1.user_achievements import router as user_achievements_router
 from app.api.v1.study_plan_courses import router as study_plan_courses_router
 from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
-from app.api.v1.users import router as users_router
 from app.api.v1.access_requests import router as access_requests_router
 
 # Схемы и сервисы
@@ -117,7 +117,7 @@ async def health_check():
 
 # Подключаем все CRUD-роутеры:
 
-app.include_router(
+""" app.include_router(
     create_crud_router(
         prefix="/users", tags=["users"],
         service=UsersService(),
@@ -125,6 +125,7 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
+app.include_router(users_router, prefix=API_PREFIX) """
 app.include_router(users_router, prefix=API_PREFIX)
 
 app.include_router(

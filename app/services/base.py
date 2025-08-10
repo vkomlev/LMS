@@ -1,4 +1,6 @@
-from typing import Any, Dict, Generic, List, Optional, TypeVar
+from __future__ import annotations
+
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Sequence, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -88,4 +90,43 @@ class BaseService(Generic[ModelType]):
         """Удалить запись."""
         await self.repo.delete(db, db_obj)
 
+    async def search_text(
+        self,
+        db: AsyncSession,
+        *,
+        field: str | Sequence[str],
+        query: str,
+        mode: str = "contains",
+        case_insensitive: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+        order_by=None,
+    ) -> list[ModelType]:
+        """
+        Универсальный текстовый поиск по произвольным полям модели.
+        """
+        return await self.repo.search_text(
+            db,
+            field=field,
+            query=query,
+            mode=mode,
+            case_insensitive=case_insensitive,
+            limit=limit,
+            offset=offset,
+            order_by=order_by,
+        )
+
     # можно добавить ещё общие операции, например batch_create, delete_by_ids и т.п.
+
+    async def patch(
+        self,
+        db: AsyncSession,
+        db_obj: ModelType,
+        fields: Mapping[str, Any],
+    ) -> ModelType:
+        """
+        Частичное обновление: по умолчанию вызывает repo.update(...) или repo.update_fields(...).
+        """
+        # Если сделали repo.update_fields — можно звать её:
+        # return await self.repo.update_fields(db, db_obj, fields)
+        return await self.repo.update(db, db_obj, fields)  # если update уже частичный

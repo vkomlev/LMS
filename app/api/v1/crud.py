@@ -77,6 +77,7 @@ def create_composite_router(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return router
+    
 def create_crud_router(
     *,
     prefix: str,
@@ -172,5 +173,32 @@ def create_crud_router(
         except Exception as e:
             logger.error(f"[{prefix}] delete id={item_id} failed: {e}", exc_info=True)
             raise
+    
 
+    @router.patch("/{item_id}", response_model=read_schema)
+    async def patch_item(
+        *,
+        item_id: pk_type,
+        obj_in: update_schema = Body(..., description="Частичное обновление"),
+        db: AsyncSession = Depends(get_db),
+    ) -> Any:
+        logger.info(f"[{prefix}] patch id={item_id}")
+        db_obj = await service.get_by_id(db, item_id)
+        if not db_obj:
+            logger.warning(f"[{prefix}] patch id={item_id} not found")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+
+        # только переданные поля:
+        payload = obj_in.model_dump(exclude_unset=True)
+        try:
+            # если сделали BaseService.patch — можно звать его
+            updated = await service.update(db, db_obj, payload)
+            logger.info(f"[{prefix}] patch id={item_id} success")
+            return updated
+        except Exception:
+            logger.exception(f"[{prefix}] patch id={item_id} failed")
+            raise
+    
     return router
+
+    
