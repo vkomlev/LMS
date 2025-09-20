@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, List
 from sqlalchemy import Integer, String, UniqueConstraint, PrimaryKeyConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from Migrations.models import Users
+from app.models.users import Users
 from app.db.base import Base
 from app.models.association_tables import t_user_roles
 
