@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Sequence, Mapping
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Sequence, Mapping, Tuple, Iterable
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement
 
 from app.db.base import Base
 from app.repos.base import BaseRepository
@@ -130,3 +131,19 @@ class BaseService(Generic[ModelType]):
         # Если сделали repo.update_fields — можно звать её:
         # return await self.repo.update_fields(db, db_obj, fields)
         return await self.repo.update(db, db_obj, fields)  # если update уже частичный
+
+    async def paginate(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        filters: Optional[Iterable[ColumnElement[bool]]] = None,
+        order_by: Optional[Sequence[ColumnElement]] = None,
+    ) -> Tuple[List[ModelType], int]:
+        """
+        Получить страницу данных и total с теми же фильтрами.
+        Здесь удобно объявлять явные транзакции, если понадобится.
+        """
+        return await self.repo.paginate(
+            limit=limit, offset=offset, filters=filters, order_by=order_by
+        )

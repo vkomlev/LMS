@@ -1,7 +1,7 @@
 # app/api/v1/crud.py
 
 import logging
-from typing import Any, Dict, List, Type
+from typing import Any, Dict, List, Type, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Body
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +9,14 @@ import json
 
 from app.api.deps import get_db
 from app.services.base import BaseService
+from app.utils.pagination import Page, build_page
 
 logger = logging.getLogger("api.crud")
+
+ModelT = TypeVar("ModelT")
+SchemaReadT = TypeVar("SchemaReadT")
+SchemaCreateT = TypeVar("SchemaCreateT")
+SchemaUpdateT = TypeVar("SchemaUpdateT")
 
 def create_composite_router(
     *,
@@ -108,17 +114,22 @@ def create_crud_router(
             logger.exception(f"[{prefix}] create failed")
             raise
 
-    @router.get("/", response_model=List[read_schema])
+    # --- ИЗМЕНЕНО: список теперь возвращает Page[read_schema] ---
+    @router.get("/", response_model=Page[read_schema])  # type: ignore[name-defined]
     async def list_items(
         skip: int = 0,
         limit: int = 100,
         db: AsyncSession = Depends(get_db),
-    ) -> List[Any]:
+    ) -> Any:
+        """
+        Возвращает Page[T]: items + meta(total, limit, offset=skip).
+        Параметры совместимы с текущими клиентами (skip/limit).
+        """
         logger.info(f"[{prefix}] list skip={skip} limit={limit}")
         try:
-            items = await service.list(db, skip, limit)
-            logger.debug(f"[{prefix}] list returned {len(items)} items")
-            return items
+            items, total = await service.paginate(limit=limit, offset=skip)
+            logger.debug(f"[{prefix}] list returned {len(items)} items (total={total})")
+            return build_page(items, total=total, limit=limit, offset=skip)
         except Exception as e:
             logger.error(f"[{prefix}] list failed: {e}", exc_info=True)
             raise
@@ -200,5 +211,3 @@ def create_crud_router(
             raise
     
     return router
-
-    

@@ -1,10 +1,11 @@
 # app/repos/base.py
 
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Iterable, Sequence, Mapping
-from sqlalchemy import delete, func, select, update, cast, or_, inspect
+from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Iterable, Sequence, Mapping, Tuple
+from sqlalchemy import delete, func, select, update, cast, or_, inspect, Select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import InstrumentedAttribute
+from sqlalchemy.sql import ColumnElement
 from sqlalchemy.sql.sqltypes import String, Text
 from app.db.base import Base
 
@@ -327,3 +328,54 @@ class BaseRepository(Generic[ModelType]):
         await db.flush()
         await db.refresh(db_obj)
         return db_obj
+    
+    async def paginate(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        filters: Optional[Iterable[ColumnElement[bool]]] = None,
+        order_by: Optional[Sequence[ColumnElement]] = None,
+    ) -> Tuple[List[ModelType], int]:
+        """
+        Получить страницу данных и общее количество записей с теми же фильтрами.
+
+        Args:
+            limit: Максимум записей на странице.
+            offset: Смещение.
+            filters: Итерабель фильтров where(...).
+            order_by: Поля сортировки.
+
+        Returns:
+            (items, total):
+                items — элементы текущей страницы,
+                total — полное количество записей без учёта limit/offset.
+        """
+        filters = list(filters or [])
+
+        # Основной запрос за данными
+        stmt: Select = select(self.model)
+        if filters:
+            for f in filters:
+                stmt = stmt.where(f)
+        if order_by:
+            stmt = stmt.order_by(*order_by)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        if offset:
+            stmt = stmt.offset(offset)
+
+        result = await self.session.execute(stmt)
+        items: List[ModelType] = result.scalars().all()
+
+        # Отдельный COUNT(*) c теми же фильтрами
+        count_stmt: Select = select(func.count())
+        base_count = select(self.model)
+        if filters:
+            for f in filters:
+                base_count = base_count.where(f)
+        # COUNT(*) от подзапроса (корректнее при сложных order_by/joins)
+        count_stmt = select(func.count()).select_from(base_count.subquery())
+
+        total: int = int(await self.session.scalar(count_stmt) or 0)
+        return items, total

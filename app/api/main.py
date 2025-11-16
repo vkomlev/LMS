@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.logger import setup_logging
+from app.utils.exceptions import DomainError  # ✅ добавлено
 
 # Роутеры
 from app.api.v1.users import router as users_router
@@ -92,6 +93,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ✅ новый хэндлер доменных ошибок — минимально инвазивно
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    """
+    Единая обработка доменных ошибок.
+    Возвращает предсказуемый ответ и статус из исключения.
+    """
+    body = {"error": "domain_error", "detail": exc.detail}
+    if getattr(exc, "payload", None):
+        body["payload"] = exc.payload
+    logger.warning("DomainError at %s: %s", request.url.path, body)
+    return JSONResponse(status_code=getattr(exc, "status_code", status.HTTP_400_BAD_REQUEST), content=body)
 
 
 @app.exception_handler(RequestValidationError)
