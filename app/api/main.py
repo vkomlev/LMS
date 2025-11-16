@@ -13,7 +13,7 @@ from app.utils.exceptions import DomainError  # ✅ добавлено
 from app.api.v1.users import router as users_router
 from app.api.v1.crud import create_crud_router, create_composite_router
 from app.api.v1.user_achievements import router as user_achievements_router
-from app.api.v1.study_plan_courses import router as study_plan_courses_router
+from app.api.v1.user_courses import router as user_courses_router
 from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.access_requests import router as access_requests_router
@@ -54,11 +54,6 @@ from app.schemas.social_posts import (
 )
 from app.services.social_posts_service import SocialPostsService
 
-from app.schemas.study_plans import (
-    StudyPlanCreate, StudyPlanRead, StudyPlanUpdate
-)
-from app.services.study_plans_service import StudyPlansService
-
 from app.schemas.tasks import TaskCreate, TaskRead, TaskUpdate
 from app.services.tasks_service import TasksService
 
@@ -67,10 +62,7 @@ from app.schemas.user_achievements import (
 )
 from app.services.user_achievements_service import UserAchievementsService
 
-from app.schemas.study_plan_courses import (
-    StudyPlanCourseCreate, StudyPlanCourseRead, StudyPlanCourseUpdate
-)
-from app.services.study_plan_courses_service import StudyPlanCoursesService
+from app.services.user_courses_service import UserCoursesService
 
 from app.schemas.task_results import (
     TaskResultCreate, TaskResultRead, TaskResultUpdate
@@ -216,15 +208,6 @@ app.include_router(
 
 app.include_router(
     create_crud_router(
-        prefix="/study-plans", tags=["study_plans"],
-        service=StudyPlansService(),
-        create_schema=StudyPlanCreate, read_schema=StudyPlanRead, update_schema=StudyPlanUpdate,
-    ),
-    prefix=API_PREFIX,
-)
-
-app.include_router(
-    create_crud_router(
         prefix="/tasks", tags=["tasks"],
         service=TasksService(),
         create_schema=TaskCreate, read_schema=TaskRead, update_schema=TaskUpdate,
@@ -237,8 +220,8 @@ app.include_router(
 app.include_router(user_achievements_router, prefix=API_PREFIX)
 
 
-# StudyPlanCourses (composite PK: study_plan_id + course_id)
-app.include_router(study_plan_courses_router, prefix=API_PREFIX)
+# UserCourses (composite PK: user_id + course_id)
+app.include_router(user_courses_router, prefix=API_PREFIX)
 
 
 app.include_router(
@@ -253,7 +236,7 @@ app.include_router(
 # User ←→ Roles
 app.include_router(user_roles_router, prefix=API_PREFIX)
 
-# ... после подключения study_plan_courses и user_roles:
+# ... после подключения user_courses и user_roles:
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
 
 app.include_router(access_requests_router, prefix=API_PREFIX)

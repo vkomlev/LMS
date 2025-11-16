@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Table, Column, Integer, ForeignKeyConstraint,
-    PrimaryKeyConstraint
+    PrimaryKeyConstraint, text, DateTime
 )
 from app.db.base import Base
 
@@ -36,4 +36,22 @@ t_user_roles = Table(
     ),
     PrimaryKeyConstraint("user_id", "role_id", name="user_roles_pkey"),
     comment="Связь пользователей с ролями"
+)
+
+t_student_teacher_links = Table(
+    "student_teacher_links",
+    Base.metadata,
+    Column("student_id", Integer, primary_key=True, nullable=False, comment="ID студента"),
+    Column("teacher_id", Integer, primary_key=True, nullable=False, comment="ID преподавателя"),
+    Column("linked_at",  DateTime(timezone=True), server_default=text("now()"), nullable=False, comment="Когда добавлен"),
+    ForeignKeyConstraint(
+        ["student_id"], ["users.id"],
+        ondelete="CASCADE", name="student_teacher_links_student_id_fkey"
+    ),
+    ForeignKeyConstraint(
+        ["teacher_id"], ["users.id"],
+        ondelete="CASCADE", name="student_teacher_links_teacher_id_fkey"
+    ),
+    PrimaryKeyConstraint("student_id", "teacher_id", name="student_teacher_links_pkey"),
+    comment="Привязка студентов к преподавателям"
 )

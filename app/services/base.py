@@ -134,6 +134,7 @@ class BaseService(Generic[ModelType]):
 
     async def paginate(
         self,
+        db: AsyncSession,
         *,
         limit: int = 50,
         offset: int = 0,
@@ -145,5 +146,9 @@ class BaseService(Generic[ModelType]):
         Здесь удобно объявлять явные транзакции, если понадобится.
         """
         return await self.repo.paginate(
-            limit=limit, offset=offset, filters=filters, order_by=order_by
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=order_by,
         )

@@ -16,8 +16,7 @@ import app.models.courses
 import app.models.difficulty_levels
 import app.models.materials
 import app.models.social_posts
-import app.models.study_plans
 import app.models.tasks
 import app.models.user_achievements
-import app.models.study_plan_courses
+import app.models.user_courses
 import app.models.task_results

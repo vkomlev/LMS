@@ -4,21 +4,20 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
-class StudyPlanCourseCreate(BaseModel):
-    study_plan_id: int
+class UserCourseCreate(BaseModel):
+    user_id: int
     course_id: int
     order_number: Optional[int] = None
 
 
-class StudyPlanCourseUpdate(BaseModel):
+class UserCourseUpdate(BaseModel):
     order_number: Optional[int] = None
 
 
-class StudyPlanCourseRead(BaseModel):
-    study_plan_id: int
+class UserCourseRead(BaseModel):
+    user_id: int
     course_id: int
     added_at: datetime
     order_number: Optional[int]
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)

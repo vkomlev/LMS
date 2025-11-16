@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     
     from app.models.materials import Materials
     from app.models.social_posts import SocialPosts
-    from app.models.study_plan_courses import StudyPlanCourses
+    from app.models.user_courses import UserCourses
     from app.models.tasks import Tasks
 
 class Courses(Base):
@@ -81,6 +81,6 @@ class Courses(Base):
     materials: Mapped[List["Materials"]] = relationship("Materials", back_populates="course")
     social_posts: Mapped[List["SocialPosts"]] = relationship("SocialPosts", back_populates="course")
     tasks: Mapped[List["Tasks"]] = relationship("Tasks", back_populates="course")
-    study_plan_courses: Mapped[List["StudyPlanCourses"]] = relationship(
-        "StudyPlanCourses", back_populates="course"
+    user_courses: Mapped[List["UserCourses"]] = relationship(
+        "UserCourses", back_populates="course"
     )
