@@ -17,6 +17,7 @@ from app.api.v1.user_courses import router as user_courses_router
 from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.access_requests import router as access_requests_router
+from app.api.v1.student_teacher_links import router as student_teacher_links_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -235,6 +236,9 @@ app.include_router(
 
 # User ←→ Roles
 app.include_router(user_roles_router, prefix=API_PREFIX)
+
+# Student ↔ Teacher
+app.include_router(student_teacher_links_router, prefix=API_PREFIX)
 
 # ... после подключения user_courses и user_roles:
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
