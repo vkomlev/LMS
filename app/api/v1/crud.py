@@ -127,7 +127,7 @@ def create_crud_router(
         """
         logger.info(f"[{prefix}] list skip={skip} limit={limit}")
         try:
-            items, total = await service.paginate(limit=limit, offset=skip)
+            items, total = await service.paginate(db, limit=limit, offset=skip)
             logger.debug(f"[{prefix}] list returned {len(items)} items (total={total})")
             return build_page(items, total=total, limit=limit, offset=skip)
         except Exception as e:

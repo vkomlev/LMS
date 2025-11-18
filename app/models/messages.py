@@ -35,10 +35,23 @@ class Messages(Base):
             ["sender_id"], ["users.id"],
             ondelete="SET NULL", name="messages_sender_id_fkey"
         ),
+        ForeignKeyConstraint(
+            ["reply_to_id"], ["messages.id"],
+            ondelete="SET NULL", name="messages_reply_to_id_fkey"
+        ),
+        ForeignKeyConstraint(
+            ["thread_id"], ["messages.id"],
+            ondelete="SET NULL", name="messages_thread_id_fkey"
+        ),
+        ForeignKeyConstraint(
+            ["forwarded_from_id"], ["messages.id"],
+            ondelete="SET NULL", name="messages_forwarded_from_id_fkey"
+        ),
         PrimaryKeyConstraint("id", name="messages_pkey"),
         Index("idx_messages_recipient", "recipient_id"),
         {"comment": "Сообщения между пользователями и преподавателями"},
     )
+
 
     id: Mapped[int] = mapped_column(
         Integer, primary_key=True, comment="Идентификатор сообщения"
@@ -55,6 +68,36 @@ class Messages(Base):
     recipient_id: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="ID получателя"
     )
+
+    # 🔽 новое: ссылки на другие сообщения
+    reply_to_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="ID сообщения, на которое дан ответ"
+    )
+    thread_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="ID корневого сообщения треда"
+    )
+    forwarded_from_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="ID исходного сообщения при пересылке"
+    )
+
+    # 🔽 новое: информация о вложении
+    attachment_url: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="URL или путь к вложенному файлу"
+    )
+    attachment_id: Mapped[Optional[str]] = mapped_column(
+        String(100),
+        nullable=True,
+        comment="Идентификатор файла во внешней системе (например, Telegram file_id)"
+    )
+
     sent_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("now()"),
@@ -73,6 +116,7 @@ class Messages(Base):
         nullable=False,
         comment="Источник сообщения"
     )
+
     
     recipient: Mapped["Users"] = relationship(
         "Users", foreign_keys=[recipient_id], back_populates="messages"
@@ -80,3 +124,19 @@ class Messages(Base):
     sender: Mapped[Optional["Users"]] = relationship(
         "Users", foreign_keys=[sender_id], back_populates="messages_"
     )
+
+    # 🔽 новое: связи между сообщениями
+    reply_to: Mapped[Optional["Messages"]] = relationship(
+        "Messages",
+        remote_side="Messages.id",
+        foreign_keys=[reply_to_id],
+        backref="replies",
+    )
+
+    forwarded_from: Mapped[Optional["Messages"]] = relationship(
+        "Messages",
+        remote_side="Messages.id",
+        foreign_keys=[forwarded_from_id],
+        backref="forwards",
+    )
+

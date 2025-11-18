@@ -11,6 +11,16 @@ class MessageCreate(BaseModel):
     recipient_id: int
     source_system: Optional[str] = None
 
+    # 🔽 новое: ссылки на сообщения
+    reply_to_id: Optional[int] = None
+    thread_id: Optional[int] = None
+    forwarded_from_id: Optional[int] = None
+
+    # 🔽 новое: вложение
+    attachment_url: Optional[str] = None
+    attachment_id: Optional[str] = None
+
+
 
 class MessageUpdate(BaseModel):
     content: Optional[Any] = None
@@ -27,5 +37,15 @@ class MessageRead(BaseModel):
     is_read: bool
     source_system: str
 
+    # 🔽 новое: ссылки на сообщения
+    reply_to_id: Optional[int] = None
+    thread_id: Optional[int] = None
+    forwarded_from_id: Optional[int] = None
+
+    # 🔽 новое: вложение
+    attachment_url: Optional[str] = None
+    attachment_id: Optional[str] = None
+
     class Config:
         model_config = ConfigDict(from_attributes=True)
+
