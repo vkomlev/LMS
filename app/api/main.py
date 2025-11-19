@@ -18,6 +18,8 @@ from app.api.v1.user_roles import router as user_roles_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.access_requests import router as access_requests_router
 from app.api.v1.student_teacher_links import router as student_teacher_links_router
+from app.api.v1.messages_extra import router as messages_extra_router  
+
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -189,6 +191,9 @@ app.include_router(
     prefix=API_PREFIX,
 )
 
+# Бизнес-операции с сообщениями (send/reply/forward и т.п.)
+app.include_router(messages_extra_router, prefix=API_PREFIX)
+
 app.include_router(
     create_crud_router(
         prefix="/notifications", tags=["notifications"],
@@ -240,7 +245,7 @@ app.include_router(user_roles_router, prefix=API_PREFIX)
 # Student ↔ Teacher
 app.include_router(student_teacher_links_router, prefix=API_PREFIX)
 
-# ... после подключения user_courses и user_roles:
+# Зависимости и заявки на доступ к ролям
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
 
 app.include_router(access_requests_router, prefix=API_PREFIX)
