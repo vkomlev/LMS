@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence
+from datetime import datetime
+from typing import Any, List, Optional, Sequence, Tuple
 
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.messages import Messages
@@ -23,11 +25,16 @@ class MessagesService(BaseService[Messages]):
     - отправка per2per,
     - массовая отправка (bulk),
     - ответ на сообщение,
-    - пересылка сообщения.
+    - пересылка сообщения,
+    - выборка сообщений по пользователю/периоду,
+    - список отправителей,
+    - прикрепление файла.
     """
 
     def __init__(self, repo: MessagesRepository = MessagesRepository()) -> None:
         super().__init__(repo)
+
+    # ---------- Отправка сообщений ----------
 
     async def send_message(
         self,
@@ -247,3 +254,127 @@ class MessagesService(BaseService[Messages]):
             messages.append(msg)
 
         return messages
+
+    # ---------- Выборка сообщений ----------
+
+    async def get_messages_for_user(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        direction: str = "both",
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Tuple[List[Messages], int]:
+        """
+        Получить сообщения пользователя с фильтрами по направлению и периоду.
+
+        direction:
+            - "sent"     — только отправленные пользователем;
+            - "received" — только полученные пользователем;
+            - "both"     — и отправленные, и полученные.
+        """
+        model = self.repo.model  # Messages
+        filters = []
+
+        # Направление
+        if direction == "sent":
+            filters.append(model.sender_id == user_id)
+        elif direction == "received":
+            filters.append(model.recipient_id == user_id)
+        else:  # both
+            filters.append(
+                or_(
+                    model.sender_id == user_id,
+                    model.recipient_id == user_id,
+                )
+            )
+
+        # Период
+        if from_dt is not None:
+            filters.append(model.sent_at >= from_dt)
+        if to_dt is not None:
+            filters.append(model.sent_at <= to_dt)
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[model.sent_at.desc()],
+        )
+
+    async def get_senders_for_user(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+    ) -> List[Tuple[int, int]]:
+        """
+        Получить список отправителей пользователя и количество сообщений от каждого.
+
+        Возвращает список кортежей (sender_id, messages_count), отсортированный
+        по убыванию количества сообщений. Сообщения от системного отправителя
+        (sender_id IS NULL) не включаются.
+        """
+        model = self.repo.model  # Messages
+
+        stmt = select(
+            model.sender_id,
+            func.count().label("messages_count"),
+        ).where(
+            model.recipient_id == user_id,
+        )
+
+        if from_dt is not None:
+            stmt = stmt.where(model.sent_at >= from_dt)
+        if to_dt is not None:
+            stmt = stmt.where(model.sent_at <= to_dt)
+
+        stmt = (
+            stmt.where(model.sender_id.isnot(None))
+            .group_by(model.sender_id)
+            .order_by(func.count().desc())
+        )
+
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        # Преобразуем в список (sender_id, count)
+        return [(int(sender_id), int(messages_count)) for sender_id, messages_count in rows]
+
+    # ---------- Прикрепление файла ----------
+
+    async def attach_file(
+        self,
+        db: AsyncSession,
+        *,
+        message_id: int,
+        attachment_url: str,
+        attachment_id: Optional[str] = None,
+    ) -> Messages:
+        """
+        Обновить сообщение, прикрепив к нему файл.
+
+        attachment_url — путь или URL до файла (на диске/в хранилище),
+        attachment_id  — идентификатор файла во внешней системе (если есть).
+        """
+        msg = await self.repo.get(db, message_id)
+        if msg is None:
+            raise DomainError(
+                "Сообщение не найдено",
+                status_code=404,
+                payload={"message_id": message_id},
+            )
+
+        msg.attachment_url = attachment_url
+        msg.attachment_id = attachment_id
+
+        db.add(msg)
+        await db.commit()
+        await db.refresh(msg)
+        return msg

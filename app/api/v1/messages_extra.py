@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Body, Depends, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,13 +23,14 @@ from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
 )
+from app.utils.pagination import Page, build_page
 
 router = APIRouter(tags=["messages"])
 service = MessagesService()
 student_teacher_service = StudentTeacherLinksService()
 
 
-# ------------ Базовые запросы, которые уже были ------------
+# ------------ Базовые запросы (send / reply / forward) ------------
 
 class MessageReplyRequest(BaseModel):
     """
@@ -133,7 +143,7 @@ async def forward_message_endpoint(
     return messages
 
 
-# ------------ НОВОЕ: массовые рассылки ------------
+# ------------ Массовые рассылки ------------
 
 class MessageToGroupBase(BaseModel):
     """
@@ -149,7 +159,7 @@ class MessageToGroupBase(BaseModel):
     sender_id: Optional[int] = None
     source_system: Optional[str] = None
 
-    # При желании можно сразу поддержать вложения/цепочки:
+    # Дополнительно поддерживаем вложения/цепочки:
     reply_to_id: Optional[int] = None
     thread_id: Optional[int] = None
     forwarded_from_id: Optional[int] = None
@@ -265,3 +275,119 @@ async def send_to_teachers_endpoint(
         attachment_id=payload.attachment_id,
     )
     return messages
+
+
+# ------------ НОВОЕ: выборка сообщений по периоду/направлению ------------
+
+@router.get(
+    "/messages/by-user",
+    response_model=Page[MessageRead],
+    summary="Сообщения пользователя с фильтрами по направлению и периоду",
+)
+async def get_messages_by_user_endpoint(
+    user_id: int,
+    direction: str = "both",  # sent | received | both
+    from_dt: Optional[datetime] = None,
+    to_dt: Optional[datetime] = None,
+    skip: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+) -> Page[MessageRead]:
+    """
+    Получить сообщения пользователя с возможностью указать направление и период.
+
+    direction:
+        - sent     — только отправленные пользователем;
+        - received — только полученные;
+        - both     — по умолчанию, всё.
+    """
+    items, total = await service.get_messages_for_user(
+        db,
+        user_id=user_id,
+        direction=direction,
+        from_dt=from_dt,
+        to_dt=to_dt,
+        limit=limit,
+        offset=skip,
+    )
+    return build_page(items, total=total, limit=limit, offset=skip)
+
+
+# ------------ НОВОЕ: список отправителей ------------
+
+class SenderStats(BaseModel):
+    sender_id: int
+    messages_count: int
+
+
+@router.get(
+    "/messages/senders",
+    response_model=List[SenderStats],
+    summary="Список отправителей пользователя за период",
+)
+async def get_senders_for_user_endpoint(
+    user_id: int,
+    from_dt: Optional[datetime] = None,
+    to_dt: Optional[datetime] = None,
+    db: AsyncSession = Depends(get_db),
+) -> List[SenderStats]:
+    """
+    Получить список отправителей пользователя и количество сообщений от каждого.
+
+    Системные сообщения (sender_id = NULL) не попадают в список.
+    """
+    raw = await service.get_senders_for_user(
+        db,
+        user_id=user_id,
+        from_dt=from_dt,
+        to_dt=to_dt,
+    )
+    return [SenderStats(sender_id=sid, messages_count=cnt) for sid, cnt in raw]
+
+
+# ------------ НОВОЕ: прикрепление файла к сообщению ------------
+
+ATTACHMENTS_DIR = Path("uploads/messages")
+
+
+@router.post(
+    "/messages/{message_id}/attachment",
+    response_model=MessageRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Прикрепить файл к сообщению",
+)
+async def attach_file_to_message_endpoint(
+    message_id: int,
+    file: UploadFile = File(..., description="Файл для прикрепления к сообщению"),
+    db: AsyncSession = Depends(get_db),
+) -> MessageRead:
+    """
+    Загрузить файл и привязать его к сообщению.
+
+    Файл сохраняется в локальную директорию `uploads/messages` внутри проекта.
+    В message.attachment_url пишем относительный путь к файлу,
+    в attachment_id — имя файла (на случай, если нужно идентифицировать его отдельно).
+    """
+    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Простая схема имени файла: messageId_uuid_originalName
+    from uuid import uuid4
+
+    safe_name = f"{message_id}_{uuid4().hex}_{file.filename}"
+    file_path = ATTACHMENTS_DIR / safe_name
+
+    # Читаем и сохраняем файл
+    content = await file.read()
+    file_path.write_bytes(content)
+
+    # attachment_url — относительный путь, который потом можно будет отдать статики
+    attachment_url = str(file_path.as_posix())
+    attachment_id = safe_name
+
+    msg = await service.attach_file(
+        db,
+        message_id=message_id,
+        attachment_url=attachment_url,
+        attachment_id=attachment_id,
+    )
+    return msg

@@ -182,6 +182,9 @@ app.include_router(
     prefix=API_PREFIX,
 )
 
+# Бизнес-операции с сообщениями (send/reply/forward и т.п.)
+app.include_router(messages_extra_router, prefix=API_PREFIX)
+
 app.include_router(
     create_crud_router(
         prefix="/messages", tags=["messages"],
@@ -191,8 +194,6 @@ app.include_router(
     prefix=API_PREFIX,
 )
 
-# Бизнес-операции с сообщениями (send/reply/forward и т.п.)
-app.include_router(messages_extra_router, prefix=API_PREFIX)
 
 app.include_router(
     create_crud_router(
