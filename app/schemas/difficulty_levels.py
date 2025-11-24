@@ -1,21 +1,54 @@
 from __future__ import annotations
+
 from typing import Optional
+
 from pydantic import BaseModel, Field, ConfigDict
 
 
 class DifficultyLevelCreate(BaseModel):
-    name: str
-    weight: int
+    """
+    Схема создания уровня сложности.
+    """
+    code: str = Field(
+        ...,
+        description="Код уровня сложности (например, 'Theory', 'Easy', 'Normal', 'Hard', 'Project')",
+    )
+    name_ru: str = Field(
+        ...,
+        description="Русское имя уровня сложности (например, 'Теория', 'Легко', 'Нормально', ...')",
+    )
+    weight: int = Field(
+        ...,
+        description="Вес уровня сложности (1..5)",
+    )
 
 
 class DifficultyLevelUpdate(BaseModel):
-    name: Optional[str] = None
-    weight: Optional[int] = None
+    """
+    Схема частичного обновления уровня сложности.
+    Все поля опциональны.
+    """
+    code: Optional[str] = Field(
+        None,
+        description="Код уровня сложности",
+    )
+    name_ru: Optional[str] = Field(
+        None,
+        description="Русское имя уровня сложности",
+    )
+    weight: Optional[int] = Field(
+        None,
+        description="Вес уровня сложности (1..5)",
+    )
 
 
 class DifficultyLevelRead(BaseModel):
+    """
+    Схема чтения уровня сложности.
+    """
     id: int
-    name: str
+    code: str
+    name_ru: str
     weight: int
 
     class Config:
