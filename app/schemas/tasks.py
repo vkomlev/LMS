@@ -103,3 +103,15 @@ class TaskValidateResponse(BaseModel):
     """
     is_valid: bool
     errors: List[str]
+
+class TaskFindByExternalRequest(BaseModel):
+    uids: list[str]
+
+
+class TaskFindByExternalItem(BaseModel):
+    external_uid: str
+    id: int
+
+
+class TaskFindByExternalResponse(BaseModel):
+    items: list[TaskFindByExternalItem]

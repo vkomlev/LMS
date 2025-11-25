@@ -6,7 +6,17 @@ from typing import Any, List, Literal
 from pydantic import BaseModel
 
 from app.api.deps import get_db
-from app.schemas.tasks import TaskRead, TaskBulkUpsertRequest, TaskBulkUpsertResponse, TaskBulkUpsertResultItem, TaskValidateResponse, TaskValidateRequest
+from app.schemas.tasks import (
+    TaskRead, 
+    TaskBulkUpsertRequest, 
+    TaskBulkUpsertResponse, 
+    TaskBulkUpsertResultItem, 
+    TaskValidateResponse, 
+    TaskValidateRequest,
+    TaskFindByExternalResponse,
+    TaskFindByExternalItem,
+    TaskFindByExternalRequest,
+)
 from app.services.tasks_service import TasksService
 
 
@@ -106,3 +116,26 @@ async def bulk_upsert_tasks_endpoint(
 
     return TaskBulkUpsertResponse(results=results)
 
+@router.post(
+    "/tasks/find-by-external",
+    response_model=TaskFindByExternalResponse,
+    summary="Массовое получение задач по списку external_uid",
+)
+async def find_tasks_by_external_uid_endpoint(
+    payload: TaskFindByExternalRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TaskFindByExternalResponse:
+    """
+    Массовое получение задач по external_uid.
+
+    Возвращает только существующие задачи.
+    Если часть UID отсутствует — они просто не попадут в список.
+    """
+    results = await tasks_service.find_by_external_uids(db, uids=payload.uids)
+
+    items = [
+        TaskFindByExternalItem(external_uid=uid, id=id_)
+        for uid, id_ in results
+    ]
+
+    return TaskFindByExternalResponse(items=items)

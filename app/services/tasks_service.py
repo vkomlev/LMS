@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, Any, Dict, List, Sequence, Tuple
-
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tasks import Tasks
@@ -183,4 +183,27 @@ class TasksService(BaseService[Tasks]):
             is_valid = len(errors) == 0
             return is_valid, errors
 
+    async def find_by_external_uids(
+        self,
+        db: AsyncSession,
+        uids: list[str],
+    ) -> list[tuple[str, int]]:
+        """
+        Массовый поиск задач по списку external_uid.
+
+        Возвращает список кортежей (external_uid, id)
+        только для тех uid, которые действительно найдены.
+        """
+        if not uids:
+            return []
+
+        stmt = (
+            select(self.repo.model.external_uid, self.repo.model.id)
+            .where(self.repo.model.external_uid.in_(uids))
+        )
+
+        rows = (await db.execute(stmt)).all()
+
+        # rows: List[(external_uid, id)]
+        return [(uid, id_) for uid, id_ in rows]
 
