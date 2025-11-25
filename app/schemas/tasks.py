@@ -85,3 +85,21 @@ class TaskBulkUpsertResponse(BaseModel):
     Ответ bulk-upsert'а задач.
     """
     results: List[TaskBulkUpsertResultItem]
+
+class TaskValidateRequest(BaseModel):
+    """
+    Запрос на предварительную валидацию задания перед импортом.
+    """
+    task_content: Any
+    solution_rules: Any | None = None
+    difficulty_code: str | None = None
+    course_code: str | None = None
+    external_uid: str | None = None
+
+
+class TaskValidateResponse(BaseModel):
+    """
+    Результат предварительной валидации.
+    """
+    is_valid: bool
+    errors: List[str]

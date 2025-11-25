@@ -56,6 +56,12 @@ class Courses(Base):
     is_required: Mapped[bool] = mapped_column(
         Boolean, server_default=text("false"), nullable=False, comment="Обязательный курс"
     )
+    course_uid: Mapped[str | None] = mapped_column(
+        String,
+        unique=True,
+        nullable=True,  # можно сделать NOT NULL позже, когда все курсы получат коды
+        comment="Код курса для импорта (course_uid, например 'COURSE-PY-01')",
+    )
 
     parent_course: Mapped[Optional["Courses"]] = relationship(
         "Courses", remote_side=[id], back_populates="parent_course_reverse"
