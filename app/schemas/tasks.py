@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, List, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -50,3 +50,38 @@ class TaskRead(BaseModel):
 
     class Config:
         model_config = ConfigDict(from_attributes=True)
+
+class TaskUpsertItem(BaseModel):
+    """
+    Один элемент для массового upsert'а задачи.
+    Поля соответствуют структуре TaskCreate, плюс обязательный external_uid.
+    """
+    external_uid: str
+    course_id: int
+    difficulty_id: int
+    task_content: Any
+    solution_rules: Any | None = None
+    max_score: int | None = None
+
+
+class TaskBulkUpsertRequest(BaseModel):
+    """
+    Тело запроса для массового upsert'а задач.
+    """
+    items: List[TaskUpsertItem]
+
+
+class TaskBulkUpsertResultItem(BaseModel):
+    """
+    Один элемент результата bulk-upsert'а.
+    """
+    external_uid: str
+    action: Literal["created", "updated"]
+    id: int
+
+
+class TaskBulkUpsertResponse(BaseModel):
+    """
+    Ответ bulk-upsert'а задач.
+    """
+    results: List[TaskBulkUpsertResultItem]
