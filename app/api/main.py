@@ -19,6 +19,7 @@ from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.access_requests import router as access_requests_router
 from app.api.v1.student_teacher_links import router as student_teacher_links_router
 from app.api.v1.messages_extra import router as messages_extra_router  
+from app.api.v1.tasks_extra import router as tasks_extra_router
 
 
 # Схемы и сервисы
@@ -212,7 +213,7 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
-
+app.include_router(tasks_extra_router, prefix=API_PREFIX)
 app.include_router(
     create_crud_router(
         prefix="/tasks", tags=["tasks"],
