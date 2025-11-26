@@ -38,5 +38,4 @@ class CourseRead(BaseModel):
     created_at: datetime
     is_required: bool
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
