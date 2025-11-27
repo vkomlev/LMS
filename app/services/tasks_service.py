@@ -109,6 +109,7 @@ class TasksService(BaseService[Tasks]):
             task_content: Any,
             solution_rules: Any | None,
             difficulty_code: str | None,
+            difficulty_id: int | None,
             course_code: str | None,
             external_uid: str | None,
         ) -> tuple[bool, List[str]]:
@@ -159,14 +160,21 @@ class TasksService(BaseService[Tasks]):
             else:
                 errors.append("solution_rules should be an object (JSON)")
 
-            # ---- difficulty_code ----
-            if not difficulty_code:
-                errors.append("difficulty_code not provided")
-            else:
-                diff_service = DifficultyLevelsService()
+            # ---- difficulty_code / difficulty_id ----
+            diff_service = DifficultyLevelsService()
+
+            if difficulty_code:
+                # Основной путь — проверка по коду сложности
                 diff = await diff_service.repo.get_by_keys(db, {"code": difficulty_code})
                 if diff is None:
                     errors.append(f"difficulty_id not found for code='{difficulty_code}'")
+            elif difficulty_id is not None:
+                # Резервный путь — если пришёл только ID сложности
+                diff = await diff_service.get_by_id(db, difficulty_id)
+                if diff is None:
+                    errors.append(f"difficulty_id {difficulty_id} not found")
+            else:
+                errors.append("difficulty_code or difficulty_id not provided")
 
             # ---- course_code ----
             if not course_code:

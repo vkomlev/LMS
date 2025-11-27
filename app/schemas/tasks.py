@@ -89,10 +89,15 @@ class TaskBulkUpsertResponse(BaseModel):
 class TaskValidateRequest(BaseModel):
     """
     Запрос на предварительную валидацию задания перед импортом.
+
+    Можно передавать либо difficulty_code, либо difficulty_id (или оба).
     """
     task_content: Any
     solution_rules: Any | None = None
+
     difficulty_code: str | None = None
+    difficulty_id: int | None = None
+
     course_code: str | None = None
     external_uid: str | None = None
 

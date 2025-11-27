@@ -72,6 +72,7 @@ async def validate_task_endpoint(
         task_content=payload.task_content,
         solution_rules=payload.solution_rules,
         difficulty_code=payload.difficulty_code,
+        difficulty_id=payload.difficulty_id,
         course_code=payload.course_code,
         external_uid=payload.external_uid,
     )

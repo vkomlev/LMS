@@ -37,5 +37,6 @@ class CourseRead(BaseModel):
     parent_course_id: Optional[int]
     created_at: datetime
     is_required: bool
+    course_uid: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
