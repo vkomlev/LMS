@@ -23,6 +23,7 @@ from app.api.v1.tasks_extra import router as tasks_extra_router
 from app.api.v1.courses_extra import router as courses_extra_router
 from app.api.v1.meta_tasks import router as meta_tasks_router
 from app.api.v1.checking import router as checking_router
+from app.api.v1.attempts import router as attempts_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -256,4 +257,6 @@ app.include_router(access_requests_router, prefix=API_PREFIX)
 
 app.include_router(meta_tasks_router, prefix=API_PREFIX)
 
-app.include_router(checking_router)
+app.include_router(checking_router, prefix=API_PREFIX)
+
+app.include_router(attempts_router, prefix=API_PREFIX)

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from app.models.user_achievements import UserAchievements
     from app.models.access_requests import AccessRequests
     from app.models.user_courses import UserCourses
+    from app.models.attempts import Attempts
     
 class Users(Base):
     """
@@ -67,7 +68,7 @@ class Users(Base):
         "UserCourses",
         back_populates="user",
     )
-
+    attempts: Mapped[List["Attempts"]] = relationship("Attempts", back_populates="user")
     # Преподаватель → его студенты
     students: Mapped[List["Users"]] = relationship(
         "Users",

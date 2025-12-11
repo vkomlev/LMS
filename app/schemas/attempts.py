@@ -1,0 +1,207 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
+from datetime import datetime  # импортируем datetime для использования в модели
+
+from pydantic import BaseModel, Field, ConfigDict
+
+from app.schemas.checking import StudentAnswer, CheckResult
+
+
+class AttemptCreate(BaseModel):
+    """
+    Схема создания попытки.
+
+    Используется при stateful-проверке:
+    - POST /api/v1/attempts
+    """
+    user_id: int = Field(
+        ...,
+        description="ID пользователя, который проходит попытку.",
+    )
+    course_id: Optional[int] = Field(
+        default=None,
+        description="ID курса, если попытка привязана к конкретному курсу.",
+    )
+    source_system: Optional[str] = Field(
+        default="lms",
+        description="Источник создания попытки (lms_web, tg_bot, import и т.п.).",
+    )
+    meta: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Произвольные метаданные (таймлимит, название контрольной и т.п.).",
+    )
+
+
+class AttemptUpdate(BaseModel):
+    """
+    Схема обновления попытки (частичное обновление).
+
+    В первую очередь пригодится для:
+    - установки finished_at,
+    - изменения статуса в meta (например, 'finished': true).
+    """
+    course_id: Optional[int] = Field(
+        default=None,
+        description="Обновлённый ID курса (если нужно).",
+    )
+    source_system: Optional[str] = Field(
+        default=None,
+        description="Обновлённый источник попытки.",
+    )
+    meta: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Обновлённый JSON метаданных.",
+    )
+    # finished_at трогает доменная логика, а не клиент.
+
+
+class AttemptRead(BaseModel):
+    """
+    Базовое представление попытки для ответов API.
+    """
+
+    id: int
+    user_id: int
+    course_id: Optional[int] = None
+
+    # 👇 ключевая правка: datetime вместо str
+    created_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    source_system: Optional[str] = None
+    meta: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ---------- Результаты по задачам внутри попытки ----------
+
+
+class AttemptTaskResultShort(BaseModel):
+    """
+    Краткая информация о результате по конкретной задаче
+    внутри попытки (для GET /attempts/{id} и summary).
+    """
+
+    task_id: int = Field(..., description="ID задачи.")
+    score: int = Field(..., description="Набранный балл.")
+    max_score: int = Field(..., description="Максимальный балл.")
+    is_correct: Optional[bool] = Field(
+        default=None,
+        description="True/False/None (для задач с ручной проверкой).",
+    )
+    answer_json: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Сохранённый ответ ученика по задаче (как в task_results.answer_json).",
+    )
+
+
+class AttemptWithResults(BaseModel):
+    """
+    Детальное представление попытки:
+    - сама попытка,
+    - список результатов по задачам,
+    - суммарные баллы.
+    """
+
+    attempt: AttemptRead = Field(
+        ...,
+        description="Метаданные попытки.",
+    )
+    results: List[AttemptTaskResultShort] = Field(
+        ...,
+        description="Результаты по задачам в рамках попытки.",
+    )
+    total_score: int = Field(
+        ...,
+        description="Суммарный набранный балл по всем задачам попытки.",
+    )
+    total_max_score: int = Field(
+        ...,
+        description="Суммарный максимальный балл по всем задачам попытки.",
+    )
+
+
+# ---------- Схемы для POST /attempts/{id}/answers ----------
+
+
+class AttemptAnswerItem(BaseModel):
+    """
+    Один ответ в рамках попытки.
+
+    Требуем, чтобы был указан хотя бы task_id или external_uid.
+    Тип задачи и сама структура ответа — через StudentAnswer.
+    """
+
+    task_id: int | None = Field(
+        default=None,
+        description="ID задачи в БД. Обязателен, если не указан external_uid.",
+    )
+    external_uid: str | None = Field(
+        default=None,
+        description="Внешний устойчивый ID задачи. Обязателен, если не указан task_id.",
+    )
+    answer: StudentAnswer = Field(
+        ...,
+        description=(
+            "Ответ ученика на данную задачу. "
+            "Поля type/response должны соответствовать task_content."
+        ),
+    )
+
+
+class AttemptAnswersRequest(BaseModel):
+    """
+    Тело запроса для POST /attempts/{id}/answers.
+    """
+
+    items: List[AttemptAnswerItem] = Field(
+        ...,
+        description="Список ответов по задачам внутри попытки.",
+    )
+
+
+class AttemptAnswerResult(BaseModel):
+    """
+    Один элемент результата проверки внутри попытки.
+    """
+
+    task_id: int = Field(
+        ...,
+        description="ID задачи, к которой относится результат.",
+    )
+    check_result: CheckResult = Field(
+        ...,
+        description="Результат проверки ответа по данной задаче.",
+    )
+
+
+class AttemptAnswersResponse(BaseModel):
+    """
+    Ответ для POST /attempts/{id}/answers.
+    """
+
+    attempt_id: int = Field(..., description="ID попытки.")
+    results: List[AttemptAnswerResult] = Field(
+        ..., description="Результаты проверки по каждой задаче."
+    )
+    total_score_delta: int = Field(
+        ...,
+        description="Суммарный набранный балл только по этим присланным ответам.",
+    )
+    total_max_score_delta: int = Field(
+        ...,
+        description="Суммарный максимальный балл только по этим присланным ответам.",
+    )
+
+
+class AttemptFinishResponse(AttemptWithResults):
+    """
+    Ответ для POST /attempts/{id}/finish.
+
+    Наследуемся от AttemptWithResults — возвращаем полную картину:
+    попытка + все результаты + суммы баллов.
+    """
+
+    pass
