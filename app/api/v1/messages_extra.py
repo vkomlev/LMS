@@ -18,7 +18,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.schemas.messages import MessageRead, MessageCreate
+from app.schemas.messages import (
+    MessageRead, 
+    MessageCreate,
+    MarkReadRequest,
+    MarkReadBySenderRequest,
+    MarkReadResponse,
+    )
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
@@ -289,6 +295,8 @@ async def get_messages_by_user_endpoint(
     direction: str = "both",  # sent | received | both
     from_dt: Optional[datetime] = None,
     to_dt: Optional[datetime] = None,
+    is_read: Optional[bool] = None,
+    unread_only: bool = False,
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
@@ -307,6 +315,8 @@ async def get_messages_by_user_endpoint(
         direction=direction,
         from_dt=from_dt,
         to_dt=to_dt,
+        is_read=is_read,
+        unread_only=unread_only,
         limit=limit,
         offset=skip,
     )
@@ -391,3 +401,68 @@ async def attach_file_to_message_endpoint(
         attachment_id=attachment_id,
     )
     return msg
+
+class UnreadCountResponse(BaseModel):
+    user_id: int
+    unread_count: int
+
+@router.get(
+    "/messages/unread/count",
+    response_model=UnreadCountResponse,
+    summary="Количество непрочитанных сообщений у пользователя",
+)
+async def get_unread_count_endpoint(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> UnreadCountResponse:
+    unread = await service.count_unread(db, user_id=user_id)
+    return UnreadCountResponse(user_id=user_id, unread_count=unread)
+
+
+class UnreadBySenderItem(BaseModel):
+    sender_id: int
+    unread_count: int
+
+@router.get(
+    "/messages/unread/by-sender",
+    response_model=List[UnreadBySenderItem],
+    summary="Непрочитанные сообщения по отправителям",
+)
+async def get_unread_by_sender_endpoint(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+) -> List[UnreadBySenderItem]:
+    rows = await service.count_unread_by_sender(db, user_id=user_id)
+    return [UnreadBySenderItem(sender_id=sid, unread_count=cnt) for sid, cnt in rows]
+
+@router.post(
+    "/messages/mark-read",
+    response_model=MarkReadResponse,
+    summary="Массово отметить сообщения как прочитанные",
+)
+async def mark_read_endpoint(
+    payload: MarkReadRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> MarkReadResponse:
+    updated = await service.mark_read(
+        db,
+        user_id=payload.user_id,
+        message_ids=payload.message_ids,
+    )
+    return MarkReadResponse(updated_count=updated)
+
+@router.post(
+    "/messages/mark-read/by-sender",
+    response_model=MarkReadResponse,
+    summary="Отметить как прочитанные все сообщения от отправителя",
+)
+async def mark_read_by_sender_endpoint(
+    payload: MarkReadBySenderRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> MarkReadResponse:
+    updated = await service.mark_read_by_sender(
+        db,
+        user_id=payload.user_id,
+        sender_id=payload.sender_id,
+    )
+    return MarkReadResponse(updated_count=updated)

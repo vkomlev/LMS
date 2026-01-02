@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.messages import Messages
@@ -265,6 +265,8 @@ class MessagesService(BaseService[Messages]):
         direction: str = "both",
         from_dt: Optional[datetime] = None,
         to_dt: Optional[datetime] = None,
+        is_read: Optional[bool] = None,
+        unread_only: bool = False,
         limit: int = 50,
         offset: int = 0,
     ) -> Tuple[List[Messages], int]:
@@ -297,7 +299,10 @@ class MessagesService(BaseService[Messages]):
             filters.append(model.sent_at >= from_dt)
         if to_dt is not None:
             filters.append(model.sent_at <= to_dt)
-
+        if unread_only:
+            filters.append(model.is_read.is_(False))
+        elif is_read is not None:
+            filters.append(model.is_read.is_(is_read))
         return await self.paginate(
             db,
             limit=limit,
@@ -346,6 +351,42 @@ class MessagesService(BaseService[Messages]):
 
         # Преобразуем в список (sender_id, count)
         return [(int(sender_id), int(messages_count)) for sender_id, messages_count in rows]
+    
+    async def count_unread(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+    ) -> int:
+        model = self.repo.model  # Messages
+        stmt = select(func.count()).where(
+            model.recipient_id == user_id,
+            model.is_read.is_(False),
+        )
+        return int(await db.scalar(stmt) or 0)
+
+    async def count_unread_by_sender(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+    ) -> List[Tuple[int, int]]:
+        model = self.repo.model  # Messages
+
+        stmt = (
+            select(model.sender_id, func.count().label("unread_count"))
+            .where(
+                model.recipient_id == user_id,
+                model.is_read.is_(False),
+                model.sender_id.isnot(None),
+            )
+            .group_by(model.sender_id)
+            .order_by(func.count().desc())
+        )
+
+        res = await db.execute(stmt)
+        rows = res.all()
+        return [(int(sid), int(cnt)) for sid, cnt in rows]
 
     # ---------- Прикрепление файла ----------
 
@@ -378,3 +419,45 @@ class MessagesService(BaseService[Messages]):
         await db.commit()
         await db.refresh(msg)
         return msg
+
+    async def mark_read(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        message_ids: Sequence[int],
+    ) -> int:
+        model = self.repo.model  # Messages
+        stmt = (
+            update(model)
+            .where(
+                model.id.in_(list(message_ids)),
+                model.recipient_id == user_id,
+                model.is_read.is_(False),
+            )
+            .values(is_read=True)
+        )
+        res = await db.execute(stmt)
+        await db.commit()
+        return int(res.rowcount or 0)
+
+    async def mark_read_by_sender(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        sender_id: int,
+    ) -> int:
+        model = self.repo.model  # Messages
+        stmt = (
+            update(model)
+            .where(
+                model.recipient_id == user_id,
+                model.sender_id == sender_id,
+                model.is_read.is_(False),
+            )
+            .values(is_read=True)
+        )
+        res = await db.execute(stmt)
+        await db.commit()
+        return int(res.rowcount or 0)

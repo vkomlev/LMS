@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Any, Optional
+from typing import Any, Optional, List
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MessageCreate(BaseModel):
@@ -49,3 +49,13 @@ class MessageRead(BaseModel):
     class Config:
         model_config = ConfigDict(from_attributes=True)
 
+class MarkReadRequest(BaseModel):
+    user_id: int = Field(..., description="Кто помечает (получатель сообщений)")
+    message_ids: List[int] = Field(..., min_length=1)
+
+class MarkReadBySenderRequest(BaseModel):
+    user_id: int
+    sender_id: int
+
+class MarkReadResponse(BaseModel):
+    updated_count: int
