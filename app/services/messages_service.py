@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, update, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.messages import Messages
+from app.models.users import Users
 from app.repos.messages_repo import MessagesRepository
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
@@ -461,3 +462,92 @@ class MessagesService(BaseService[Messages]):
         res = await db.execute(stmt)
         await db.commit()
         return int(res.rowcount or 0)
+    
+    async def get_inbox(
+        self,
+        db: AsyncSession,
+        *,
+        user_id: int,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        Inbox пользователя: список диалогов (peer) с last_message и unread_count.
+
+        Возвращает список dict-строк:
+        - peer_id
+        - peer_full_name
+        - last_message_id, last_sender_id, last_recipient_id
+        - last_message_type, last_content, last_sent_at
+        - unread_count (только входящие непрочитанные от peer)
+        """
+        m = self.repo.model  # Messages
+
+        # Собеседник (peer):
+        # - если я отправитель -> peer = recipient
+        # - если я получатель -> peer = sender
+        peer_id_expr = case(
+            (m.sender_id == user_id, m.recipient_id),
+            else_=m.sender_id,
+        ).label("peer_id")
+
+        # Подзапрос: все сообщения пользователя + peer_id + rn по последнему сообщению
+        base = (
+            select(
+                m.id.label("last_message_id"),
+                m.sender_id.label("last_sender_id"),
+                m.recipient_id.label("last_recipient_id"),
+                m.message_type.label("last_message_type"),
+                m.content.label("last_content"),
+                m.sent_at.label("last_sent_at"),
+                peer_id_expr,
+                func.row_number()
+                .over(
+                    partition_by=peer_id_expr,
+                    order_by=m.sent_at.desc(),
+                )
+                .label("rn"),
+            )
+            .where(
+                or_(m.sender_id == user_id, m.recipient_id == user_id),
+                peer_id_expr.isnot(None),  # исключаем системные/битые без peer
+            )
+        ).subquery("inbox_last")
+
+        # Подзапрос: непрочитанные ВХОДЯЩИЕ по отправителю
+        unread = (
+            select(
+                m.sender_id.label("peer_id"),
+                func.count().label("unread_count"),
+            )
+            .where(
+                m.recipient_id == user_id,
+                m.is_read.is_(False),
+                m.sender_id.isnot(None),
+            )
+            .group_by(m.sender_id)
+        ).subquery("inbox_unread")
+
+        stmt = (
+            select(
+                base.c.peer_id,
+                Users.full_name.label("peer_full_name"),
+                base.c.last_message_id,
+                base.c.last_sender_id,
+                base.c.last_recipient_id,
+                base.c.last_message_type,
+                base.c.last_content,
+                base.c.last_sent_at,
+                func.coalesce(unread.c.unread_count, 0).label("unread_count"),
+            )
+            .join(Users, Users.id == base.c.peer_id)
+            .outerjoin(unread, unread.c.peer_id == base.c.peer_id)
+            .where(base.c.rn == 1)  # только последнее сообщение на peer
+            .order_by(base.c.last_sent_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        res = await db.execute(stmt)
+        # mappings() -> list[dict]-подобных, удобно для роутера
+        return [dict(r) for r in res.mappings().all()]

@@ -13,6 +13,7 @@ from fastapi import (
     File,
     UploadFile,
     status,
+    #Path,
 )
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
 )
 from app.utils.pagination import Page, build_page
+from app.schemas.messages import InboxResponse, InboxItem, MessageRead
 
 router = APIRouter(tags=["messages"])
 service = MessagesService()
@@ -466,3 +468,43 @@ async def mark_read_by_sender_endpoint(
         sender_id=payload.sender_id,
     )
     return MarkReadResponse(updated_count=updated)
+
+@router.get(
+    "/messages/inbox",
+    response_model=InboxResponse,
+    summary="Список диалогов (peer + last_message + unread_count)",
+)
+async def get_inbox(
+    user_id: int,
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+) -> InboxResponse:
+    rows = await service.get_inbox(db, user_id=user_id, limit=limit, offset=offset)
+
+    items = [
+        InboxItem(
+            peer_id=row["peer_id"],
+            peer_full_name=row["peer_full_name"],
+            unread_count=row["unread_count"],
+            last_message=MessageRead.model_validate(row["last_message"], from_attributes=True),
+        )
+        for row in rows
+    ]
+    return InboxResponse(items=items)
+
+@router.post(
+    "/messages/{message_id}/read",
+    summary="Отметить одно сообщение прочитанным (явно)",
+)
+async def mark_one_as_read(
+    message_id: int,  # ← БЕЗ Path(...)
+    user_id: int = Body(..., embed=True),
+    db: AsyncSession = Depends(get_db),
+):
+    updated = await service.mark_read(
+        db,
+        user_id=user_id,
+        message_ids=[message_id],
+    )
+    return {"updated": updated}

@@ -59,3 +59,16 @@ class MarkReadBySenderRequest(BaseModel):
 
 class MarkReadResponse(BaseModel):
     updated_count: int
+
+class InboxItem(BaseModel):
+    peer_id: int = Field(..., description="ID собеседника")
+    peer_full_name: Optional[str] = Field(default=None, description="Имя собеседника (users.full_name)")
+    unread_count: int = Field(..., description="Кол-во непрочитанных от этого собеседника")
+    last_message: MessageRead = Field(..., description="Последнее сообщение в диалоге")
+
+    class Config:
+        model_config = ConfigDict(from_attributes=True)
+
+
+class InboxResponse(BaseModel):
+    items: List[InboxItem]
