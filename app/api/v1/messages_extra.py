@@ -310,6 +310,8 @@ async def get_messages_by_user_endpoint(
         - sent     — только отправленные пользователем;
         - received — только полученные;
         - both     — по умолчанию, всё.
+    is_read / unread_only применяются ТОЛЬКО к входящим сообщениям (recipient_id == user_id). 
+    При direction=both исходящие сообщения не фильтруются по is_read.
     """
     items, total = await service.get_messages_for_user(
         db,

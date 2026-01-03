@@ -283,17 +283,30 @@ class MessagesService(BaseService[Messages]):
         filters = []
 
         # Направление
+        read_filter = None
+        if unread_only:
+            read_filter = model.is_read.is_(False)
+        elif is_read is not None:
+            read_filter = model.is_read.is_(is_read)
+
+        # Направление
         if direction == "sent":
+            # is_read не применяем к исходящим
             filters.append(model.sender_id == user_id)
+
         elif direction == "received":
             filters.append(model.recipient_id == user_id)
+            if read_filter is not None:
+                filters.append(read_filter)
+
         else:  # both
-            filters.append(
-                or_(
-                    model.sender_id == user_id,
-                    model.recipient_id == user_id,
-                )
-            )
+            sent_cond = (model.sender_id == user_id)
+
+            received_cond = (model.recipient_id == user_id)
+            if read_filter is not None:
+                received_cond = received_cond & read_filter
+
+            filters.append(or_(sent_cond, received_cond))
 
         # Период
         if from_dt is not None:
