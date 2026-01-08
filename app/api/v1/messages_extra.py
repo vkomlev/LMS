@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
+from uuid import uuid4
 from typing import Any, List, Optional
+import os
+import mimetypes
+from starlette.responses import FileResponse
 
 from fastapi import (
     APIRouter,
@@ -13,6 +16,8 @@ from fastapi import (
     File,
     UploadFile,
     status,
+    HTTPException,
+    Query,
     #Path,
 )
 from pydantic import BaseModel
@@ -32,10 +37,13 @@ from app.services.student_teacher_links_service import (
 )
 from app.utils.pagination import Page, build_page
 from app.schemas.messages import InboxResponse, InboxItem, MessageRead
+from app.core.config import Settings
 
 router = APIRouter(tags=["messages"])
 service = MessagesService()
 student_teacher_service = StudentTeacherLinksService()
+
+settings = Settings()
 
 
 # ------------ Базовые запросы (send / reply / forward) ------------
@@ -361,8 +369,6 @@ async def get_senders_for_user_endpoint(
 
 # ------------ НОВОЕ: прикрепление файла к сообщению ------------
 
-ATTACHMENTS_DIR = Path("uploads/messages")
-
 
 @router.post(
     "/messages/{message_id}/attachment",
@@ -376,26 +382,44 @@ async def attach_file_to_message_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> MessageRead:
     """
-    Загрузить файл и привязать его к сообщению.
+    Загружает файл и привязывает к сообщению.
 
-    Файл сохраняется в локальную директорию `uploads/messages` внутри проекта.
-    В message.attachment_url пишем относительный путь к файлу,
-    в attachment_id — имя файла (на случай, если нужно идентифицировать его отдельно).
+    - Лимит размера: Settings.max_attachment_size_bytes
+    - Файл пишем в Settings.messages_upload_dir
+    - attachment_url сохраняем как ОТНОСИТЕЛЬНЫЙ путь до download endpoint:
+      /api/v1/messages/{message_id}/attachment
     """
-    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Простая схема имени файла: messageId_uuid_originalName
-    from uuid import uuid4
+    # Папка гарантированно есть (Settings её создаёт), но на всякий случай:
+    settings.messages_upload_dir.mkdir(parents=True, exist_ok=True)
 
     safe_name = f"{message_id}_{uuid4().hex}_{file.filename}"
-    file_path = ATTACHMENTS_DIR / safe_name
+    file_path = settings.messages_upload_dir / safe_name
 
-    # Читаем и сохраняем файл
-    content = await file.read()
-    file_path.write_bytes(content)
+    total = 0
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(settings.attachment_chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > settings.max_attachment_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        # удаляем частично записанный файл
+        try:
+            if file_path.exists():
+                file_path.unlink()
+        except Exception:
+            pass
+        raise
 
-    # attachment_url — относительный путь, который потом можно будет отдать статики
-    attachment_url = str(file_path.as_posix())
+    # ✅ ВАЖНО: сохраняем относительный URL (без api_key)
+    attachment_url = f"/api/v1/messages/{message_id}/attachment"
     attachment_id = safe_name
 
     msg = await service.attach_file(
@@ -405,6 +429,43 @@ async def attach_file_to_message_endpoint(
         attachment_id=attachment_id,
     )
     return msg
+
+@router.get(
+    "/messages/{message_id}/attachment",
+    summary="Скачать вложение сообщения",
+)
+async def download_message_attachment(
+    message_id: int,
+    user_id: int = Query(..., description="Кто скачивает (для проверки прав)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Стриминговая отдача вложения.
+    Доступ: только sender_id или recipient_id сообщения.
+    """
+    msg = await service.get_by_id(db, message_id)  # BaseService method
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    if not msg.attachment_id:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # ✅ Проверка прав
+    if user_id not in {msg.sender_id, msg.recipient_id}:
+        raise HTTPException(status_code=403, detail="No access to this attachment")
+
+    file_path = settings.messages_upload_dir / msg.attachment_id
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Attachment file missing on server")
+
+    media_type = mimetypes.guess_type(msg.attachment_id)[0] or "application/octet-stream"
+
+    # filename: можно отдать исходное имя, но у нас оно в конце safe_name (с префиксом)
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=os.path.basename(msg.attachment_id),
+    )
 
 class UnreadCountResponse(BaseModel):
     user_id: int
