@@ -93,7 +93,7 @@ class Messages(Base):
         comment="URL или путь к вложенному файлу"
     )
     attachment_id: Mapped[Optional[str]] = mapped_column(
-        String(100),
+        Text,
         nullable=True,
         comment="Идентификатор файла во внешней системе (например, Telegram file_id)"
     )
