@@ -20,7 +20,7 @@ from fastapi import (
     Query,
     #Path,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -51,24 +51,40 @@ settings = Settings()
 class MessageReplyRequest(BaseModel):
     """
     Запрос на ответ на сообщение.
-    sender_id передаём явно (автор ответа), пока без auth-слоя.
+    
+    Автоматически устанавливаются:
+    - reply_to_id = message_id исходного сообщения
+    - thread_id наследуется из исходного сообщения
+    
+    Не требуется указывать:
+    - recipient_id (определяется автоматически)
+    - reply_to_id (устанавливается автоматически)
+    - thread_id (наследуется автоматически)
     """
-    sender_id: int
-    message_type: str
-    content: Any
-    source_system: Optional[str] = None
+    sender_id: int = Field(..., description="ID отправителя ответа (должен быть участником диалога)")
+    message_type: str = Field(..., description="Тип сообщения")
+    content: Any = Field(..., description="Содержимое ответа")
+    source_system: Optional[str] = Field(None, description="Источник сообщения")
 
 
 class MessageForwardRequest(BaseModel):
     """
     Запрос на пересылку сообщения.
-    sender_id — кто инициирует пересылку.
-    recipient_ids — список получателей.
+    
+    Автоматически устанавливаются:
+    - forwarded_from_id = message_id исходного сообщения
+    - content копируется из исходного сообщения
+    - thread_id наследуется из исходного сообщения
+    
+    Не требуется указывать:
+    - content (копируется из исходного сообщения)
+    - forwarded_from_id (устанавливается автоматически)
+    - thread_id (наследуется автоматически)
     """
-    sender_id: int
-    recipient_ids: List[int]
-    message_type: Optional[str] = None
-    source_system: Optional[str] = None
+    sender_id: int = Field(..., description="ID отправителя пересылки")
+    recipient_ids: List[int] = Field(..., min_length=1, description="Список получателей")
+    message_type: Optional[str] = Field(None, description="Тип сообщения (по умолчанию наследуется от исходного)")
+    source_system: Optional[str] = Field(None, description="Источник сообщения (по умолчанию наследуется от исходного)")
 
 
 @router.post(
@@ -84,6 +100,15 @@ async def send_message_endpoint(
     """
     Высокоуровневый эндпойнт отправки сообщения.
 
+    Логика thread_id:
+    - Если указан reply_to_id:
+      * thread_id наследуется из исходного сообщения (или его id, если thread_id пустой)
+      * Если thread_id передан явно, он игнорируется (используется из исходного сообщения)
+    - Если reply_to_id НЕ указан и thread_id НЕ передан:
+      * Создаётся новый тред: thread_id = id созданного сообщения (корневое сообщение)
+    - Если reply_to_id НЕ указан, но thread_id передан явно:
+      * Используется переданный thread_id (для продолжения существующего треда)
+    
     Это обёртка над MessagesService.send_message и замена голого CRUD в случаях,
     когда нужна логика тредов и reply/forward.
     """
@@ -117,7 +142,17 @@ async def reply_to_message_endpoint(
     """
     Ответить на существующее сообщение.
 
-    Получатель определяется автоматически по исходному сообщению.
+    Автоматическое поведение:
+    - reply_to_id устанавливается автоматически (равен message_id исходного сообщения)
+    - thread_id наследуется автоматически из исходного сообщения:
+      * если у исходного сообщения есть thread_id → используется он
+      * если thread_id пустой → используется id исходного сообщения
+    - recipient_id определяется автоматически:
+      * если исходное сообщение отправил sender_id → отвечаем получателю
+      * если исходное сообщение получил sender_id → отвечаем отправителю
+    
+    Требования:
+    - sender_id должен быть либо отправителем, либо получателем исходного сообщения
     """
     msg = await service.reply_to_message(
         db,
@@ -144,9 +179,18 @@ async def forward_message_endpoint(
     """
     Переслать сообщение одному или нескольким получателям.
 
-    На этом уровне:
-    - content пересылается как есть;
-    - тип сообщения по умолчанию наследуется от исходного.
+    Автоматическое поведение:
+    - forwarded_from_id устанавливается автоматически (равен message_id исходного сообщения)
+    - content сохраняется и пересылается из исходного сообщения
+    - message_type по умолчанию наследуется от исходного сообщения (может быть переопределён)
+    - thread_id наследуется автоматически из исходного сообщения:
+      * если у исходного сообщения есть thread_id → используется он
+      * если thread_id пустой → используется id исходного сообщения
+    - reply_to_id НЕ устанавливается (пересылка не является ответом)
+    
+    Вложения:
+    - В текущей реализации вложения (attachment_url, attachment_id) НЕ пересылаются автоматически.
+      Для пересылки вложений используйте прямой эндпойнт /messages/send с указанием attachment_url/attachment_id.
     """
     messages = await service.forward_message(
         db,
@@ -307,6 +351,7 @@ async def get_messages_by_user_endpoint(
     to_dt: Optional[datetime] = None,
     is_read: Optional[bool] = None,
     unread_only: bool = False,
+    thread_id: Optional[int] = Query(None, description="Фильтр по ID треда"),
     skip: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
@@ -320,6 +365,8 @@ async def get_messages_by_user_endpoint(
         - both     — по умолчанию, всё.
     is_read / unread_only применяются ТОЛЬКО к входящим сообщениям (recipient_id == user_id). 
     При direction=both исходящие сообщения не фильтруются по is_read.
+    thread_id:
+        - опциональный фильтр для получения сообщений конкретного треда.
     """
     items, total = await service.get_messages_for_user(
         db,
@@ -329,6 +376,41 @@ async def get_messages_by_user_endpoint(
         to_dt=to_dt,
         is_read=is_read,
         unread_only=unread_only,
+        thread_id=thread_id,
+        limit=limit,
+        offset=skip,
+    )
+    return build_page(items, total=total, limit=limit, offset=skip)
+
+
+@router.get(
+    "/messages/thread/{thread_id}",
+    response_model=Page[MessageRead],
+    summary="Получить все сообщения треда",
+)
+async def get_thread_messages_endpoint(
+    thread_id: int,
+    user_id: Optional[int] = Query(None, description="Фильтр: только сообщения, где пользователь участвует"),
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+) -> Page[MessageRead]:
+    """
+    Получить все сообщения треда в хронологическом порядке.
+
+    thread_id:
+        - ID корневого сообщения треда (или любого сообщения в треде).
+    
+    user_id:
+        - опциональный фильтр: если указан, возвращаются только сообщения,
+          где пользователь является отправителем или получателем.
+    
+    Сообщения возвращаются в хронологическом порядке (от старых к новым).
+    """
+    items, total = await service.get_thread_messages(
+        db,
+        thread_id=thread_id,
+        user_id=user_id,
         limit=limit,
         offset=skip,
     )

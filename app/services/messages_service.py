@@ -268,6 +268,7 @@ class MessagesService(BaseService[Messages]):
         to_dt: Optional[datetime] = None,
         is_read: Optional[bool] = None,
         unread_only: bool = False,
+        thread_id: Optional[int] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Tuple[List[Messages], int]:
@@ -278,6 +279,9 @@ class MessagesService(BaseService[Messages]):
             - "sent"     — только отправленные пользователем;
             - "received" — только полученные пользователем;
             - "both"     — и отправленные, и полученные.
+        
+        thread_id:
+            - если указан, возвращаются только сообщения из указанного треда.
         """
         model = self.repo.model  # Messages
         filters = []
@@ -308,6 +312,10 @@ class MessagesService(BaseService[Messages]):
 
             filters.append(or_(sent_cond, received_cond))
 
+        # Фильтр по thread_id
+        if thread_id is not None:
+            filters.append(model.thread_id == thread_id)
+
         # Период
         if from_dt is not None:
             filters.append(model.sent_at >= from_dt)
@@ -323,6 +331,47 @@ class MessagesService(BaseService[Messages]):
             offset=offset,
             filters=filters,
             order_by=[model.sent_at.desc()],
+        )
+
+    async def get_thread_messages(
+        self,
+        db: AsyncSession,
+        *,
+        thread_id: int,
+        user_id: Optional[int] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Tuple[List[Messages], int]:
+        """
+        Получить все сообщения треда.
+
+        thread_id:
+            - ID корневого сообщения треда (или любого сообщения в треде).
+        
+        user_id:
+            - опциональный фильтр: если указан, возвращаются только сообщения,
+              где пользователь является отправителем или получателем.
+        
+        Сообщения возвращаются в хронологическом порядке (от старых к новым).
+        """
+        model = self.repo.model  # Messages
+        filters = [model.thread_id == thread_id]
+
+        # Если указан user_id, фильтруем только сообщения, где пользователь участвует
+        if user_id is not None:
+            filters.append(
+                or_(
+                    model.sender_id == user_id,
+                    model.recipient_id == user_id,
+                )
+            )
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[model.sent_at.asc()],  # хронологический порядок
         )
 
     async def get_senders_for_user(

@@ -8,3 +8,5 @@ create_struct.cmd
 app/tests/*
 *.zip
 uploads/*
+docs/*
+.cursor/*
