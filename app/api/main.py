@@ -110,10 +110,23 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning("Validation error at %s: %s", request.url.path, exc.errors())
+    errors = exc.errors()
+    # Преобразуем ошибки в сериализуемый формат
+    serializable_errors = []
+    for error in errors:
+        serializable_error = {
+            "loc": error.get("loc", []),
+            "msg": str(error.get("msg", "")),
+            "type": str(error.get("type", "")),
+        }
+        if "ctx" in error:
+            serializable_error["ctx"] = {k: str(v) for k, v in error["ctx"].items()}
+        serializable_errors.append(serializable_error)
+    
+    logger.warning("Validation error at %s: %s", request.url.path, serializable_errors)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
+        content={"detail": serializable_errors},
     )
 
 @app.exception_handler(Exception)

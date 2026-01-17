@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import List, Optional
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -155,6 +156,24 @@ async def submit_attempt_answers(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+    # Валидация попытки: проверка, что попытка не завершена
+    if attempt.finished_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Попытка уже завершена. Нельзя отправлять ответы в завершенную попытку.",
+        )
+
+    # Валидация попытки: проверка таймлимита (если указан в meta)
+    if attempt.meta and isinstance(attempt.meta, dict) and "time_limit" in attempt.meta:
+        time_limit_seconds = attempt.meta.get("time_limit")
+        if time_limit_seconds and isinstance(time_limit_seconds, (int, float)):
+            elapsed = datetime.now(timezone.utc) - attempt.created_at
+            if elapsed > timedelta(seconds=time_limit_seconds):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Время на выполнение истекло.",
+                )
 
     if not payload.items:
         raise HTTPException(

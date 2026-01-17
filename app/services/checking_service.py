@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Dict
 
 from app.schemas.task_content import TaskContent, TaskType
 from app.schemas.solution_rules import SolutionRules, ShortAnswerRules
@@ -10,6 +10,7 @@ from app.schemas.checking import (
     StudentAnswer,
     CheckResult,
     CheckResultDetails,
+    CheckFeedback,
 )
 from app.utils.exceptions import DomainError
 
@@ -112,32 +113,75 @@ class CheckingService:
         solution_rules: SolutionRules,
         answer: StudentAnswer,
     ) -> CheckResult:
-        selected = self._ensure_selected_options(answer)
+        # Проверяем наличие ответа перед валидацией
+        selected = answer.response.selected_option_ids or []
+        missing_answer = len(selected) == 0
+        
         # Для SC считаем, что должен быть ровно 1 выбранный вариант.
         if len(selected) != 1:
-            raise DomainError(
-                detail="Для задач типа SC должен быть выбран ровно один вариант.",
-                status_code=400,
-                payload={"selected_option_ids": selected},
-            )
+            if missing_answer:
+                # Если ответ отсутствует, применяем штраф и возвращаем результат
+                penalty = solution_rules.penalties.missing_answer if solution_rules.penalties else 0
+                final_score = max(0, 0 - penalty)
+                
+                details = CheckResultDetails(
+                    correct_options=list(solution_rules.correct_options or []) or None,
+                    user_options=[],
+                )
+                
+                feedback = self._generate_feedback_sc(
+                    task_content=task_content,
+                    is_correct=False,
+                    user_set=set(),
+                    correct_set=set(solution_rules.correct_options or []),
+                )
+                
+                return CheckResult(
+                    is_correct=False,
+                    score=final_score,
+                    max_score=solution_rules.max_score,
+                    details=details,
+                    feedback=feedback,
+                )
+            else:
+                raise DomainError(
+                    detail="Для задач типа SC должен быть выбран ровно один вариант.",
+                    status_code=400,
+                    payload={"selected_option_ids": selected},
+                )
 
         correct_set: Set[str] = set(solution_rules.correct_options or [])
         user_set: Set[str] = set(selected)
 
         is_correct = user_set == correct_set and len(correct_set) == 1
-        score = solution_rules.max_score if is_correct else 0
+        base_score = solution_rules.max_score if is_correct else 0
+        
+        # Применение штрафов
+        penalty = 0
+        if not is_correct and solution_rules.penalties:
+            penalty += solution_rules.penalties.wrong_answer
+        
+        final_score = max(0, base_score - penalty)
 
         details = CheckResultDetails(
             correct_options=list(correct_set) or None,
             user_options=list(user_set),
         )
 
+        # Генерация обратной связи
+        feedback = self._generate_feedback_sc(
+            task_content=task_content,
+            is_correct=is_correct,
+            user_set=user_set,
+            correct_set=correct_set,
+        )
+
         return CheckResult(
             is_correct=is_correct,
-            score=score,
+            score=final_score,
             max_score=solution_rules.max_score,
             details=details,
-            feedback=None,
+            feedback=feedback,
         )
 
     # ---------- Проверка MC ----------
@@ -148,51 +192,75 @@ class CheckingService:
         solution_rules: SolutionRules,
         answer: StudentAnswer,
     ) -> CheckResult:
-        selected = self._ensure_selected_options(answer)
+        # Проверяем наличие ответа
+        selected = answer.response.selected_option_ids or []
+        missing_answer = len(selected) == 0
+        
         correct_set: Set[str] = set(solution_rules.correct_options or [])
         user_set: Set[str] = set(selected)
 
         # all_or_nothing: либо все и только правильные варианты → полный балл
         if solution_rules.scoring_mode == "all_or_nothing":
             is_correct = user_set == correct_set and bool(correct_set)
-            score = solution_rules.max_score if is_correct else 0
+            base_score = solution_rules.max_score if is_correct else 0
 
         # partial: сначала пытаемся применить явные partial_rules,
         # если нет совпадения — даём простой пропорциональный балл.
         elif solution_rules.scoring_mode == "partial":
-            score = self._apply_partial_rules(solution_rules, user_set)
+            base_score = self._apply_partial_rules(solution_rules, user_set)
 
-            if score is None:
+            if base_score is None:
                 # Пропорциональный вариант: только за пересечение с правильными.
                 if not correct_set:
-                    score = 0
+                    base_score = 0
                 else:
                     num_correct = len(correct_set & user_set)
-                    score = int(
+                    base_score = int(
                         solution_rules.max_score * num_correct / len(correct_set)
                     )
-            is_correct = score == solution_rules.max_score
+            is_correct = base_score == solution_rules.max_score
 
         # custom: здесь можно будет подключать внешний движок;
         # сейчас считаем как all_or_nothing, чтобы не ломать API.
         else:  # "custom"
             is_correct = user_set == correct_set and bool(correct_set)
-            score = solution_rules.max_score if is_correct else 0
+            base_score = solution_rules.max_score if is_correct else 0
 
+        # Применение штрафов
+        penalty = 0
+        if solution_rules.penalties:
+            if missing_answer:
+                penalty += solution_rules.penalties.missing_answer
+            elif not is_correct:
+                penalty += solution_rules.penalties.wrong_answer
+                
+                # Штраф за лишние неверные варианты в MC
+                wrong_selected = user_set - correct_set
+                if wrong_selected:
+                    penalty += solution_rules.penalties.extra_wrong_mc * len(wrong_selected)
+        
         # Не даём уйти в отрицательные или сверх max_score
-        score = max(0, min(score, solution_rules.max_score))
+        final_score = max(0, min(base_score - penalty, solution_rules.max_score))
 
         details = CheckResultDetails(
             correct_options=list(correct_set) or None,
             user_options=list(user_set),
         )
 
+        # Генерация обратной связи
+        feedback = self._generate_feedback_mc(
+            task_content=task_content,
+            is_correct=is_correct,
+            user_set=user_set,
+            correct_set=correct_set,
+        )
+
         return CheckResult(
             is_correct=is_correct,
-            score=score,
+            score=final_score,
             max_score=solution_rules.max_score,
             details=details,
-            feedback=None,
+            feedback=feedback,
         )
 
     @staticmethod
@@ -217,23 +285,54 @@ class CheckingService:
         solution_rules: SolutionRules,
         answer: StudentAnswer,
     ) -> CheckResult:
-        value_raw = self._ensure_value(answer)
+        # Проверяем наличие ответа
+        value_raw = answer.response.value or ""
+        missing_answer = not value_raw or value_raw.strip() == ""
+        
         rules: Optional[ShortAnswerRules] = solution_rules.short_answer
 
         if not rules:
             # Нечем проверять — считаем, что нужна ручная проверка.
+            penalty = solution_rules.penalties.missing_answer if missing_answer else 0
+            final_score = max(0, 0 - penalty)
+            
             return CheckResult(
                 is_correct=None,
-                score=0,
+                score=final_score,
                 max_score=solution_rules.max_score,
                 details=None,
                 feedback=None,
             )
 
+        if missing_answer:
+            # Если ответ отсутствует, применяем штраф и возвращаем результат
+            penalty = solution_rules.penalties.missing_answer
+            final_score = max(0, 0 - penalty)
+            
+            details = CheckResultDetails(
+                correct_options=None,
+                user_options=None,
+                matched_short_answer=None,
+            )
+            
+            feedback = self._generate_feedback_sa(
+                is_correct=False,
+                base_score=0,
+                max_score=solution_rules.max_score,
+            )
+            
+            return CheckResult(
+                is_correct=False,
+                score=final_score,
+                max_score=solution_rules.max_score,
+                details=details,
+                feedback=feedback,
+            )
+
         value_norm = self._normalize_text(value_raw, rules.normalization)
 
         matched_value: Optional[str] = None
-        score = 0
+        base_score = 0
 
         # Если включён regex — пробуем сперва его
         if rules.use_regex and rules.regex:
@@ -242,7 +341,7 @@ class CheckingService:
             try:
                 pattern = re.compile(rules.regex)
                 if pattern.fullmatch(value_norm):
-                    score = solution_rules.max_score
+                    base_score = solution_rules.max_score
                     matched_value = value_raw
             except re.error:
                 # Невалидное регулярное выражение — игнорируем regex,
@@ -250,7 +349,7 @@ class CheckingService:
                 pass
 
         # Если regex не дал полного балла — проверяем accepted_answers
-        if score < solution_rules.max_score:
+        if base_score < solution_rules.max_score:
             for accepted in rules.accepted_answers:
                 accepted_norm = self._normalize_text(
                     accepted.value,
@@ -258,11 +357,19 @@ class CheckingService:
                 )
                 if value_norm == accepted_norm:
                     # Берём максимальный из найденных вариантов (на случай нескольких правил)
-                    if accepted.score > score:
-                        score = accepted.score
+                    if accepted.score > base_score:
+                        base_score = accepted.score
                         matched_value = accepted.value
 
-        is_correct = score == solution_rules.max_score if score > 0 else False
+        is_correct = base_score == solution_rules.max_score if base_score > 0 else False
+        
+        # Применение штрафов
+        penalty = 0
+        if solution_rules.penalties:
+            if not is_correct and base_score == 0:
+                penalty += solution_rules.penalties.wrong_answer
+        
+        final_score = max(0, base_score - penalty)
 
         details = CheckResultDetails(
             correct_options=None,
@@ -270,12 +377,19 @@ class CheckingService:
             matched_short_answer=matched_value,
         )
 
+        # Генерация обратной связи
+        feedback = self._generate_feedback_sa(
+            is_correct=is_correct,
+            base_score=base_score,
+            max_score=solution_rules.max_score,
+        )
+
         return CheckResult(
             is_correct=is_correct,
-            score=score,
+            score=final_score,
             max_score=solution_rules.max_score,
             details=details,
-            feedback=None,
+            feedback=feedback,
         )
 
     @staticmethod
@@ -297,6 +411,140 @@ class CheckingService:
             result = " ".join(result.split())
         return result
 
+    # ---------- Генерация обратной связи ----------
+
+    def _generate_feedback_sc(
+        self,
+        task_content: TaskContent,
+        is_correct: bool,
+        user_set: Set[str],
+        correct_set: Set[str],
+    ) -> Optional[CheckFeedback]:
+        """
+        Генерирует обратную связь для задач типа SC.
+        """
+        if not task_content.options:
+            return None
+
+        by_option: Dict[str, str] = {}
+        general: Optional[str] = None
+
+        # Обратная связь по выбранным вариантам
+        for option in task_content.options:
+            if option.id in user_set:
+                if option.id in correct_set:
+                    # Правильный вариант
+                    if option.explanation:
+                        by_option[option.id] = option.explanation
+                    else:
+                        by_option[option.id] = "Правильный вариант!"
+                else:
+                    # Неправильный вариант
+                    if option.explanation:
+                        by_option[option.id] = option.explanation
+                    else:
+                        by_option[option.id] = "Этот вариант неверен."
+
+        # Общая обратная связь
+        if is_correct:
+            general = "Отлично! Вы выбрали правильный ответ."
+        else:
+            general = "Ответ неверен. Обратите внимание на объяснения к вариантам."
+
+        return CheckFeedback(
+            general=general if by_option or general else None,
+            by_option=by_option if by_option else None,
+        )
+
+    def _generate_feedback_mc(
+        self,
+        task_content: TaskContent,
+        is_correct: bool,
+        user_set: Set[str],
+        correct_set: Set[str],
+    ) -> Optional[CheckFeedback]:
+        """
+        Генерирует обратную связь для задач типа MC.
+        """
+        if not task_content.options:
+            return None
+
+        by_option: Dict[str, str] = {}
+        general: Optional[str] = None
+
+        # Обратная связь по всем вариантам, которые выбрал пользователь
+        for option in task_content.options:
+            if option.id in user_set:
+                if option.id in correct_set:
+                    # Правильный вариант
+                    if option.explanation:
+                        by_option[option.id] = option.explanation
+                    else:
+                        by_option[option.id] = "Правильный вариант!"
+                else:
+                    # Неправильный вариант
+                    if option.explanation:
+                        by_option[option.id] = option.explanation
+                    else:
+                        by_option[option.id] = "Этот вариант неверен."
+
+        # Общая обратная связь
+        if is_correct:
+            general = "Отлично! Вы выбрали все правильные варианты."
+        else:
+            correct_count = len(correct_set & user_set)
+            total_correct = len(correct_set)
+            if correct_count > 0:
+                general = f"Вы выбрали {correct_count} из {total_correct} правильных вариантов."
+            else:
+                general = "Ответ неверен. Обратите внимание на объяснения к вариантам."
+
+        return CheckFeedback(
+            general=general if by_option or general else None,
+            by_option=by_option if by_option else None,
+        )
+
+    def _generate_feedback_sa(
+        self,
+        is_correct: bool,
+        base_score: int,
+        max_score: int,
+    ) -> Optional[CheckFeedback]:
+        """
+        Генерирует обратную связь для задач типа SA/SA_COM.
+        """
+        if is_correct:
+            general = "Отлично! Ваш ответ правильный."
+        elif base_score > 0:
+            general = f"Ваш ответ частично правильный. Набрано {base_score} из {max_score} баллов."
+        else:
+            general = "Ответ неверен. Попробуйте еще раз."
+
+        return CheckFeedback(
+            general=general,
+            by_option=None,
+        )
+
+    def _generate_feedback_ta(
+        self,
+        task_content: TaskContent,
+        solution_rules: SolutionRules,
+    ) -> Optional[CheckFeedback]:
+        """
+        Генерирует обратную связь для задач типа TA.
+        """
+        general = "Ваш ответ будет проверен вручную."
+        
+        # Добавляем информацию о рубриках, если они есть
+        if solution_rules.text_answer and solution_rules.text_answer.rubric:
+            rubric_info = ", ".join([r.title for r in solution_rules.text_answer.rubric])
+            general += f" Критерии оценивания: {rubric_info}."
+
+        return CheckFeedback(
+            general=general,
+            by_option=None,
+        )
+
     # ---------- Проверка TA ----------
 
     def _check_text_answer(
@@ -305,18 +553,35 @@ class CheckingService:
         solution_rules: SolutionRules,
         answer: StudentAnswer,
     ) -> CheckResult:
-        _ = self._ensure_text(answer)
+        # Проверяем наличие ответа
+        text = answer.response.text or ""
+        missing_answer = not text or text.strip() == ""
 
         # Сейчас автопроверку сочинений/эссе не делаем.
         # Возвращаем шаблон, который фронт/методист смогут дооценить вручную.
+        
+        # Применение штрафов за отсутствие ответа
+        penalty = 0
+        if solution_rules.penalties and missing_answer:
+            penalty = solution_rules.penalties.missing_answer
+        
+        base_score = 0
+        final_score = max(0, base_score - penalty)
+        
         details = CheckResultDetails(
             rubric_scores=None,
         )
 
+        # Генерация обратной связи
+        feedback = self._generate_feedback_ta(
+            task_content=task_content,
+            solution_rules=solution_rules,
+        )
+
         return CheckResult(
             is_correct=None,
-            score=0,
+            score=final_score,
             max_score=solution_rules.max_score,
             details=details,
-            feedback=None,
+            feedback=feedback,
         )
