@@ -1,6 +1,7 @@
-from typing import Any
+from typing import Any, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, case
 
 from app.models.task_results import TaskResults
 from app.repos.task_results_repo import TaskResultsRepository
@@ -156,3 +157,151 @@ class TaskResultsService(BaseService[TaskResults]):
             filters=filters,
             order_by=[desc(self.repo.model.submitted_at)],
         )
+
+    async def get_stats_by_task(
+        self,
+        db: AsyncSession,
+        task_id: int,
+    ) -> Dict[str, Any]:
+        """Получить статистику по задаче."""
+        from sqlalchemy import select
+        
+        total_query = select(func.count(TaskResults.id)).where(TaskResults.task_id == task_id)
+        total_result = await db.execute(total_query)
+        total_attempts = total_result.scalar() or 0
+        
+        if total_attempts == 0:
+            return {
+                "task_id": task_id,
+                "total_attempts": 0,
+                "average_score": 0.0,
+                "correct_percentage": 0.0,
+                "min_score": 0,
+                "max_score": 0,
+                "score_distribution": {},
+            }
+        
+        stats_query = select(
+            func.avg(TaskResults.score).label("avg_score"),
+            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+            func.min(TaskResults.score).label("min_score"),
+            func.max(TaskResults.score).label("max_score"),
+        ).where(TaskResults.task_id == task_id)
+        
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.first()
+        
+        average_score = float(stats_row.avg_score or 0)
+        correct_count = stats_row.correct_count or 0
+        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        
+        return {
+            "task_id": task_id,
+            "total_attempts": total_attempts,
+            "average_score": round(average_score, 2),
+            "correct_percentage": round(correct_percentage, 2),
+            "min_score": stats_row.min_score or 0,
+            "max_score": stats_row.max_score or 0,
+            "score_distribution": {},
+        }
+
+    async def get_stats_by_course(
+        self,
+        db: AsyncSession,
+        course_id: int,
+    ) -> Dict[str, Any]:
+        """Получить статистику по курсу."""
+        from sqlalchemy import select
+        from app.models.tasks import Tasks
+        
+        tasks_query = select(Tasks.id).where(Tasks.course_id == course_id)
+        tasks_result = await db.execute(tasks_query)
+        task_ids = [row[0] for row in tasks_result]
+        
+        if not task_ids:
+            return {
+                "course_id": course_id,
+                "total_attempts": 0,
+                "average_score": 0.0,
+                "correct_percentage": 0.0,
+                "tasks_count": 0,
+            }
+        
+        stats_query = select(
+            func.count(TaskResults.id).label("total_attempts"),
+            func.avg(TaskResults.score).label("avg_score"),
+            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+        ).where(TaskResults.task_id.in_(task_ids))
+        
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.first()
+        
+        total_attempts = stats_row.total_attempts or 0
+        if total_attempts == 0:
+            return {
+                "course_id": course_id,
+                "total_attempts": 0,
+                "average_score": 0.0,
+                "correct_percentage": 0.0,
+                "tasks_count": len(task_ids),
+            }
+        
+        average_score = float(stats_row.avg_score or 0)
+        correct_count = stats_row.correct_count or 0
+        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        
+        return {
+            "course_id": course_id,
+            "total_attempts": total_attempts,
+            "average_score": round(average_score, 2),
+            "correct_percentage": round(correct_percentage, 2),
+            "tasks_count": len(task_ids),
+        }
+
+    async def get_stats_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+    ) -> Dict[str, Any]:
+        """Получить статистику по пользователю."""
+        from sqlalchemy import select
+        
+        stats_query = select(
+            func.count(TaskResults.id).label("total_attempts"),
+            func.avg(TaskResults.score).label("avg_score"),
+            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+            func.sum(TaskResults.max_score).label("total_max_score"),
+            func.sum(TaskResults.score).label("total_score"),
+        ).where(TaskResults.user_id == user_id)
+        
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.first()
+        
+        total_attempts = stats_row.total_attempts or 0
+        if total_attempts == 0:
+            return {
+                "user_id": user_id,
+                "total_attempts": 0,
+                "average_score": 0.0,
+                "correct_percentage": 0.0,
+                "total_score": 0,
+                "total_max_score": 0,
+                "completion_percentage": 0.0,
+            }
+        
+        average_score = float(stats_row.avg_score or 0)
+        correct_count = stats_row.correct_count or 0
+        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        total_score = stats_row.total_score or 0
+        total_max_score = stats_row.total_max_score or 0
+        completion_percentage = (total_score / total_max_score * 100) if total_max_score > 0 else 0.0
+        
+        return {
+            "user_id": user_id,
+            "total_attempts": total_attempts,
+            "average_score": round(average_score, 2),
+            "correct_percentage": round(correct_percentage, 2),
+            "total_score": total_score,
+            "total_max_score": total_max_score,
+            "completion_percentage": round(completion_percentage, 2),
+        }

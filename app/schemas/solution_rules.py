@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict, Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -202,6 +202,38 @@ class SolutionRules(BaseModel):
     penalties: PenaltiesRules = Field(
         default_factory=PenaltiesRules,
         description="Настройки штрафов за неверные/отсутствующие ответы.",
+    )
+
+    # Для режима custom
+    custom_scoring_config: Optional[Any] = Field(
+        default=None,
+        description=(
+            "Конфигурация для режима custom scoring_mode. "
+            "Позволяет задать расширенные правила оценивания. "
+            "Формат зависит от типа задачи и требований. "
+            "Примеры: "
+            "{'formula': 'score = correct_count * 2', 'min_score': 0, 'max_score': 20} "
+            "или {'rules': [{'condition': 'all_correct', 'score': 10}, {'condition': 'partial', 'score': 5}]} "
+            "или {'coefficient': 1.5, 'min_score': 0}"
+        ),
+        examples=[
+            {
+                "coefficient": 1.5,
+                "min_score": 0,
+            },
+            {
+                "formula": "score = correct_count * 2",
+                "min_score": 0,
+                "max_score": 20,
+            },
+            {
+                "rules": [
+                    {"condition": "all_correct", "score": 10},
+                    {"condition": "partial", "score": 5},
+                ],
+            },
+            None,
+        ],
     )
 
     @model_validator(mode="after")

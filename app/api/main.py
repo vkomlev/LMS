@@ -101,11 +101,12 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
     Единая обработка доменных ошибок.
     Возвращает предсказуемый ответ и статус из исключения.
     """
-    body = {"error": "domain_error", "detail": exc.detail}
+    body = {"error": "domain_error", "detail": str(exc.detail) if exc.detail else "Domain error occurred"}
     if getattr(exc, "payload", None):
         body["payload"] = exc.payload
-    logger.warning("DomainError at %s: %s", request.url.path, body)
-    return JSONResponse(status_code=getattr(exc, "status_code", status.HTTP_400_BAD_REQUEST), content=body)
+    status_code = getattr(exc, "status_code", status.HTTP_400_BAD_REQUEST)
+    logger.warning("DomainError at %s: %s (status=%s)", request.url.path, body, status_code)
+    return JSONResponse(status_code=status_code, content=body)
 
 
 @app.exception_handler(RequestValidationError)

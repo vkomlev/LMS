@@ -75,7 +75,12 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
 
     На выходе — CheckResult без сохранения в БД.
     """
-    logger.info("check_task: type=%s", payload.answer.type)
+    logger.info(
+        "check_task: type=%s, scoring_mode=%s, has_custom_config=%s",
+        payload.answer.type,
+        payload.solution_rules.scoring_mode,
+        payload.solution_rules.custom_scoring_config is not None,
+    )
     try:
         result = checking_service.check_task(
             task_content=payload.task_content,
@@ -88,8 +93,9 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
             result.max_score,
         )
         return result
-    except DomainError:
+    except DomainError as e:
         # DomainError перехватывается глобальным хэндлером в app/api/main.py
+        logger.warning("check_task: DomainError: %s", e.detail)
         raise
     except Exception as exc:  # на случай непредвиденной ошибки
         logger.exception("check_task: unexpected error: %s", exc)

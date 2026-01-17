@@ -153,8 +153,18 @@ class CheckingService:
         correct_set: Set[str] = set(solution_rules.correct_options or [])
         user_set: Set[str] = set(selected)
 
-        is_correct = user_set == correct_set and len(correct_set) == 1
-        base_score = solution_rules.max_score if is_correct else 0
+        # Обработка различных режимов оценивания
+        if solution_rules.scoring_mode == "custom":
+            base_score, is_correct = self._apply_custom_scoring(
+                solution_rules,
+                user_set,
+                correct_set,
+                missing_answer,
+            )
+        else:
+            # all_or_nothing (по умолчанию для SC)
+            is_correct = user_set == correct_set and len(correct_set) == 1
+            base_score = solution_rules.max_score if is_correct else 0
         
         # Применение штрафов
         penalty = 0
@@ -220,11 +230,14 @@ class CheckingService:
                     )
             is_correct = base_score == solution_rules.max_score
 
-        # custom: здесь можно будет подключать внешний движок;
-        # сейчас считаем как all_or_nothing, чтобы не ломать API.
+        # custom: используем custom_scoring_config для расширенной логики
         else:  # "custom"
-            is_correct = user_set == correct_set and bool(correct_set)
-            base_score = solution_rules.max_score if is_correct else 0
+            base_score, is_correct = self._apply_custom_scoring(
+                solution_rules,
+                user_set,
+                correct_set,
+                missing_answer,
+            )
 
         # Применение штрафов
         penalty = 0
@@ -276,6 +289,116 @@ class CheckingService:
             if set(rule.selected) == user_set:
                 return rule.score
         return None
+
+    def _apply_custom_scoring(
+        self,
+        solution_rules: SolutionRules,
+        user_set: Set[str],
+        correct_set: Set[str],
+        missing_answer: bool,
+    ) -> tuple[int, bool]:
+        """
+        Применяет кастомную логику оценивания на основе custom_scoring_config.
+        
+        Поддерживаемые форматы конфигурации:
+        1. Правила на основе условий:
+           {"rules": [{"condition": "all_correct", "score": 10}, ...]}
+        2. Формула:
+           {"formula": "score = correct_count * 2", "min_score": 0, "max_score": 20}
+        3. Пропорциональное оценивание с коэффициентом:
+           {"coefficient": 2.0, "min_score": 0}
+        
+        Если конфигурация не задана или не распознана, используется all_or_nothing.
+        
+        Returns:
+            tuple[int, bool]: (base_score, is_correct)
+        """
+        config = solution_rules.custom_scoring_config
+        
+        # Если конфигурация не задана, используем all_or_nothing
+        if not config:
+            is_correct = user_set == correct_set and bool(correct_set)
+            base_score = solution_rules.max_score if is_correct else 0
+            return base_score, is_correct
+        
+        # Убеждаемся, что config - это словарь
+        if not isinstance(config, dict):
+            # Если config не словарь, используем all_or_nothing
+            is_correct = user_set == correct_set and bool(correct_set)
+            base_score = solution_rules.max_score if is_correct else 0
+            return base_score, is_correct
+        
+        # Обработка отсутствующего ответа
+        if missing_answer:
+            return 0, False
+        
+        # Формат 1: Правила на основе условий
+        if "rules" in config and isinstance(config.get("rules"), list):
+            for rule in config["rules"]:
+                condition = rule.get("condition")
+                score = rule.get("score", 0)
+                
+                if condition == "all_correct":
+                    if user_set == correct_set and bool(correct_set):
+                        return min(score, solution_rules.max_score), score == solution_rules.max_score
+                elif condition == "partial":
+                    if user_set & correct_set:  # Есть хотя бы один правильный
+                        return min(score, solution_rules.max_score), False
+                elif condition == "no_wrong":
+                    wrong_selected = user_set - correct_set
+                    if not wrong_selected and user_set & correct_set:
+                        return min(score, solution_rules.max_score), False
+        
+        # Формат 2: Формула (упрощенная версия)
+        if "formula" in config:
+            # Поддерживаем простые формулы вида "score = correct_count * multiplier"
+            formula = config["formula"]
+            correct_count = len(correct_set & user_set)
+            
+            if "correct_count" in formula:
+                # Извлекаем множитель из формулы (упрощенно)
+                try:
+                    # Ищем паттерн "correct_count * N" или "N * correct_count"
+                    import re
+                    match = re.search(r'correct_count\s*\*\s*(\d+(?:\.\d+)?)', formula)
+                    if match:
+                        multiplier = float(match.group(1))
+                        base_score = int(correct_count * multiplier)
+                    else:
+                        # По умолчанию: correct_count * (max_score / total_correct)
+                        if correct_set:
+                            base_score = int(solution_rules.max_score * correct_count / len(correct_set))
+                        else:
+                            base_score = 0
+                except Exception:
+                    base_score = 0
+            else:
+                base_score = 0
+            
+            min_score = config.get("min_score", 0)
+            max_score = config.get("max_score", solution_rules.max_score)
+            base_score = max(min_score, min(base_score, max_score))
+            is_correct = base_score == solution_rules.max_score
+            return base_score, is_correct
+        
+        # Формат 3: Пропорциональное оценивание с коэффициентом
+        if "coefficient" in config:
+            coefficient = float(config.get("coefficient", 1.0))
+            correct_count = len(correct_set & user_set)
+            if correct_set:
+                base_score = int(solution_rules.max_score * correct_count / len(correct_set) * coefficient)
+            else:
+                base_score = 0
+            
+            min_score = config.get("min_score", 0)
+            base_score = max(min_score, min(base_score, solution_rules.max_score))
+            is_correct = base_score == solution_rules.max_score
+            return base_score, is_correct
+        
+        # Если формат не распознан, используем all_or_nothing
+        is_correct = user_set == correct_set and bool(correct_set)
+        base_score = solution_rules.max_score if is_correct else 0
+        return base_score, is_correct
 
     # ---------- Проверка SA / SA_COM ----------
 
