@@ -108,10 +108,22 @@ class TaskContent(BaseModel):
 
         - SC/MC: должны быть как минимум 2 варианта;
         - SA/TA: options не обязательны.
+        - Проверка уникальности options[].id.
         """
         if self.type in ("SC", "MC"):
             if not self.options or len(self.options) < 2:
                 raise ValueError(
                     "Для задач типов SC/MC необходимо указать минимум два варианта ответа в поле 'options'."
                 )
+        
+        # Валидация уникальности options[].id
+        if self.options:
+            option_ids = [opt.id for opt in self.options]
+            if len(option_ids) != len(set(option_ids)):
+                duplicates = [opt_id for opt_id in option_ids if option_ids.count(opt_id) > 1]
+                raise ValueError(
+                    f"ID вариантов ответа должны быть уникальными. "
+                    f"Найдены дубликаты: {', '.join(set(duplicates))}"
+                )
+        
         return self

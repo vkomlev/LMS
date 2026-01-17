@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 ScoringMode = Literal["all_or_nothing", "partial", "custom"]
@@ -128,6 +128,7 @@ class SolutionRules(BaseModel):
     max_score: int = Field(
         ...,
         description="Полный балл за задачу (должен совпадать с tasks.max_score).",
+        gt=0,
     )
     scoring_mode: ScoringMode = Field(
         default="all_or_nothing",
@@ -168,3 +169,59 @@ class SolutionRules(BaseModel):
         default_factory=PenaltiesRules,
         description="Настройки штрафов за неверные/отсутствующие ответы.",
     )
+
+    @model_validator(mode="after")
+    def validate_max_score(self) -> "SolutionRules":
+        """
+        Валидация max_score: должен быть положительным числом.
+        """
+        if self.max_score <= 0:
+            raise ValueError("max_score должен быть положительным числом")
+        return self
+
+    def validate_with_task_content(self, task_content: "TaskContent") -> None:
+        """
+        Валидирует соответствие correct_options и options[].id из task_content.
+        
+        Вызывается из сервиса при создании/обновлении задачи.
+        
+        Args:
+            task_content: Схема содержимого задачи (TaskContent).
+            
+        Raises:
+            ValueError: Если correct_options не соответствуют options[].id.
+        """
+        from app.schemas.task_content import TaskContent
+        
+        # Для задач с выбором (SC/MC) проверяем соответствие
+        if task_content.type in ("SC", "MC"):
+            if not task_content.options:
+                raise ValueError(
+                    f"Для задач типа {task_content.type} необходимо указать варианты ответа в task_content.options"
+                )
+            
+            # Получаем все доступные ID вариантов
+            available_option_ids = {opt.id for opt in task_content.options}
+            
+            # Проверяем, что все correct_options существуют в options
+            invalid_options = set(self.correct_options) - available_option_ids
+            if invalid_options:
+                raise ValueError(
+                    f"correct_options содержат несуществующие ID вариантов: {', '.join(sorted(invalid_options))}. "
+                    f"Доступные ID: {', '.join(sorted(available_option_ids))}"
+                )
+            
+            # Для SC проверяем, что выбран ровно один правильный вариант
+            if task_content.type == "SC" and len(self.correct_options) != 1:
+                raise ValueError(
+                    f"Для задач типа SC должен быть указан ровно один правильный вариант. "
+                    f"Указано: {len(self.correct_options)}"
+                )
+            
+            # Проверяем partial_rules
+            for rule in self.partial_rules:
+                invalid_in_rule = set(rule.selected) - available_option_ids
+                if invalid_in_rule:
+                    raise ValueError(
+                        f"partial_rules содержат несуществующие ID вариантов: {', '.join(sorted(invalid_in_rule))}"
+                    )
