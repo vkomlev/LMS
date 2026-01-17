@@ -10,3 +10,11 @@ app/tests/*
 uploads/*
 docs/*
 .cursor/*
+
+# Secrets and credentials
+secrets/*
+!secrets/.gitkeep
+# Игнорируем все JSON файлы с credentials (но не конфигурационные)
+*.credentials.json
+*service-account*.json
+gscapi-*.json

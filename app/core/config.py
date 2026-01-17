@@ -34,3 +34,13 @@ class Settings:
         self.attachment_chunk_size: int = int(
             os.getenv("ATTACHMENT_CHUNK_SIZE", str(1024 * 1024))  # 1 MB
         )
+
+        # ✅ Google Sheets settings (из QSMImport)
+        self.gsheets_spreadsheet_id: str = os.getenv("GSHEETS_SPREADSHEET_ID", "")
+        self.gsheets_worksheet_name: str = os.getenv("GSHEETS_WORKSHEET_NAME", "Задания")
+        self.gsheets_service_account_json: str = os.getenv("GSHEETS_SERVICE_ACCOUNT_JSON", "")
+        
+        # ✅ Default settings для импорта
+        self.default_points_short_answer: int = int(os.getenv("DEFAULT_POINTS_SHORT_ANSWER", "10"))
+        self.prepend_input_link: bool = os.getenv("PREPEND_INPUT_LINK", "true").lower() == "true"
+        self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "Входные данные")
