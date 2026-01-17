@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Body, HTTPException, status
+from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -290,3 +290,40 @@ async def get_attempt(
 
     attempt_with_results = await _build_attempt_with_results(db, attempt)
     return attempt_with_results
+
+
+@router.get(
+    "/attempts/by-user/{user_id}",
+    response_model=List[AttemptRead],
+    summary="Получить попытки пользователя",
+)
+async def get_attempts_by_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
+    limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+) -> List[AttemptRead]:
+    """
+    Получить список попыток пользователя с пагинацией.
+
+    Поддерживается опциональная фильтрация по курсу.
+    Результаты сортируются по дате создания (от новых к старым).
+
+    Args:
+        user_id: ID пользователя.
+        course_id: Опциональный фильтр по курсу.
+        limit: Максимум записей на странице (1-1000).
+        offset: Смещение для пагинации.
+
+    Returns:
+        Список попыток пользователя.
+    """
+    attempts, total = await attempts_service.get_by_user(
+        db,
+        user_id=user_id,
+        course_id=course_id,
+        limit=limit,
+        offset=offset,
+    )
+    return [AttemptRead.model_validate(attempt) for attempt in attempts]

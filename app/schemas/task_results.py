@@ -64,5 +64,4 @@ class TaskResultRead(BaseModel):
     checked_by: Optional[int]
     source_system: str
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)

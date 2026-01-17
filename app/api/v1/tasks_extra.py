@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Any, List, Literal
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel
 
 from app.api.deps import get_db
@@ -140,3 +140,39 @@ async def find_tasks_by_external_uid_endpoint(
     ]
 
     return TaskFindByExternalResponse(items=items)
+
+
+@router.get(
+    "/tasks/by-course/{course_id}",
+    response_model=List[TaskRead],
+    summary="Получить задачи курса",
+)
+async def get_tasks_by_course(
+    course_id: int,
+    db: AsyncSession = Depends(get_db),
+    difficulty_id: Optional[int] = Query(None, description="Фильтр по уровню сложности"),
+    limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+) -> List[TaskRead]:
+    """
+    Получить список задач курса с пагинацией.
+
+    Поддерживается опциональная фильтрация по уровню сложности.
+
+    Args:
+        course_id: ID курса.
+        difficulty_id: Опциональный фильтр по уровню сложности.
+        limit: Максимум записей на странице (1-1000).
+        offset: Смещение для пагинации.
+
+    Returns:
+        Список задач курса.
+    """
+    tasks, total = await tasks_service.get_by_course(
+        db,
+        course_id=course_id,
+        difficulty_id=difficulty_id,
+        limit=limit,
+        offset=offset,
+    )
+    return [TaskRead.model_validate(task) for task in tasks]

@@ -375,3 +375,36 @@ class TasksService(BaseService[Tasks]):
         # rows: List[(external_uid, id)]
         return [(uid, id_) for uid, id_ in rows]
 
+    async def get_by_course(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        difficulty_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Tuple[List[Tasks], int]:
+        """
+        Получить задачи курса с пагинацией.
+
+        Args:
+            db: Асинхронная сессия БД.
+            course_id: ID курса.
+            difficulty_id: Опциональный фильтр по уровню сложности.
+            limit: Максимум записей на странице.
+            offset: Смещение.
+
+        Returns:
+            Кортеж (список задач, общее количество).
+        """
+        from sqlalchemy import and_
+
+        filters = [self.repo.model.course_id == course_id]
+        if difficulty_id is not None:
+            filters.append(self.repo.model.difficulty_id == difficulty_id)
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+        )

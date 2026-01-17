@@ -63,3 +63,96 @@ class TaskResultsService(BaseService[TaskResults]):
 
         # BaseService.create ожидает dict[str, Any], поэтому передаём model_dump()
         return await self.create(db, obj_in.model_dump())
+
+    async def get_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list, int]:
+        """
+        Получить результаты пользователя с пагинацией.
+
+        Args:
+            db: Асинхронная сессия БД.
+            user_id: ID пользователя.
+            limit: Максимум записей на странице.
+            offset: Смещение.
+
+        Returns:
+            Кортеж (список результатов, общее количество).
+        """
+        from sqlalchemy import desc
+
+        filters = [self.repo.model.user_id == user_id]
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[desc(self.repo.model.submitted_at)],
+        )
+
+    async def get_by_task(
+        self,
+        db: AsyncSession,
+        task_id: int,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list, int]:
+        """
+        Получить результаты по задаче с пагинацией.
+
+        Args:
+            db: Асинхронная сессия БД.
+            task_id: ID задачи.
+            limit: Максимум записей на странице.
+            offset: Смещение.
+
+        Returns:
+            Кортеж (список результатов, общее количество).
+        """
+        from sqlalchemy import desc
+
+        filters = [self.repo.model.task_id == task_id]
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[desc(self.repo.model.submitted_at)],
+        )
+
+    async def get_by_attempt(
+        self,
+        db: AsyncSession,
+        attempt_id: int,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list, int]:
+        """
+        Получить результаты попытки с пагинацией.
+
+        Args:
+            db: Асинхронная сессия БД.
+            attempt_id: ID попытки.
+            limit: Максимум записей на странице.
+            offset: Смещение.
+
+        Returns:
+            Кортеж (список результатов, общее количество).
+        """
+        from sqlalchemy import desc
+
+        filters = [self.repo.model.attempt_id == attempt_id]
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[desc(self.repo.model.submitted_at)],
+        )

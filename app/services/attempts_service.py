@@ -62,3 +62,38 @@ class AttemptsService(BaseService[Attempts]):
             "finished_at": datetime.now(timezone.utc),
         }
         return await self.update(db, db_obj=attempt, obj_in=update_data)
+
+    async def get_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        course_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[Attempts], int]:
+        """
+        Получить попытки пользователя с пагинацией.
+
+        Args:
+            db: Асинхронная сессия БД.
+            user_id: ID пользователя.
+            course_id: Опциональный фильтр по курсу.
+            limit: Максимум записей на странице.
+            offset: Смещение.
+
+        Returns:
+            Кортеж (список попыток, общее количество).
+        """
+        from sqlalchemy import desc
+
+        filters = [self.repo.model.user_id == user_id]
+        if course_id is not None:
+            filters.append(self.repo.model.course_id == course_id)
+
+        return await self.paginate(
+            db,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            order_by=[desc(self.repo.model.created_at)],
+        )
