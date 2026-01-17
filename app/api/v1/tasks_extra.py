@@ -39,6 +39,47 @@ tasks_service = TasksService()
     "/tasks/by-external/{external_uid}",
     response_model=TaskRead,
     summary="Получить задачу по внешнему идентификатору",
+    responses={
+        200: {
+            "description": "Задача найдена",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "external_uid": "TASK-SC-001",
+                        "task_content": {
+                            "type": "SC",
+                            "stem": "Что такое переменная в Python?",
+                            "options": [
+                                {"id": "A", "text": "Именованная область памяти", "is_active": True},
+                                {"id": "B", "text": "Функция для вывода", "is_active": True},
+                            ],
+                        },
+                        "solution_rules": {
+                            "max_score": 10,
+                            "correct_options": ["A"],
+                            "penalties": {"wrong_answer": 0, "missing_answer": 0, "extra_wrong_mc": 0},
+                        },
+                        "course_id": 1,
+                        "difficulty_id": 3,
+                        "max_score": 10,
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Задача с указанным external_uid не найдена",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Задача с указанным external_uid не найдена",
+                        "payload": {"external_uid": "TASK-NOT-FOUND"},
+                    }
+                }
+            }
+        },
+    },
 )
 async def get_task_by_external_uid(
     external_uid: str,
@@ -58,11 +99,64 @@ async def get_task_by_external_uid(
     "/tasks/validate",
     response_model=TaskValidateResponse,
     summary="Массовая предварительная валидация задания перед импортом",
+    responses={
+        200: {
+            "description": "Валидация выполнена",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "valid": {
+                            "summary": "Валидная задача",
+                            "value": {
+                                "is_valid": True,
+                                "errors": [],
+                            }
+                        },
+                        "invalid": {
+                            "summary": "Задача с ошибками",
+                            "value": {
+                                "is_valid": False,
+                                "errors": [
+                                    "course_code not provided",
+                                    "Validation error: Для задач типа SC должен быть указан ровно один правильный вариант. Указано: 2",
+                                ],
+                            }
+                        },
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Ошибка валидации запроса (неверный формат данных)",
+        },
+    },
 )
 async def validate_task_endpoint(
     payload: TaskValidateRequest = Body(
         ...,
         description="Данные задания для предварительной валидации",
+        examples=[
+            {
+                "summary": "Валидная задача SC",
+                "value": {
+                    "task_content": {
+                        "type": "SC",
+                        "stem": "Что такое переменная?",
+                        "options": [
+                            {"id": "A", "text": "Область памяти", "is_active": True},
+                            {"id": "B", "text": "Функция", "is_active": True},
+                        ],
+                    },
+                    "solution_rules": {
+                        "max_score": 10,
+                        "correct_options": ["A"],
+                    },
+                    "course_code": "PY",
+                    "difficulty_code": "NORMAL",
+                    "external_uid": "TASK-SC-001",
+                }
+            },
+        ],
     ),
     db: AsyncSession = Depends(get_db),
 ) -> TaskValidateResponse:
@@ -93,11 +187,67 @@ async def validate_task_endpoint(
     "/tasks/bulk-upsert",
     response_model=TaskBulkUpsertResponse,
     summary="Массовый upsert задач по external_uid",
+    responses={
+        200: {
+            "description": "Upsert выполнен успешно",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "results": [
+                            {"external_uid": "TASK-SC-001", "action": "created", "id": 1},
+                            {"external_uid": "TASK-SC-002", "action": "updated", "id": 2},
+                        ]
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Ошибка валидации данных задач",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Ошибка валидации данных задачи: Для задач типа SC должен быть указан ровно один правильный вариант",
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Ошибка валидации запроса (неверный формат JSON)",
+        },
+    },
 )
 async def bulk_upsert_tasks_endpoint(
     payload: TaskBulkUpsertRequest = Body(
         ...,
         description="Список задач для массового upsert'а",
+        examples=[
+            {
+                "summary": "Массовый импорт задач",
+                "value": {
+                    "items": [
+                        {
+                            "external_uid": "TASK-SC-001",
+                            "course_id": 1,
+                            "difficulty_id": 3,
+                            "task_content": {
+                                "type": "SC",
+                                "stem": "Что такое переменная?",
+                                "options": [
+                                    {"id": "A", "text": "Область памяти", "is_active": True},
+                                    {"id": "B", "text": "Функция", "is_active": True},
+                                ],
+                            },
+                            "solution_rules": {
+                                "max_score": 10,
+                                "correct_options": ["A"],
+                            },
+                            "max_score": 10,
+                        }
+                    ]
+                }
+            },
+        ],
     ),
     db: AsyncSession = Depends(get_db),
 ) -> TaskBulkUpsertResponse:
@@ -156,6 +306,39 @@ async def find_tasks_by_external_uid_endpoint(
     "/tasks/by-course/{course_id}",
     response_model=List[TaskRead],
     summary="Получить задачи курса",
+    responses={
+        200: {
+            "description": "Список задач курса",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "external_uid": "TASK-SC-001",
+                            "task_content": {
+                                "type": "SC",
+                                "stem": "Что такое переменная в Python?",
+                                "options": [
+                                    {"id": "A", "text": "Область памяти", "is_active": True},
+                                    {"id": "B", "text": "Функция", "is_active": True},
+                                ],
+                            },
+                            "solution_rules": {
+                                "max_score": 10,
+                                "correct_options": ["A"],
+                            },
+                            "course_id": 1,
+                            "difficulty_id": 3,
+                            "max_score": 10,
+                        }
+                    ]
+                }
+            }
+        },
+        404: {
+            "description": "Курс не найден",
+        },
+    },
 )
 async def get_tasks_by_course(
     course_id: int,

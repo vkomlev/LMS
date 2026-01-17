@@ -32,10 +32,13 @@ class ShortAnswerAccepted(BaseModel):
     value: str = Field(
         ...,
         description="Строковое представление корректного ответа (например '4' или 'четыре').",
+        examples=["8", "28", "len", "len()", "двадцать восемь"],
     )
     score: int = Field(
         ...,
         description="Баллы за этот вариант ответа (может быть меньше максимума для частичных совпадений).",
+        examples=[5, 10, 15],
+        ge=0,
     )
 
 
@@ -50,18 +53,26 @@ class ShortAnswerRules(BaseModel):
             "Список шагов нормализации строки перед сравнением "
             "(например: trim, lower, collapse_spaces)."
         ),
+        examples=[["trim", "lower"], ["trim", "lower", "collapse_spaces"]],
     )
     accepted_answers: List[ShortAnswerAccepted] = Field(
         default_factory=list,
         description="Список допустимых ответов и баллов за них.",
+        examples=[
+            [{"value": "8", "score": 10}, {"value": "28", "score": 10}],
+            [{"value": "len", "score": 5}, {"value": "len()", "score": 5}],
+            [],
+        ],
     )
     use_regex: bool = Field(
         default=False,
         description="Если true, допускается проверка по регулярному выражению.",
+        examples=[False, True],
     )
     regex: Optional[str] = Field(
         default=None,
         description="Регулярное выражение для проверки ответа (если use_regex = true).",
+        examples=[None, r"^\d+$", r"^[A-Z][a-z]+$"],
     )
 
 
@@ -73,14 +84,18 @@ class TextRubricItem(BaseModel):
     id: str = Field(
         ...,
         description="Устойчивый ID критерия (например 'content', 'style').",
+        examples=["content", "style", "grammar", "logic"],
     )
     title: str = Field(
         ...,
         description="Человекочитаемое название критерия.",
+        examples=["Содержание", "Стиль изложения", "Грамматика", "Логика рассуждений"],
     )
     max_score: int = Field(
         ...,
         description="Максимальный балл по данному критерию.",
+        examples=[5, 10, 15],
+        gt=0,
     )
 
 
@@ -92,10 +107,18 @@ class TextAnswerRules(BaseModel):
     auto_check: bool = Field(
         default=False,
         description="Флаг возможности автопроверки. Обычно false, оценка ручная.",
+        examples=[False, True],
     )
     rubric: List[TextRubricItem] = Field(
         default_factory=list,
         description="Набор критериев оценивания для ручной или комбинированной проверки.",
+        examples=[
+            [
+                {"id": "content", "title": "Содержание", "max_score": 10},
+                {"id": "style", "title": "Стиль изложения", "max_score": 5},
+            ],
+            [],
+        ],
     )
 
 
@@ -106,15 +129,21 @@ class PenaltiesRules(BaseModel):
 
     wrong_answer: int = Field(
         default=0,
-        description="Штраф за заведомо неверный ответ.",
+        description="Штраф за заведомо неверный ответ. Вычитается из базового балла (0 для неправильного ответа).",
+        examples=[0, 1, 2, 5],
+        ge=0,
     )
     missing_answer: int = Field(
         default=0,
-        description="Штраф за отсутствие ответа.",
+        description="Штраф за отсутствие ответа. Вычитается из базового балла (0 для отсутствия ответа).",
+        examples=[0, 1, 3, 5],
+        ge=0,
     )
     extra_wrong_mc: int = Field(
         default=0,
-        description="Штраф за лишние неверные варианты при множественном выборе.",
+        description="Штраф за каждый лишний неверный вариант при множественном выборе (MC). Вычитается из частичного балла.",
+        examples=[0, 1, 2, 4],
+        ge=0,
     )
 
 
@@ -129,24 +158,29 @@ class SolutionRules(BaseModel):
         ...,
         description="Полный балл за задачу (должен совпадать с tasks.max_score).",
         gt=0,
+        examples=[5, 10, 15, 20],
     )
     scoring_mode: ScoringMode = Field(
         default="all_or_nothing",
         description="Режим оценивания: all_or_nothing | partial | custom.",
+        examples=["all_or_nothing", "partial", "custom"],
     )
     auto_check: bool = Field(
         default=True,
         description="Можно ли выполнить полную проверку автоматически.",
+        examples=[True, False],
     )
     manual_review_required: bool = Field(
         default=False,
         description="Требуется ли обязательная ручная дооценка (даже при автопроверке).",
+        examples=[False, True],
     )
 
     # Для задач с выбором (SC/MC)
     correct_options: List[str] = Field(
         default_factory=list,
-        description="Список ID правильных вариантов ответа для задач с выбором.",
+        description="Список ID правильных вариантов ответа для задач с выбором. Для SC должен быть ровно один элемент.",
+        examples=[["A"], ["A", "B"], ["opt1", "opt2", "opt3"], []],
     )
     partial_rules: List[PartialRule] = Field(
         default_factory=list,

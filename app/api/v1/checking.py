@@ -25,7 +25,45 @@ router = APIRouter(
 checking_service = CheckingService()
 
 
-@router.post("/task", response_model=CheckResult)
+@router.post(
+    "/task",
+    response_model=CheckResult,
+    summary="Проверка одной задачи",
+    responses={
+        200: {
+            "description": "Проверка выполнена успешно",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "score": 10,
+                        "max_score": 10,
+                        "is_correct": True,
+                        "feedback": [
+                            {
+                                "type": "correct",
+                                "message": "Правильно! Переменная действительно хранит данные в памяти.",
+                            }
+                        ],
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Ошибка валидации данных задачи или ответа",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Неверный тип ответа для задачи типа SC",
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Ошибка валидации запроса (неверный формат JSON)",
+        },
+    },
+)
 async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
     """
     Stateless-проверка **одной** задачи.
@@ -59,7 +97,48 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
         raise
 
 
-@router.post("/tasks-batch", response_model=BatchCheckResponse)
+@router.post(
+    "/tasks-batch",
+    response_model=BatchCheckResponse,
+    summary="Проверка набора задач",
+    responses={
+        200: {
+            "description": "Проверка выполнена успешно",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "results": [
+                            {
+                                "index": 0,
+                                "result": {
+                                    "score": 10,
+                                    "max_score": 10,
+                                    "is_correct": True,
+                                    "feedback": [],
+                                },
+                            },
+                            {
+                                "index": 1,
+                                "result": {
+                                    "score": 0,
+                                    "max_score": 10,
+                                    "is_correct": False,
+                                    "feedback": [],
+                                },
+                            },
+                        ]
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Ошибка валидации данных задач или ответов",
+        },
+        422: {
+            "description": "Ошибка валидации запроса (неверный формат JSON)",
+        },
+    },
+)
 async def check_tasks_batch_endpoint(
     payload: BatchCheckRequest,
 ) -> BatchCheckResponse:

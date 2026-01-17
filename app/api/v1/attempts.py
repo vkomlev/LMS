@@ -127,6 +127,61 @@ async def create_attempt(
     "/attempts/{attempt_id}/answers",
     response_model=AttemptAnswersResponse,
     summary="Отправить ответы по задачам внутри попытки",
+    responses={
+        200: {
+            "description": "Ответы успешно отправлены и проверены",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "attempt_id": 1,
+                        "total_score": 25,
+                        "max_score": 30,
+                        "results": [
+                            {
+                                "task_id": 1,
+                                "score": 10,
+                                "max_score": 10,
+                                "is_correct": True,
+                            },
+                            {
+                                "task_id": 2,
+                                "score": 15,
+                                "max_score": 20,
+                                "is_correct": False,
+                            },
+                        ],
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Попытка уже завершена или истекло время",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "finished": {
+                            "summary": "Попытка завершена",
+                            "value": {
+                                "detail": "Попытка уже завершена. Нельзя отправлять ответы в завершенную попытку."
+                            }
+                        },
+                        "timeout": {
+                            "summary": "Истекло время",
+                            "value": {
+                                "detail": "Время на выполнение истекло"
+                            }
+                        },
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Попытка не найдена",
+        },
+        422: {
+            "description": "Ошибка валидации запроса (неверный формат JSON)",
+        },
+    },
 )
 async def submit_attempt_answers(
     attempt_id: int,

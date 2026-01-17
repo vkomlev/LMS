@@ -19,6 +19,27 @@ task_results_service = TaskResultsService()
     "/task-results/by-user/{user_id}",
     response_model=List[TaskResultRead],
     summary="Получить результаты пользователя",
+    responses={
+        200: {
+            "description": "Список результатов пользователя",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "attempt_id": 1,
+                            "task_id": 1,
+                            "score": 10,
+                            "max_score": 10,
+                            "is_correct": True,
+                            "feedback": [],
+                            "created_at": "2026-01-17T12:00:00Z",
+                        }
+                    ]
+                }
+            }
+        },
+    },
 )
 async def get_task_results_by_user(
     user_id: int,
@@ -50,6 +71,30 @@ async def get_task_results_by_user(
     "/task-results/by-task/{task_id}",
     response_model=List[TaskResultRead],
     summary="Получить результаты по задаче",
+    responses={
+        200: {
+            "description": "Список результатов по задаче",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "attempt_id": 1,
+                            "task_id": 1,
+                            "score": 10,
+                            "max_score": 10,
+                            "is_correct": True,
+                            "feedback": [],
+                            "created_at": "2026-01-17T12:00:00Z",
+                        }
+                    ]
+                }
+            }
+        },
+        404: {
+            "description": "Задача не найдена",
+        },
+    },
 )
 async def get_task_results_by_task(
     task_id: int,
@@ -81,6 +126,30 @@ async def get_task_results_by_task(
     "/task-results/by-attempt/{attempt_id}",
     response_model=List[TaskResultRead],
     summary="Получить результаты попытки",
+    responses={
+        200: {
+            "description": "Список результатов попытки",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "attempt_id": 1,
+                            "task_id": 1,
+                            "score": 10,
+                            "max_score": 10,
+                            "is_correct": True,
+                            "feedback": [],
+                            "created_at": "2026-01-17T12:00:00Z",
+                        }
+                    ]
+                }
+            }
+        },
+        404: {
+            "description": "Попытка не найдена",
+        },
+    },
 )
 async def get_task_results_by_attempt(
     attempt_id: int,
