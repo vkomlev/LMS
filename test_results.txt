@@ -1,0 +1,204 @@
+﻿.venv\Scripts\python.exe : Traceback (most recent call last):
+C:\Users\victor\AppData\Local\Temp\ps-script-c6baa6f0-6175-4094-a952-7788d9e35748.
+ps1:80 знак:17
++ ... :\Work\LMS; .venv\Scripts\python.exe tests/test_repos_smoke.py 2>&1 | ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::S 
+   tring) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "D:\Work\LMS\tests\test_repos_smoke.py", line 168, in test_get_course_tree
+    tree = await repo.get_course_tree(session, root_course_id)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+  File "D:\Work\LMS\app\repos\courses_repo.py", line 125, in get_course_tree
+    return build_tree(course)
+  File "D:\Work\LMS\app\repos\courses_repo.py", line 122, in build_tree
+    course_obj.parent_course_reverse = [build_tree(child) for child in children]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\attributes.py", line 53
+7, in __set__
+    self.impl.set(
+    ~~~~~~~~~~~~~^
+        instance_state(instance), instance_dict(instance), value, None
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\attributes.py", line 19
+66, in set
+    old = self.get(
+        state,
+        dict_,
+        passive=PASSIVE_ONLY_PERSISTENT ^ (passive & PassiveFlag.NO_RAISE),
+    )
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\attributes.py", line 10
+86, in get
+    value = self._fire_loader_callables(state, key, passive)
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\attributes.py", line 11
+21, in _fire_loader_callables
+    return self.callable_(state, passive)
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\strategies.py", line 97
+8, in _load_for_state
+    return self._emit_lazyload(
+           ~~~~~~~~~~~~~~~~~~~^
+        session,
+        ^^^^^^^^
+    ...<7 lines>...
+        execution_options,
+        ^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\strategies.py", line 11
+41, in _emit_lazyload
+    result = session.execute(
+        stmt, params, execution_options=execution_options
+    )
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 2365,
+ in execute
+    return self._execute_internal(
+           ~~~~~~~~~~~~~~~~~~~~~~^
+        statement,
+        ^^^^^^^^^^
+    ...<4 lines>...
+        _add_event=_add_event,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\session.py", line 2251,
+ in _execute_internal
+    result: Result[Any] = compile_state_cls.orm_execute_statement(
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self,
+        ^^^^^
+    ...<4 lines>...
+        conn,
+        ^^^^^
+    )
+    ^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\orm\context.py", line 306, 
+in orm_execute_statement
+    result = conn.execute(
+        statement, params or {}, execution_options=execution_options
+    )
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1415,
+ in execute
+    return meth(
+        self,
+        distilled_parameters,
+        execution_options or NO_OPTIONS,
+    )
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\sql\elements.py", line 523,
+ in _execute_on_connection
+    return connection._execute_clauseelement(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self, distilled_params, execution_options
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1637,
+ in _execute_clauseelement
+    ret = self._execute_context(
+        dialect,
+    ...<8 lines>...
+        cache_hit=cache_hit,
+    )
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1842,
+ in _execute_context
+    return self._exec_single_context(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        dialect, context, statement, parameters
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1982,
+ in _exec_single_context
+    self._handle_dbapi_exception(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        e, str_statement, effective_parameters, cursor, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 2354,
+ in _handle_dbapi_exception
+    raise exc_info[1].with_traceback(exc_info[2])
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\base.py", line 1963,
+ in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\engine\default.py", line 94
+3, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\dialects\postgresql\asyncpg
+.py", line 580, in execute
+    self._adapt_connection.await_(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._prepare_and_execute(operation, parameters)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\Work\LMS\.venv\Lib\site-packages\sqlalchemy\util\_concurrency_py3k.py",
+ line 123, in await_only
+    raise exc.MissingGreenlet(
+    ...<2 lines>...
+    )
+
+sqlalchemy.exc.MissingGreenlet: greenlet_spawn has not been called; can't call awa
+it_only() here. Was IO attempted in an unexpected place? (Background on this error
+ at: https://sqlalche.me/e/20/xd2s)
+
+============================================================
+Smoke ╤В╨╡╤Б╤В╤Л ╨┤╨╗╤П ╨╜╨╛╨▓╤Л╤Е ╨╝╨╡╤В╨╛╨┤╨╛╨▓ ╤А╨╡╨┐╨╛╨╖╨╕╤В╨╛╤А╨╕╨╡╨▓
+============================================================
+
+=== ╨в╨╡╤Б╤В 1: get_children ===
+[PASS] ╨Э╨░╨╣╨┤╨╡╨╜╨╛ 0 ╨┐╤А╤П╨╝╤Л╤Е ╨┤╨╡╤В╨╡╨╣ ╨┤╨╗╤П ╨║╤Г╤А╤Б╨░ 1
+
+=== ╨в╨╡╤Б╤В 2: get_all_children ===
+[PASS] ╨Э╨░╨╣╨┤╨╡╨╜╨╛ 0 ╨┐╨╛╤В╨╛╨╝╨║╨╛╨▓ ╨┤╨╗╤П ╨║╤Г╤А╤Б╨░ 1
+
+=== ╨в╨╡╤Б╤В 3: get_root_courses ===
+[PASS] ╨Э╨░╨╣╨┤╨╡╨╜╨╛ 3 ╨║╨╛╤А╨╜╨╡╨▓╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓
+  - ╨Ъ╤Г╤А╤Б 1: ╨Ю╤Б╨╜╨╛╨▓╤Л Python (parent=None)
+  - ╨Ъ╤Г╤А╤Б 6: Test Course 1 (parent=None)
+  - ╨Ъ╤Г╤А╤Б 2: ╨Р╨╜╨░╨╗╨╕╨╖ ╨┤╨░╨╜╨╜╤Л╤Е (parent=None)
+
+=== ╨в╨╡╤Б╤В 4: get_course_tree ===
+[ERROR] greenlet_spawn has not been called; can't call await_only() here. Was IO attempted in an unexpected place? (Background on this error at: https://sqlalche.me/e/20/xd2s)
+
+=== ╨в╨╡╤Б╤В 5: get_user_courses ===
+[PASS] ╨Э╨░╨╣╨┤╨╡╨╜╨╛ 2 ╨║╤Г╤А╤Б╨╛╨▓ ╨┤╨╗╤П ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П 4
+  - ╨Ъ╤Г╤А╤Б 1, order_number=None, added_at=2025-02-06 16:29:40.005259+00:00
+  - ╨Ъ╤Г╤А╤Б 2, order_number=None, added_at=2025-02-06 16:29:40.005259+00:00
+[PASS] ╨б╨╛╤А╤В╨╕╤А╨╛╨▓╨║╨░ ╨┐╨╛ ╨┤╨░╤В╨╡: 2 ╨║╤Г╤А╤Б╨╛╨▓
+
+=== ╨в╨╡╤Б╤В 6: bulk_create_user_courses ===
+[PASS] ╨Я╤А╨╕╨▓╤П╨╖╨░╨╜╨╛ 2 ╨║╤Г╤А╤Б╨╛╨▓ ╨║ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О 3
+  - ╨Ъ╤Г╤А╤Б 1, order_number=1
+  - ╨Ъ╤Г╤А╤Б 6, order_number=2
+[PASS] ╨Я╨╛╨▓╤В╨╛╤А╨╜╨░╤П ╨┐╤А╨╕╨▓╤П╨╖╨║╨░: ╨▓╨╛╨╖╨▓╤А╨░╤Й╨╡╨╜╨╛ 2 ╤Б╤Г╤Й╨╡╤Б╤В╨▓╤Г╤О╤Й╨╕╤Е ╨╖╨░╨┐╨╕╤Б╨╡╨╣ (╨┤╤Г╨▒╨╗╨╕╨║╨░╤В╤Л ╨╜╨╡ ╤Б╨╛╨╖╨┤╨░╨╜╤Л)
+
+=== ╨в╨╡╤Б╤В 7: reorder_user_courses ===
+[SKIP] ╨Э╤Г╨╢╨╜╨╛ ╨╝╨╕╨╜╨╕╨╝╤Г╨╝ 2 ╨║╤Г╤А╤Б╨░ ╤Б order_number ╨┤╨╗╤П ╤В╨╡╤Б╤В╨░
+
+============================================================
+╨Ш╨в╨Ю╨У╨Ш:
+============================================================
+╨Я╤А╨╛╨╣╨┤╨╡╨╜╨╛: 5/7
+тЭМ ╨Я╤А╨╛╨▓╨░╨╗╨╡╨╜╨╛ ╤В╨╡╤Б╤В╨╛╨▓: 2
