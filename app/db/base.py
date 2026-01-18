@@ -9,6 +9,7 @@ class Base(DeclarativeBase):
 import app.models.association_tables   # таблицы связей
 import app.models.roles
 import app.models.access_requests  # ДО users, так как users ссылается на AccessRequests
+import app.models.attempts
 import app.models.users
 import app.models.messages
 import app.models.notifications
@@ -21,4 +22,4 @@ import app.models.tasks
 import app.models.user_achievements
 import app.models.user_courses
 import app.models.task_results
-import app.models.attempts
+

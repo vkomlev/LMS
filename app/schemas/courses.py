@@ -59,3 +59,11 @@ class CourseTreeRead(CourseRead):
 # Обновление моделей для корректной работы рекурсивных типов
 CourseReadWithChildren.model_rebuild()
 CourseTreeRead.model_rebuild()
+
+
+class CourseMoveRequest(BaseModel):
+    """Схема для перемещения курса в иерархии."""
+    new_parent_id: Optional[int] = Field(
+        None,
+        description="ID нового родительского курса. Если None, курс становится корневым."
+    )
