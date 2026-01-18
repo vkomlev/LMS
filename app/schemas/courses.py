@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
@@ -40,3 +40,22 @@ class CourseRead(BaseModel):
     course_uid: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class CourseReadWithChildren(CourseRead):
+    """Схема курса с вложенными детьми (прямые потомки)."""
+    children: List["CourseReadWithChildren"] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CourseTreeRead(CourseRead):
+    """Схема курса с полным деревом потомков (рекурсивная структура)."""
+    children: List["CourseTreeRead"] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Обновление моделей для корректной работы рекурсивных типов
+CourseReadWithChildren.model_rebuild()
+CourseTreeRead.model_rebuild()
