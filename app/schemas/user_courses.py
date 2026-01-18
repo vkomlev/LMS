@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from app.schemas.courses import CourseRead
+else:
+    from app.schemas.courses import CourseRead  # Импортируем для model_rebuild
 
 
 class UserCourseCreate(BaseModel):
@@ -63,3 +65,8 @@ class UserCourseReorderRequest(BaseModel):
         min_length=1,
         description="Список курсов с их порядковыми номерами"
     )
+
+
+# Rebuild models для разрешения forward references
+UserCourseWithCourse.model_rebuild()
+UserCourseListResponse.model_rebuild()

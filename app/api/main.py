@@ -21,6 +21,7 @@ from app.api.v1.student_teacher_links import router as student_teacher_links_rou
 from app.api.v1.messages_extra import router as messages_extra_router  
 from app.api.v1.tasks_extra import router as tasks_extra_router
 from app.api.v1.courses_extra import router as courses_extra_router
+from app.api.v1.user_courses_extra import router as user_courses_extra_router
 from app.api.v1.meta_tasks import router as meta_tasks_router
 from app.api.v1.checking import router as checking_router
 from app.api.v1.attempts import router as attempts_router
@@ -248,6 +249,7 @@ app.include_router(user_achievements_router, prefix=API_PREFIX)
 
 # UserCourses (composite PK: user_id + course_id)
 app.include_router(user_courses_router, prefix=API_PREFIX)
+app.include_router(user_courses_extra_router, prefix=API_PREFIX)
 
 
 app.include_router(
