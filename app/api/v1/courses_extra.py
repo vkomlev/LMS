@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from typing import List, Optional
-from fastapi import APIRouter, Depends, Body, status
+import logging
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, Body, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -10,8 +11,13 @@ from app.schemas.courses import (
     CourseReadWithChildren,
     CourseTreeRead,
     CourseMoveRequest,
+    GoogleSheetsImportRequest,
+    GoogleSheetsImportResponse,
+    GoogleSheetsImportError,
 )
 from app.services.courses_service import CoursesService
+from app.services.google_sheets_service import GoogleSheetsService
+from app.services.courses_sheets_parser_service import CoursesSheetsParserService
 from app.utils.exceptions import DomainError
 
 router = APIRouter(tags=["courses"])
@@ -228,3 +234,306 @@ async def move_course_endpoint(
         payload.new_parent_id,
     )
     return CourseRead.model_validate(updated_course)
+
+
+@router.post(
+    "/courses/import/google-sheets",
+    response_model=GoogleSheetsImportResponse,
+    summary="Импорт курсов из Google Sheets",
+    description=(
+        "Массовый импорт курсов из Google Sheets таблицы в систему LMS.\n\n"
+        "**Поддерживаемые функции:**\n"
+        "- Иерархия курсов (parent_course_uid)\n"
+        "- Зависимости между курсами (required_courses_uid)\n"
+        "- Upsert по course_uid (если курс существует - обновляется, иначе создается)\n\n"
+        "**Процесс импорта:**\n"
+        "1. Извлекает spreadsheet_id из URL\n"
+        "2. Читает данные из указанного листа через Google Sheets API\n"
+        "3. Парсит каждую строку данных в структуру курса\n"
+        "4. Валидирует данные (структура, ссылочная целостность)\n"
+        "5. Импортирует курсы через bulk_upsert (создает новые или обновляет существующие по course_uid)\n"
+        "6. Обрабатывает зависимости между курсами\n"
+        "7. Возвращает детальный отчет с результатами\n\n"
+        "**Рекомендации:**\n"
+        "- Используйте `dry_run: true` для предварительной проверки данных\n"
+        "- Убедитесь, что Service Account имеет доступ к таблице\n"
+        "- Проверьте формат данных в таблице (см. документацию)\n\n"
+        "**Требования к таблице:**\n"
+        "- Первая строка должна содержать заголовки колонок\n"
+        "- Обязательные колонки: `course_uid`, `title`, `access_level`\n"
+        "- Опциональные колонки: `description`, `parent_course_uid`, `required_courses_uid`, `is_required`\n"
+        "- `required_courses_uid` - список course_uid через запятую (например, 'COURSE-PY-01,COURSE-MATH-01')\n\n"
+        "**Обработка ошибок:**\n"
+        "- Импорт продолжается даже при ошибках в отдельных строках\n"
+        "- Все ошибки возвращаются в массиве `errors` с указанием номера строки\n"
+        "- Частичный успех: некоторые курсы могут быть импортированы, другие - нет"
+    ),
+    responses={
+        200: {
+            "description": "Импорт выполнен (возможно с ошибками в отдельных строках)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "imported": 10,
+                        "updated": 0,
+                        "errors": [],
+                        "total_rows": 10,
+                    }
+                }
+            }
+        },
+        400: {
+            "description": "Неверные параметры запроса",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Таблица пуста или не найдена"
+                    }
+                }
+            }
+        },
+        403: {
+            "description": "Неверный или отсутствующий API ключ",
+        },
+        500: {
+            "description": "Ошибка при чтении Google Sheets или обработке данных",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Ошибка при чтении Google Sheet: <HttpError 403 when requesting ... returned \"The caller does not have permission\">"
+                    }
+                }
+            }
+        },
+    },
+    tags=["courses", "import"],
+)
+async def import_courses_from_google_sheets(
+    payload: GoogleSheetsImportRequest = Body(
+        ...,
+        description="Параметры импорта курсов из Google Sheets",
+        examples=[
+            {
+                "summary": "Минимальный запрос",
+                "description": "Базовый пример с обязательными полями",
+                "value": {
+                    "spreadsheet_url": "https://docs.google.com/spreadsheets/d/1NbsaFMkDWGqzGTSi9Y1lG4THj8fiFty6u7CL9NLx8xk/edit",
+                }
+            },
+            {
+                "summary": "С указанием листа и dry_run",
+                "description": "Пример с явным указанием листа и режимом проверки",
+                "value": {
+                    "spreadsheet_url": "1NbsaFMkDWGqzGTSi9Y1lG4THj8fiFty6u7CL9NLx8xk",
+                    "sheet_name": "Courses",
+                    "dry_run": True,
+                }
+            },
+            {
+                "summary": "С кастомным маппингом колонок",
+                "description": "Пример с явным указанием маппинга колонок",
+                "value": {
+                    "spreadsheet_url": "1NbsaFMkDWGqzGTSi9Y1lG4THj8fiFty6u7CL9NLx8xk",
+                    "column_mapping": {
+                        "Код": "course_uid",
+                        "Название": "title",
+                        "Описание": "description",
+                        "Уровень доступа": "access_level",
+                        "Родитель": "parent_course_uid",
+                        "Зависимости": "required_courses_uid",
+                        "Обязательный": "is_required",
+                    },
+                }
+            },
+        ],
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> GoogleSheetsImportResponse:
+    """
+    Импортирует курсы из Google Sheets.
+    
+    Подробное описание процесса импорта и требований см. в summary эндпойнта.
+    """
+    logger = logging.getLogger("api.courses_extra")
+    
+    # Инициализация сервисов
+    gsheets_service = GoogleSheetsService()
+    parser_service = CoursesSheetsParserService()
+    
+    # 1. Извлекаем spreadsheet_id
+    try:
+        spreadsheet_id = parser_service.extract_spreadsheet_id(payload.spreadsheet_url)
+        logger.info("Extracted spreadsheet_id: %s", spreadsheet_id)
+    except Exception as e:
+        logger.exception("Ошибка при извлечении spreadsheet_id: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Ошибка при извлечении spreadsheet_id: {str(e)}",
+        ) from e
+    
+    # 2. Читаем данные из Google Sheets
+    try:
+        # Если sheet_name не указан, используем "Courses" по умолчанию
+        sheet_name = payload.sheet_name or "Courses"
+        range_name = f"{sheet_name}!A:Z"
+        
+        logger.info("Reading sheet: %s, range: %s", sheet_name, range_name)
+        rows = gsheets_service.read_sheet(
+            spreadsheet_id=spreadsheet_id,
+            range_name=range_name,
+        )
+        logger.info("Read %d rows from Google Sheet", len(rows))
+    except Exception as e:
+        logger.exception("Ошибка при чтении Google Sheet: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Ошибка при чтении Google Sheet: {str(e)}",
+        ) from e
+    
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Таблица пуста или не найдена",
+        )
+    
+    # 3. Парсим заголовки (первая строка)
+    headers = rows[0] if rows else []
+    if not headers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Таблица не содержит заголовков",
+        )
+    
+    # Создаем маппинг колонок
+    column_mapping = payload.column_mapping or {}
+    if not column_mapping:
+        # Стандартный маппинг: ищем колонки по названиям
+        column_mapping = {}
+        for idx, header in enumerate(headers):
+            header_lower = header.lower().strip()
+            # Маппинг стандартных названий
+            if header_lower in ("course_uid", "uid", "id", "код", "course code"):
+                column_mapping["course_uid"] = header
+            elif header_lower in ("title", "название", "name"):
+                column_mapping["title"] = header
+            elif header_lower in ("description", "описание", "desc"):
+                column_mapping["description"] = header
+            elif header_lower in ("access_level", "access level", "уровень доступа", "тип доступа"):
+                column_mapping["access_level"] = header
+            elif header_lower in ("parent_course_uid", "parent", "родитель", "parent course"):
+                column_mapping["parent_course_uid"] = header
+            elif header_lower in ("required_courses_uid", "required courses", "зависимости", "dependencies"):
+                column_mapping["required_courses_uid"] = header
+            elif header_lower in ("is_required", "required", "обязательный", "mandatory"):
+                column_mapping["is_required"] = header
+    
+    # 4. Парсим строки данных
+    parsed_courses: List[Dict[str, Any]] = []
+    dependencies_map: Dict[str, List[str]] = {}
+    errors: List[GoogleSheetsImportError] = []
+    
+    for row_index, row_data in enumerate(rows[1:], start=1):  # Пропускаем заголовок
+        # Преобразуем список в словарь
+        row_dict = {}
+        for idx, value in enumerate(row_data):
+            if idx < len(headers):
+                row_dict[headers[idx]] = str(value) if value else ""
+        
+        # Пропускаем пустые строки
+        if not any(row_dict.values()):
+            continue
+        
+        try:
+            # Парсим строку
+            course_data, required_courses_uid_list = parser_service.parse_course_row(
+                row=row_dict,
+                column_mapping=column_mapping,
+            )
+            
+            # Сохраняем зависимости для последующей обработки
+            if required_courses_uid_list:
+                dependencies_map[course_data["course_uid"]] = required_courses_uid_list
+            
+            parsed_courses.append(course_data)
+            
+        except DomainError as e:
+            # Ошибка валидации - добавляем в список ошибок
+            errors.append(GoogleSheetsImportError(
+                row_index=row_index,
+                course_uid=row_dict.get(column_mapping.get("course_uid", ""), None),
+                error=str(e.detail) if hasattr(e, 'detail') else str(e),
+            ))
+            continue
+        except Exception as e:
+            logger.exception("Ошибка при парсинге строки %d: %s", row_index, e)
+            errors.append(GoogleSheetsImportError(
+                row_index=row_index,
+                course_uid=None,
+                error=f"Ошибка парсинга: {str(e)}",
+            ))
+            continue
+    
+    if not parsed_courses:
+        return GoogleSheetsImportResponse(
+            imported=0,
+            updated=0,
+            errors=errors,
+            total_rows=len(rows) - 1,  # Без заголовка
+        )
+    
+    # 5. Импортируем курсы (если не dry_run)
+    imported = 0
+    updated = 0
+    
+    if not payload.dry_run:
+        try:
+            results, import_errors = await courses_service.bulk_upsert(
+                db, 
+                parsed_courses,
+                dependencies_map=dependencies_map if dependencies_map else None,
+            )
+            
+            # Обрабатываем успешно импортированные курсы
+            for course_uid, action, course_id in results:
+                if action == "created":
+                    imported += 1
+                elif action == "updated":
+                    updated += 1
+            
+            # Добавляем ошибки из bulk_upsert в общий список ошибок
+            for import_error in import_errors:
+                # Пытаемся найти номер строки по course_uid
+                row_index = 0
+                course_uid_from_error = None
+                if hasattr(import_error, 'payload') and import_error.payload:
+                    course_uid_from_error = import_error.payload.get('course_uid')
+                    # Ищем номер строки в parsed_courses
+                    for idx, course_data in enumerate(parsed_courses, start=1):
+                        if course_data.get("course_uid") == course_uid_from_error:
+                            row_index = idx
+                            break
+                
+                errors.append(GoogleSheetsImportError(
+                    row_index=row_index,
+                    course_uid=course_uid_from_error,
+                    error=str(import_error.detail) if hasattr(import_error, 'detail') else str(import_error),
+                ))
+            
+            logger.info("Imported: %d, Updated: %d, Errors: %d", imported, updated, len(import_errors))
+        except Exception as e:
+            logger.exception("Ошибка при импорте курсов: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Ошибка при импорте курсов: {str(e)}",
+            ) from e
+    else:
+        # В dry_run режиме считаем все как "would be imported"
+        imported = len(parsed_courses)
+        logger.info("Dry run: would import %d courses", imported)
+    
+    return GoogleSheetsImportResponse(
+        imported=imported,
+        updated=updated,
+        errors=errors,
+        total_rows=len(rows) - 1,  # Без заголовка
+    )
