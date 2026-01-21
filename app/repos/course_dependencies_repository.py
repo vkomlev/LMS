@@ -67,3 +67,50 @@ class CourseDependenciesRepository:
         )
         await db.execute(stmt)
         await db.commit()
+
+    async def bulk_add_dependencies(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        required_course_ids: List[int]
+    ) -> List[Courses]:
+        """
+        Массовое добавление зависимостей: course_id зависит от всех курсов из списка.
+        Пропускает уже существующие зависимости и self-dependency.
+        Возвращает список успешно добавленных зависимостей.
+        """
+        # Проверяем, что курс существует
+        course = await db.get(Courses, course_id)
+        if not course:
+            raise ValueError(f"Course {course_id} not found")
+        
+        # Проверяем существование всех required_courses
+        stmt = select(Courses).where(Courses.id.in_(required_course_ids))
+        result = await db.execute(stmt)
+        existing_courses = {c.id: c for c in result.scalars().all()}
+        
+        # Фильтруем: убираем несуществующие курсы и self-dependency
+        valid_course_ids = [
+            rid for rid in required_course_ids
+            if rid in existing_courses and rid != course_id
+        ]
+        
+        if not valid_course_ids:
+            return []
+        
+        # Массовое добавление зависимостей (пропускаем конфликты)
+        values = [
+            {"course_id": course_id, "required_course_id": rid}
+            for rid in valid_course_ids
+        ]
+        
+        stmt = (
+            insert(t_course_dependencies)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=["course_id", "required_course_id"])
+        )
+        await db.execute(stmt)
+        await db.commit()
+        
+        # Возвращаем список успешно добавленных зависимостей
+        return [existing_courses[rid] for rid in valid_course_ids]

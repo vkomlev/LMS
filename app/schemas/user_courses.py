@@ -5,8 +5,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from app.schemas.courses import CourseRead
+    from app.schemas.users import UserRead
 else:
-    from app.schemas.courses import CourseRead  # Импортируем для model_rebuild
+    from app.schemas.courses import CourseRead
+    from app.schemas.users import UserRead  # Импортируем для model_rebuild
 
 
 class UserCourseCreate(BaseModel):
@@ -126,6 +128,29 @@ class UserCourseReorderRequest(BaseModel):
     )
 
 
+class UserCourseWithUser(BaseModel):
+    """Схема привязки пользователя к курсу с информацией о пользователе."""
+    user_id: int
+    course_id: int
+    added_at: datetime
+    order_number: Optional[int]
+    user: UserRead  # type: ignore
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CourseUsersResponse(BaseModel):
+    """Схема для списка пользователей курса."""
+    course_id: int
+    course_title: str
+    users: List[UserCourseWithUser]
+    total: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # Rebuild models для разрешения forward references
 UserCourseWithCourse.model_rebuild()
 UserCourseListResponse.model_rebuild()
+UserCourseWithUser.model_rebuild()
+CourseUsersResponse.model_rebuild()

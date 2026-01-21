@@ -28,3 +28,16 @@ class CourseDependenciesService:
         self, db: AsyncSession, course_id: int, required_course_id: int
     ) -> None:
         await self.repo.remove_dependency(db, course_id, required_course_id)
+
+    async def bulk_add_dependencies(
+        self, db: AsyncSession, course_id: int, required_course_ids: List[int]
+    ) -> List[Courses]:
+        """
+        Массовое добавление зависимостей для курса.
+        
+        :param db: асинхронная сессия БД.
+        :param course_id: ID курса.
+        :param required_course_ids: Список ID курсов-зависимостей.
+        :return: Список успешно добавленных зависимостей.
+        """
+        return await self.repo.bulk_add_dependencies(db, course_id, required_course_ids)

@@ -137,6 +137,27 @@ class CourseMoveRequest(BaseModel):
     )
 
 
+class CourseDependenciesBulkCreate(BaseModel):
+    """Схема для массового добавления зависимостей курса."""
+    required_course_ids: List[int] = Field(
+        ...,
+        min_length=1,
+        description="Список ID курсов-зависимостей для добавления",
+        examples=[[2, 3, 4]],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "summary": "Добавить несколько зависимостей",
+                    "value": {"required_course_ids": [2, 3, 4]},
+                }
+            ]
+        }
+    )
+
+
 # ---------- Импорт из Google Sheets ----------
 
 

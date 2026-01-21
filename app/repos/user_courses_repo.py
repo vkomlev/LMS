@@ -147,3 +147,32 @@ class UserCoursesRepository(BaseRepository[UserCourses]):
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_course_users(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[UserCourses]:
+        """
+        Получить список пользователей (студентов) курса.
+        
+        Args:
+            db: Сессия БД
+            course_id: ID курса
+            limit: Максимум результатов
+            offset: Смещение
+        
+        Returns:
+            Список связей пользователей с курсом
+        """
+        stmt = (
+            select(UserCourses)
+            .where(UserCourses.course_id == course_id)
+            .order_by(UserCourses.added_at.asc())
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, Body, status, HTTPException
+from fastapi import APIRouter, Depends, Body, status, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -15,14 +15,75 @@ from app.schemas.courses import (
     GoogleSheetsImportResponse,
     GoogleSheetsImportError,
 )
+from app.schemas.user_courses import CourseUsersResponse, UserCourseWithUser
 from app.services.courses_service import CoursesService
+from app.services.user_courses_service import UserCoursesService
 from app.services.google_sheets_service import GoogleSheetsService
 from app.services.courses_sheets_parser_service import CoursesSheetsParserService
 from app.utils.exceptions import DomainError
+from app.models.courses import Courses
+from sqlalchemy.orm import selectinload
 
 router = APIRouter(tags=["courses"])
 
 courses_service = CoursesService()
+user_courses_service = UserCoursesService()
+
+
+@router.get(
+    "/courses/search",
+    response_model=List[CourseRead],
+    summary="Поиск курсов по названию или коду",
+    responses={
+        200: {
+            "description": "Список найденных курсов",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "title": "Основы Python",
+                            "access_level": "auto_check",
+                            "description": "Введение в Python",
+                            "parent_course_id": None,
+                            "created_at": "2025-02-06T11:42:52.674613Z",
+                            "is_required": False,
+                            "course_uid": "COURSE-PY-01",
+                        }
+                    ]
+                }
+            }
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def search_courses_endpoint(
+    q: str = Query(..., min_length=2, description="Поисковый запрос (поиск по title и course_uid)"),
+    limit: int = Query(20, ge=1, le=200, description="Максимум результатов"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    db: AsyncSession = Depends(get_db),
+) -> List[CourseRead]:
+    """
+    Поиск курсов по названию (title) или коду (course_uid).
+    
+    Поиск выполняется с использованием ILIKE (регистронезависимый).
+    Ищет вхождение запроса в поле title или course_uid.
+    
+    Примеры:
+    - q="Python" - найдет курсы с "Python" в названии или коде
+    - q="COURSE-PY" - найдет курсы с кодом, содержащим "COURSE-PY"
+    """
+    courses = await courses_service.search_text(
+        db,
+        field=["title", "course_uid"],
+        query=q,
+        mode="contains",
+        case_insensitive=True,
+        limit=limit,
+        offset=offset,
+        order_by=Courses.title,
+    )
+    return [CourseRead.model_validate(course) for course in courses]
 
 
 @router.get(
@@ -234,6 +295,134 @@ async def move_course_endpoint(
         payload.new_parent_id,
     )
     return CourseRead.model_validate(updated_course)
+
+
+@router.get(
+    "/courses/{course_id}/users",
+    response_model=CourseUsersResponse,
+    summary="Получить список студентов курса",
+    responses={
+        200: {
+            "description": "Список студентов курса с информацией о пользователях",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "course_id": 1,
+                        "course_title": "Основы Python",
+                        "total": 5,
+                        "users": [
+                            {
+                                "user_id": 3,
+                                "course_id": 1,
+                                "added_at": "2025-01-15T10:30:00Z",
+                                "order_number": 1,
+                                "user": {
+                                    "id": 3,
+                                    "email": "student@example.com",
+                                    "full_name": "Иван Иванов",
+                                    "tg_id": 123456789,
+                                    "created_at": "2025-01-10T08:00:00Z"
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Курс не найден",
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def get_course_users_endpoint(
+    course_id: int,
+    limit: int = Query(100, ge=1, le=1000, description="Максимум результатов на странице"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    db: AsyncSession = Depends(get_db),
+) -> CourseUsersResponse:
+    """
+    Получить список студентов (пользователей), привязанных к курсу.
+    
+    Возвращает список пользователей с полной информацией о каждом пользователе
+    и датой/порядком привязки к курсу.
+    
+    Параметры:
+    - course_id: ID курса
+    - limit: Максимум результатов (по умолчанию 100, максимум 1000)
+    - offset: Смещение для пагинации
+    
+    Использование:
+    - Для управления студентами курса со стороны методиста
+    - Для просмотра текущих студентов курса в боте
+    """
+    # Проверяем существование курса
+    course = await courses_service.get_by_id(db, course_id)
+    if course is None:
+        raise DomainError(
+            detail="Курс не найден",
+            status_code=404,
+            payload={"course_id": course_id},
+        )
+    
+    # Получаем список пользователей курса
+    user_courses = await user_courses_service.get_course_users(
+        db, course_id, limit=limit, offset=offset
+    )
+    
+    # Загружаем информацию о пользователях
+    from sqlalchemy import select, func
+    from app.models.user_courses import UserCourses as UserCoursesModel
+    from app.models.users import Users
+    
+    # Получаем user_ids из связей
+    user_ids = [uc.user_id for uc in user_courses]
+    
+    if not user_ids:
+        # Если нет студентов, возвращаем пустой список
+        return CourseUsersResponse(
+            course_id=course.id,
+            course_title=course.title,
+            users=[],
+            total=0,
+        )
+    
+    # Загружаем пользователей одним запросом
+    users_stmt = select(Users).where(Users.id.in_(user_ids))
+    users_result = await db.execute(users_stmt)
+    users_dict = {user.id: user for user in users_result.scalars().all()}
+    
+    # Формируем ответ
+    from app.schemas.users import UserRead
+    users_list = []
+    for uc in user_courses:
+        user = users_dict.get(uc.user_id)
+        if user is None:
+            continue  # Пропускаем, если пользователь не найден
+        
+        user_read = UserRead.model_validate(user)
+        user_course_with_user = UserCourseWithUser(
+            user_id=uc.user_id,
+            course_id=uc.course_id,
+            added_at=uc.added_at,
+            order_number=uc.order_number,
+            user=user_read,
+        )
+        users_list.append(user_course_with_user)
+    
+    # Получаем общее количество студентов курса для total
+    total_stmt = select(func.count(UserCoursesModel.user_id)).where(
+        UserCoursesModel.course_id == course_id
+    )
+    total_result = await db.execute(total_stmt)
+    total = total_result.scalar() or 0
+    
+    return CourseUsersResponse(
+        course_id=course.id,
+        course_title=course.title,
+        users=users_list,
+        total=total,
+    )
 
 
 @router.post(

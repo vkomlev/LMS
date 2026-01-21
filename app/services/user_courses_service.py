@@ -106,3 +106,21 @@ class UserCoursesService(BaseService[UserCourses]):
         :return: Список обновленных связей пользователя с курсами.
         """
         return await self.repo.reorder_user_courses(db, user_id, course_orders)
+
+    async def get_course_users(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[UserCourses]:
+        """
+        Получить список пользователей (студентов) курса.
+
+        :param db: асинхронная сессия БД.
+        :param course_id: ID курса.
+        :param limit: Максимум результатов.
+        :param offset: Смещение.
+        :return: Список связей пользователей с курсом.
+        """
+        return await self.repo.get_course_users(db, course_id, limit, offset)
