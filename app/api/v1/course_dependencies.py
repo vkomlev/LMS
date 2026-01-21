@@ -1,7 +1,7 @@
 # app/api/v1/course_dependencies.py
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -23,11 +23,25 @@ async def list_course_dependencies(
 ) -> List[CourseRead]:
     """
     Получить все курсы, от которых зависит данный курс.
+
+    Статусы:
+    - 200: список зависимостей (может быть пустым);
+    - 403: Invalid or missing API Key.
     """
     return await service.list_dependencies(db, course_id)
 
 
-@router.post("/{required_course_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/{required_course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Добавить зависимость курса",
+    responses={
+        204: {"description": "Зависимость добавлена"},
+        404: {"description": "Курс или required_course не найдены"},
+        400: {"description": "Некорректная зависимость (например, self-dependency)"},
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
 async def add_course_dependency(
     course_id: int,
     required_course_id: int,
@@ -42,7 +56,15 @@ async def add_course_dependency(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 
 
-@router.delete("/{required_course_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{required_course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить зависимость курса",
+    responses={
+        204: {"description": "Зависимость удалена (или не существовала)"},
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
 async def remove_course_dependency(
     course_id: int,
     required_course_id: int,

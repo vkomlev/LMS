@@ -10,13 +10,46 @@ else:
 
 
 class UserCourseCreate(BaseModel):
-    user_id: int
-    course_id: int
-    order_number: Optional[int] = None
+    """
+    Создание связи пользователь ↔ курс.
+
+    Правила:
+    - Если `order_number` не указан (null), он проставится автоматически триггером БД.
+    - (user_id, course_id) уникальны (PK), дубликаты запрещены.
+    """
+    user_id: int = Field(..., description="ID пользователя", examples=[3])
+    course_id: int = Field(..., description="ID курса", examples=[1])
+    order_number: Optional[int] = Field(
+        None,
+        description="Порядковый номер курса у пользователя. null = авто-нумерация триггером БД.",
+        examples=[None, 1, 2],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"user_id": 3, "course_id": 1, "order_number": None},
+                {"user_id": 3, "course_id": 2, "order_number": 1},
+            ]
+        }
+    )
 
 
 class UserCourseUpdate(BaseModel):
-    order_number: Optional[int] = None
+    """Обновление связи пользователь ↔ курс (обычно меняем только order_number)."""
+    order_number: Optional[int] = Field(
+        None,
+        description="Новый порядковый номер. null = поставить в конец (триггер пересчитает).",
+        examples=[1, 2, None],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"order_number": 1},
+            ]
+        }
+    )
 
 
 class UserCourseRead(BaseModel):
@@ -30,7 +63,20 @@ class UserCourseRead(BaseModel):
 
 class UserCourseBulkCreate(BaseModel):
     """Схема для массовой привязки курсов к пользователю."""
-    course_ids: List[int] = Field(..., min_length=1, description="Список ID курсов для привязки")
+    course_ids: List[int] = Field(
+        ...,
+        min_length=1,
+        description="Список ID курсов для привязки (дубликаты допустимы, но будут проигнорированы на уровне логики/БД).",
+        examples=[[1, 2, 3]],
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {"course_ids": [1, 2, 3]},
+            ]
+        }
+    )
 
 
 class UserCourseWithCourse(BaseModel):
@@ -54,8 +100,8 @@ class UserCourseListResponse(BaseModel):
 
 class CourseOrderItem(BaseModel):
     """Элемент для переупорядочивания курса."""
-    course_id: int
-    order_number: int = Field(..., ge=1, description="Порядковый номер курса")
+    course_id: int = Field(..., description="ID курса", examples=[1])
+    order_number: int = Field(..., ge=1, description="Новый порядковый номер (>= 1)", examples=[1, 2, 3])
 
 
 class UserCourseReorderRequest(BaseModel):
@@ -64,6 +110,19 @@ class UserCourseReorderRequest(BaseModel):
         ...,
         min_length=1,
         description="Список курсов с их порядковыми номерами"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "course_orders": [
+                        {"course_id": 1, "order_number": 1},
+                        {"course_id": 2, "order_number": 2},
+                    ]
+                }
+            ]
+        }
     )
 
 

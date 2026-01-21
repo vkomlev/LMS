@@ -12,6 +12,7 @@ from app.schemas.courses import (
     CourseMoveRequest,
 )
 from app.services.courses_service import CoursesService
+from app.utils.exceptions import DomainError
 
 router = APIRouter(tags=["courses"])
 
@@ -22,6 +23,38 @@ courses_service = CoursesService()
     "/courses/by-code/{code}",
     response_model=CourseRead,
     summary="Получить курс по его коду (course_uid)",
+    responses={
+        200: {
+            "description": "Курс найден",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": 1,
+                        "title": "Основы Python",
+                        "access_level": "auto_check",
+                        "description": "Введение в Python",
+                        "parent_course_id": None,
+                        "created_at": "2025-02-06T11:42:52.674613Z",
+                        "is_required": False,
+                        "course_uid": "COURSE-PY-01",
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Курс с указанным code не найден",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Курс с указанным кодом не найден",
+                        "payload": {"course_uid": "COURSE-NOT-FOUND"},
+                    }
+                }
+            },
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
 )
 async def get_course_by_code_endpoint(
     code: str,
@@ -49,6 +82,7 @@ async def get_course_by_code_endpoint(
         404: {
             "description": "Курс не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def get_course_children_endpoint(
@@ -75,6 +109,7 @@ async def get_course_children_endpoint(
         404: {
             "description": "Курс не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def get_course_tree_endpoint(
@@ -88,7 +123,6 @@ async def get_course_tree_endpoint(
     """
     tree = await courses_service.get_course_tree(db, course_id)
     if tree is None:
-        from app.utils.exceptions import DomainError
         raise DomainError(
             detail="Курс не найден",
             status_code=404,
@@ -105,6 +139,7 @@ async def get_course_tree_endpoint(
         200: {
             "description": "Список корневых курсов (без родителя)",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def get_root_courses_endpoint(
@@ -128,10 +163,33 @@ async def get_root_courses_endpoint(
         },
         400: {
             "description": "Ошибка валидации (цикл в иерархии, курс не может быть родителем самому себе)",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "cycle": {
+                            "summary": "Попытка создать цикл",
+                            "value": {
+                                "error": "domain_error",
+                                "detail": "Нельзя создать цикл в иерархии курсов",
+                                "payload": {"course_id": 10, "new_parent_id": 11},
+                            },
+                        },
+                        "self_parent": {
+                            "summary": "Курс пытается стать родителем сам себе",
+                            "value": {
+                                "error": "domain_error",
+                                "detail": "Курс не может быть родителем самому себе",
+                                "payload": {"course_id": 10},
+                            },
+                        },
+                    }
+                }
+            },
         },
         404: {
             "description": "Курс или родительский курс не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def move_course_endpoint(

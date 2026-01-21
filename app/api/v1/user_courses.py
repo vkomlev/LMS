@@ -16,7 +16,15 @@ service = UserCoursesService()
 
 
 @router.post(
-    "/", response_model=UserCourseRead, status_code=status.HTTP_201_CREATED
+    "/",
+    response_model=UserCourseRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать связь пользователь ↔ курс",
+    responses={
+        201: {"description": "Связь создана"},
+        400: {"description": "Дубликат связи или некорректные данные"},
+        403: {"description": "Invalid or missing API Key"},
+    },
 )
 async def create_user_course(
     obj_in: UserCourseCreate = Body(...),
@@ -24,12 +32,22 @@ async def create_user_course(
 ):
     """
     Создать связь пользователя и курса.
+
+    Примечание:
+    - Если `order_number` не задан (null), он проставится автоматически триггером БД.
     """
     return await service.create(db, obj_in.dict())
 
 
 @router.get(
-    "/{user_id}/{course_id}", response_model=UserCourseRead
+    "/{user_id}/{course_id}",
+    response_model=UserCourseRead,
+    summary="Получить связь пользователь ↔ курс по составному ключу",
+    responses={
+        200: {"description": "Связь найдена"},
+        404: {"description": "Not found"},
+        403: {"description": "Invalid or missing API Key"},
+    },
 )
 async def read_user_course(
     user_id: int,
@@ -48,7 +66,14 @@ async def read_user_course(
 
 
 @router.put(
-    "/{user_id}/{course_id}", response_model=UserCourseRead
+    "/{user_id}/{course_id}",
+    response_model=UserCourseRead,
+    summary="Обновить связь пользователь ↔ курс",
+    responses={
+        200: {"description": "Связь обновлена"},
+        404: {"description": "Not found"},
+        403: {"description": "Invalid or missing API Key"},
+    },
 )
 async def update_user_course(
     user_id: int,
@@ -70,7 +95,14 @@ async def update_user_course(
 
 
 @router.delete(
-    "/{user_id}/{course_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/{user_id}/{course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить связь пользователь ↔ курс",
+    responses={
+        204: {"description": "Связь удалена"},
+        404: {"description": "Not found"},
+        403: {"description": "Invalid or missing API Key"},
+    },
 )
 async def delete_user_course(
     user_id: int,

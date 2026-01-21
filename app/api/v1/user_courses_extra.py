@@ -34,6 +34,7 @@ user_courses_service = UserCoursesService()
         404: {
             "description": "Пользователь не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def get_user_courses_endpoint(
@@ -107,6 +108,7 @@ async def get_user_courses_endpoint(
         404: {
             "description": "Пользователь не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def bulk_assign_courses_endpoint(
@@ -157,6 +159,7 @@ async def bulk_assign_courses_endpoint(
         404: {
             "description": "Пользователь не найден",
         },
+        403: {"description": "Invalid or missing API Key"},
     },
 )
 async def reorder_user_courses_endpoint(
