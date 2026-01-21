@@ -138,12 +138,23 @@ class CourseMoveRequest(BaseModel):
 
 
 class CourseDependenciesBulkCreate(BaseModel):
-    """Схема для массового добавления зависимостей курса."""
+    """
+    Схема для массового добавления зависимостей курса.
+    
+    Используется в запросе POST /courses/{course_id}/dependencies/bulk.
+    Позволяет добавить несколько зависимостей за один запрос.
+    
+    **Правила:**
+    - Уже существующие зависимости пропускаются (не создаются дубликаты)
+    - Self-dependency автоматически пропускается
+    - Несуществующие курсы пропускаются
+    - Возвращается только список успешно добавленных зависимостей
+    """
     required_course_ids: List[int] = Field(
         ...,
         min_length=1,
-        description="Список ID курсов-зависимостей для добавления",
-        examples=[[2, 3, 4]],
+        description="Список ID курсов-зависимостей для добавления. Минимум 1 элемент.",
+        examples=[[2, 3, 4], [7, 8]],
     )
 
     model_config = ConfigDict(
@@ -152,6 +163,10 @@ class CourseDependenciesBulkCreate(BaseModel):
                 {
                     "summary": "Добавить несколько зависимостей",
                     "value": {"required_course_ids": [2, 3, 4]},
+                },
+                {
+                    "summary": "Добавить две зависимости",
+                    "value": {"required_course_ids": [7, 8]},
                 }
             ]
         }

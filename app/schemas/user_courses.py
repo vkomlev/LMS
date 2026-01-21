@@ -129,24 +129,79 @@ class UserCourseReorderRequest(BaseModel):
 
 
 class UserCourseWithUser(BaseModel):
-    """Схема привязки пользователя к курсу с информацией о пользователе."""
-    user_id: int
-    course_id: int
-    added_at: datetime
-    order_number: Optional[int]
-    user: UserRead  # type: ignore
+    """
+    Схема привязки пользователя к курсу с информацией о пользователе.
+    
+    Используется в ответе GET /courses/{course_id}/users для предоставления
+    полной информации о студенте курса, включая его личные данные.
+    """
+    user_id: int = Field(..., description="ID пользователя", examples=[3])
+    course_id: int = Field(..., description="ID курса", examples=[2])
+    added_at: datetime = Field(..., description="Дата и время привязки пользователя к курсу")
+    order_number: Optional[int] = Field(None, description="Порядковый номер курса у пользователя", examples=[1, 2, None])
+    user: UserRead = Field(..., description="Полная информация о пользователе")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "user_id": 3,
+                    "course_id": 2,
+                    "added_at": "2025-01-15T10:30:00Z",
+                    "order_number": 1,
+                    "user": {
+                        "id": 3,
+                        "email": "student@example.com",
+                        "full_name": "Иван Иванов",
+                        "tg_id": 123456789,
+                        "created_at": "2025-01-10T08:00:00Z"
+                    }
+                }
+            ]
+        }
+    )
 
 
 class CourseUsersResponse(BaseModel):
-    """Схема для списка пользователей курса."""
-    course_id: int
-    course_title: str
-    users: List[UserCourseWithUser]
-    total: int
+    """
+    Схема для списка пользователей курса.
+    
+    Используется в ответе GET /courses/{course_id}/users.
+    Содержит информацию о курсе и список всех студентов, привязанных к нему.
+    """
+    course_id: int = Field(..., description="ID курса", examples=[2])
+    course_title: str = Field(..., description="Название курса", examples=["Анализ данных"])
+    users: List[UserCourseWithUser] = Field(..., description="Список студентов курса с полной информацией о каждом")
+    total: int = Field(..., description="Общее количество студентов курса (для пагинации)", examples=[3, 10])
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "course_id": 2,
+                    "course_title": "Анализ данных",
+                    "total": 3,
+                    "users": [
+                        {
+                            "user_id": 4,
+                            "course_id": 2,
+                            "added_at": "2025-02-06T16:29:40.005259Z",
+                            "order_number": None,
+                            "user": {
+                                "id": 4,
+                                "email": "student@example.com",
+                                "full_name": "Иван Иванов",
+                                "tg_id": None,
+                                "created_at": "2025-02-06T11:42:52.667736Z"
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+    )
 
 
 # Rebuild models для разрешения forward references
