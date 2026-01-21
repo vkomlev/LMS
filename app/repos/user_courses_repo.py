@@ -11,6 +11,12 @@ from app.repos.base import BaseRepository
 class UserCoursesRepository(BaseRepository[UserCourses]):
     """
     Репозиторий для связей пользователей с курсами.
+    
+    ⚠️ ВАЖНО: Бизнес-логика для order_number реализована в БД через триггеры:
+    - trg_set_user_course_order_number (автоматическая нумерация)
+    - trg_reorder_after_delete (пересчет после удаления)
+    Не дублировать логику автоматической нумерации в коде!
+    См. docs/database-triggers-contract.md
     """
     def __init__(self) -> None:
         super().__init__(UserCourses)

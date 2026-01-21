@@ -15,6 +15,10 @@ from app.utils.exceptions import DomainError
 class UserCoursesService(BaseService[UserCourses]):
     """
     Сервис для связей пользователей с курсами.
+    
+    ⚠️ ВАЖНО: Бизнес-логика для order_number реализована в БД через триггеры.
+    Не дублировать логику автоматической нумерации в коде!
+    См. docs/database-triggers-contract.md
     """
     def __init__(self, repo: UserCoursesRepository = UserCoursesRepository()):
         super().__init__(repo)

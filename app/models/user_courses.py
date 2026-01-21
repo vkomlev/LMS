@@ -64,7 +64,13 @@ class UserCourses(Base):
     )
     order_number: Mapped[Optional[int]] = mapped_column(
         SmallInteger,
-        comment="Порядковый номер",
+        comment=(
+            "Порядковый номер. "
+            "⚠️ ВАЖНО: Автоматически устанавливается и пересчитывается триггером БД "
+            "(trg_set_user_course_order_number). "
+            "Не дублировать логику в коде приложения! "
+            "См. docs/database-triggers-contract.md"
+        ),
     )
 
     user: Mapped["Users"] = relationship(

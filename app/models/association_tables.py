@@ -7,7 +7,15 @@ from app.db.base import Base
 t_course_dependencies = Table(
     "course_dependencies",
     Base.metadata,
-    Column("course_id", Integer, primary_key=True, nullable=False, comment="ID курса, требующего завершения другого"),
+    Column(
+        "course_id", Integer, primary_key=True, nullable=False,
+        comment=(
+            "ID курса, требующего завершения другого. "
+            "⚠️ ВАЖНО: Предотвращение самоссылок реализовано в БД через CHECK CONSTRAINT "
+            "(check_no_self_dependency). Не дублировать логику в коде! "
+            "См. docs/database-triggers-contract.md"
+        )
+    ),
     Column("required_course_id", Integer, primary_key=True, nullable=False, comment="ID обязательного курса"),
     ForeignKeyConstraint(
         ["course_id"], ["courses.id"],

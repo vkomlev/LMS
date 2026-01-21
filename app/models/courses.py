@@ -45,7 +45,14 @@ class Courses(Base):
     )
     description: Mapped[Optional[str]] = mapped_column(Text, comment="Описание курса")
     parent_course_id: Mapped[Optional[int]] = mapped_column(
-        Integer, comment="ID родительского курса"
+        Integer, 
+        comment=(
+            "ID родительского курса. "
+            "⚠️ ВАЖНО: Валидация циклов выполняется триггером БД "
+            "(trg_check_course_hierarchy_cycle). "
+            "Не дублировать логику проверки циклов в коде! "
+            "См. docs/database-triggers-contract.md"
+        )
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

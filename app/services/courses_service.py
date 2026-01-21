@@ -98,7 +98,11 @@ class CoursesService(BaseService[Courses]):
     ) -> None:
         """
         Упрощенная валидация иерархии курсов.
-        Основная проверка циклов выполняется триггером БД.
+        
+        ⚠️ ВАЖНО: Основная проверка циклов выполняется триггером БД 
+        (trg_check_course_hierarchy_cycle). Не дублировать логику проверки циклов!
+        См. docs/database-triggers-contract.md
+        
         Здесь проверяем только существование курсов.
 
         :param db: асинхронная сессия БД.
@@ -133,7 +137,10 @@ class CoursesService(BaseService[Courses]):
     ) -> Courses:
         """
         Переместить курс в иерархии (изменить parent_course_id).
-        Валидация циклов выполняется триггером БД.
+        
+        ⚠️ ВАЖНО: Валидация циклов выполняется триггером БД 
+        (trg_check_course_hierarchy_cycle). Не дублировать логику проверки циклов!
+        См. docs/database-triggers-contract.md
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса для перемещения.

@@ -12,6 +12,10 @@ from app.models.association_tables import t_course_dependencies
 class CourseDependenciesRepository:
     """
     Репозиторий для работы с зависимостями курсов через таблицу course_dependencies.
+    
+    ⚠️ ВАЖНО: Предотвращение самоссылок реализовано в БД через CHECK CONSTRAINT 
+    (check_no_self_dependency). Не дублировать логику проверки в коде!
+    См. docs/database-triggers-contract.md
     """
 
     async def list_dependencies(
