@@ -19,6 +19,7 @@ class CourseCreate(BaseModel):
 
     Правила:
     - `parent_course_id` может быть `null` → курс корневой.
+    - `course_uid` должен быть уникальным (проверяется на уровне БД).
     - Валидация циклов в иерархии выполняется триггером БД.
     """
     title: str = Field(..., description="Название курса", examples=["Основы Python"])
@@ -30,6 +31,11 @@ class CourseCreate(BaseModel):
         examples=[None, 1],
     )
     is_required: bool = Field(False, description="Обязательный ли курс", examples=[False])
+    course_uid: Optional[str] = Field(
+        None,
+        description="Внешний код курса (для импорта/интеграций), например 'COURSE-PY-01'. Должен быть уникальным.",
+        examples=["COURSE-PY-01", None],
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -40,6 +46,13 @@ class CourseCreate(BaseModel):
                     "description": "Введение в Python: переменные, типы, условия, циклы",
                     "parent_course_id": None,
                     "is_required": False,
+                },
+                {
+                    "title": "Python для ЕГЭ",
+                    "access_level": "manual_check",
+                    "description": "Подготовка к ЕГЭ по информатике",
+                    "course_uid": "COURSE-PY-EGE-01",
+                    "is_required": True,
                 }
             ]
         }
@@ -53,6 +66,7 @@ class CourseUpdate(BaseModel):
     Правила:
     - Любое поле может быть опущено.
     - Валидация циклов (если меняется parent) выполняется триггером БД.
+    - `course_uid` должен быть уникальным (проверяется на уровне БД).
     """
     title: Optional[str] = Field(None, description="Название курса", examples=["Python: продвинутый уровень"])
     access_level: Optional[AccessLevel] = Field(None, description="Тип доступа/проверки", examples=["manual_check"])
@@ -63,6 +77,11 @@ class CourseUpdate(BaseModel):
         examples=[None, 1],
     )
     is_required: Optional[bool] = Field(None, description="Обязательный ли курс", examples=[True, False])
+    course_uid: Optional[str] = Field(
+        None,
+        description="Внешний код курса (для импорта/интеграций), например 'COURSE-PY-01'. Должен быть уникальным.",
+        examples=["COURSE-PY-01", None],
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -71,6 +90,14 @@ class CourseUpdate(BaseModel):
                     "title": "Python: продвинутый уровень",
                     "description": "Генераторы, декораторы, контекстные менеджеры",
                     "is_required": False,
+                },
+                {
+                    "course_uid": "COURSE-PY-02",
+                    "description": "Обновленное описание курса",
+                },
+                {
+                    "title": "Новое название",
+                    "course_uid": "COURSE-PY-03",
                 }
             ]
         }
