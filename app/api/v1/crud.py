@@ -160,7 +160,10 @@ def create_crud_router(
             logger.warning(f"[{prefix}] update id={item_id} not found")
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
         try:
-            updated = await service.update(db, db_obj, obj_in.dict(exclude_unset=True))
+            # Исключаем только не установленные поля
+            # None значения для обязательных полей фильтруются в репозитории
+            update_data = obj_in.dict(exclude_unset=True)
+            updated = await service.update(db, db_obj, update_data)
             logger.info(f"[{prefix}] update id=%s success", item_id)
             return updated
         except Exception as e:

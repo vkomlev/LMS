@@ -151,9 +151,32 @@ class BaseRepository(Generic[ModelType]):
         db_obj: ModelType,
         obj_in: Dict[str, Any]
     ) -> ModelType:
-        """Обновить поля существующего объекта."""
+        """
+        Обновить поля существующего объекта.
+        
+        Игнорирует None значения для обязательных полей (nullable=False),
+        чтобы не нарушать ограничения БД при частичном обновлении (PATCH).
+        Для опциональных полей (nullable=True) разрешает явную установку None.
+        """
+        # Получаем информацию о колонках модели
+        mapper = inspect(self.model)
+        column_info = {col.key: col for col in mapper.columns}
+        
         for field, value in obj_in.items():
+            # Если поле не существует в модели, пропускаем
+            if field not in column_info:
+                continue
+            
+            column = column_info[field]
+            # Если поле обязательное (nullable=False) и значение None - пропускаем
+            # Это означает, что поле не было передано в запросе
+            if not column.nullable and value is None:
+                continue
+            
+            # Для опциональных полей разрешаем явную установку None
+            # (например, parent_course_id: null для корневого курса)
             setattr(db_obj, field, value)
+        
         db.add(db_obj)
         await db.commit()
         await db.refresh(db_obj)
