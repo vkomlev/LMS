@@ -720,6 +720,8 @@ async def import_courses_from_google_sheets(
                 column_mapping["access_level"] = header
             elif header_lower in ("parent_course_uid", "parent", "родитель", "parent course"):
                 column_mapping["parent_course_uid"] = header
+            elif header_lower in ("order_number", "order number", "порядковый номер", "порядок", "order"):
+                column_mapping["order_number"] = header
             elif header_lower in ("required_courses_uid", "required courses", "зависимости", "dependencies"):
                 column_mapping["required_courses_uid"] = header
             elif header_lower in ("is_required", "required", "обязательный", "mandatory"):

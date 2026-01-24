@@ -309,26 +309,44 @@ class CoursesService(BaseService[Courses]):
             course_uid = data["course_uid"]
             parent_course_uid = data.get("parent_course_uid")
             parent_course_uids = data.get("parent_course_uids", [])
+            order_number = data.get("order_number")  # Порядковый номер из импорта
             
-            # Преобразуем parent_course_uid/parent_course_uids в parent_course_ids
+            # Преобразуем parent_course_uid/parent_course_uids в parent_course_ids или parent_courses
             parent_course_ids = []
+            parent_courses = None  # Используется если указан order_number
+            
             if parent_course_uid:
                 # Обратная совместимость: один родитель
                 parent_course_uids = [parent_course_uid]
             
             if parent_course_uids:
-                for uid in parent_course_uids:
+                # Если указан order_number, используем parent_courses
+                if order_number is not None and len(parent_course_uids) == 1:
+                    # Для одного родителя с order_number используем parent_courses
                     try:
-                        parent_course = await self.get_by_course_uid(db, uid)
-                        parent_course_ids.append(parent_course.id)
+                        parent_course = await self.get_by_course_uid(db, parent_course_uids[0])
+                        parent_courses = [{"parent_course_id": parent_course.id, "order_number": order_number}]
                     except DomainError:
-                        # Родительский курс не найден - добавляем в ошибки и пропускаем этот курс
                         errors.append(DomainError(
-                            detail=f"Родительский курс с course_uid '{uid}' не найден",
+                            detail=f"Родительский курс с course_uid '{parent_course_uids[0]}' не найден",
                             status_code=400,
-                            payload={"course_uid": course_uid, "parent_course_uid": uid},
+                            payload={"course_uid": course_uid, "parent_course_uid": parent_course_uids[0]},
                         ))
                         continue
+                else:
+                    # Для нескольких родителей или без order_number используем parent_course_ids
+                    for uid in parent_course_uids:
+                        try:
+                            parent_course = await self.get_by_course_uid(db, uid)
+                            parent_course_ids.append(parent_course.id)
+                        except DomainError:
+                            # Родительский курс не найден - добавляем в ошибки и пропускаем этот курс
+                            errors.append(DomainError(
+                                detail=f"Родительский курс с course_uid '{uid}' не найден",
+                                status_code=400,
+                                payload={"course_uid": course_uid, "parent_course_uid": uid},
+                            ))
+                            continue
 
             try:
                 # Пытаемся найти существующий курс по course_uid
@@ -344,9 +362,14 @@ class CoursesService(BaseService[Courses]):
                         "title": data["title"],
                         "description": data.get("description"),
                         "access_level": data["access_level"],
-                        "parent_course_ids": parent_course_ids if parent_course_ids else None,
                         "is_required": data.get("is_required", False),
                     }
+                    # Используем parent_courses если указан order_number, иначе parent_course_ids
+                    if parent_courses is not None:
+                        obj_in["parent_courses"] = parent_courses
+                    elif parent_course_ids:
+                        obj_in["parent_course_ids"] = parent_course_ids
+                    
                     course = await self.create(db, obj_in)
                     results.append((course_uid, "created", course.id))
                 else:
@@ -355,9 +378,17 @@ class CoursesService(BaseService[Courses]):
                         "title": data["title"],
                         "description": data.get("description"),
                         "access_level": data["access_level"],
-                        "parent_course_ids": parent_course_ids if parent_course_ids else [],
                         "is_required": data.get("is_required", False),
                     }
+                    # Используем parent_courses если указан order_number, иначе parent_course_ids
+                    if parent_courses is not None:
+                        obj_in["parent_courses"] = parent_courses
+                    elif parent_course_ids:
+                        obj_in["parent_course_ids"] = parent_course_ids
+                    else:
+                        # Если родители не указаны, оставляем текущие связи
+                        pass
+                    
                     course = await self.update(db, existing, obj_in)
                     results.append((course_uid, "updated", course.id))
             except Exception as e:

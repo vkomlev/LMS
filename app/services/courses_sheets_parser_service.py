@@ -118,6 +118,7 @@ class CoursesSheetsParserService:
         # Опциональные поля
         description = self._get_field(row, column_mapping, "description", required=False)
         parent_course_uid = self._get_field(row, column_mapping, "parent_course_uid", required=False)
+        order_number_str = self._get_field(row, column_mapping, "order_number", required=False)
         is_required_str = self._get_field(row, column_mapping, "is_required", required=False)
         
         # Парсим is_required (по умолчанию False)
@@ -136,6 +137,26 @@ class CoursesSheetsParserService:
                     course_uid,
                 )
         
+        # Парсим order_number (опционально, только если указан parent_course_uid)
+        order_number: Optional[int] = None
+        if order_number_str and parent_course_uid:
+            try:
+                order_number = int(order_number_str.strip())
+                if order_number < 1:
+                    logger.warning(
+                        "order_number должен быть положительным числом, получено: %s для курса %s. Используется None",
+                        order_number_str,
+                        course_uid,
+                    )
+                    order_number = None
+            except (ValueError, AttributeError):
+                logger.warning(
+                    "Не удалось распознать order_number '%s' для курса %s. Используется None",
+                    order_number_str,
+                    course_uid,
+                )
+                order_number = None
+        
         # Парсим required_courses_uid (список через запятую)
         required_courses_uid_str = self._get_field(row, column_mapping, "required_courses_uid", required=False)
         required_courses_uid_list: List[str] = []
@@ -151,6 +172,7 @@ class CoursesSheetsParserService:
             "access_level": access_level.value,
             "description": description,
             "parent_course_uid": parent_course_uid if parent_course_uid else None,
+            "order_number": order_number,
             "is_required": is_required,
         }
         
@@ -169,6 +191,7 @@ class CoursesSheetsParserService:
             "description": "description",
             "access_level": "access_level",
             "parent_course_uid": "parent_course_uid",
+            "order_number": "order_number",
             "required_courses_uid": "required_courses_uid",
             "is_required": "is_required",
         }
