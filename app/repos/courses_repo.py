@@ -1,6 +1,6 @@
 # app/repos/courses_repo.py
 
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from sqlalchemy import select, text, delete, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,11 +23,20 @@ class CoursesRepository(BaseRepository[Courses]):
         db: AsyncSession,
         course_id: int
     ) -> List[Courses]:
-        """Получить прямых детей курса (потомки первого уровня)."""
+        """
+        Получить прямых детей курса (потомки первого уровня).
+        
+        Сортировка: по order_number (NULL в конце), затем по id.
+        ⚠️ ВАЖНО: order_number автоматически управляется триггером БД.
+        """
         stmt = (
             select(Courses)
             .join(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(t_course_parents.c.parent_course_id == course_id)
+            .order_by(
+                t_course_parents.c.order_number.asc().nulls_last(),
+                Courses.id.asc()
+            )
             .options(selectinload(Courses.parent_courses))
         )
         result = await db.execute(stmt)
@@ -158,21 +167,79 @@ class CoursesRepository(BaseRepository[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
-        parent_course_ids: List[int]
+        parent_course_ids: Optional[List[int]] = None,
+        parent_courses: Optional[List[Dict[str, Any]]] = None
     ) -> None:
         """
         Установить родительские курсы для курса.
         Удаляет все существующие связи и создает новые.
+        
+        Args:
+            course_id: ID курса
+            parent_course_ids: Список ID родительских курсов (order_number будет установлен автоматически)
+            parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально)
+        
+        ⚠️ ВАЖНО: order_number автоматически устанавливается триггером БД, если не указан.
+        См. docs/database-triggers-contract.md
         """
         # Удаляем все существующие связи
         stmt = delete(t_course_parents).where(t_course_parents.c.course_id == course_id)
         await db.execute(stmt)
         
+        # Определяем, какие данные использовать
+        if parent_courses is not None:
+            # Используем parent_courses (с приоритетом)
+            values = [
+                {
+                    "course_id": course_id,
+                    "parent_course_id": pc.get("parent_course_id"),
+                    "order_number": pc.get("order_number")  # Может быть None - триггер установит автоматически
+                }
+                for pc in parent_courses
+            ]
+        elif parent_course_ids is not None:
+            # Используем parent_course_ids
+            values = [
+                {
+                    "course_id": course_id,
+                    "parent_course_id": pid,
+                    "order_number": None  # Триггер установит автоматически
+                }
+                for pid in parent_course_ids
+            ]
+        else:
+            values = []
+        
         # Создаем новые связи
-        if parent_course_ids:
-            values = [{"course_id": course_id, "parent_course_id": pid} for pid in parent_course_ids]
+        if values:
             await db.execute(t_course_parents.insert().values(values))
         
         # Не делаем commit здесь - он будет сделан в update
         
+        await db.commit()
+    
+    async def update_course_parent_order(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        parent_course_id: int,
+        order_number: Optional[int]
+    ) -> None:
+        """
+        Обновить порядковый номер подкурса у конкретного родителя.
+        
+        ⚠️ ВАЖНО: Триггер БД автоматически пересчитает order_number остальных подкурсов.
+        См. docs/database-triggers-contract.md
+        """
+        from sqlalchemy import update as sql_update
+        
+        stmt = (
+            sql_update(t_course_parents)
+            .where(
+                (t_course_parents.c.course_id == course_id) &
+                (t_course_parents.c.parent_course_id == parent_course_id)
+            )
+            .values(order_number=order_number)
+        )
+        await db.execute(stmt)
         await db.commit()

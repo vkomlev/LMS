@@ -15,6 +15,7 @@ from app.schemas.courses import (
     GoogleSheetsImportResponse,
     GoogleSheetsImportError,
 )
+from app.schemas.course_parents import CourseParentOrderUpdate
 from app.schemas.user_courses import CourseUsersResponse, UserCourseWithUser
 from app.services.courses_service import CoursesService
 from app.services.user_courses_service import UserCoursesService
@@ -294,11 +295,114 @@ async def move_course_endpoint(
     - 404: Курс или родительский курс не найден.
     - 400: Обнаружен цикл в иерархии или курс пытается стать родителем самому себе.
     """
+    # Преобразуем new_parent_courses в список словарей, если это Pydantic модели
+    new_parent_courses_dict = None
+    if payload.new_parent_courses is not None:
+        new_parent_courses_dict = [
+            pc.model_dump() if hasattr(pc, 'model_dump') else pc
+            for pc in payload.new_parent_courses
+        ]
+    
     updated_course = await courses_service.move_course(
         db,
         course_id,
-        payload.new_parent_ids,
+        new_parent_ids=payload.new_parent_ids,
+        new_parent_courses=new_parent_courses_dict,
     )
+    return CourseRead.model_validate(updated_course)
+
+
+@router.patch(
+    "/courses/{course_id}/parents/{parent_course_id}/order",
+    response_model=CourseRead,
+    summary="Изменить порядковый номер подкурса у родителя",
+    status_code=status.HTTP_200_OK,
+    responses={
+        200: {
+            "description": "Порядковый номер успешно обновлен",
+        },
+        404: {
+            "description": "Курс, родительский курс или связь не найдены",
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def update_course_parent_order_endpoint(
+    course_id: int,
+    parent_course_id: int,
+    payload: CourseParentOrderUpdate = Body(
+        ...,
+        description="Новый порядковый номер подкурса",
+        examples=[
+            {
+                "summary": "Установить порядковый номер 1",
+                "value": {"order_number": 1},
+            },
+            {
+                "summary": "Установить порядковый номер 2",
+                "value": {"order_number": 2},
+            },
+        ],
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> CourseRead:
+    """
+    Изменить порядковый номер подкурса у конкретного родительского курса.
+    
+    Правила:
+    - Если order_number указан, триггер БД автоматически пересчитает порядковые номера остальных подкурсов.
+    - Если order_number = null, триггер установит следующий доступный номер.
+    - Порядковые номера уникальны в рамках одного родительского курса.
+    
+    ⚠️ ВАЖНО: Пересчет order_number выполняется автоматически триггером БД.
+    См. docs/database-triggers-contract.md
+    
+    Ошибки:
+    - 404: Курс, родительский курс или связь между ними не найдены.
+    """
+    from app.utils.exceptions import DomainError
+    from app.models.association_tables import t_course_parents
+    from sqlalchemy import select
+    
+    # Проверяем существование курса
+    course = await courses_service.get_by_id(db, course_id)
+    if course is None:
+        raise DomainError(
+            detail="Курс не найден",
+            status_code=404,
+            payload={"course_id": course_id},
+        )
+    
+    # Проверяем существование родительского курса
+    parent_course = await courses_service.get_by_id(db, parent_course_id)
+    if parent_course is None:
+        raise DomainError(
+            detail="Родительский курс не найден",
+            status_code=404,
+            payload={"parent_course_id": parent_course_id},
+        )
+    
+    # Проверяем существование связи
+    stmt = select(t_course_parents).where(
+        (t_course_parents.c.course_id == course_id) &
+        (t_course_parents.c.parent_course_id == parent_course_id)
+    )
+    result = await db.execute(stmt)
+    link = result.first()
+    if link is None:
+        raise DomainError(
+            detail="Связь между курсом и родительским курсом не найдена",
+            status_code=404,
+            payload={"course_id": course_id, "parent_course_id": parent_course_id},
+        )
+    
+    # Обновляем порядковый номер
+    await courses_service.repo.update_course_parent_order(
+        db, course_id, parent_course_id, payload.order_number
+    )
+    
+    # Перезагружаем курс с relationships
+    updated_course = await courses_service.get_by_id(db, course_id)
     return CourseRead.model_validate(updated_course)
 
 

@@ -36,11 +36,23 @@ class CoursesService(BaseService[Courses]):
         parent_course_ids обрабатывается отдельно, так как это relationship, а не поле модели.
         """
         parent_course_ids = obj_in.pop("parent_course_ids", None)
-        # Создаем курс без parent_course_ids
+        parent_courses = obj_in.pop("parent_courses", None)
+        # Создаем курс без parent_course_ids и parent_courses
         course = await super().create(db, obj_in)
         # Устанавливаем родительские курсы
-        if parent_course_ids is not None:
-            await self.repo.set_parent_courses(db, course.id, parent_course_ids)
+        if parent_courses is not None or parent_course_ids is not None:
+            # Преобразуем parent_courses в список словарей, если это Pydantic модели
+            parent_courses_dict = None
+            if parent_courses is not None:
+                parent_courses_dict = [
+                    pc.model_dump() if hasattr(pc, 'model_dump') else pc
+                    for pc in parent_courses
+                ]
+            await self.repo.set_parent_courses(
+                db, course.id,
+                parent_course_ids=parent_course_ids,
+                parent_courses=parent_courses_dict
+            )
         # Перезагружаем курс с relationships через новый запрос
         stmt = select(Courses).where(Courses.id == course.id).options(selectinload(Courses.parent_courses))
         result = await db.execute(stmt)
@@ -56,10 +68,22 @@ class CoursesService(BaseService[Courses]):
         parent_course_ids обрабатывается отдельно, так как это relationship, а не поле модели.
         """
         parent_course_ids = obj_in.pop("parent_course_ids", None)
+        parent_courses = obj_in.pop("parent_courses", None)
         # Обновляем родительские курсы ПЕРЕД обновлением основного объекта
         # чтобы все изменения были в одной транзакции
-        if parent_course_ids is not None:
-            await self.repo.set_parent_courses(db, db_obj.id, parent_course_ids)
+        if parent_courses is not None or parent_course_ids is not None:
+            # Преобразуем parent_courses в список словарей, если это Pydantic модели
+            parent_courses_dict = None
+            if parent_courses is not None:
+                parent_courses_dict = [
+                    pc.model_dump() if hasattr(pc, 'model_dump') else pc
+                    for pc in parent_courses
+                ]
+            await self.repo.set_parent_courses(
+                db, db_obj.id,
+                parent_course_ids=parent_course_ids,
+                parent_courses=parent_courses_dict
+            )
         # Обновляем курс без parent_course_ids
         course = await super().update(db, db_obj, obj_in)
         # Перезагружаем курс с relationships через новый запрос
@@ -177,7 +201,8 @@ class CoursesService(BaseService[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
-        new_parent_ids: Optional[List[int]],
+        new_parent_ids: Optional[List[int]] = None,
+        new_parent_courses: Optional[List[Dict[str, Any]]] = None,
     ) -> Courses:
         """
         Переместить курс в иерархии (изменить родительские курсы).
@@ -189,11 +214,17 @@ class CoursesService(BaseService[Courses]):
         :param db: асинхронная сессия БД.
         :param course_id: ID курса для перемещения.
         :param new_parent_ids: Список ID новых родителей (None или [] для корневого курса).
+        :param new_parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number'.
         :return: Обновленный курс.
         :raises DomainError: если курс не найден, родитель не найден, или обнаружен цикл.
         """
+        # Определяем, какие данные использовать для валидации
+        parent_ids_for_validation = new_parent_ids
+        if new_parent_courses is not None:
+            parent_ids_for_validation = [pc.get("parent_course_id") for pc in new_parent_courses]
+        
         # Валидация существования курсов
-        await self.validate_hierarchy(db, course_id, new_parent_ids)
+        await self.validate_hierarchy(db, course_id, parent_ids_for_validation)
 
         # Получаем курс
         course = await self.get_by_id(db, course_id)
@@ -205,9 +236,20 @@ class CoursesService(BaseService[Courses]):
             )
 
         try:
+            # Преобразуем new_parent_courses в список словарей, если это Pydantic модели
+            parent_courses_dict = None
+            if new_parent_courses is not None:
+                parent_courses_dict = [
+                    pc.model_dump() if hasattr(pc, 'model_dump') else pc
+                    for pc in new_parent_courses
+                ]
+            
             # Устанавливаем родительские курсы через репозиторий
-            parent_ids = new_parent_ids or []
-            await self.repo.set_parent_courses(db, course_id, parent_ids)
+            await self.repo.set_parent_courses(
+                db, course_id,
+                parent_course_ids=new_parent_ids,
+                parent_courses=parent_courses_dict
+            )
             # Обновляем объект в сессии
             await db.refresh(course)
             return course

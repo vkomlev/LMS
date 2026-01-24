@@ -1,8 +1,13 @@
 from __future__ import annotations
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, TYPE_CHECKING
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
+
+if TYPE_CHECKING:
+    from app.schemas.course_parents import ParentCourseWithOrder
+else:
+    from app.schemas.course_parents import ParentCourseWithOrder
 
 
 class AccessLevel(str, Enum):
@@ -27,8 +32,13 @@ class CourseCreate(BaseModel):
     description: Optional[str] = Field(None, description="Описание курса", examples=["Введение в Python: переменные, типы, условия, циклы"])
     parent_course_ids: Optional[List[int]] = Field(
         None,
-        description="Список ID родительских курсов. Пустой список или null = корневой курс.",
+        description="Список ID родительских курсов. Пустой список или null = корневой курс. Для указания order_number используйте parent_courses.",
         examples=[None, [], [1], [1, 2]],
+    )
+    parent_courses: Optional[List[ParentCourseWithOrder]] = Field(
+        None,
+        description="Список родительских курсов с порядковыми номерами. Если указано, имеет приоритет над parent_course_ids.",
+        examples=[None, [{"parent_course_id": 1, "order_number": 1}]],
     )
     is_required: bool = Field(False, description="Обязательный ли курс", examples=[False])
     course_uid: Optional[str] = Field(
@@ -82,8 +92,13 @@ class CourseUpdate(BaseModel):
     description: Optional[str] = Field(None, description="Описание курса")
     parent_course_ids: Optional[List[int]] = Field(
         None,
-        description="Список ID родительских курсов. null = не изменять, [] = сделать корневым.",
+        description="Список ID родительских курсов. null = не изменять, [] = сделать корневым. Для указания order_number используйте parent_courses.",
         examples=[None, [], [1], [1, 2]],
+    )
+    parent_courses: Optional[List[ParentCourseWithOrder]] = Field(
+        None,
+        description="Список родительских курсов с порядковыми номерами. Если указано, имеет приоритет над parent_course_ids.",
+        examples=[None, [{"parent_course_id": 1, "order_number": 1}]],
     )
     is_required: Optional[bool] = Field(None, description="Обязательный ли курс", examples=[True, False])
     course_uid: Optional[str] = Field(
@@ -165,11 +180,17 @@ class CourseMoveRequest(BaseModel):
     - `new_parent_ids = []` или `null` → курс становится корневым.
     - Триггер БД запрещает циклы и самоссылки.
     - Курс может иметь несколько родителей.
+    - Для указания order_number используйте new_parent_courses.
     """
     new_parent_ids: Optional[List[int]] = Field(
         None,
-        description="Список ID новых родительских курсов. Если [] или null, курс становится корневым.",
+        description="Список ID новых родительских курсов. Если [] или null, курс становится корневым. Для указания order_number используйте new_parent_courses.",
         examples=[None, [], [10], [10, 11]],
+    )
+    new_parent_courses: Optional[List[ParentCourseWithOrder]] = Field(
+        None,
+        description="Список новых родительских курсов с порядковыми номерами. Если указано, имеет приоритет над new_parent_ids.",
+        examples=[None, [{"parent_course_id": 10, "order_number": 1}]],
     )
 
     model_config = ConfigDict(
@@ -177,6 +198,7 @@ class CourseMoveRequest(BaseModel):
             "examples": [
                 {"new_parent_ids": [10]},
                 {"new_parent_ids": [10, 11]},
+                {"new_parent_courses": [{"parent_course_id": 10, "order_number": 1}]},
                 {"new_parent_ids": []},
                 {"new_parent_ids": None},
             ]

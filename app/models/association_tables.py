@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Table, Column, Integer, ForeignKeyConstraint,
+    Table, Column, Integer, SmallInteger, ForeignKeyConstraint,
     PrimaryKeyConstraint, text, DateTime
 )
 from app.db.base import Base
@@ -77,6 +77,18 @@ t_course_parents = Table(
         )
     ),
     Column("parent_course_id", Integer, primary_key=True, nullable=False, comment="ID родительского курса"),
+    Column(
+        "order_number",
+        SmallInteger,
+        nullable=True,
+        comment=(
+            "Порядковый номер подкурса внутри родительского курса. "
+            "⚠️ ВАЖНО: Автоматически устанавливается и пересчитывается триггером БД "
+            "(trg_set_course_parent_order_number). "
+            "Не дублировать логику в коде приложения! "
+            "См. docs/database-triggers-contract.md"
+        )
+    ),
     ForeignKeyConstraint(
         ["course_id"], ["courses.id"],
         ondelete="CASCADE", name="course_parents_course_id_fkey"
