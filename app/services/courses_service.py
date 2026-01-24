@@ -121,13 +121,13 @@ class CoursesService(BaseService[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
-    ) -> List[Courses]:
+    ) -> List[tuple[Courses, Optional[int]]]:
         """
         Получить прямых детей курса (потомки первого уровня).
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса.
-        :return: Список прямых детей курса.
+        :return: Список кортежей (course, order_number) для прямых детей курса.
         """
         return await self.repo.get_children(db, course_id)
 

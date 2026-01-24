@@ -153,6 +153,29 @@ class CourseRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CourseWithOrderNumber(CourseRead):
+    """
+    Схема курса с порядковым номером внутри родительского курса.
+    
+    Используется в эндпойнте GET /courses/{course_id}/children для возврата
+    дочерних курсов с их порядковыми номерами внутри родительского курса.
+    
+    Порядковые номера автоматически управляются триггерами БД.
+    См. docs/database-triggers-contract.md
+    """
+    order_number: Optional[int] = Field(
+        None,
+        description=(
+            "Порядковый номер подкурса внутри родительского курса. "
+            "Может быть null, если порядковый номер не установлен. "
+            "Автоматически управляется триггерами БД."
+        ),
+        examples=[1, 2, 3, None],
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class CourseReadWithChildren(CourseRead):
     """Схема курса с вложенными детьми (прямые потомки)."""
     children: List["CourseReadWithChildren"] = []

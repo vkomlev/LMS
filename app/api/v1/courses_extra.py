@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db
 from app.schemas.courses import (
     CourseRead,
+    CourseWithOrderNumber,
     CourseReadWithChildren,
     CourseTreeRead,
     CourseMoveRequest,
@@ -141,11 +142,50 @@ async def get_course_by_code_endpoint(
 
 @router.get(
     "/courses/{course_id}/children",
-    response_model=List[CourseRead],
+    response_model=List[CourseWithOrderNumber],
     summary="Получить прямых детей курса",
+    description=(
+        "Получить прямых детей курса (потомки первого уровня) с порядковыми номерами.\n\n"
+        "**Возвращает:**\n"
+        "- Список курсов, у которых указанный `course_id` является родителем\n"
+        "- Каждый курс включает порядковый номер (`order_number`) внутри родительского курса\n"
+        "- Сортировка: по `order_number` (NULL в конце), затем по `id`\n\n"
+        "**Порядковые номера:**\n"
+        "- Автоматически управляются триггерами БД (см. `docs/database-triggers-contract.md`)\n"
+        "- Могут быть `null`, если порядковый номер не установлен\n"
+        "- Уникальны в рамках одного родительского курса"
+    ),
     responses={
         200: {
-            "description": "Список прямых детей курса",
+            "description": "Список прямых детей курса с порядковыми номерами",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 2,
+                            "title": "Анализ данных",
+                            "access_level": "manual_check",
+                            "description": "Курс по анализу данных",
+                            "parent_course_ids": [1],
+                            "created_at": "2026-01-24T12:00:00Z",
+                            "is_required": False,
+                            "course_uid": None,
+                            "order_number": 1
+                        },
+                        {
+                            "id": 6,
+                            "title": "Test Course 1",
+                            "access_level": "self_guided",
+                            "description": "Test course",
+                            "parent_course_ids": [1],
+                            "created_at": "2026-01-24T12:00:00Z",
+                            "is_required": False,
+                            "course_uid": None,
+                            "order_number": 3
+                        }
+                    ]
+                }
+            }
         },
         404: {
             "description": "Курс не найден",
@@ -156,14 +196,20 @@ async def get_course_by_code_endpoint(
 async def get_course_children_endpoint(
     course_id: int,
     db: AsyncSession = Depends(get_db),
-) -> List[CourseRead]:
+) -> List[CourseWithOrderNumber]:
     """
     Получить прямых детей курса (потомки первого уровня).
 
     Возвращает список курсов, у которых указанный course_id является родителем.
+    Каждый курс включает порядковый номер (order_number) внутри родительского курса.
     """
-    children = await courses_service.get_children(db, course_id)
-    return [CourseRead.model_validate(child) for child in children]
+    children_with_order = await courses_service.get_children(db, course_id)
+    result = []
+    for course, order_number in children_with_order:
+        course_data = CourseRead.model_validate(course).model_dump()
+        course_data["order_number"] = order_number
+        result.append(CourseWithOrderNumber(**course_data))
+    return result
 
 
 @router.get(

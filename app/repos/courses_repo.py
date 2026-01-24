@@ -1,6 +1,6 @@
 # app/repos/courses_repo.py
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy import select, text, delete, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,15 +22,16 @@ class CoursesRepository(BaseRepository[Courses]):
         self,
         db: AsyncSession,
         course_id: int
-    ) -> List[Courses]:
+    ) -> List[tuple[Courses, Optional[int]]]:
         """
         Получить прямых детей курса (потомки первого уровня).
         
+        Возвращает список кортежей (course, order_number).
         Сортировка: по order_number (NULL в конце), затем по id.
         ⚠️ ВАЖНО: order_number автоматически управляется триггером БД.
         """
         stmt = (
-            select(Courses)
+            select(Courses, t_course_parents.c.order_number)
             .join(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(t_course_parents.c.parent_course_id == course_id)
             .order_by(
@@ -40,7 +41,7 @@ class CoursesRepository(BaseRepository[Courses]):
             .options(selectinload(Courses.parent_courses))
         )
         result = await db.execute(stmt)
-        return list(result.scalars().all())
+        return [(row[0], row[1]) for row in result.all()]
 
     async def get_all_children(
         self,
