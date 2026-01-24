@@ -8,7 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.models.association_tables import t_course_dependencies
+from app.models.association_tables import t_course_dependencies, t_course_parents
 
 if TYPE_CHECKING:
     
@@ -23,12 +23,7 @@ class Courses(Base):
     """
     __tablename__ = "courses"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["parent_course_id"], ["courses.id"],
-            ondelete="SET NULL", name="courses_parent_course_id_fkey"
-        ),
         PrimaryKeyConstraint("id", name="courses_pkey"),
-        Index("idx_courses_parent", "parent_course_id"),
         {"comment": "Курсы системы обучения"},
     )
 
@@ -44,16 +39,6 @@ class Courses(Base):
         comment="Уровень доступа к курсу"
     )
     description: Mapped[Optional[str]] = mapped_column(Text, comment="Описание курса")
-    parent_course_id: Mapped[Optional[int]] = mapped_column(
-        Integer, 
-        comment=(
-            "ID родительского курса. "
-            "⚠️ ВАЖНО: Валидация циклов выполняется триггером БД "
-            "(trg_check_course_hierarchy_cycle). "
-            "Не дублировать логику проверки циклов в коде! "
-            "См. docs/database-triggers-contract.md"
-        )
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("now()"),
@@ -70,11 +55,21 @@ class Courses(Base):
         comment="Код курса для импорта (course_uid, например 'COURSE-PY-01')",
     )
 
-    parent_course: Mapped[Optional["Courses"]] = relationship(
-        "Courses", remote_side=[id], back_populates="parent_course_reverse"
+    # Родители курса (многие-ко-многим через course_parents)
+    parent_courses: Mapped[List["Courses"]] = relationship(
+        "Courses",
+        secondary=t_course_parents,
+        primaryjoin=id == t_course_parents.c.course_id,
+        secondaryjoin=id == t_course_parents.c.parent_course_id,
+        back_populates="child_courses",
     )
-    parent_course_reverse: Mapped[List["Courses"]] = relationship(
-        "Courses", remote_side=[parent_course_id], back_populates="parent_course"
+    # Дети курса (обратная сторона связи)
+    child_courses: Mapped[List["Courses"]] = relationship(
+        "Courses",
+        secondary=t_course_parents,
+        primaryjoin=id == t_course_parents.c.parent_course_id,
+        secondaryjoin=id == t_course_parents.c.course_id,
+        back_populates="parent_courses"
     )
     
     required_course: Mapped[List["Courses"]] = relationship(
@@ -97,3 +92,25 @@ class Courses(Base):
     user_courses: Mapped[List["UserCourses"]] = relationship(
         "UserCourses", back_populates="course"
     )
+    
+    @property
+    def parent_course_ids(self) -> List[int]:
+        """Получить список ID родительских курсов."""
+        # Проверяем, загружены ли parent_courses
+        # Используем hasattr и проверку на None, чтобы избежать lazy loading
+        try:
+            # Проверяем, есть ли у объекта загруженные parent_courses
+            if hasattr(self, '_sa_instance_state'):
+                state = self._sa_instance_state
+                if 'parent_courses' in state.unloaded:
+                    # Если relationships не загружены, возвращаем пустой список
+                    # Это предотвратит lazy loading в неправильном контексте
+                    return []
+            # Если parent_courses загружены или не определены, возвращаем список ID
+            if self.parent_courses:
+                return [p.id for p in self.parent_courses]
+            return []
+        except Exception:
+            # В случае любой ошибки (например, lazy loading в неправильном контексте)
+            # возвращаем пустой список
+            return []

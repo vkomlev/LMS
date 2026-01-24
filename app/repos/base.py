@@ -4,6 +4,7 @@ from typing import Any, Dict, Generic, List, Optional, Type, TypeVar, Iterable, 
 from sqlalchemy import delete, func, select, update, cast, or_, inspect, Select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.sql import ColumnElement
 from sqlalchemy.sql.sqltypes import String, Text
@@ -29,6 +30,13 @@ class BaseRepository(Generic[ModelType]):
 
     async def get(self, db: AsyncSession, id: Any) -> Optional[ModelType]:
         """Получить объект по первичному ключу."""
+        # Для курсов загружаем parent_courses через selectinload сразу
+        from app.models.courses import Courses
+        if self.model == Courses:
+            stmt = select(Courses).where(Courses.id == id).options(selectinload(Courses.parent_courses))
+            result = await db.execute(stmt)
+            return result.scalar_one_or_none()
+        # Для остальных моделей используем обычный get
         return await db.get(self.model, id)
     
     async def get_by_keys(
@@ -180,6 +188,13 @@ class BaseRepository(Generic[ModelType]):
         db.add(db_obj)
         await db.commit()
         await db.refresh(db_obj)
+        # Загружаем parent_courses для курсов через selectinload
+        if hasattr(db_obj, 'parent_courses'):
+            from app.models.courses import Courses
+            if isinstance(db_obj, Courses):
+                stmt = select(Courses).where(Courses.id == db_obj.id).options(selectinload(Courses.parent_courses))
+                result = await db.execute(stmt)
+                db_obj = result.scalar_one()
         return db_obj
 
     async def delete(
@@ -391,7 +406,27 @@ class BaseRepository(Generic[ModelType]):
                 stmt = stmt.offset(offset)
 
             result = await db.execute(stmt)
-            items: List[ModelType] = result.scalars().all()
+            items: List[ModelType] = list(result.scalars().all())
+            
+            # Загружаем parent_courses для курсов, если есть
+            if items and hasattr(items[0], 'parent_courses'):
+                from sqlalchemy.orm import selectinload
+                from app.models.courses import Courses
+                if isinstance(items[0], Courses):
+                    # Перезагружаем с relationships
+                    ids = [item.id for item in items]
+                    stmt_with_load = (
+                        select(Courses)
+                        .where(Courses.id.in_(ids))
+                        .options(selectinload(Courses.parent_courses))
+                    )
+                    if filters:
+                        for f in filters:
+                            stmt_with_load = stmt_with_load.where(f)
+                    if order_by:
+                        stmt_with_load = stmt_with_load.order_by(*order_by)
+                    result = await db.execute(stmt_with_load)
+                    items = list(result.scalars().all())
 
             # Отдельный COUNT(*) c теми же фильтрами
             base_count = select(self.model)

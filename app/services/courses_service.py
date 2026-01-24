@@ -6,6 +6,8 @@ from typing import Optional, List, Dict, Any, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, DBAPIError
+from sqlalchemy.orm import selectinload
+from sqlalchemy import select
 
 from app.models.courses import Courses
 from app.repos.courses_repo import CoursesRepository
@@ -24,6 +26,47 @@ class CoursesService(BaseService[Courses]):
 
     def __init__(self, repo: CoursesRepository = CoursesRepository()) -> None:
         super().__init__(repo)
+    
+    async def create(
+        self, db: AsyncSession, obj_in: Dict[str, Any]
+    ) -> Courses:
+        """
+        Создать курс с обработкой parent_course_ids.
+        
+        parent_course_ids обрабатывается отдельно, так как это relationship, а не поле модели.
+        """
+        parent_course_ids = obj_in.pop("parent_course_ids", None)
+        # Создаем курс без parent_course_ids
+        course = await super().create(db, obj_in)
+        # Устанавливаем родительские курсы
+        if parent_course_ids is not None:
+            await self.repo.set_parent_courses(db, course.id, parent_course_ids)
+        # Перезагружаем курс с relationships через новый запрос
+        stmt = select(Courses).where(Courses.id == course.id).options(selectinload(Courses.parent_courses))
+        result = await db.execute(stmt)
+        course = result.scalar_one()
+        return course
+    
+    async def update(
+        self, db: AsyncSession, db_obj: Courses, obj_in: Dict[str, Any]
+    ) -> Courses:
+        """
+        Обновить курс с обработкой parent_course_ids.
+        
+        parent_course_ids обрабатывается отдельно, так как это relationship, а не поле модели.
+        """
+        parent_course_ids = obj_in.pop("parent_course_ids", None)
+        # Обновляем родительские курсы ПЕРЕД обновлением основного объекта
+        # чтобы все изменения были в одной транзакции
+        if parent_course_ids is not None:
+            await self.repo.set_parent_courses(db, db_obj.id, parent_course_ids)
+        # Обновляем курс без parent_course_ids
+        course = await super().update(db, db_obj, obj_in)
+        # Перезагружаем курс с relationships через новый запрос
+        stmt = select(Courses).where(Courses.id == course.id).options(selectinload(Courses.parent_courses))
+        result = await db.execute(stmt)
+        course = result.scalar_one()
+        return course
 
     async def get_by_course_uid(
         self,
@@ -94,7 +137,7 @@ class CoursesService(BaseService[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
-        new_parent_id: Optional[int],
+        new_parent_ids: Optional[List[int]],
     ) -> None:
         """
         Упрощенная валидация иерархии курсов.
@@ -107,7 +150,7 @@ class CoursesService(BaseService[Courses]):
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса для перемещения.
-        :param new_parent_id: ID нового родителя (None для корневого курса).
+        :param new_parent_ids: Список ID новых родителей (None или [] для корневого курса).
         :raises DomainError: если курс не найден или родитель не найден.
         """
         # Проверяем существование курса
@@ -119,24 +162,25 @@ class CoursesService(BaseService[Courses]):
                 payload={"course_id": course_id},
             )
 
-        # Если указан родитель, проверяем его существование
-        if new_parent_id is not None:
-            parent = await self.get_by_id(db, new_parent_id)
-            if parent is None:
-                raise DomainError(
-                    detail="Родительский курс не найден",
-                    status_code=404,
-                    payload={"parent_course_id": new_parent_id},
-                )
+        # Если указаны родители, проверяем их существование
+        if new_parent_ids:
+            for parent_id in new_parent_ids:
+                parent = await self.get_by_id(db, parent_id)
+                if parent is None:
+                    raise DomainError(
+                        detail="Родительский курс не найден",
+                        status_code=404,
+                        payload={"parent_course_id": parent_id},
+                    )
 
     async def move_course(
         self,
         db: AsyncSession,
         course_id: int,
-        new_parent_id: Optional[int],
+        new_parent_ids: Optional[List[int]],
     ) -> Courses:
         """
-        Переместить курс в иерархии (изменить parent_course_id).
+        Переместить курс в иерархии (изменить родительские курсы).
         
         ⚠️ ВАЖНО: Валидация циклов выполняется триггером БД 
         (trg_check_course_hierarchy_cycle). Не дублировать логику проверки циклов!
@@ -144,12 +188,12 @@ class CoursesService(BaseService[Courses]):
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса для перемещения.
-        :param new_parent_id: ID нового родителя (None для корневого курса).
+        :param new_parent_ids: Список ID новых родителей (None или [] для корневого курса).
         :return: Обновленный курс.
         :raises DomainError: если курс не найден, родитель не найден, или обнаружен цикл.
         """
         # Валидация существования курсов
-        await self.validate_hierarchy(db, course_id, new_parent_id)
+        await self.validate_hierarchy(db, course_id, new_parent_ids)
 
         # Получаем курс
         course = await self.get_by_id(db, course_id)
@@ -161,13 +205,12 @@ class CoursesService(BaseService[Courses]):
             )
 
         try:
-            # Обновляем parent_course_id
-            updated_course = await self.update(
-                db,
-                course,
-                {"parent_course_id": new_parent_id},
-            )
-            return updated_course
+            # Устанавливаем родительские курсы через репозиторий
+            parent_ids = new_parent_ids or []
+            await self.repo.set_parent_courses(db, course_id, parent_ids)
+            # Обновляем объект в сессии
+            await db.refresh(course)
+            return course
         except (IntegrityError, DBAPIError) as e:
             # Обрабатываем ошибки от триггера БД
             error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
@@ -176,7 +219,7 @@ class CoursesService(BaseService[Courses]):
                 raise DomainError(
                     detail="Нельзя создать цикл в иерархии курсов",
                     status_code=400,
-                    payload={"course_id": course_id, "new_parent_id": new_parent_id},
+                    payload={"course_id": course_id, "new_parent_ids": new_parent_ids},
                 ) from e
             elif "cannot be its own parent" in error_msg or "Course cannot be its own parent" in error_msg:
                 raise DomainError(
@@ -200,7 +243,7 @@ class CoursesService(BaseService[Courses]):
         - если курс с таким course_uid не найден → создаём (CREATE),
         - если найден → обновляем поля (UPDATE).
 
-        Обрабатывает иерархию (parent_course_uid преобразуется в parent_course_id).
+        Обрабатывает иерархию (parent_course_uid преобразуется в parent_course_ids).
         После импорта всех курсов обрабатывает зависимости (если передан dependencies_map).
 
         :param db: асинхронная сессия БД.
@@ -208,6 +251,7 @@ class CoursesService(BaseService[Courses]):
                       (course_uid, title, description, access_level, 
                        parent_course_uid, is_required).
                       parent_course_uid может быть строкой (course_uid родителя) или None.
+                      Для множественных родителей используйте parent_course_uids (список).
         :param dependencies_map: словарь {course_uid: [required_course_uid, ...]} для зависимостей.
         :return: кортеж (results, errors), где
                  results - список кортежей (course_uid, action, course_id), где
@@ -222,21 +266,27 @@ class CoursesService(BaseService[Courses]):
         for data in items:
             course_uid = data["course_uid"]
             parent_course_uid = data.get("parent_course_uid")
+            parent_course_uids = data.get("parent_course_uids", [])
             
-            # Преобразуем parent_course_uid в parent_course_id
-            parent_course_id = None
+            # Преобразуем parent_course_uid/parent_course_uids в parent_course_ids
+            parent_course_ids = []
             if parent_course_uid:
-                try:
-                    parent_course = await self.get_by_course_uid(db, parent_course_uid)
-                    parent_course_id = parent_course.id
-                except DomainError as e:
-                    # Родительский курс не найден - добавляем в ошибки и пропускаем этот курс
-                    errors.append(DomainError(
-                        detail=f"Родительский курс с course_uid '{parent_course_uid}' не найден",
-                        status_code=400,
-                        payload={"course_uid": course_uid, "parent_course_uid": parent_course_uid},
-                    ))
-                    continue
+                # Обратная совместимость: один родитель
+                parent_course_uids = [parent_course_uid]
+            
+            if parent_course_uids:
+                for uid in parent_course_uids:
+                    try:
+                        parent_course = await self.get_by_course_uid(db, uid)
+                        parent_course_ids.append(parent_course.id)
+                    except DomainError:
+                        # Родительский курс не найден - добавляем в ошибки и пропускаем этот курс
+                        errors.append(DomainError(
+                            detail=f"Родительский курс с course_uid '{uid}' не найден",
+                            status_code=400,
+                            payload={"course_uid": course_uid, "parent_course_uid": uid},
+                        ))
+                        continue
 
             try:
                 # Пытаемся найти существующий курс по course_uid
@@ -252,7 +302,7 @@ class CoursesService(BaseService[Courses]):
                         "title": data["title"],
                         "description": data.get("description"),
                         "access_level": data["access_level"],
-                        "parent_course_id": parent_course_id,
+                        "parent_course_ids": parent_course_ids if parent_course_ids else None,
                         "is_required": data.get("is_required", False),
                     }
                     course = await self.create(db, obj_in)
@@ -263,7 +313,7 @@ class CoursesService(BaseService[Courses]):
                         "title": data["title"],
                         "description": data.get("description"),
                         "access_level": data["access_level"],
-                        "parent_course_id": parent_course_id,
+                        "parent_course_ids": parent_course_ids if parent_course_ids else [],
                         "is_required": data.get("is_required", False),
                     }
                     course = await self.update(db, existing, obj_in)

@@ -45,7 +45,7 @@ user_courses_service = UserCoursesService()
                             "title": "Основы Python",
                             "access_level": "auto_check",
                             "description": "Введение в Python",
-                            "parent_course_id": None,
+                            "parent_course_ids": [],
                             "created_at": "2025-02-06T11:42:52.674613Z",
                             "is_required": False,
                             "course_uid": "COURSE-PY-01",
@@ -159,7 +159,7 @@ async def get_course_children_endpoint(
     """
     Получить прямых детей курса (потомки первого уровня).
 
-    Возвращает список курсов, у которых parent_course_id равен указанному course_id.
+    Возвращает список курсов, у которых указанный course_id является родителем.
     """
     children = await courses_service.get_children(db, course_id)
     return [CourseRead.model_validate(child) for child in children]
@@ -213,7 +213,7 @@ async def get_root_courses_endpoint(
     db: AsyncSession = Depends(get_db),
 ) -> List[CourseRead]:
     """
-    Получить корневые курсы (курсы без родителя, parent_course_id IS NULL).
+    Получить корневые курсы (курсы без родителей).
     """
     root_courses = await courses_service.get_root_courses(db)
     return [CourseRead.model_validate(course) for course in root_courses]
@@ -267,22 +267,27 @@ async def move_course_endpoint(
         examples=[
             {
                 "summary": "Переместить в подкурс",
-                "value": {"new_parent_id": 5},
+                "value": {"new_parent_ids": [5]},
+            },
+            {
+                "summary": "Установить несколько родителей",
+                "value": {"new_parent_ids": [5, 6]},
             },
             {
                 "summary": "Сделать корневым курсом",
-                "value": {"new_parent_id": None},
+                "value": {"new_parent_ids": []},
             },
         ],
     ),
     db: AsyncSession = Depends(get_db),
 ) -> CourseRead:
     """
-    Переместить курс в иерархии (изменить parent_course_id).
+    Переместить курс в иерархии (изменить родительские курсы).
 
     Правила:
-    - Если new_parent_id указан, курс становится дочерним для указанного курса.
-    - Если new_parent_id = None, курс становится корневым (без родителя).
+    - Если new_parent_ids указан, курс становится дочерним для указанных курсов.
+    - Если new_parent_ids = [] или null, курс становится корневым (без родителей).
+    - Курс может иметь несколько родителей.
     - Валидация циклов выполняется триггером БД.
 
     Ошибки:
@@ -292,7 +297,7 @@ async def move_course_endpoint(
     updated_course = await courses_service.move_course(
         db,
         course_id,
-        payload.new_parent_id,
+        payload.new_parent_ids,
     )
     return CourseRead.model_validate(updated_course)
 

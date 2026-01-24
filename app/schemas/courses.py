@@ -18,17 +18,17 @@ class CourseCreate(BaseModel):
     Создание курса.
 
     Правила:
-    - `parent_course_id` может быть `null` → курс корневой.
+    - `parent_course_ids` может быть пустым списком или `null` → курс корневой.
     - `course_uid` должен быть уникальным (проверяется на уровне БД).
     - Валидация циклов в иерархии выполняется триггером БД.
     """
     title: str = Field(..., description="Название курса", examples=["Основы Python"])
     access_level: AccessLevel = Field(..., description="Тип доступа/проверки", examples=["auto_check"])
     description: Optional[str] = Field(None, description="Описание курса", examples=["Введение в Python: переменные, типы, условия, циклы"])
-    parent_course_id: Optional[int] = Field(
+    parent_course_ids: Optional[List[int]] = Field(
         None,
-        description="ID родительского курса (если курс является модулем внутри другого курса). null = корневой курс.",
-        examples=[None, 1],
+        description="Список ID родительских курсов. Пустой список или null = корневой курс.",
+        examples=[None, [], [1], [1, 2]],
     )
     is_required: bool = Field(False, description="Обязательный ли курс", examples=[False])
     course_uid: Optional[str] = Field(
@@ -44,7 +44,7 @@ class CourseCreate(BaseModel):
                     "title": "Основы Python",
                     "access_level": "auto_check",
                     "description": "Введение в Python: переменные, типы, условия, циклы",
-                    "parent_course_id": None,
+                    "parent_course_ids": None,
                     "is_required": False,
                 },
                 {
@@ -52,7 +52,15 @@ class CourseCreate(BaseModel):
                     "access_level": "manual_check",
                     "description": "Подготовка к ЕГЭ по информатике",
                     "course_uid": "COURSE-PY-EGE-01",
+                    "parent_course_ids": [1],
                     "is_required": True,
+                },
+                {
+                    "title": "Продвинутый Python",
+                    "access_level": "auto_check",
+                    "description": "Курс с несколькими родителями",
+                    "parent_course_ids": [1, 2],
+                    "is_required": False,
                 }
             ]
         }
@@ -65,16 +73,17 @@ class CourseUpdate(BaseModel):
 
     Правила:
     - Любое поле может быть опущено.
-    - Валидация циклов (если меняется parent) выполняется триггером БД.
+    - Валидация циклов (если меняются родители) выполняется триггером БД.
     - `course_uid` должен быть уникальным (проверяется на уровне БД).
+    - `parent_course_ids` может быть пустым списком или `null` → сделать курс корневым.
     """
     title: Optional[str] = Field(None, description="Название курса", examples=["Python: продвинутый уровень"])
     access_level: Optional[AccessLevel] = Field(None, description="Тип доступа/проверки", examples=["manual_check"])
     description: Optional[str] = Field(None, description="Описание курса")
-    parent_course_id: Optional[int] = Field(
+    parent_course_ids: Optional[List[int]] = Field(
         None,
-        description="ID родительского курса. null = сделать курс корневым.",
-        examples=[None, 1],
+        description="Список ID родительских курсов. null = не изменять, [] = сделать корневым.",
+        examples=[None, [], [1], [1, 2]],
     )
     is_required: Optional[bool] = Field(None, description="Обязательный ли курс", examples=[True, False])
     course_uid: Optional[str] = Field(
@@ -98,6 +107,10 @@ class CourseUpdate(BaseModel):
                 {
                     "title": "Новое название",
                     "course_uid": "COURSE-PY-03",
+                    "parent_course_ids": [1, 2],
+                },
+                {
+                    "parent_course_ids": [],
                 }
             ]
         }
@@ -109,7 +122,11 @@ class CourseRead(BaseModel):
     title: str
     access_level: AccessLevel
     description: Optional[str]
-    parent_course_id: Optional[int]
+    parent_course_ids: List[int] = Field(
+        default_factory=list,
+        description="Список ID родительских курсов. Пустой список для корневых курсов.",
+        examples=[[], [1], [1, 2]],
+    )
     created_at: datetime
     is_required: bool
     course_uid: str | None = Field(
@@ -145,20 +162,23 @@ class CourseMoveRequest(BaseModel):
     Перемещение курса в иерархии.
 
     Правила:
-    - `new_parent_id = null` → курс становится корневым.
+    - `new_parent_ids = []` или `null` → курс становится корневым.
     - Триггер БД запрещает циклы и самоссылки.
+    - Курс может иметь несколько родителей.
     """
-    new_parent_id: Optional[int] = Field(
+    new_parent_ids: Optional[List[int]] = Field(
         None,
-        description="ID нового родительского курса. Если null, курс становится корневым.",
-        examples=[None, 10],
+        description="Список ID новых родительских курсов. Если [] или null, курс становится корневым.",
+        examples=[None, [], [10], [10, 11]],
     )
 
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
-                {"new_parent_id": 10},
-                {"new_parent_id": None},
+                {"new_parent_ids": [10]},
+                {"new_parent_ids": [10, 11]},
+                {"new_parent_ids": []},
+                {"new_parent_ids": None},
             ]
         }
     )

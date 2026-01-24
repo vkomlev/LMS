@@ -63,3 +63,28 @@ t_student_teacher_links = Table(
     PrimaryKeyConstraint("student_id", "teacher_id", name="student_teacher_links_pkey"),
     comment="Привязка студентов к преподавателям"
 )
+
+t_course_parents = Table(
+    "course_parents",
+    Base.metadata,
+    Column(
+        "course_id", Integer, primary_key=True, nullable=False,
+        comment=(
+            "ID дочернего курса. "
+            "⚠️ ВАЖНО: Предотвращение самоссылок и циклов реализовано в БД через триггер "
+            "(trg_check_course_hierarchy_cycle). Не дублировать логику в коде! "
+            "См. docs/database-triggers-contract.md"
+        )
+    ),
+    Column("parent_course_id", Integer, primary_key=True, nullable=False, comment="ID родительского курса"),
+    ForeignKeyConstraint(
+        ["course_id"], ["courses.id"],
+        ondelete="CASCADE", name="course_parents_course_id_fkey"
+    ),
+    ForeignKeyConstraint(
+        ["parent_course_id"], ["courses.id"],
+        ondelete="CASCADE", name="course_parents_parent_course_id_fkey"
+    ),
+    PrimaryKeyConstraint("course_id", "parent_course_id", name="course_parents_pkey"),
+    comment="Иерархия курсов: связь многие-ко-многим (курс может иметь несколько родителей)"
+)
