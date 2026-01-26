@@ -1,7 +1,8 @@
 # app/services/users_service.py
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import ColumnElement
 
 from app.models.users import Users
 from app.repos.users_repo import UsersRepository
@@ -21,3 +22,23 @@ class UsersService(BaseService[Users]):
         """
         user = await self.get_by_keys(db, {"tg_id": tg_id})
         return user.id if user else None
+
+    async def list_with_role_filter(
+        self,
+        db: AsyncSession,
+        *,
+        role_name: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+        order_by: Optional[Sequence[ColumnElement]] = None,
+    ) -> Tuple[List[Users], int]:
+        """
+        Получить список пользователей с фильтрацией по роли.
+        """
+        return await self.repo.list_with_role_filter(
+            db,
+            role_name=role_name,
+            limit=limit,
+            offset=offset,
+            order_by=order_by,
+        )
