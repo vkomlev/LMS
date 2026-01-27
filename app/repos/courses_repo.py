@@ -173,50 +173,65 @@ class CoursesRepository(BaseRepository[Courses]):
     ) -> None:
         """
         Установить родительские курсы для курса.
-        Удаляет все существующие связи и создает новые.
+        Добавляет новые связи к существующим (не удаляет старые).
         
         Args:
             course_id: ID курса
-            parent_course_ids: Список ID родительских курсов (order_number будет установлен автоматически)
-            parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально)
+            parent_course_ids: Список ID родительских курсов для добавления (order_number будет установлен автоматически)
+            parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально) для добавления
         
         ⚠️ ВАЖНО: order_number автоматически устанавливается триггером БД, если не указан.
+        ⚠️ ВАЖНО: Метод добавляет новые связи к существующим, не удаляя старые.
         ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: При удалении связей вызывается sync_on_child_removed для синхронизации
         связей преподавателей с курсами (из-за ограничения PostgreSQL триггер отключен).
         См. docs/database-triggers-contract.md
         """
-        # Получаем список существующих связей перед удалением
+        # Получаем список существующих связей
         existing_links_stmt = select(t_course_parents).where(
             t_course_parents.c.course_id == course_id
         )
         existing_links_result = await db.execute(existing_links_stmt)
         existing_links = existing_links_result.all()
+        existing_parent_ids = {link.parent_course_id for link in existing_links}
         
-        # Определяем новые родители
+        # Определяем новые родители для добавления
         new_parent_ids = set()
         if parent_courses is not None:
             new_parent_ids = {pc.get("parent_course_id") for pc in parent_courses}
         elif parent_course_ids is not None:
             new_parent_ids = set(parent_course_ids)
         
-        # Удаляем все существующие связи
-        stmt = delete(t_course_parents).where(t_course_parents.c.course_id == course_id)
-        await db.execute(stmt)
+        # Определяем, какие родители нужно добавить (которых еще нет)
+        parents_to_add = new_parent_ids - existing_parent_ids
         
-        # ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: Синхронизируем связи преподавателей для удаленных связей
-        # Вызываем sync_on_child_removed для каждой удаленной связи, которой нет в новых родителях
+        # Если нет новых родителей для добавления, ничего не делаем
+        if not parents_to_add:
+            return
+        
+        # Получаем список потомков курса для синхронизации при добавлении новых родителей
         from app.repos.teacher_courses_repo import TeacherCoursesRepository
-        teacher_courses_repo = TeacherCoursesRepository()
-        for link in existing_links:
-            old_parent_id = link.parent_course_id
-            if old_parent_id not in new_parent_ids:
-                await teacher_courses_repo.sync_on_child_removed(
-                    db, removed_course_id=course_id, removed_parent_id=old_parent_id
-                )
         
-        # Определяем, какие данные использовать
+        descendants_stmt = text("""
+            WITH RECURSIVE course_descendants AS (
+                SELECT cp.course_id, 1 as depth
+                FROM course_parents cp
+                WHERE cp.parent_course_id = :course_id
+                
+                UNION ALL
+                
+                SELECT cp.course_id, cd.depth + 1
+                FROM course_parents cp
+                INNER JOIN course_descendants cd ON cp.parent_course_id = cd.course_id
+                WHERE cd.depth < 20
+            )
+            SELECT course_id FROM course_descendants
+        """)
+        descendants_result = await db.execute(descendants_stmt, {"course_id": course_id})
+        descendant_course_ids = [row[0] for row in descendants_result.all()]
+        
+        # Определяем, какие данные использовать для добавления
         if parent_courses is not None:
-            # Используем parent_courses (с приоритетом)
+            # Используем parent_courses (с приоритетом), но только для новых родителей
             values = [
                 {
                     "course_id": course_id,
@@ -224,9 +239,10 @@ class CoursesRepository(BaseRepository[Courses]):
                     "order_number": pc.get("order_number")  # Может быть None - триггер установит автоматически
                 }
                 for pc in parent_courses
+                if pc.get("parent_course_id") in parents_to_add
             ]
         elif parent_course_ids is not None:
-            # Используем parent_course_ids
+            # Используем parent_course_ids, но только для новых родителей
             values = [
                 {
                     "course_id": course_id,
@@ -234,15 +250,16 @@ class CoursesRepository(BaseRepository[Courses]):
                     "order_number": None  # Триггер установит автоматически
                 }
                 for pid in parent_course_ids
+                if pid in parents_to_add
             ]
         else:
             values = []
         
-        # Создаем новые связи
+        # Создаем новые связи (триггер автоматически синхронизирует связи преподавателей)
         if values:
             await db.execute(t_course_parents.insert().values(values))
         
-        # Commit выполняется после синхронизации
+        # Commit выполняется после добавления
         await db.commit()
     
     async def update_course_parent_order(

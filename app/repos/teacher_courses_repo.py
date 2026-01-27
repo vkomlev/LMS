@@ -408,7 +408,9 @@ class TeacherCoursesRepository:
         self,
         db: AsyncSession,
         removed_course_id: int,
-        removed_parent_id: int
+        removed_parent_id: int,
+        other_parent_ids: Optional[List[int]] = None,
+        descendant_course_ids: Optional[List[int]] = None
     ) -> None:
         """
         Синхронизация связей преподавателей с курсами при удалении ребенка из иерархии.
@@ -428,6 +430,7 @@ class TeacherCoursesRepository:
             db: Сессия БД
             removed_course_id: ID курса, который был удален из иерархии
             removed_parent_id: ID родителя, от которого был удален курс
+            other_parent_ids: Список ID других родителей курса (опционально, для оптимизации)
         """
         from app.models.association_tables import t_teacher_courses, t_course_parents
         
@@ -442,12 +445,16 @@ class TeacherCoursesRepository:
             return  # Нет преподавателей у родителя - ничего не делаем
         
         # 2. Проверяем, есть ли у курса другие родители
-        other_parents_stmt = select(t_course_parents.c.parent_course_id).where(
-            t_course_parents.c.course_id == removed_course_id,
-            t_course_parents.c.parent_course_id != removed_parent_id
-        ).distinct()
-        other_parents_result = await db.execute(other_parents_stmt)
-        other_parent_ids = [row[0] for row in other_parents_result.all()]
+        # Используем переданный список, если он есть, иначе читаем из БД
+        if other_parent_ids is None:
+            other_parents_stmt = select(t_course_parents.c.parent_course_id).where(
+                t_course_parents.c.course_id == removed_course_id,
+                t_course_parents.c.parent_course_id != removed_parent_id
+            ).distinct()
+            other_parents_result = await db.execute(other_parents_stmt)
+            other_parent_ids = [row[0] for row in other_parents_result.all()]
+        else:
+            other_parent_ids = other_parent_ids
         
         # 3. Получаем ID преподавателей, привязанных к удаляемому курсу
         course_teachers_stmt = select(t_teacher_courses.c.teacher_id).where(
@@ -484,26 +491,29 @@ class TeacherCoursesRepository:
             await db.execute(delete_course_stmt)
         
         # 6. Находим всех потомков удаляемого ребенка (рекурсивно, с ограничением глубины)
-        descendants_stmt = text("""
-            WITH RECURSIVE course_descendants AS (
-                SELECT cp.course_id, 1 as depth
-                FROM course_parents cp
-                WHERE cp.parent_course_id = :removed_course_id
-                
-                UNION ALL
-                
-                SELECT cp.course_id, cd.depth + 1
-                FROM course_parents cp
-                INNER JOIN course_descendants cd ON cp.parent_course_id = cd.course_id
-                WHERE cd.depth < 20
+        # Используем переданный список, если он есть, иначе читаем из БД
+        if descendant_course_ids is None:
+            descendants_stmt = text("""
+                WITH RECURSIVE course_descendants AS (
+                    SELECT cp.course_id, 1 as depth
+                    FROM course_parents cp
+                    WHERE cp.parent_course_id = :removed_course_id
+                    
+                    UNION ALL
+                    
+                    SELECT cp.course_id, cd.depth + 1
+                    FROM course_parents cp
+                    INNER JOIN course_descendants cd ON cp.parent_course_id = cd.course_id
+                    WHERE cd.depth < 20
+                )
+                SELECT course_id FROM course_descendants
+            """)
+            descendants_result = await db.execute(
+                descendants_stmt,
+                {"removed_course_id": removed_course_id}
             )
-            SELECT course_id FROM course_descendants
-        """)
-        descendants_result = await db.execute(
-            descendants_stmt,
-            {"removed_course_id": removed_course_id}
-        )
-        descendant_course_ids = [row[0] for row in descendants_result.all()]
+            descendant_course_ids = [row[0] for row in descendants_result.all()]
+        # Иначе используем переданный список
         
         # 7. Удаляем связи для всех потомков
         if descendant_course_ids and parent_teacher_ids:
@@ -513,4 +523,5 @@ class TeacherCoursesRepository:
             )
             await db.execute(delete_descendants_stmt)
         
-        await db.commit()
+        # Примечание: commit НЕ вызывается здесь, так как этот метод вызывается
+        # из транзакции, которая сама управляет commit (например, из set_parent_courses)
