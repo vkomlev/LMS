@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Body, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,43 +14,87 @@ from app.schemas.user_courses import (
     UserCourseWithCourse,
 )
 from app.services.user_courses_service import UserCoursesService
+from app.services.teacher_courses_service import TeacherCoursesService
+from app.services.user_roles_service import UserRolesService
 from app.models.user_courses import UserCourses
+from app.models.users import Users
 from sqlalchemy import select
 from app.schemas.courses import CourseRead
 
 router = APIRouter(tags=["user_courses"])
 
 user_courses_service = UserCoursesService()
+teacher_courses_service = TeacherCoursesService()
+user_roles_service = UserRolesService()
 
 
-@router.get(
-    "/users/{user_id}/courses",
-    response_model=UserCourseListResponse,
-    summary="Получить список курсов пользователя",
-    responses={
-        200: {
-            "description": "Список курсов пользователя с информацией о курсах",
-        },
-        404: {
-            "description": "Пользователь не найден",
-        },
-        403: {"description": "Invalid or missing API Key"},
-    },
-)
-async def get_user_courses_endpoint(
+def _is_teacher_role(role_name: str) -> bool:
+    """Проверяет, является ли роль преподавательской."""
+    role_lower = role_name.lower().strip()
+    return role_lower in ["teacher", "преподаватель"]
+
+
+async def _user_has_teacher_role(db: AsyncSession, user_id: int) -> bool:
+    """Проверяет, имеет ли пользователь роль преподавателя."""
+    from app.models.association_tables import t_user_roles
+    from app.models.roles import Roles
+    
+    stmt = (
+        select(Roles.name)
+        .join(t_user_roles, Roles.id == t_user_roles.c.role_id)
+        .where(t_user_roles.c.user_id == user_id)
+    )
+    result = await db.execute(stmt)
+    roles = [row[0] for row in result.fetchall()]
+    
+    return any(_is_teacher_role(role) for role in roles)
+
+
+async def _get_teacher_courses(
+    db: AsyncSession,
     user_id: int,
-    order_by_order: bool = Query(True, description="Сортировать по order_number (True) или по added_at (False)"),
-    db: AsyncSession = Depends(get_db),
-) -> UserCourseListResponse:
-    """
-    Получить список курсов пользователя с информацией о курсах.
+    order_by_order: bool = True
+) -> List[UserCourseWithCourse]:
+    """Получить курсы преподавателя из teacher_courses."""
+    from app.models.association_tables import t_teacher_courses
+    from app.models.courses import Courses
     
-    Параметры:
-    - order_by_order: Если True, сортировать по order_number, иначе по added_at.
+    stmt = (
+        select(Courses, t_teacher_courses.c.linked_at)
+        .join(t_teacher_courses, Courses.id == t_teacher_courses.c.course_id)
+        .where(t_teacher_courses.c.teacher_id == user_id)
+    )
     
-    Возвращает список курсов с полной информацией о каждом курсе.
-    """
-    # Получаем связи пользователя с курсами с явной загрузкой курсов
+    # Сортировка
+    if order_by_order:
+        stmt = stmt.order_by(t_teacher_courses.c.linked_at.desc())
+    else:
+        stmt = stmt.order_by(t_teacher_courses.c.linked_at.asc())
+    
+    result = await db.execute(stmt)
+    rows = result.all()
+    
+    courses_list = []
+    for course, linked_at in rows:
+        course_read = CourseRead.model_validate(course)
+        course_data = UserCourseWithCourse(
+            user_id=user_id,
+            course_id=course.id,
+            added_at=linked_at,  # Используем linked_at как added_at для совместимости
+            order_number=None,  # У преподавателей нет order_number
+            course=course_read,
+        )
+        courses_list.append(course_data)
+    
+    return courses_list
+
+
+async def _get_student_courses(
+    db: AsyncSession,
+    user_id: int,
+    order_by_order: bool = True
+) -> List[UserCourseWithCourse]:
+    """Получить курсы студента из user_courses."""
     stmt = select(UserCourses).where(UserCourses.user_id == user_id)
     
     if order_by_order:
@@ -67,7 +111,6 @@ async def get_user_courses_endpoint(
     result = await db.execute(stmt)
     user_courses = list(result.scalars().all())
     
-    # Формируем ответ с информацией о курсах
     courses_list = []
     for uc in user_courses:
         # Проверяем, что курс загружен
@@ -86,6 +129,108 @@ async def get_user_courses_endpoint(
             course=course_read,
         )
         courses_list.append(course_data)
+    
+    return courses_list
+
+
+@router.get(
+    "/users/{user_id}/courses",
+    response_model=UserCourseListResponse,
+    summary="Получить список курсов пользователя",
+    description=(
+        "Получить список курсов пользователя с информацией о курсах.\n\n"
+        "**Особенности:**\n"
+        "- Пользователь может быть одновременно и преподавателем, и студентом\n"
+        "- Если параметр `role` не указан - возвращаются курсы из обеих таблиц (объединенный список)\n"
+        "- Если параметр `role=teacher` - возвращаются только курсы преподавателя из `teacher_courses`\n"
+        "- Если параметр `role=student` - возвращаются только курсы студента из `user_courses`\n\n"
+        "**Параметры:**\n"
+        "- `role` (опционально): Фильтр по роли (`teacher` или `student`). Если не указан - возвращаются все курсы\n"
+        "- `order_by_order`: Если True, сортировать по order_number (для студентов) или по linked_at (для преподавателей), иначе по added_at/linked_at\n\n"
+        "**Примеры:**\n"
+        "- `GET /api/v1/users/2/courses` - все курсы пользователя (и как преподавателя, и как студента)\n"
+        "- `GET /api/v1/users/2/courses?role=teacher` - только курсы преподавателя\n"
+        "- `GET /api/v1/users/2/courses?role=student` - только курсы студента"
+    ),
+    responses={
+        200: {
+            "description": "Список курсов пользователя с информацией о курсах",
+        },
+        404: {
+            "description": "Пользователь не найден",
+        },
+        400: {
+            "description": "Некорректное значение параметра role (должно быть 'teacher' или 'student')",
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def get_user_courses_endpoint(
+    user_id: int,
+    role: Optional[str] = Query(
+        None,
+        description=(
+            "Фильтр по роли: 'teacher' - только курсы преподавателя, "
+            "'student' - только курсы студента. "
+            "Если не указан - возвращаются курсы из обеих таблиц."
+        ),
+        examples=["teacher", "student"]
+    ),
+    order_by_order: bool = Query(True, description="Сортировать по order_number (True) или по added_at (False)"),
+    db: AsyncSession = Depends(get_db),
+) -> UserCourseListResponse:
+    """
+    Получить список курсов пользователя с информацией о курсах.
+    
+    Поддерживает пользователей с несколькими ролями одновременно.
+    """
+    # Проверяем существование пользователя
+    user = await db.get(Users, user_id)
+    if user is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Пользователь с ID {user_id} не найден")
+    
+    courses_list = []
+    
+    # Нормализуем параметр role
+    role_normalized = None
+    if role:
+        role_lower = role.lower().strip()
+        if role_lower in ["teacher", "преподаватель"]:
+            role_normalized = "teacher"
+        elif role_lower in ["student", "студент"]:
+            role_normalized = "student"
+        else:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail=f"Некорректное значение параметра role: '{role}'. Допустимые значения: 'teacher', 'student'"
+            )
+    
+    # Если роль указана явно - возвращаем курсы только из соответствующей таблицы
+    if role_normalized == "teacher":
+        courses_list = await _get_teacher_courses(db, user_id, order_by_order)
+    elif role_normalized == "student":
+        courses_list = await _get_student_courses(db, user_id, order_by_order)
+    else:
+        # Если роль не указана - возвращаем курсы из обеих таблиц
+        # Для объединенного списка используем сортировку по дате (added_at/linked_at)
+        # независимо от order_by_order, так как у преподавателей нет order_number
+        teacher_courses = await _get_teacher_courses(db, user_id, order_by_order=False)
+        student_courses = await _get_student_courses(db, user_id, order_by_order=False)
+        
+        # Объединяем списки
+        courses_list = teacher_courses + student_courses
+        
+        # Сортируем объединенный список по added_at/linked_at
+        # (для преподавателей это linked_at, для студентов - added_at)
+        # Применяем order_by_order к финальной сортировке
+        if order_by_order:
+            # Сортируем по убыванию даты (новые сначала)
+            courses_list.sort(key=lambda x: x.added_at, reverse=True)
+        else:
+            # Сортируем по возрастанию даты (старые сначала)
+            courses_list.sort(key=lambda x: x.added_at)
     
     return UserCourseListResponse(
         user_id=user_id,
