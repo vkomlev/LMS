@@ -8,7 +8,18 @@ create_struct.cmd
 app/tests/*
 *.zip
 uploads/*
+# Документация: игнорируем все файлы в docs, кроме указанных
 docs/*
+!docs/API_TEACHERS_MANAGEMENT.md
+!docs/API_STUDENTS_MANAGEMENT.md
+!docs/API_TEACHER_COURSES.md
+!docs/database-triggers-contract.md
+!docs/courses-api.md
+!docs/courses-import-manual.md
+!docs/import-api-documentation.md
+!docs/import-quick-start.md
+!docs/api-reference.md
+!docs/api-examples.md
 .cursor/*
 
 # Secrets and credentials

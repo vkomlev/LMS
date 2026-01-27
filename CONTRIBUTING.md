@@ -51,6 +51,11 @@
 - Обновляйте Swagger документацию для всех новых эндпойнтов
 - Добавляйте примеры запросов и ответов
 - Документируйте использование триггеров БД в комментариях кода
+- При изменении API обновляйте соответствующую документацию в `docs/`:
+  - Управление пользователями → `API_TEACHERS_MANAGEMENT.md`, `API_STUDENTS_MANAGEMENT.md`
+  - Управление курсами → `courses-api.md`, `courses-import-manual.md`
+  - Задания и проверка → `api-reference.md`, `api-examples.md`
+  - Импорт задач → `import-api-documentation.md`, `import-quick-start.md`
 
 ---
 
@@ -67,6 +72,26 @@
 
 ## Полезные ссылки
 
-- [Контракт БД-триггеров](docs/database-triggers-contract.md)
-- [API документация курсов](docs/courses-api.md)
+### Техническая документация
+
+- [Контракт БД-триггеров](docs/database-triggers-contract.md) - ⚠️ ОБЯЗАТЕЛЬНО к прочтению перед разработкой
 - [Миграции БД](app/db/migrations/)
+
+### API Документация
+
+#### Управление пользователями
+- [API для управления преподавателями](docs/API_TEACHERS_MANAGEMENT.md)
+- [API для управления студентами](docs/API_STUDENTS_MANAGEMENT.md)
+- [API для связей преподаватель-курс](docs/API_TEACHER_COURSES.md)
+
+#### Управление курсами
+- [API курсов](docs/courses-api.md)
+- [Руководство по импорту курсов](docs/courses-import-manual.md)
+
+#### Задания и проверка
+- [Полная документация API Quiz системы](docs/api-reference.md)
+- [Примеры использования API Quiz системы](docs/api-examples.md)
+
+#### Импорт задач
+- [Быстрый старт - Импорт задач](docs/import-quick-start.md)
+- [Документация API импорта задач](docs/import-api-documentation.md)
