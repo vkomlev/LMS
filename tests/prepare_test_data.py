@@ -31,33 +31,33 @@ async def prepare_test_data():
         
         print(f"Found {len(roles)} roles: {[r[1] for r in roles]}")
         
-        # Создаем роли, если их нет
+        # Используем существующие роли: 3 (Преподаватель) и 4 (Студент)
+        # НЕ создаем новые роли "student" и "teacher" - используем русские названия
         student_role_id = None
         teacher_role_id = None
         
-        if "student" not in role_dict:
-            print("Creating 'student' role...")
-            result = await session.execute(
-                text("INSERT INTO roles (name) VALUES ('student') RETURNING id")
-            )
-            student_role_id = result.scalar()
-            await session.commit()
-            print(f"  Created 'student' role (id: {student_role_id})")
-        else:
+        # Ищем роли по русским названиям (основные роли в системе)
+        if "студент" in role_dict:
+            student_role_id = role_dict["студент"]
+            print(f"  Found 'Студент' role (id: {student_role_id})")
+        elif "student" in role_dict:
+            # Fallback на английское название, если есть
             student_role_id = role_dict["student"]
-            print(f"  'student' role exists (id: {student_role_id})")
-        
-        if "teacher" not in role_dict:
-            print("Creating 'teacher' role...")
-            result = await session.execute(
-                text("INSERT INTO roles (name) VALUES ('teacher') RETURNING id")
-            )
-            teacher_role_id = result.scalar()
-            await session.commit()
-            print(f"  Created 'teacher' role (id: {teacher_role_id})")
+            print(f"  Found 'student' role (id: {student_role_id})")
         else:
+            print("  [WARN] Role 'Студент' or 'student' not found. Using role_id=4 as default.")
+            student_role_id = 4
+        
+        if "преподаватель" in role_dict:
+            teacher_role_id = role_dict["преподаватель"]
+            print(f"  Found 'Преподаватель' role (id: {teacher_role_id})")
+        elif "teacher" in role_dict:
+            # Fallback на английское название, если есть
             teacher_role_id = role_dict["teacher"]
-            print(f"  'teacher' role exists (id: {teacher_role_id})")
+            print(f"  Found 'teacher' role (id: {teacher_role_id})")
+        else:
+            print("  [WARN] Role 'Преподаватель' or 'teacher' not found. Using role_id=3 as default.")
+            teacher_role_id = 3
         
         # Проверяем пользователей
         result = await session.execute(text("SELECT COUNT(*) FROM users"))
@@ -65,13 +65,14 @@ async def prepare_test_data():
         print(f"\nFound {user_count} users in database")
         
         # Проверяем, сколько пользователей имеют роли
+        # Используем русские названия ролей: "Студент" и "Преподаватель"
         result = await session.execute(
             text("""
                 SELECT COUNT(DISTINCT u.id) 
                 FROM users u 
                 JOIN user_roles ur ON u.id = ur.user_id 
                 JOIN roles r ON ur.role_id = r.id 
-                WHERE r.name = 'student'
+                WHERE LOWER(r.name) IN ('студент', 'student')
             """)
         )
         student_count = result.scalar() or 0
@@ -82,13 +83,13 @@ async def prepare_test_data():
                 FROM users u 
                 JOIN user_roles ur ON u.id = ur.user_id 
                 JOIN roles r ON ur.role_id = r.id 
-                WHERE r.name = 'teacher'
+                WHERE LOWER(r.name) IN ('преподаватель', 'teacher')
             """)
         )
         teacher_count = result.scalar() or 0
         
-        print(f"Users with 'student' role: {student_count}")
-        print(f"Users with 'teacher' role: {teacher_count}")
+        print(f"Users with 'Студент'/'student' role: {student_count}")
+        print(f"Users with 'Преподаватель'/'teacher' role: {teacher_count}")
         
         # Если недостаточно пользователей с ролями, добавляем тестовые
         if student_count < 3:
@@ -148,7 +149,7 @@ async def prepare_test_data():
                 FROM users u 
                 JOIN user_roles ur ON u.id = ur.user_id 
                 JOIN roles r ON ur.role_id = r.id 
-                WHERE r.name = 'student'
+                WHERE LOWER(r.name) IN ('студент', 'student')
             """)
         )
         final_student_count = result.scalar() or 0
@@ -159,14 +160,14 @@ async def prepare_test_data():
                 FROM users u 
                 JOIN user_roles ur ON u.id = ur.user_id 
                 JOIN roles r ON ur.role_id = r.id 
-                WHERE r.name = 'teacher'
+                WHERE LOWER(r.name) IN ('преподаватель', 'teacher')
             """)
         )
         final_teacher_count = result.scalar() or 0
         
         print(f"\nFinal counts:")
-        print(f"  Users with 'student' role: {final_student_count}")
-        print(f"  Users with 'teacher' role: {final_teacher_count}")
+        print(f"  Users with 'Студент'/'student' role: {final_student_count}")
+        print(f"  Users with 'Преподаватель'/'teacher' role: {final_teacher_count}")
         print("\nTest data preparation completed!")
 
 if __name__ == "__main__":
