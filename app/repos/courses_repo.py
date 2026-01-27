@@ -181,11 +181,38 @@ class CoursesRepository(BaseRepository[Courses]):
             parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально)
         
         ⚠️ ВАЖНО: order_number автоматически устанавливается триггером БД, если не указан.
+        ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: При удалении связей вызывается sync_on_child_removed для синхронизации
+        связей преподавателей с курсами (из-за ограничения PostgreSQL триггер отключен).
         См. docs/database-triggers-contract.md
         """
+        # Получаем список существующих связей перед удалением
+        existing_links_stmt = select(t_course_parents).where(
+            t_course_parents.c.course_id == course_id
+        )
+        existing_links_result = await db.execute(existing_links_stmt)
+        existing_links = existing_links_result.all()
+        
+        # Определяем новые родители
+        new_parent_ids = set()
+        if parent_courses is not None:
+            new_parent_ids = {pc.get("parent_course_id") for pc in parent_courses}
+        elif parent_course_ids is not None:
+            new_parent_ids = set(parent_course_ids)
+        
         # Удаляем все существующие связи
         stmt = delete(t_course_parents).where(t_course_parents.c.course_id == course_id)
         await db.execute(stmt)
+        
+        # ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: Синхронизируем связи преподавателей для удаленных связей
+        # Вызываем sync_on_child_removed для каждой удаленной связи, которой нет в новых родителях
+        from app.repos.teacher_courses_repo import TeacherCoursesRepository
+        teacher_courses_repo = TeacherCoursesRepository()
+        for link in existing_links:
+            old_parent_id = link.parent_course_id
+            if old_parent_id not in new_parent_ids:
+                await teacher_courses_repo.sync_on_child_removed(
+                    db, removed_course_id=course_id, removed_parent_id=old_parent_id
+                )
         
         # Определяем, какие данные использовать
         if parent_courses is not None:
@@ -215,8 +242,7 @@ class CoursesRepository(BaseRepository[Courses]):
         if values:
             await db.execute(t_course_parents.insert().values(values))
         
-        # Не делаем commit здесь - он будет сделан в update
-        
+        # Commit выполняется после синхронизации
         await db.commit()
     
     async def update_course_parent_order(

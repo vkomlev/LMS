@@ -268,6 +268,10 @@ app.include_router(user_roles_router, prefix=API_PREFIX)
 # Student ↔ Teacher
 app.include_router(student_teacher_links_router, prefix=API_PREFIX)
 
+# Teacher ↔ Courses
+from app.api.v1.teacher_courses import router as teacher_courses_router
+app.include_router(teacher_courses_router, prefix=API_PREFIX)
+
 # Зависимости и заявки на доступ к ролям
 app.include_router(course_dependencies_router, prefix=API_PREFIX)
 

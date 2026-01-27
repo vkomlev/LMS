@@ -100,3 +100,34 @@ t_course_parents = Table(
     PrimaryKeyConstraint("course_id", "parent_course_id", name="course_parents_pkey"),
     comment="Иерархия курсов: связь многие-ко-многим (курс может иметь несколько родителей)"
 )
+
+t_teacher_courses = Table(
+    "teacher_courses",
+    Base.metadata,
+    Column("teacher_id", Integer, primary_key=True, nullable=False, comment="ID преподавателя"),
+    Column("course_id", Integer, primary_key=True, nullable=False, comment="ID курса"),
+    Column(
+        "linked_at",
+        DateTime(timezone=True),
+        server_default=text("now()"),
+        nullable=False,
+        comment="Дата и время привязки"
+    ),
+    ForeignKeyConstraint(
+        ["teacher_id"], ["users.id"],
+        ondelete="CASCADE", name="teacher_courses_teacher_id_fkey"
+    ),
+    ForeignKeyConstraint(
+        ["course_id"], ["courses.id"],
+        ondelete="CASCADE", name="teacher_courses_course_id_fkey"
+    ),
+    PrimaryKeyConstraint("teacher_id", "course_id", name="teacher_courses_pkey"),
+    comment=(
+        "Привязка преподавателей к курсам. "
+        "⚠️ ВАЖНО: Автоматическая привязка детей при привязке родителя и синхронизация при изменении иерархии "
+        "реализованы в БД через триггеры. "
+        "⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: Синхронизация при удалении ребенка из иерархии реализована в коде "
+        "(TeacherCoursesRepository.sync_on_child_removed) из-за ограничения PostgreSQL. "
+        "См. docs/database-triggers-contract.md"
+    )
+)
