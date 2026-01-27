@@ -42,10 +42,14 @@ class SortOrder(str, Enum):
         "**Особенности:**\n"
         "- Поиск нечувствителен к регистру (case-insensitive)\n"
         "- Поиск выполняется по шаблону `ILIKE %q%` (содержит подстроку)\n"
+        "- Можно ограничить выдачу конкретной ролью через параметр `role`\n"
         "- Результаты автоматически сортируются по `full_name` ASC\n"
         "- Минимальная длина запроса: 2 символа\n\n"
         "**Примеры:**\n"
         "- `GET /api/v1/users/search?q=Иван` - найдет всех пользователей с 'Иван' в имени\n"
+        "- `GET /api/v1/users/search?q=Иван&role=teacher` - поиск только среди преподавателей\n"
+        "- `GET /api/v1/users/search?q=Иван&role=student` - поиск только среди студентов\n"
+        "- `GET /api/v1/users/search?q=Иван&role=methodist` - поиск только среди методистов\n"
         "- `GET /api/v1/users/search?q=test&limit=10` - поиск с ограничением результатов"
     ),
     responses={
@@ -76,6 +80,14 @@ async def search_users_by_name(
         min_length=2, 
         description="Фрагмент имени для поиска (минимум 2 символа)",
         examples=["Иван", "Петр", "test"]
+    ),
+    role: Optional[str] = Query(
+        None,
+        description=(
+            "Фильтр по роли по имени. Примеры: `teacher`, `student`, `methodist`.\n"
+            "Сравнение выполняется без учета регистра."
+        ),
+        examples=["teacher", "student", "methodist"],
     ),
     limit: int = Query(
         20, 
@@ -109,16 +121,13 @@ async def search_users_by_name(
     - `403` - Неверный или отсутствующий API ключ
     - `422` - Ошибка валидации параметров
     """
-    logger.info("users.search q=%r limit=%s offset=%s", q, limit, offset)
-    items = await service.search_text(
+    logger.info("users.search q=%r role=%r limit=%s offset=%s", q, role, limit, offset)
+    items = await service.search_by_full_name_with_role(
         db,
-        field="full_name",
-        query=q,
-        mode="contains",
-        case_insensitive=True,
+        q=q,
+        role_name=role,
         limit=limit,
         offset=offset,
-        order_by=Users.full_name,  # опционально сортируем по имени
     )
     logger.debug("users.search -> %d rows", len(items))
     return items
@@ -138,7 +147,9 @@ async def search_users_by_name(
         "- Если указана несуществующая роль, возвращается пустой список\n\n"
         "**Примеры использования:**\n"
         "- `GET /api/v1/users/` - все пользователи, сортировка по full_name ASC\n"
+        "- `GET /api/v1/users/?role=teacher` - только преподаватели\n"
         "- `GET /api/v1/users/?role=student` - только студенты\n"
+        "- `GET /api/v1/users/?role=methodist` - только методисты\n"
         "- `GET /api/v1/users/?sort_by=email&order=desc` - сортировка по email по убыванию\n"
         "- `GET /api/v1/users/?skip=0&limit=50&sort_by=full_name&order=asc&role=student` - полный пример"
     ),
@@ -197,10 +208,10 @@ async def list_users(
     role: Optional[str] = Query(
         None,
         description=(
-            "Фильтр по роли по имени. Примеры: 'student', 'teacher', 'Администратор'.\n"
+            "Фильтр по роли по имени. Примеры: `teacher`, `student`, `methodist`.\n"
             "Если роль не найдена, возвращается пустой список."
         ),
-        examples=["student", "teacher", "Администратор"]
+        examples=["teacher", "student", "methodist"]
     ),
     db: AsyncSession = Depends(get_db),
 ) -> Page[UserRead]:

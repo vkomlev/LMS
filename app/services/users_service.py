@@ -42,3 +42,24 @@ class UsersService(BaseService[Users]):
             offset=offset,
             order_by=order_by,
         )
+
+    async def search_by_full_name_with_role(
+        self,
+        db: AsyncSession,
+        *,
+        q: str,
+        role_name: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Users]:
+        """
+        Поиск пользователей по full_name с опциональной фильтрацией по роли.
+        Используется для эндпойнта `GET /api/v1/users/search`.
+        """
+        return await self.repo.search_by_full_name_with_role(
+            db,
+            q=q,
+            role_name=role_name,
+            limit=limit,
+            offset=offset,
+        )
