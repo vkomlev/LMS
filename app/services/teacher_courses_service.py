@@ -14,13 +14,9 @@ class TeacherCoursesService:
     """
     Сервис для работы со связями преподавателей с курсами.
     
-    ⚠️ ВАЖНО: Большая часть бизнес-логики реализована в БД через триггеры:
-    - trg_auto_link_teacher_course_children (автоматическая привязка детей при привязке родителя)
-    - trg_auto_unlink_teacher_course_children (автоматическая отвязка детей при отвязке родителя)
-    - trg_sync_teacher_courses_on_child_added (синхронизация при добавлении ребенка)
+    ⚠️ ВАЖНО: Привязка преподавателей возможна только к курсам без родителей.
+    Проверка выполняется на уровне БД через триггер trg_check_teacher_course_no_parents.
     
-    ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: Синхронизация при удалении ребенка реализована в коде
-    (TeacherCoursesRepository.sync_on_child_removed) из-за ограничения PostgreSQL.
     См. docs/database-triggers-contract.md
     """
     

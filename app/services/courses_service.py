@@ -38,6 +38,7 @@ class CoursesService(BaseService[Courses]):
         parent_course_ids = obj_in.pop("parent_course_ids", None)
         parent_courses = obj_in.pop("parent_courses", None)
         # Создаем курс без parent_course_ids и parent_courses
+        replace_parents = obj_in.pop("replace_parents", False)
         course = await super().create(db, obj_in)
         # Устанавливаем родительские курсы
         if parent_courses is not None or parent_course_ids is not None:
@@ -51,7 +52,8 @@ class CoursesService(BaseService[Courses]):
             await self.repo.set_parent_courses(
                 db, course.id,
                 parent_course_ids=parent_course_ids,
-                parent_courses=parent_courses_dict
+                parent_courses=parent_courses_dict,
+                replace=replace_parents
             )
         # Перезагружаем курс с relationships через новый запрос
         stmt = select(Courses).where(Courses.id == course.id).options(selectinload(Courses.parent_courses))
@@ -69,6 +71,7 @@ class CoursesService(BaseService[Courses]):
         """
         parent_course_ids = obj_in.pop("parent_course_ids", None)
         parent_courses = obj_in.pop("parent_courses", None)
+        replace_parents = obj_in.pop("replace_parents", False)
         # Обновляем родительские курсы ПЕРЕД обновлением основного объекта
         # чтобы все изменения были в одной транзакции
         if parent_courses is not None or parent_course_ids is not None:
@@ -82,7 +85,8 @@ class CoursesService(BaseService[Courses]):
             await self.repo.set_parent_courses(
                 db, db_obj.id,
                 parent_course_ids=parent_course_ids,
-                parent_courses=parent_courses_dict
+                parent_courses=parent_courses_dict,
+                replace=replace_parents
             )
         # Обновляем курс без parent_course_ids
         course = await super().update(db, db_obj, obj_in)
@@ -203,6 +207,7 @@ class CoursesService(BaseService[Courses]):
         course_id: int,
         new_parent_ids: Optional[List[int]] = None,
         new_parent_courses: Optional[List[Dict[str, Any]]] = None,
+        replace_parents: bool = False,
     ) -> Courses:
         """
         Переместить курс в иерархии (изменить родительские курсы).
@@ -248,7 +253,8 @@ class CoursesService(BaseService[Courses]):
             await self.repo.set_parent_courses(
                 db, course_id,
                 parent_course_ids=new_parent_ids,
-                parent_courses=parent_courses_dict
+                parent_courses=parent_courses_dict,
+                replace=replace_parents
             )
             # Обновляем объект в сессии
             await db.refresh(course)

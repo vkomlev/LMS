@@ -299,10 +299,8 @@ PostgreSQL генерирует `IntegrityError` при нарушении ог�
 | `check_no_self_dependency` | `course_dependencies` | CHECK CONSTRAINT | - | Предотвращение самоссылок в зависимостях |
 | `trg_set_course_parent_order_number` | `course_parents` | BEFORE INSERT/UPDATE | `set_course_parent_order_number()` | Автоматическая нумерация и пересчет order_number для подкурсов |
 | `trg_reorder_course_parents_after_delete` | `course_parents` | AFTER DELETE | `reorder_course_parents_after_delete()` | Пересчет order_number после удаления подкурса |
-| `trg_auto_link_teacher_course_children` | `teacher_courses` | AFTER INSERT | `auto_link_teacher_course_children()` | Автоматическая привязка детей при привязке родителя к преподавателю |
-| `trg_auto_unlink_teacher_course_children` | `teacher_courses` | AFTER DELETE | `auto_unlink_teacher_course_children()` | Автоматическая отвязка детей при отвязке родителя от преподавателя |
-| `trg_sync_teacher_courses_on_child_added` | `course_parents` | AFTER INSERT | `sync_teacher_courses_on_child_added()` | Синхронизация при добавлении ребенка в иерархию |
-| ⚠️ `sync_on_child_removed` (код) | `course_parents` | - | `TeacherCoursesRepository.sync_on_child_removed()` | Синхронизация при удалении ребенка из иерархии (технический долг) |
+| `trg_check_teacher_course_no_parents` | `teacher_courses` | BEFORE INSERT | `check_course_has_no_parents()` | Проверка, что курс не имеет родителей перед привязкой преподавателя |
+| `trg_check_user_course_no_parents` | `user_courses` | BEFORE INSERT | `check_user_course_has_no_parents()` | Проверка, что курс не имеет родителей перед привязкой студента |
 
 ---
 
@@ -490,5 +488,23 @@ WHERE constraint_schema = 'public';
 
 ---
 
-**Последнее обновление:** 2026-01-21  
+**Последнее обновление:** 2026-01-27  
 **Ответственный:** Команда разработки LMS
+
+---
+
+## 📝 История изменений
+
+### 2026-01-27: Упрощение логики работы с триггерами
+
+**Удалено:**
+- Триггеры автоматической привязки/отвязки детей (`trg_auto_link_teacher_course_children`, `trg_auto_unlink_teacher_course_children`)
+- Триггер синхронизации при добавлении ребенка (`trg_sync_teacher_courses_on_child_added`)
+- Метод `sync_on_child_removed` из `TeacherCoursesRepository`
+
+**Добавлено:**
+- Триггеры проверки отсутствия родителей перед привязкой (`trg_check_teacher_course_no_parents`, `trg_check_user_course_no_parents`)
+
+**Новые правила:**
+- Привязка преподавателей и студентов возможна только к курсам без родителей (корневым курсам)
+- Автоматическая синхронизация при изменении иерархии курсов больше не выполняется

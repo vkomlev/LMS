@@ -336,6 +336,8 @@ async def move_course_endpoint(
     - Если new_parent_ids = [] или null, курс становится корневым (без родителей).
     - Курс может иметь несколько родителей.
     - Валидация циклов выполняется триггером БД.
+    - Если replace_parents=True, все существующие связи заменяются новыми.
+    - Если replace_parents=False (по умолчанию), новые связи добавляются к существующим.
 
     Ошибки:
     - 404: Курс или родительский курс не найден.
@@ -354,6 +356,7 @@ async def move_course_endpoint(
         course_id,
         new_parent_ids=payload.new_parent_ids,
         new_parent_courses=new_parent_courses_dict,
+        replace_parents=payload.replace_parents if payload.replace_parents is not None else False,
     )
     return CourseRead.model_validate(updated_course)
 

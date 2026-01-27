@@ -61,11 +61,15 @@
   - Если указано, имеет приоритет над `new_parent_ids`
   - Каждый элемент: `{"parent_course_id": int, "order_number": int|null}`
   - `order_number` - порядковый номер подкурса внутри родителя (если `null`, устанавливается автоматически триггером БД)
+- `replace_parents` (bool, default=false): режим работы с родителями
+  - `false` (по умолчанию) = добавить новые связи к существующим
+  - `true` = заменить все существующие связи новыми
 
 **Важно:** 
 - Курс может быть перемещен к нескольким родителям одновременно.
 - Для указания порядкового номера используйте `new_parent_courses` вместо `new_parent_ids`.
 - Порядковые номера автоматически управляются триггерами БД (см. `docs/database-triggers-contract.md`).
+- Поведение при перемещении зависит от параметра `replace_parents`.
 
 ### `UserCourseBulkCreate`
 `course_ids` (int[]) список курсов для массовой привязки.
@@ -104,17 +108,26 @@ CRUD для курсов подключён через общий генерат
 - `parent_course_ids` (int[]|null): обновить список родительских курсов
   - `null` = не изменять текущие связи
   - `[]` = сделать курс корневым (удалить все связи с родителями)
-  - `[1, 2]` = установить новых родителей (старые связи удаляются, order_number установится автоматически)
+  - `[1, 2]` = установить новых родителей (поведение зависит от `replace_parents`)
 - `parent_courses` (ParentCourseWithOrder[]|null): список родительских курсов с порядковыми номерами
   - Если указано, имеет приоритет над `parent_course_ids`
   - Позволяет задать порядковый номер подкурса внутри каждого родителя
+- `replace_parents` (bool, default=false): режим работы с родителями
+  - `false` (по умолчанию) = добавить новые связи к существующим
+  - `true` = заменить все существующие связи новыми
 
 **Пример:**
 ```bash
 # Обновить родительские курсы (order_number установится автоматически)
+# Добавить новые связи к существующим (по умолчанию)
 curl -X PATCH "http://localhost:8000/api/v1/courses/6?api_key=bot-key-1" \
   -H "Content-Type: application/json" \
   -d '{"parent_course_ids": [1, 2]}'
+
+# Заменить все существующие связи новыми
+curl -X PATCH "http://localhost:8000/api/v1/courses/6?api_key=bot-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{"parent_course_ids": [1, 2], "replace_parents": true}'
 
 # Обновить родительские курсы с указанием order_number
 curl -X PATCH "http://localhost:8000/api/v1/courses/6?api_key=bot-key-1" \
@@ -297,8 +310,11 @@ curl "http://localhost:8000/api/v1/courses/access-levels?api_key=bot-key-1"
 - `new_parent_courses` (ParentCourseWithOrder[]|null): список новых родительских курсов с порядковыми номерами
   - Если указано, имеет приоритет над `new_parent_ids`
   - Позволяет задать порядковый номер подкурса внутри каждого родителя
+- `replace_parents` (bool, default=false): режим работы с родителями
+  - `false` (по умолчанию) = добавить новые связи к существующим
+  - `true` = заменить все существующие связи новыми
 
-**Важно:** Курс может иметь несколько родителей. При перемещении все старые связи с родителями удаляются и создаются новые.
+**Важно:** Курс может иметь несколько родителей. Поведение при перемещении зависит от параметра `replace_parents`.
 
 **Ошибки:**
 - **404**: курс или один из новых родителей не найден
@@ -306,10 +322,15 @@ curl "http://localhost:8000/api/v1/courses/access-levels?api_key=bot-key-1"
 
 **Пример запроса:**
 ```bash
-# Переместить курс к одному родителю (order_number установится автоматически)
+# Добавить нового родителя к существующим (по умолчанию)
 curl -X PATCH "http://localhost:8000/api/v1/courses/6/move?api_key=bot-key-1" \
   -H "Content-Type: application/json" \
   -d '{"new_parent_ids": [1]}'
+
+# Заменить всех родителей новыми
+curl -X PATCH "http://localhost:8000/api/v1/courses/6/move?api_key=bot-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{"new_parent_ids": [1, 2], "replace_parents": true}'
 
 # Переместить курс к нескольким родителям с указанием order_number
 curl -X PATCH "http://localhost:8000/api/v1/courses/6/move?api_key=bot-key-1" \

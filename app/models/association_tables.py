@@ -124,10 +124,8 @@ t_teacher_courses = Table(
     PrimaryKeyConstraint("teacher_id", "course_id", name="teacher_courses_pkey"),
     comment=(
         "Привязка преподавателей к курсам. "
-        "⚠️ ВАЖНО: Автоматическая привязка детей при привязке родителя и синхронизация при изменении иерархии "
-        "реализованы в БД через триггеры. "
-        "⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: Синхронизация при удалении ребенка из иерархии реализована в коде "
-        "(TeacherCoursesRepository.sync_on_child_removed) из-за ограничения PostgreSQL. "
+        "⚠️ ВАЖНО: Привязка преподавателей возможна только к курсам без родителей. "
+        "Проверка выполняется на уровне БД через триггер trg_check_teacher_course_no_parents. "
         "См. docs/database-triggers-contract.md"
     )
 )

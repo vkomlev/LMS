@@ -86,6 +86,8 @@ class CourseUpdate(BaseModel):
     - Валидация циклов (если меняются родители) выполняется триггером БД.
     - `course_uid` должен быть уникальным (проверяется на уровне БД).
     - `parent_course_ids` может быть пустым списком или `null` → сделать курс корневым.
+    - Если `replace_parents=True`, все существующие связи заменяются новыми.
+    - Если `replace_parents=False` (по умолчанию), новые связи добавляются к существующим.
     """
     title: Optional[str] = Field(None, description="Название курса", examples=["Python: продвинутый уровень"])
     access_level: Optional[AccessLevel] = Field(None, description="Тип доступа/проверки", examples=["manual_check"])
@@ -99,6 +101,11 @@ class CourseUpdate(BaseModel):
         None,
         description="Список родительских курсов с порядковыми номерами. Если указано, имеет приоритет над parent_course_ids.",
         examples=[None, [{"parent_course_id": 1, "order_number": 1}]],
+    )
+    replace_parents: Optional[bool] = Field(
+        False,
+        description="Если True, заменяет все существующие связи родителями новыми. Если False, добавляет новые к существующим.",
+        examples=[False, True],
     )
     is_required: Optional[bool] = Field(None, description="Обязательный ли курс", examples=[True, False])
     course_uid: Optional[str] = Field(
@@ -204,6 +211,8 @@ class CourseMoveRequest(BaseModel):
     - Триггер БД запрещает циклы и самоссылки.
     - Курс может иметь несколько родителей.
     - Для указания order_number используйте new_parent_courses.
+    - Если `replace_parents=True`, все существующие связи заменяются новыми.
+    - Если `replace_parents=False` (по умолчанию), новые связи добавляются к существующим.
     """
     new_parent_ids: Optional[List[int]] = Field(
         None,
@@ -214,6 +223,11 @@ class CourseMoveRequest(BaseModel):
         None,
         description="Список новых родительских курсов с порядковыми номерами. Если указано, имеет приоритет над new_parent_ids.",
         examples=[None, [{"parent_course_id": 10, "order_number": 1}]],
+    )
+    replace_parents: Optional[bool] = Field(
+        False,
+        description="Если True, заменяет все существующие связи родителями новыми. Если False, добавляет новые к существующим.",
+        examples=[False, True],
     )
 
     model_config = ConfigDict(

@@ -169,30 +169,37 @@ class CoursesRepository(BaseRepository[Courses]):
         db: AsyncSession,
         course_id: int,
         parent_course_ids: Optional[List[int]] = None,
-        parent_courses: Optional[List[Dict[str, Any]]] = None
+        parent_courses: Optional[List[Dict[str, Any]]] = None,
+        replace: bool = False
     ) -> None:
         """
         Установить родительские курсы для курса.
-        Добавляет новые связи к существующим (не удаляет старые).
         
         Args:
             course_id: ID курса
-            parent_course_ids: Список ID родительских курсов для добавления (order_number будет установлен автоматически)
-            parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально) для добавления
+            parent_course_ids: Список ID родительских курсов (order_number будет установлен автоматически)
+            parent_courses: Список словарей с ключами 'parent_course_id' и 'order_number' (опционально)
+            replace: Если True, заменяет все существующие связи новыми. Если False, добавляет новые к существующим.
         
         ⚠️ ВАЖНО: order_number автоматически устанавливается триггером БД, если не указан.
-        ⚠️ ВАЖНО: Метод добавляет новые связи к существующим, не удаляя старые.
-        ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: При удалении связей вызывается sync_on_child_removed для синхронизации
-        связей преподавателей с курсами (из-за ограничения PostgreSQL триггер отключен).
-        См. docs/database-triggers-contract.md
+        ⚠️ ВАЖНО: Привязка преподавателей и студентов возможна только к курсам без родителей.
+        Проверка выполняется на уровне БД через триггеры.
         """
-        # Получаем список существующих связей
-        existing_links_stmt = select(t_course_parents).where(
-            t_course_parents.c.course_id == course_id
-        )
-        existing_links_result = await db.execute(existing_links_stmt)
-        existing_links = existing_links_result.all()
-        existing_parent_ids = {link.parent_course_id for link in existing_links}
+        # Если replace=True, удаляем все существующие связи
+        if replace:
+            delete_stmt = delete(t_course_parents).where(
+                t_course_parents.c.course_id == course_id
+            )
+            await db.execute(delete_stmt)
+            existing_parent_ids = set()
+        else:
+            # Получаем список существующих связей
+            existing_links_stmt = select(t_course_parents).where(
+                t_course_parents.c.course_id == course_id
+            )
+            existing_links_result = await db.execute(existing_links_stmt)
+            existing_links = existing_links_result.all()
+            existing_parent_ids = {link.parent_course_id for link in existing_links}
         
         # Определяем новые родители для добавления
         new_parent_ids = set()
@@ -206,28 +213,8 @@ class CoursesRepository(BaseRepository[Courses]):
         
         # Если нет новых родителей для добавления, ничего не делаем
         if not parents_to_add:
+            await db.commit()
             return
-        
-        # Получаем список потомков курса для синхронизации при добавлении новых родителей
-        from app.repos.teacher_courses_repo import TeacherCoursesRepository
-        
-        descendants_stmt = text("""
-            WITH RECURSIVE course_descendants AS (
-                SELECT cp.course_id, 1 as depth
-                FROM course_parents cp
-                WHERE cp.parent_course_id = :course_id
-                
-                UNION ALL
-                
-                SELECT cp.course_id, cd.depth + 1
-                FROM course_parents cp
-                INNER JOIN course_descendants cd ON cp.parent_course_id = cd.course_id
-                WHERE cd.depth < 20
-            )
-            SELECT course_id FROM course_descendants
-        """)
-        descendants_result = await db.execute(descendants_stmt, {"course_id": course_id})
-        descendant_course_ids = [row[0] for row in descendants_result.all()]
         
         # Определяем, какие данные использовать для добавления
         if parent_courses is not None:
