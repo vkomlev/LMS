@@ -29,3 +29,4 @@ secrets/*
 *.credentials.json
 *service-account*.json
 gscapi-*.json
+materials_import_template.xlsx
