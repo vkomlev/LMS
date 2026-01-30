@@ -336,6 +336,14 @@ async def import_materials_from_google_sheets(
         imported_total = sum(len(rows) for rows in by_course_id.values())
         updated_total = 0
 
+    logger.info(
+        "import_materials_from_google_sheets dry_run=%s total_rows=%s imported=%s updated=%s errors_count=%s",
+        payload.dry_run,
+        len(rows) - 1,
+        imported_total,
+        updated_total,
+        len(global_errors),
+    )
     return MaterialsGoogleSheetsImportResponse(
         imported=imported_total,
         updated=updated_total,
