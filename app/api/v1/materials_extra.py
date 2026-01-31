@@ -1,18 +1,24 @@
 # app/api/v1/materials_extra.py
 """
-Расширенные эндпойнты для материалов: список по курсу, reorder, move, bulk-update, copy, stats, импорт из Google Sheets.
+Расширенные эндпойнты для материалов: поиск, список по курсу, reorder, move, bulk-update, copy, stats, загрузка файлов, импорт из Google Sheets.
 """
 from __future__ import annotations
 
 import logging
+import mimetypes
+import os
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Dict, List
+from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Body, Query
+from fastapi import APIRouter, Depends, Body, Query, File, UploadFile, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.config import Settings
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
 from app.schemas.materials import (
@@ -43,6 +49,32 @@ materials_repo = MaterialsRepository()
 courses_repo = CoursesRepository()
 gsheets_service = GoogleSheetsService()
 parser_service = MaterialsSheetsParserService()
+settings = Settings()
+
+
+@router.get(
+    "/materials/search",
+    response_model=MaterialsListResponse,
+    summary="Поиск материалов по title и external_uid",
+)
+async def search_materials(
+    q: str = Query(..., min_length=1, description="Строка поиска (title, external_uid)"),
+    course_id: int | None = Query(None, description="Ограничить поиск курсом; при отсутствии — по всем курсам"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+) -> MaterialsListResponse:
+    """Глобальный поиск материалов по заголовку и external_uid. course_id опционально."""
+    items, total = await materials_service.search_materials(
+        db, q, course_id=course_id, skip=skip, limit=limit
+    )
+    logger.info("search_materials q=%s course_id=%s total=%s", q, course_id, total)
+    return MaterialsListResponse(
+        items=[MaterialRead.model_validate(m) for m in items],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.get(
@@ -52,6 +84,7 @@ parser_service = MaterialsSheetsParserService()
 )
 async def list_course_materials(
     course_id: int,
+    q: str | None = Query(None, description="Поиск по заголовку и external_uid (в рамках курса)"),
     is_active: bool | None = Query(None, description="Фильтр по активности"),
     type: str | None = Query(None, alias="type", description="Фильтр по типу материала"),
     order_by: str = Query("order_position", description="Сортировка: order_position, title, created_at"),
@@ -59,10 +92,11 @@ async def list_course_materials(
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ) -> MaterialsListResponse:
-    """Возвращает материалы курса с фильтрацией и пагинацией."""
+    """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE)."""
     items, total = await materials_service.list_by_course(
         db,
         course_id,
+        q=q,
         is_active=is_active,
         type_filter=type,
         order_by=order_by,
@@ -164,6 +198,75 @@ async def get_course_materials_stats(
     stats = await materials_service.get_stats_by_course(db, course_id)
     logger.info("get_course_materials_stats course_id=%s total=%s", course_id, stats.get("total"))
     return stats
+
+
+@router.post(
+    "/materials/upload",
+    summary="Загрузить файл для использования в контенте материала",
+)
+async def upload_material_file(
+    file: UploadFile = File(..., description="Файл (PDF, документ, изображение и т.д.)"),
+) -> Dict[str, str]:
+    """
+    Загружает файл на сервер. Возвращает url для подстановки в content материала
+    (например, content.sources[].url для pdf/video или content.url для link).
+
+    Важно: загрузка не обновляет поле content материала автоматически.
+    Клиент должен выполнить PATCH материала, добавив возвращённый url в content.
+    При PATCH передавайте полный объект content, чтобы сохранить существующие
+    источники (наш файл и внешняя ссылка могут сосуществовать в content.sources).
+
+    Лимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).
+    Файлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).
+    """
+    settings.materials_upload_dir.mkdir(parents=True, exist_ok=True)
+    original = file.filename or "file"
+    safe_name = f"{uuid4().hex}_{original}"
+    file_path = settings.materials_upload_dir / safe_name
+
+    total = 0
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(settings.attachment_chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > settings.max_attachment_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Файл слишком большой. Максимум {settings.max_attachment_size_bytes} байт",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+        raise
+
+    url_path = f"/api/v1/materials/files/{safe_name}"
+    logger.info("upload_material_file filename=%s size=%s url=%s", original, total, url_path)
+    return {"url": url_path, "filename": original}
+
+
+@router.get(
+    "/materials/files/{file_id}",
+    summary="Скачать загруженный файл материала",
+)
+async def download_material_file(file_id: str):
+    """
+    Отдаёт файл по идентификатору (имя файла, выданное при upload).
+    Идентификатор не должен содержать / или ..
+    """
+    if "/" in file_id or ".." in file_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
+    file_path = settings.materials_upload_dir / file_id
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
+    media_type = mimetypes.guess_type(file_id)[0] or "application/octet-stream"
+    return FileResponse(path=str(file_path), media_type=media_type, filename=file_id)
 
 
 @router.post(

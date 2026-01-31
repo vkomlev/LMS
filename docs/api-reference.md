@@ -668,16 +668,19 @@ API учебных материалов курса: CRUD, список по ку
 
 Основные эндпойнты:
 
-- **GET** `/courses/{course_id}/materials` — список материалов курса (фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
+- **GET** `/materials/search` — поиск материалов по title и external_uid (параметр q обязателен; course_id опционально — по всем курсам или по одному)
+- **GET** `/courses/{course_id}/materials` — список материалов курса (параметр q — поиск по title/external_uid в рамках курса; фильтры: is_active, type; сортировка: order_position, title, created_at; пагинация skip/limit)
 - **POST** `/materials` — создание материала
 - **GET** `/materials/{id}` — получение материала
-- **PATCH** `/materials/{id}` — обновление материала
+- **PATCH** `/materials/{id}` — обновление материала (при изменении content передаётся полный объект content для типа)
 - **DELETE** `/materials/{id}` — удаление материала
 - **POST** `/courses/{course_id}/materials/reorder` — изменить порядок материалов
-- **POST** `/materials/{material_id}/move` — переместить материал (позиция или другой курс)
+- **POST** `/materials/{material_id}/move` — переместить материал (new_order_position опционально при переносе в другой курс — тогда в конец; course_id опционально — при null только смена позиции)
 - **POST** `/courses/{course_id}/materials/bulk-update` — массовое обновление is_active
 - **POST** `/materials/{material_id}/copy` — копировать материал в другой курс
 - **GET** `/courses/{course_id}/materials/stats` — статистика по материалам курса
+- **POST** `/materials/upload` — загрузить файл для контента материала (multipart; возвращает url для content.sources[0].url или content.url)
+- **GET** `/materials/files/{file_id}` — скачать загруженный файл материала
 - **POST** `/materials/import/google-sheets` — импорт материалов из Google Таблицы (многокурсовой; dry_run поддерживается)
 
 Типы материалов: `text`, `video`, `audio`, `image`, `link`, `pdf`, `office_document`. Структура поля `content` зависит от типа — см. [materials-api.md](materials-api.md).

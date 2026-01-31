@@ -1,0 +1,3 @@
+Smoke test upload file for Materials API.
+Проверка загрузки файла: POST /materials/upload.
+This file is used by test_materials_api_smoke.ps1.

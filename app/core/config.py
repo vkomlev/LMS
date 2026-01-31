@@ -27,6 +27,12 @@ class Settings:
         )
         self.messages_upload_dir.mkdir(parents=True, exist_ok=True)
 
+        # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
+        self.materials_upload_dir: Path = Path(
+            os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")
+        )
+        self.materials_upload_dir.mkdir(parents=True, exist_ok=True)
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )

@@ -28,6 +28,7 @@ class MaterialsRepository(BaseRepository[Materials]):
         db: AsyncSession,
         course_id: int,
         *,
+        q: Optional[str] = None,
         is_active: Optional[bool] = None,
         type_filter: Optional[str] = None,
         order_by: str = "order_position",
@@ -36,6 +37,7 @@ class MaterialsRepository(BaseRepository[Materials]):
     ) -> Tuple[List[Materials], int]:
         """
         Список материалов курса с фильтрацией и пагинацией.
+        q: поиск по title и external_uid (ILIKE %q%).
 
         Returns:
             (список материалов, общее количество без limit)
@@ -43,6 +45,11 @@ class MaterialsRepository(BaseRepository[Materials]):
         stmt = select(Materials).where(Materials.course_id == course_id)
         count_stmt = select(func.count()).select_from(Materials).where(Materials.course_id == course_id)
 
+        if q and q.strip():
+            pattern = f"%{q.strip()}%"
+            cond = (Materials.title.ilike(pattern)) | (Materials.external_uid.ilike(pattern))
+            stmt = stmt.where(cond)
+            count_stmt = count_stmt.where(cond)
         if is_active is not None:
             stmt = stmt.where(Materials.is_active == is_active)
             count_stmt = count_stmt.where(Materials.is_active == is_active)
@@ -61,6 +68,39 @@ class MaterialsRepository(BaseRepository[Materials]):
         else:
             stmt = stmt.order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
 
+        stmt = stmt.offset(skip).limit(limit)
+        result = await db.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def search_materials(
+        self,
+        db: AsyncSession,
+        q: str,
+        *,
+        course_id: Optional[int] = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> Tuple[List[Materials], int]:
+        """
+        Поиск материалов по title и external_uid (ILIKE).
+        course_id: опционально; при отсутствии — поиск по всем курсам.
+
+        Returns:
+            (список материалов, общее количество без limit)
+        """
+        if not q or not q.strip():
+            return [], 0
+        pattern = f"%{q.strip()}%"
+        cond = (Materials.title.ilike(pattern)) | (Materials.external_uid.ilike(pattern))
+
+        stmt = select(Materials).where(cond)
+        count_stmt = select(func.count()).select_from(Materials).where(cond)
+        if course_id is not None:
+            stmt = stmt.where(Materials.course_id == course_id)
+            count_stmt = count_stmt.where(Materials.course_id == course_id)
+
+        total = (await db.execute(count_stmt)).scalar() or 0
+        stmt = stmt.order_by(Materials.course_id.asc(), Materials.order_position.asc().nulls_last(), Materials.id.asc())
         stmt = stmt.offset(skip).limit(limit)
         result = await db.execute(stmt)
         return list(result.scalars().all()), total
@@ -97,22 +137,38 @@ class MaterialsRepository(BaseRepository[Materials]):
         result = await db.execute(stmt)
         return list(result.scalars().all())
 
+    async def get_max_order_position(self, db: AsyncSession, course_id: int) -> int:
+        """Максимальная order_position в курсе (0 если материалов нет)."""
+        stmt = select(func.coalesce(func.max(Materials.order_position), 0)).where(
+            Materials.course_id == course_id
+        )
+        r = await db.execute(stmt)
+        return (r.scalar() or 0) or 0
+
     async def move_material(
         self,
         db: AsyncSession,
         material_id: int,
-        new_order_position: int,
+        new_order_position: Optional[int],
         target_course_id: Optional[int] = None,
     ) -> Optional[Materials]:
         """
         Переместить материал в новую позицию (в том же курсе или в другой).
+        new_order_position: если None и курс меняется — ставим в конец (max+1).
         Триггер пересчитает order_position в целевом курсе.
         """
         material = await self.get(db, material_id)
         if not material:
             return None
 
-        updates: Dict[str, Any] = {"order_position": new_order_position}
+        target_course = target_course_id if target_course_id is not None else material.course_id
+        pos = new_order_position
+        if pos is None and target_course != material.course_id:
+            pos = await self.get_max_order_position(db, target_course) + 1
+        elif pos is None:
+            pos = await self.get_max_order_position(db, target_course) + 1
+
+        updates: Dict[str, Any] = {"order_position": pos}
         if target_course_id is not None and target_course_id != material.course_id:
             updates["course_id"] = target_course_id
 

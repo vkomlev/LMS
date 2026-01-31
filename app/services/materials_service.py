@@ -28,24 +28,40 @@ class MaterialsService(BaseService[Materials]):
         db: AsyncSession,
         course_id: int,
         *,
+        q: Optional[str] = None,
         is_active: Optional[bool] = None,
         type_filter: Optional[str] = None,
         order_by: str = "order_position",
         skip: int = 0,
         limit: int = 100,
     ) -> Tuple[List[Materials], int]:
-        """Список материалов курса с фильтрацией и пагинацией. Возвращает (items, total)."""
+        """Список материалов курса с фильтрацией и пагинацией. q — поиск по title/external_uid. Возвращает (items, total)."""
         course = await self._courses_repo.get(db, course_id)
         if not course:
             raise DomainError(f"Курс с ID {course_id} не найден", status_code=404)
         return await self.repo.list_by_course(
             db,
             course_id,
+            q=q,
             is_active=is_active,
             type_filter=type_filter,
             order_by=order_by,
             skip=skip,
             limit=limit,
+        )
+
+    async def search_materials(
+        self,
+        db: AsyncSession,
+        q: str,
+        *,
+        course_id: Optional[int] = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> Tuple[List[Materials], int]:
+        """Поиск материалов по title и external_uid. course_id опционально — при отсутствии поиск по всем курсам. Возвращает (items, total)."""
+        return await self.repo.search_materials(
+            db, q, course_id=course_id, skip=skip, limit=limit
         )
 
     async def reorder_materials(
@@ -84,13 +100,20 @@ class MaterialsService(BaseService[Materials]):
         self,
         db: AsyncSession,
         material_id: int,
-        new_order_position: int,
+        new_order_position: Optional[int],
         target_course_id: Optional[int] = None,
     ) -> Materials:
-        """Переместить материал. При смене курса проверяет существование целевого курса."""
+        """Переместить материал. При смене курса new_order_position можно не передавать — материал встанет в конец. В рамках того же курса new_order_position обязателен."""
         material = await self.repo.get(db, material_id)
         if not material:
             raise DomainError(f"Материал с ID {material_id} не найден", status_code=404)
+
+        same_course = target_course_id is None or target_course_id == material.course_id
+        if same_course and new_order_position is None:
+            raise DomainError(
+                "При перемещении внутри курса укажите new_order_position",
+                status_code=400,
+            )
 
         if target_course_id is not None and target_course_id != material.course_id:
             course = await self._courses_repo.get(db, target_course_id)

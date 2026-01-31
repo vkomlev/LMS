@@ -104,10 +104,14 @@ class MaterialReorderRequest(BaseModel):
 
 class MaterialMoveRequest(BaseModel):
     """Запрос на перемещение материала (в другую позицию или в другой курс)."""
-    new_order_position: int = Field(..., ge=1, description="Новая позиция в курсе")
+    new_order_position: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Новая позиция в курсе. При переносе в другой курс можно не передавать — материал встанет в конец. В рамках того же курса обязателен.",
+    )
     course_id: Optional[int] = Field(
         default=None,
-        description="ID курса назначения. Если не указан — перемещение внутри текущего курса.",
+        description="ID курса назначения. Если не указан — перемещение внутри текущего курса (только смена позиции).",
     )
 
 
