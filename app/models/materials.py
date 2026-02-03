@@ -59,6 +59,7 @@ class Materials(Base):
     type: Mapped[str] = mapped_column(
         Enum(
             "text", "video", "audio", "image", "link", "pdf", "office_document",
+            "script", "document",
             name="content_type",
         ),
         nullable=False,

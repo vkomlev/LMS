@@ -19,7 +19,7 @@ from app.utils.exceptions import DomainError
 logger = logging.getLogger("services.materials_sheets_parser")
 
 # Типы материалов, допустимые при импорте из таблицы (в т.ч. link для URL)
-ALLOWED_IMPORT_TYPES = frozenset({"text", "video", "audio", "image", "link", "pdf", "office_document"})
+ALLOWED_IMPORT_TYPES = frozenset({"text", "video", "audio", "image", "link", "pdf", "office_document", "script", "document"})
 
 
 class MaterialsSheetsParserService:
@@ -174,7 +174,7 @@ class MaterialsSheetsParserService:
                 "description": description,
                 "preview_image": None,
             }
-        elif type_str in ("video", "audio", "image", "pdf", "office_document") and url_val and url_val.strip():
+        elif type_str in ("video", "audio", "image", "pdf", "office_document", "script", "document") and url_val and url_val.strip():
             content = {
                 "sources": [{"type": "url", "url": url_val.strip()}],
                 "default_source": 0,

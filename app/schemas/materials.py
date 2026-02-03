@@ -21,7 +21,7 @@ class MaterialCreate(BaseModel):
     title: str = Field(..., max_length=500, description="Заголовок материала")
     type: str = Field(
         ...,
-        description="Тип материала: text, video, audio, image, link, pdf, office_document",
+        description="Тип материала: text, video, audio, image, link, pdf, office_document, script, document",
     )
     content: Any = Field(..., description="Содержимое (структура зависит от type)")
     description: Optional[str] = None

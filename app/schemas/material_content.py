@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 
 
 MaterialType = Literal[
-    "text", "video", "audio", "image", "link", "pdf", "office_document"
+    "text", "video", "audio", "image", "link", "pdf", "office_document",
+    "script", "document",
 ]
 
 # ---------- Общие типы источников ----------
@@ -65,6 +66,26 @@ class OfficeDocumentSourceItem(BaseModel):
     file_path: Optional[str] = None
     telegram_file_id: Optional[str] = None
     format: Optional[Literal["docx", "xlsx", "pptx", "odt", "ods", "odp"]] = None
+    file_size_bytes: Optional[int] = None
+
+
+class ScriptSourceItem(BaseModel):
+    """Один источник: программа или скрипт (py, js, ps1 и т.д.)."""
+    type: Optional[Literal["file", "url", "telegram"]] = None
+    url: Optional[str] = None
+    file_path: Optional[str] = None
+    telegram_file_id: Optional[str] = None
+    format: Optional[Literal["py", "js", "ts", "ps1", "sh", "bat", "cmd", "sql", "yaml", "json"]] = None
+    file_size_bytes: Optional[int] = None
+
+
+class DocumentSourceItem(BaseModel):
+    """Один источник документа (docx, xlsx, pptx, txt и т.д.)."""
+    type: Optional[Literal["file", "url", "telegram"]] = None
+    url: Optional[str] = None
+    file_path: Optional[str] = None
+    telegram_file_id: Optional[str] = None
+    format: Optional[Literal["docx", "xlsx", "pptx", "txt", "odt", "ods", "odp"]] = None
     file_size_bytes: Optional[int] = None
 
 
@@ -124,6 +145,24 @@ class OfficeDocumentContent(BaseModel):
     default_source: int = Field(default=0)
 
 
+class ScriptContent(BaseModel):
+    """Контент для type='script' — программы и скрипты (py, js, ps1 и т.д.)."""
+    sources: List[ScriptSourceItem] = Field(
+        default_factory=list,
+        description="Список источников (файл, URL)",
+    )
+    default_source: int = Field(default=0)
+
+
+class DocumentContent(BaseModel):
+    """Контент для type='document' — документы (docx, xlsx, pptx, txt)."""
+    sources: List[DocumentSourceItem] = Field(
+        default_factory=list,
+        description="Список источников (файл, URL)",
+    )
+    default_source: int = Field(default=0)
+
+
 # ---------- Валидация контента по типу материала ----------
 
 CONTENT_MODELS: dict[str, type[BaseModel]] = {
@@ -134,6 +173,8 @@ CONTENT_MODELS: dict[str, type[BaseModel]] = {
     "link": LinkContent,
     "pdf": PdfContent,
     "office_document": OfficeDocumentContent,
+    "script": ScriptContent,
+    "document": DocumentContent,
 }
 
 

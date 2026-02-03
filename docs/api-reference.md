@@ -683,7 +683,7 @@ API учебных материалов курса: CRUD, список по ку
 - **GET** `/materials/files/{file_id}` — скачать загруженный файл материала
 - **POST** `/materials/import/google-sheets` — импорт материалов из Google Таблицы (многокурсовой; dry_run поддерживается)
 
-Типы материалов: `text`, `video`, `audio`, `image`, `link`, `pdf`, `office_document`. Структура поля `content` зависит от типа — см. [materials-api.md](materials-api.md).
+Типы материалов: `text`, `video`, `audio`, `image`, `link`, `pdf`, `office_document`, `script`, `document`. Структура поля `content` зависит от типа — см. [materials-api.md](materials-api.md).
 
 ---
 

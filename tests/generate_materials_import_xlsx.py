@@ -92,6 +92,28 @@ ROWS = [
         2,
         "true",
     ),
+    (
+        "COURSE-PY-01",
+        "MAT-PY-01-SCRIPT",
+        "Скрипт hello.py",
+        "script",
+        "https://example.com/hello.py",
+        "Пример Python-скрипта",
+        "",
+        4,
+        "true",
+    ),
+    (
+        "COURSE-MATH-01",
+        "MAT-MATH-01-DOC",
+        "Лекция в DOCX",
+        "document",
+        "https://example.com/lecture.docx",
+        "Документ с лекцией",
+        "",
+        3,
+        "true",
+    ),
 ]
 
 
