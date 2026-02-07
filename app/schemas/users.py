@@ -7,6 +7,11 @@ from pydantic import BaseModel, EmailStr, ConfigDict, Field
 class UserCreate(BaseModel):
     """Схема для создания пользователя."""
     email: EmailStr = Field(..., description="Email пользователя (уникальный)", examples=["student@example.com"])
+    password_hash: Optional[str] = Field(
+        None,
+        description="Хэш пароля. Если не передан, сохраняется пустая строка (например, для пользователей из Telegram без пароля).",
+        examples=["$2b$12$...", None],
+    )
     full_name: Optional[str] = Field(None, description="Полное имя пользователя", examples=["Иван Иванов", "Петр Петров"])
     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[123456789, None])
     

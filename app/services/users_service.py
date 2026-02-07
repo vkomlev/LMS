@@ -16,6 +16,13 @@ class UsersService(BaseService[Users]):
     def __init__(self, repo: UsersRepository = UsersRepository()):
         super().__init__(repo)
 
+    async def create(self, db: AsyncSession, obj_in: Dict[str, Any]) -> Users:
+        """Создать пользователя. Если password_hash не передан, подставляется пустая строка (БД требует NOT NULL)."""
+        data = dict(obj_in)
+        if data.get("password_hash") is None:
+            data["password_hash"] = ""
+        return await self.repo.create(db, data)
+
     async def get_id_by_tg_id(self, db: AsyncSession, tg_id: int) -> int | None:
         """
         Вернуть integer id пользователя по tg_id, либо None.

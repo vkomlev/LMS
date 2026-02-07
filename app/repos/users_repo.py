@@ -52,6 +52,13 @@ class UsersRepository(BaseRepository[Users]):
                 "студент": ["student", "студент"],
                 "methodist": ["methodist", "методист"],
                 "методист": ["methodist", "методист"],
+                "admin": ["admin", "administrator", "администратор"],
+                "administrator": ["admin", "administrator", "администратор"],
+                "администратор": ["admin", "administrator", "администратор"],
+                "marketer": ["marketer", "маркетолог"],
+                "маркетолог": ["marketer", "маркетолог"],
+                "customer": ["customer", "заказчик"],
+                "заказчик": ["customer", "заказчик"],
             }
             return mapping.get(n, [n] if n else [])
         
@@ -132,6 +139,13 @@ class UsersRepository(BaseRepository[Users]):
                 "студент": ["student", "студент"],
                 "methodist": ["methodist", "методист"],
                 "методист": ["methodist", "методист"],
+                "admin": ["admin", "administrator", "администратор"],
+                "administrator": ["admin", "administrator", "администратор"],
+                "администратор": ["admin", "administrator", "администратор"],
+                "marketer": ["marketer", "маркетолог"],
+                "маркетолог": ["marketer", "маркетолог"],
+                "customer": ["customer", "заказчик"],
+                "заказчик": ["customer", "заказчик"],
             }
             return mapping.get(n, [n] if n else [])
 
