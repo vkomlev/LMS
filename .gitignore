@@ -30,3 +30,4 @@ secrets/*
 *service-account*.json
 gscapi-*.json
 materials_import_template.xlsx
+.vscode/settings.json
