@@ -21,6 +21,7 @@ docs/*
 !docs/api-reference.md
 !docs/api-examples.md
 .cursor/*
+!.cursor/rules/
 
 # Secrets and credentials
 secrets/*
