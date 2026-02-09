@@ -85,14 +85,15 @@ async def search_materials(
 async def list_course_materials(
     course_id: int,
     q: str | None = Query(None, description="Поиск по заголовку и external_uid (в рамках курса)"),
-    is_active: bool | None = Query(None, description="Фильтр по активности"),
+    is_active: bool | None = Query(None, description="Фильтр по активности. По умолчанию (null) — все материалы (и активные, и неактивные)."),
     type: str | None = Query(None, alias="type", description="Фильтр по типу материала"),
     order_by: str = Query("order_position", description="Сортировка: order_position, title, created_at"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
 ) -> MaterialsListResponse:
-    """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE)."""
+    """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).
+    total — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски)."""
     items, total = await materials_service.list_by_course(
         db,
         course_id,

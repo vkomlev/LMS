@@ -194,6 +194,9 @@ app.include_router(
     prefix=API_PREFIX,
 )
 
+# Сначала подключаем materials_extra (маршруты /materials/search, /materials/upload и т.д.),
+# чтобы они матчились раньше CRUD /materials/{item_id} — иначе "search" воспринимается как item_id.
+app.include_router(materials_extra_router, prefix=API_PREFIX)
 app.include_router(
     create_crud_router(
         prefix="/materials", tags=["materials"],
@@ -202,7 +205,6 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
-app.include_router(materials_extra_router, prefix=API_PREFIX)
 
 # Бизнес-операции с сообщениями (send/reply/forward и т.п.)
 app.include_router(messages_extra_router, prefix=API_PREFIX)
