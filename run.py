@@ -13,6 +13,6 @@ if __name__ == "__main__":
         "app.api.main:app",    # <-- здесь строка "модуль:приложение"
         host="0.0.0.0",
         port=8000,
-        log_config=None,       # не переопределяем наш logger
-        reload=True,           # теперь работает корректно
+        log_config=None,       
+        reload=True,           
     )
