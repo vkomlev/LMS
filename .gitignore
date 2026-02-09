@@ -32,3 +32,4 @@ secrets/*
 gscapi-*.json
 materials_import_template.xlsx
 .vscode/settings.json
+node_modules/*
