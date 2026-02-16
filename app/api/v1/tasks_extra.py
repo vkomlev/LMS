@@ -388,9 +388,14 @@ async def get_tasks_by_course(
                             "task_content": {
                                 "type": "SC",
                                 "stem": "Что такое переменная в Python?",
-                                "options": [...]
+                                "options": [
+                                    {"id": "A", "text": "Область памяти", "is_active": True}
+                                ]
                             },
-                            "solution_rules": {...},
+                            "solution_rules": {
+                                "max_score": 10,
+                                "correct_options": ["A"]
+                            },
                             "course_id": 1,
                             "difficulty_id": 3,
                             "max_score": 10

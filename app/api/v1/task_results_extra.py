@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Body, HTTPException, status
@@ -440,34 +440,6 @@ async def get_user_stats(
     responses={
         200: {
             "description": "Список результатов, требующих проверки",
-            "content": {
-                "application/json": {
-                    "example": [
-                        {
-                            "id": 1,
-                            "attempt_id": 1,
-                            "task_id": 1,
-                            "user_id": 10,
-                            "score": 0,
-                            "max_score": 20,
-                            "is_correct": None,
-                            "submitted_at": "2026-02-16T12:00:00Z",
-                            "received_at": "2026-02-16T12:00:00Z",
-                            "checked_at": None,
-                            "checked_by": None,
-                            "count_retry": 0,
-                            "metrics": {},
-                            "answer_json": {
-                                "type": "TA",
-                                "response": {
-                                    "text": "Развернутый ответ ученика..."
-                                }
-                            },
-                            "source_system": "web"
-                        }
-                    ]
-                }
-            }
         },
     },
 )
@@ -508,18 +480,11 @@ async def get_pending_review_results(
     if user_id is not None:
         conditions.append(TaskResults.user_id == user_id)
     
-    # Запрос с join к tasks для проверки manual_review_required
-    # Сначала получаем все непроверенные результаты
+    # Запрос с join к tasks для фильтрации по course_id
     query = (
         select(TaskResults)
         .join(Tasks, TaskResults.task_id == Tasks.id)
-        .where(
-            and_(
-                *conditions,
-                # Не проверено (checked_at = null)
-                TaskResults.checked_at.is_(None)
-            )
-        )
+        .where(and_(*conditions))
         .order_by(TaskResults.submitted_at.desc())
         .limit(limit)
         .offset(offset)
