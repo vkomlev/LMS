@@ -61,16 +61,16 @@ class AttemptRead(BaseModel):
     Базовое представление попытки для ответов API.
     """
 
-    id: int
-    user_id: int
-    course_id: Optional[int] = None
+    id: int = Field(..., description="ID попытки", examples=[1, 5])
+    user_id: int = Field(..., description="ID пользователя, который проходит попытку", examples=[10, 15])
+    course_id: Optional[int] = Field(None, description="ID курса, если попытка привязана к курсу", examples=[1, 5, None])
 
     # 👇 ключевая правка: datetime вместо str
-    created_at: Optional[datetime] = None
-    finished_at: Optional[datetime] = None
+    created_at: Optional[datetime] = Field(None, description="Время создания попытки", examples=["2026-02-16T12:00:00Z"])
+    finished_at: Optional[datetime] = Field(None, description="Время завершения попытки (null, если попытка не завершена)", examples=["2026-02-16T13:00:00Z", None])
 
-    source_system: Optional[str] = None
-    meta: Optional[Dict[str, Any]] = None
+    source_system: Optional[str] = Field(None, description="Источник создания попытки", examples=["web", "tg_bot", "lms"])
+    meta: Optional[Dict[str, Any]] = Field(None, description="Произвольные метаданные попытки", examples=[{}, {"time_limit": 3600, "task_ids": [1, 2, 3]}])
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -84,16 +84,18 @@ class AttemptTaskResultShort(BaseModel):
     внутри попытки (для GET /attempts/{id} и summary).
     """
 
-    task_id: int = Field(..., description="ID задачи.")
-    score: int = Field(..., description="Набранный балл.")
-    max_score: int = Field(..., description="Максимальный балл.")
+    task_id: int = Field(..., description="ID задачи", examples=[1, 5])
+    score: int = Field(..., description="Набранный балл", examples=[10, 5, 0])
+    max_score: int = Field(..., description="Максимальный балл", examples=[10, 20])
     is_correct: Optional[bool] = Field(
         default=None,
-        description="True/False/None (для задач с ручной проверкой).",
+        description="True/False/None (для задач с ручной проверкой)",
+        examples=[True, False, None],
     )
     answer_json: Optional[Dict[str, Any]] = Field(
         default=None,
-        description="Сохранённый ответ ученика по задаче (как в task_results.answer_json).",
+        description="Сохранённый ответ ученика по задаче (как в task_results.answer_json)",
+        examples=[{"type": "SC", "response": {"selected_option_ids": ["A"]}}, None],
     )
 
 
@@ -137,10 +139,12 @@ class AttemptAnswerItem(BaseModel):
     task_id: int | None = Field(
         default=None,
         description="ID задачи в БД. Обязателен, если не указан external_uid.",
+        examples=[1, 5, None],
     )
     external_uid: str | None = Field(
         default=None,
         description="Внешний устойчивый ID задачи. Обязателен, если не указан task_id.",
+        examples=["TASK-SC-001", "TASK-MC-002", None],
     )
     answer: StudentAnswer = Field(
         ...,
@@ -148,6 +152,16 @@ class AttemptAnswerItem(BaseModel):
             "Ответ ученика на данную задачу. "
             "Поля type/response должны соответствовать task_content."
         ),
+        examples=[
+            {
+                "type": "SC",
+                "response": {"selected_option_ids": ["A"]}
+            },
+            {
+                "type": "MC",
+                "response": {"selected_option_ids": ["A", "B"]}
+            },
+        ],
     )
 
 
@@ -182,17 +196,19 @@ class AttemptAnswersResponse(BaseModel):
     Ответ для POST /attempts/{id}/answers.
     """
 
-    attempt_id: int = Field(..., description="ID попытки.")
+    attempt_id: int = Field(..., description="ID попытки", examples=[1, 5])
     results: List[AttemptAnswerResult] = Field(
-        ..., description="Результаты проверки по каждой задаче."
+        ..., description="Результаты проверки по каждой задаче", examples=[[]]
     )
     total_score_delta: int = Field(
         ...,
-        description="Суммарный набранный балл только по этим присланным ответам.",
+        description="Суммарный набранный балл только по этим присланным ответам",
+        examples=[15, 25, 0],
     )
     total_max_score_delta: int = Field(
         ...,
-        description="Суммарный максимальный балл только по этим присланным ответам.",
+        description="Суммарный максимальный балл только по этим присланным ответам",
+        examples=[20, 30, 0],
     )
 
 

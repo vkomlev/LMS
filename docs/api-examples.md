@@ -897,6 +897,7 @@ curl "http://localhost:8000/api/v1/attempts/by-user/1?api_key=bot-key-1&skip=0&l
 ## Дополнительные ресурсы
 
 - [Полная документация API](./api-reference.md) - Полный список всех эндпойнтов
+- [API управления заданиями и результатами учеников](./assignments-and-results-api.md) - Подробная документация по эндпойнтам попыток, результатов заданий, ручной проверке и статистике
 - [Документация импорта из Google Sheets](./import-api-documentation.md) - Подробное руководство по импорту
 - [Краткая шпаргалка по импорту](./import-quick-start.md) - Быстрый старт
 - [Swagger UI](http://localhost:8000/docs) - Интерактивная документация API

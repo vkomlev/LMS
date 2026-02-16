@@ -21,18 +21,22 @@ class StudentResponse(BaseModel):
     selected_option_ids: Optional[List[str]] = Field(
         default=None,
         description="Список выбранных ID вариантов ответа (SC/MC).",
+        examples=[["A"], ["A", "B"], None],
     )
     value: Optional[str] = Field(
         default=None,
         description="Краткий текстовый/числовой ответ (SA/SA_COM).",
+        examples=["42", "Python", None],
     )
     text: Optional[str] = Field(
         default=None,
         description="Развёрнутый ответ (TA).",
+        examples=["Развернутый ответ ученика...", None],
     )
     meta: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Произвольные метаданные (время, номер попытки, источник и т.п.).",
+        examples=[{}, {"attempt_number": 1}, None],
     )
 
 
@@ -46,18 +50,26 @@ class StudentAnswer(BaseModel):
     task_id: Optional[int] = Field(
         default=None,
         description="ID задачи в БД (если известен).",
+        examples=[1, 5, None],
     )
     external_uid: Optional[str] = Field(
         default=None,
         description="Внешний устойчивый идентификатор задачи (если используется).",
+        examples=["TASK-SC-001", "TASK-MC-002", None],
     )
     type: TaskType = Field(
         ...,
         description="Тип задачи, должен совпадать с task_content.type.",
+        examples=["SC", "MC", "SA", "TA"],
     )
     response: StudentResponse = Field(
         ...,
         description="Структура с конкретным ответом ученика.",
+        examples=[
+            {"selected_option_ids": ["A"]},
+            {"value": "42"},
+            {"text": "Развернутый ответ..."},
+        ],
     )
 
 
@@ -74,18 +86,22 @@ class CheckResultDetails(BaseModel):
     correct_options: Optional[List[str]] = Field(
         default=None,
         description="Список правильных вариантов (для задач с выбором).",
+        examples=[["A"], ["A", "B"], None],
     )
     user_options: Optional[List[str]] = Field(
         default=None,
         description="Список выбранных учеником вариантов (SC/MC).",
+        examples=[["A"], ["A", "B"], None],
     )
     matched_short_answer: Optional[str] = Field(
         default=None,
         description="Строка, с которой был сопоставлен короткий ответ (если найдено совпадение).",
+        examples=["42", "Python", None],
     )
     rubric_scores: Optional[List[Dict[str, Any]]] = Field(
         default=None,
         description="Список оценок по рубрикам для развёрнутых ответов (TA).",
+        examples=[[{"id": "content", "score": 5}], None],
     )
 
 
@@ -97,10 +113,12 @@ class CheckFeedback(BaseModel):
     general: Optional[str] = Field(
         default=None,
         description="Общая обратная связь для ученика.",
+        examples=["Правильно!", "Частично правильно", None],
     )
     by_option: Optional[Dict[str, str]] = Field(
         default=None,
         description="Обратная связь по конкретным вариантам ответа (ключ — ID варианта).",
+        examples=[{"A": "Правильно!", "B": "Неверно"}, None],
     )
 
 
@@ -115,22 +133,27 @@ class CheckResult(BaseModel):
             "Флаг правильности ответа. "
             "Для задач, требующих только ручной проверки (TA), может быть None."
         ),
+        examples=[True, False, None],
     )
     score: int = Field(
         ...,
         description="Набранный балл за ответ.",
+        examples=[10, 5, 0],
     )
     max_score: int = Field(
         ...,
         description="Максимальный балл за данную задачу.",
+        examples=[10, 20],
     )
     details: Optional[CheckResultDetails] = Field(
         default=None,
         description="Расширенная информация о проверке.",
+        examples=[{"correct_options": ["A"], "user_options": ["A"]}, None],
     )
     feedback: Optional[CheckFeedback] = Field(
         default=None,
         description="Текстовая обратная связь для ученика.",
+        examples=[{"general": "Правильно!"}, None],
     )
 
 
