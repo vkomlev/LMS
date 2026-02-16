@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Body, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, or_
 from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel
 import logging
@@ -368,6 +369,84 @@ async def get_tasks_by_course(
         limit=limit,
         offset=offset,
     )
+    return [TaskRead.model_validate(task) for task in tasks]
+
+
+@router.get(
+    "/tasks/search",
+    response_model=List[TaskRead],
+    summary="Поиск заданий по содержимому",
+    responses={
+        200: {
+            "description": "Список найденных заданий",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "external_uid": "TASK-SC-001",
+                            "task_content": {
+                                "type": "SC",
+                                "stem": "Что такое переменная в Python?",
+                                "options": [...]
+                            },
+                            "solution_rules": {...},
+                            "course_id": 1,
+                            "difficulty_id": 3,
+                            "max_score": 10
+                        }
+                    ]
+                }
+            }
+        },
+    },
+)
+async def search_tasks(
+    q: str = Query(..., min_length=2, description="Поисковый запрос (минимум 2 символа)"),
+    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
+    limit: int = Query(20, ge=1, le=200, description="Максимум результатов"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    db: AsyncSession = Depends(get_db),
+) -> List[TaskRead]:
+    """
+    Поиск заданий по содержимому.
+    
+    Поиск выполняется по:
+    - task_content.stem (формулировка вопроса)
+    - task_content.title (название задания, если указано)
+    - external_uid (внешний идентификатор)
+    
+    Поиск регистронезависимый (case-insensitive).
+    
+    Args:
+        q: Поисковый запрос (минимум 2 символа)
+        course_id: Опциональный фильтр по курсу
+        limit: Максимум результатов (1-200)
+        offset: Смещение для пагинации
+    
+    Returns:
+        Список найденных заданий
+    """
+    from app.models.tasks import Tasks
+    
+    # Поиск по JSONB полям task_content
+    # Используем JSONB операторы PostgreSQL для поиска в task_content.stem и task_content.title
+    search_conditions = [
+        Tasks.task_content['stem'].astext.ilike(f'%{q}%'),
+        Tasks.task_content['title'].astext.ilike(f'%{q}%'),
+        Tasks.external_uid.ilike(f'%{q}%'),
+    ]
+    
+    query = select(Tasks).where(or_(*search_conditions))
+    
+    if course_id is not None:
+        query = query.where(Tasks.course_id == course_id)
+    
+    query = query.limit(limit).offset(offset).order_by(Tasks.id)
+    
+    result = await db.execute(query)
+    tasks = result.scalars().all()
+    
     return [TaskRead.model_validate(task) for task in tasks]
 
 

@@ -5,6 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Body, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_, or_
 
 from app.api.deps import get_db
 from app.schemas.task_results import TaskResultRead, TaskResultUpdate
@@ -430,3 +431,101 @@ async def get_user_stats(
     - completion_percentage: Процент выполнения (total_score / total_max_score * 100)
     """
     return await task_results_service.get_stats_by_user(db, user_id)
+
+
+@router.get(
+    "/task-results/by-pending-review",
+    response_model=List[TaskResultRead],
+    summary="Получить результаты заданий, требующих ручной проверки",
+    responses={
+        200: {
+            "description": "Список результатов, требующих проверки",
+            "content": {
+                "application/json": {
+                    "example": [
+                        {
+                            "id": 1,
+                            "attempt_id": 1,
+                            "task_id": 1,
+                            "user_id": 10,
+                            "score": 0,
+                            "max_score": 20,
+                            "is_correct": None,
+                            "submitted_at": "2026-02-16T12:00:00Z",
+                            "received_at": "2026-02-16T12:00:00Z",
+                            "checked_at": None,
+                            "checked_by": None,
+                            "count_retry": 0,
+                            "metrics": {},
+                            "answer_json": {
+                                "type": "TA",
+                                "response": {
+                                    "text": "Развернутый ответ ученика..."
+                                }
+                            },
+                            "source_system": "web"
+                        }
+                    ]
+                }
+            }
+        },
+    },
+)
+async def get_pending_review_results(
+    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
+    user_id: Optional[int] = Query(None, description="Фильтр по пользователю"),
+    limit: int = Query(50, ge=1, le=1000, description="Максимум записей на странице"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    db: AsyncSession = Depends(get_db),
+) -> List[TaskResultRead]:
+    """
+    Получить список результатов заданий, требующих ручной проверки.
+    
+    Возвращает результаты, где:
+    - checked_at = null (еще не проверены)
+    
+    Args:
+        course_id: Опциональный фильтр по курсу
+        user_id: Опциональный фильтр по пользователю
+        limit: Максимум записей на странице (1-1000)
+        offset: Смещение для пагинации
+    
+    Returns:
+        Список результатов, требующих проверки
+    """
+    from sqlalchemy import select, and_, or_
+    from app.models.task_results import TaskResults
+    from app.models.tasks import Tasks
+    
+    # Базовое условие: результаты не проверены
+    conditions = [TaskResults.checked_at.is_(None)]
+    
+    # Дополнительные фильтры
+    if course_id is not None:
+        # Нужно присоединить tasks для фильтрации по course_id
+        conditions.append(Tasks.course_id == course_id)
+    
+    if user_id is not None:
+        conditions.append(TaskResults.user_id == user_id)
+    
+    # Запрос с join к tasks для проверки manual_review_required
+    # Сначала получаем все непроверенные результаты
+    query = (
+        select(TaskResults)
+        .join(Tasks, TaskResults.task_id == Tasks.id)
+        .where(
+            and_(
+                *conditions,
+                # Не проверено (checked_at = null)
+                TaskResults.checked_at.is_(None)
+            )
+        )
+        .order_by(TaskResults.submitted_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    
+    result = await db.execute(query)
+    results = result.scalars().all()
+    
+    return [TaskResultRead.model_validate(r) for r in results]

@@ -256,6 +256,8 @@ app.include_router(user_courses_router, prefix=API_PREFIX)
 app.include_router(user_courses_extra_router, prefix=API_PREFIX)
 
 
+# Регистрируем extra_router ПЕРЕД CRUD роутером, чтобы специфичные маршруты не перехватывались CRUD
+app.include_router(task_results_extra_router, prefix=API_PREFIX)
 app.include_router(
     create_crud_router(
         prefix="/task-results", tags=["task_results"],
@@ -264,7 +266,6 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
-app.include_router(task_results_extra_router, prefix=API_PREFIX)
 
 # User ←→ Roles
 app.include_router(user_roles_router, prefix=API_PREFIX)

@@ -1,0 +1,26 @@
+{
+  "external_uid": "TEST-SEARCH-001",
+  "course_id": 1,
+  "difficulty_id": 1,
+  "task_content": {
+    "type": "SC",
+    "stem": "Что такое переменная в Python?",
+    "options": [
+      {
+        "id": "A",
+        "text": "Область памяти",
+        "is_active": true
+      },
+      {
+        "id": "B",
+        "text": "Функция",
+        "is_active": true
+      }
+    ]
+  },
+  "solution_rules": {
+    "max_score": 10,
+    "correct_options": ["A"]
+  },
+  "max_score": 10
+}
