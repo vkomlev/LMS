@@ -22,6 +22,7 @@ class DifficultyLevels(Base):
 
     Таблица: difficulties
     Поля:
+      - uid     — уникальный идентификатор для импорта (как course_uid у курсов)
       - code    — машинный код уровня ('Theory', 'Easy', 'Normal', 'Hard', 'Project')
       - name_ru — русское название уровня ('Теория', 'Легко', ...)
       - weight  — условная сложность (1..5)
@@ -30,6 +31,7 @@ class DifficultyLevels(Base):
     __table_args__ = (
         PrimaryKeyConstraint("id", name="difficulties_pkey"),
         UniqueConstraint("code", name="difficulties_code_key"),
+        UniqueConstraint("uid", name="difficulties_uid_key"),
         {"comment": "Уровни сложности заданий"},
     )
 
@@ -37,6 +39,13 @@ class DifficultyLevels(Base):
         Integer,
         primary_key=True,
         comment="ID уровня сложности",
+    )
+
+    uid: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+        comment="Уникальный идентификатор для импорта (маппинг через БД)",
     )
 
     code: Mapped[str] = mapped_column(

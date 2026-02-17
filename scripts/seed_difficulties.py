@@ -21,12 +21,13 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
 
 
+# (uid, code, name_ru, weight) — uid для маппинга при импорте (как course_uid)
 DIFFICULTIES = [
-    ("THEORY", "Теория", 1),
-    ("EASY", "Легко", 2),
-    ("NORMAL", "Средняя", 3),
-    ("HARD", "Сложно", 4),
-    ("PROJECT", "Проект", 5),
+    ("theory", "THEORY", "Теория", 1),
+    ("easy", "EASY", "Легко", 2),
+    ("normal", "NORMAL", "Средняя", 3),
+    ("hard", "HARD", "Сложно", 4),
+    ("project", "PROJECT", "Проект", 5),
 ]
 
 
@@ -38,25 +39,26 @@ async def main() -> int:
         await session.execute(
             text(
                 """
-                INSERT INTO difficulties (code, name_ru, weight)
-                VALUES (:code, :name_ru, :weight)
-                ON CONFLICT (code) DO UPDATE
-                SET name_ru = EXCLUDED.name_ru,
+                INSERT INTO difficulties (uid, code, name_ru, weight)
+                VALUES (:uid, :code, :name_ru, :weight)
+                ON CONFLICT (uid) DO UPDATE
+                SET code = EXCLUDED.code,
+                    name_ru = EXCLUDED.name_ru,
                     weight = EXCLUDED.weight
                 """
             ),
-            [{"code": c, "name_ru": n, "weight": w} for c, n, w in DIFFICULTIES],
+            [{"uid": u, "code": c, "name_ru": n, "weight": w} for u, c, n, w in DIFFICULTIES],
         )
         await session.commit()
 
         result = await session.execute(
-            text("SELECT id, code, name_ru, weight FROM difficulties ORDER BY weight, id")
+            text("SELECT id, uid, code, name_ru, weight FROM difficulties ORDER BY weight, id")
         )
         rows = result.fetchall()
 
     print("OK: difficulties seeded/updated.")
     for r in rows:
-        print(f"- id={r[0]} code={r[1]} name_ru={r[2]} weight={r[3]}")
+        print(f"- id={r[0]} uid={r[1]} code={r[2]} name_ru={r[3]} weight={r[4]}")
     return 0
 
 

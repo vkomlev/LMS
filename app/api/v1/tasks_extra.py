@@ -640,12 +640,6 @@ async def import_from_google_sheets(
                 detail=f"Ошибка при поиске уровня сложности: {str(e)}",
             ) from e
     
-    if not difficulty_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Необходимо указать difficulty_id или difficulty_code",
-        )
-    
     # 3. Читаем данные из Google Sheets
     try:
         # Если sheet_name не указан, используем из настроек или "Лист1" по умолчанию
@@ -694,6 +688,8 @@ async def import_from_google_sheets(
             "correct_answer",
             "max_score",
             "course_uid",
+            "difficulty_code",
+            "difficulty_uid",
             "code",
             "title",
             "prompt",
@@ -717,6 +713,11 @@ async def import_from_google_sheets(
             elif header_lower in ("course_uid", "course_code", "course code", "курс", "course"):
                 # курс для строки (если указан, переопределяет course_id/course_code из payload)
                 column_mapping["course_uid"] = header
+            elif header_lower in ("difficulty_uid", "difficulty uid"):
+                # Маппинг через БД: значение — difficulties.uid (например theory, normal)
+                column_mapping["difficulty_uid"] = header
+            elif header_lower in ("difficulty_code", "difficulty", "difficulty code", "сложность"):
+                column_mapping["difficulty_code"] = header
             elif header_lower in ("type", "тип", "task_type"):
                 column_mapping["type"] = header
             elif header_lower in ("stem", "question", "вопрос", "задача"):
@@ -737,6 +738,15 @@ async def import_from_google_sheets(
                 column_mapping["input_link"] = header
             elif header_lower in ("accepted_answers", "принятые"):
                 column_mapping["accepted_answers"] = header
+
+    has_row_difficulty_code = "difficulty_code" in column_mapping and bool(column_mapping.get("difficulty_code"))
+    has_row_difficulty_uid = "difficulty_uid" in column_mapping and bool(column_mapping.get("difficulty_uid"))
+    has_row_difficulty = has_row_difficulty_code or has_row_difficulty_uid
+    if not difficulty_id and not has_row_difficulty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Необходимо указать difficulty_id/difficulty_code в запросе или добавить колонку difficulty_uid/difficulty_code в таблицу",
+        )
 
     # Если курс не задан в payload, допускаем курс "на строке" через колонку course_uid
     has_row_course_uid = "course_uid" in column_mapping and bool(column_mapping.get("course_uid"))
@@ -773,6 +783,54 @@ async def import_from_google_sheets(
                 select(Courses.course_uid, Courses.id).where(Courses.course_uid.in_(list(requested_uids)))
             )
             course_uid_to_id = {course_uid: course_id_ for course_uid, course_id_ in res.all()}
+
+    # Сложность на строке: по difficulty_uid (маппинг через БД) или по difficulty_code
+    difficulty_uid_to_id: dict[str, int] = {}
+    difficulty_code_to_id: dict[str, int] = {}
+    difficulty_uid_column = column_mapping.get("difficulty_uid") if has_row_difficulty_uid else None
+    difficulty_code_column = column_mapping.get("difficulty_code") if has_row_difficulty_code else None
+    if difficulty_uid_column or difficulty_code_column:
+        from sqlalchemy import func
+        from app.models.difficulty_levels import DifficultyLevels
+
+        if difficulty_uid_column:
+            requested_uids_diff: set[str] = set()
+            for row_data in rows[1:]:
+                if not row_data:
+                    continue
+                row_dict_tmp: dict[str, str] = {}
+                for idx, value in enumerate(row_data):
+                    if idx < len(headers):
+                        row_dict_tmp[headers[idx]] = str(value) if value else ""
+                uid_val = (row_dict_tmp.get(difficulty_uid_column) or "").strip()
+                if uid_val:
+                    requested_uids_diff.add(uid_val)
+            if requested_uids_diff:
+                res = await db.execute(
+                    select(DifficultyLevels.id, DifficultyLevels.uid).where(
+                        DifficultyLevels.uid.in_(list(requested_uids_diff))
+                    )
+                )
+                difficulty_uid_to_id = {row.uid: row.id for row in res.all()}
+        if difficulty_code_column:
+            requested_codes: set[str] = set()
+            for row_data in rows[1:]:
+                if not row_data:
+                    continue
+                row_dict_tmp2: dict[str, str] = {}
+                for idx, value in enumerate(row_data):
+                    if idx < len(headers):
+                        row_dict_tmp2[headers[idx]] = str(value) if value else ""
+                code = (row_dict_tmp2.get(difficulty_code_column) or "").strip().upper()
+                if code:
+                    requested_codes.add(code)
+            if requested_codes:
+                res = await db.execute(
+                    select(DifficultyLevels.id, DifficultyLevels.code).where(
+                        func.upper(DifficultyLevels.code).in_(list(requested_codes))
+                    )
+                )
+                difficulty_code_to_id = {row.code.upper(): row.id for row in res.all()}
     
     # 5. Парсим строки данных
     parsed_tasks: List[Dict[str, Any]] = []
@@ -819,12 +877,51 @@ async def import_from_google_sheets(
                 )
                 continue
 
+            # Сложность для текущей строки: из колонки difficulty_uid (маппинг через БД) или difficulty_code или из payload
+            row_difficulty_code = None
+            effective_difficulty_id = difficulty_id
+            if difficulty_uid_column:
+                row_difficulty_uid = (row_dict.get(difficulty_uid_column) or "").strip() or None
+                if row_difficulty_uid:
+                    effective_difficulty_id = difficulty_uid_to_id.get(row_difficulty_uid)
+                    if not effective_difficulty_id:
+                        errors.append(
+                            GoogleSheetsImportError(
+                                row_index=row_index,
+                                external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                                error=f"Уровень сложности с uid '{row_difficulty_uid}' не найден в БД (difficulties.uid)",
+                            )
+                        )
+                        continue
+            elif difficulty_code_column:
+                row_difficulty_code = (row_dict.get(difficulty_code_column) or "").strip().upper() or None
+                if row_difficulty_code:
+                    effective_difficulty_id = difficulty_code_to_id.get(row_difficulty_code)
+                    if not effective_difficulty_id:
+                        errors.append(
+                            GoogleSheetsImportError(
+                                row_index=row_index,
+                                external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                                error=f"Уровень сложности с кодом '{row_difficulty_code}' не найден",
+                            )
+                        )
+                        continue
+            if not effective_difficulty_id:
+                errors.append(
+                    GoogleSheetsImportError(
+                        row_index=row_index,
+                        external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                        error="Не указана сложность: заполните difficulty_uid/difficulty_code в строке или передайте difficulty_id/difficulty_code в запросе",
+                    )
+                )
+                continue
+
             # Парсим строку
             task_content, solution_rules, metadata = parser_service.parse_task_row(
                 row=row_dict,
                 column_mapping=column_mapping,
                 course_id=effective_course_id,
-                difficulty_id=difficulty_id,
+                difficulty_id=effective_difficulty_id,
             )
             
             # Валидируем задачу
@@ -832,9 +929,9 @@ async def import_from_google_sheets(
                 db,
                 task_content=task_content.model_dump(),
                 solution_rules=solution_rules.model_dump(),
-                difficulty_id=difficulty_id,
-                difficulty_code=payload.difficulty_code,  # Передаем для валидации
-                course_code=row_course_uid or payload.course_code,  # Передаем фактический курс строки (если есть)
+                difficulty_id=effective_difficulty_id,
+                difficulty_code=row_difficulty_code or payload.difficulty_code,
+                course_code=row_course_uid or payload.course_code,
                 external_uid=metadata["external_uid"],
             )
             
@@ -850,7 +947,7 @@ async def import_from_google_sheets(
             task_data = {
                 "external_uid": metadata["external_uid"],
                 "course_id": effective_course_id,
-                "difficulty_id": difficulty_id,
+                "difficulty_id": effective_difficulty_id,
                 "task_content": task_content.model_dump(),
                 "solution_rules": solution_rules.model_dump(),
                 "max_score": metadata["max_score"],

@@ -216,6 +216,8 @@ class SheetsParserService:
             "type": "type",
             "stem": "stem",
             "course_uid": "course_uid",
+            "difficulty_code": "difficulty_code",
+            "difficulty_uid": "difficulty_uid",
             "code": "code",
             "title": "title",
             "prompt": "prompt",

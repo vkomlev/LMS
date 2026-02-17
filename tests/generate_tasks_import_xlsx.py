@@ -29,6 +29,7 @@ COURSE_UID_SUB = "PY-pishem-pervuju-programmu-na-python-peremennye-i-konstanty"
 HEADERS = [
     "external_uid",
     "course_uid",
+    "difficulty_uid",
     "type",
     "stem",
     "options",
@@ -50,6 +51,16 @@ ROW_COURSE_UID: dict[str, str] = {
     "TEST-SA-COM-002": COURSE_UID_SUB,
     "TEST-TA-002": COURSE_UID_SUB,
 }
+
+# Для части заданий задаём другую сложность (значения — difficulties.uid из БД)
+ROW_DIFFICULTY_UID: dict[str, str] = {
+    "TEST-SC-001": "easy",
+    "TEST-MC-001": "easy",
+    "TEST-SA-001": "easy",
+    "TEST-SA-COM-001": "hard",
+    "TEST-TA-001": "hard",
+}
+DEFAULT_DIFFICULTY_UID = "normal"
 
 # Тестовые данные заданий разных типов
 # Формат (без course_uid — он будет добавлен при записи в XLSX):
@@ -329,11 +340,12 @@ def main() -> None:
     # Данные
     for row_idx, row_tuple in enumerate(ROWS, start=2):
         values = row_tuple
-        # Поддержка старого формата ROWS без course_uid
-        if len(row_tuple) == len(HEADERS) - 1:
+        # Поддержка формата ROWS без course_uid и difficulty_code (11 полей)
+        if len(row_tuple) == len(HEADERS) - 2:
             external_uid = str(row_tuple[0])
             course_uid = ROW_COURSE_UID.get(external_uid, COURSE_UID_MAIN)
-            values = (external_uid, course_uid, *row_tuple[1:])
+            difficulty_uid = ROW_DIFFICULTY_UID.get(external_uid, DEFAULT_DIFFICULTY_UID)
+            values = (external_uid, course_uid, difficulty_uid, *row_tuple[1:])
 
         for col_idx, value in enumerate(values, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)

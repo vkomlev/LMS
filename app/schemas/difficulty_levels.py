@@ -8,7 +8,12 @@ from pydantic import BaseModel, Field, ConfigDict
 class DifficultyLevelCreate(BaseModel):
     """
     Схема создания уровня сложности.
+    uid — уникальный идентификатор для импорта (маппинг при импорте заданий).
     """
+    uid: str = Field(
+        ...,
+        description="Уникальный идентификатор (например theory, easy, normal, hard, project)",
+    )
     code: str = Field(
         ...,
         description="Код уровня сложности (например, 'Theory', 'Easy', 'Normal', 'Hard', 'Project')",
@@ -28,6 +33,10 @@ class DifficultyLevelUpdate(BaseModel):
     Схема частичного обновления уровня сложности.
     Все поля опциональны.
     """
+    uid: Optional[str] = Field(
+        None,
+        description="Уникальный идентификатор для импорта",
+    )
     code: Optional[str] = Field(
         None,
         description="Код уровня сложности",
@@ -45,8 +54,10 @@ class DifficultyLevelUpdate(BaseModel):
 class DifficultyLevelRead(BaseModel):
     """
     Схема чтения уровня сложности.
+    uid — для маппинга при импорте заданий (колонка difficulty_uid в таблице).
     """
     id: int
+    uid: str
     code: str
     name_ru: str
     weight: int
