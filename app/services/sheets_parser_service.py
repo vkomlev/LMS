@@ -131,6 +131,11 @@ class SheetsParserService:
         }
         
         # Опциональные поля
+        if "course_uid" in column_mapping:
+            course_uid = self._get_field(row, column_mapping, "course_uid", required=False)
+            if course_uid:
+                task_content_data["course_uid"] = course_uid
+
         if "code" in column_mapping:
             code = self._get_field(row, column_mapping, "code", required=False)
             if code:
@@ -210,6 +215,7 @@ class SheetsParserService:
             "external_uid": "external_uid",
             "type": "type",
             "stem": "stem",
+            "course_uid": "course_uid",
             "code": "code",
             "title": "title",
             "prompt": "prompt",

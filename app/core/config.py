@@ -43,7 +43,7 @@ class Settings:
 
         # ✅ Google Sheets settings (из QSMImport)
         self.gsheets_spreadsheet_id: str = os.getenv("GSHEETS_SPREADSHEET_ID", "")
-        self.gsheets_worksheet_name: str = os.getenv("GSHEETS_WORKSHEET_NAME", "Задания")
+        self.gsheets_worksheet_name: str = os.getenv("GSHEETS_WORKSHEET_NAME", "Tasks")
         self.gsheets_service_account_json: str = os.getenv("GSHEETS_SERVICE_ACCOUNT_JSON", "")
         
         # ✅ Default settings для импорта

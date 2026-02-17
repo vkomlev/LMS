@@ -133,8 +133,11 @@ class GoogleSheetsImportRequest(BaseModel):
     
     **Обязательные параметры:**
     - `spreadsheet_url` - URL таблицы или spreadsheet_id
-    - `course_code` ИЛИ `course_id` - курс для импортируемых задач
     - `difficulty_code` ИЛИ `difficulty_id` - уровень сложности
+
+    **Курс для заданий:**
+    - либо укажите `course_code` / `course_id` (один курс на весь импорт),
+    - либо добавьте в таблицу колонку `course_uid` и заполняйте курс для каждой строки (курс на строке).
     
     **Рекомендации:**
     - Используйте `dry_run: true` для предварительной проверки данных
@@ -169,17 +172,18 @@ class GoogleSheetsImportRequest(BaseModel):
         description=(
             "Кастомный маппинг колонок таблицы на поля задачи. "
             "Если не указан, используется автоматический маппинг по стандартным названиям. "
-            "Формат: {'название_колонки_в_таблице': 'поле_задачи'}. "
+            "Формат: {'поле_задачи': 'название_колонки_в_таблице'}. "
             "Доступные поля: external_uid, type, stem, options, correct_answer, max_score, "
-            "code, title, prompt, input_link, accepted_answers"
+            "course_uid, code, title, prompt, input_link, accepted_answers"
         ),
         examples=[
             {
-                "ID": "external_uid",
-                "Тип": "type",
-                "Вопрос": "stem",
-                "Варианты": "options",
-                "Правильный ответ": "correct_answer",
+                "external_uid": "ID",
+                "type": "Тип",
+                "stem": "Вопрос",
+                "options": "Варианты",
+                "correct_answer": "Правильный ответ",
+                "course_uid": "Курс",
             }
         ],
     )
@@ -187,7 +191,7 @@ class GoogleSheetsImportRequest(BaseModel):
         default=None,
         description=(
             "Код курса (courses.course_uid) для импортируемых задач. "
-            "Обязательно указать либо course_code, либо course_id. "
+            "Если в таблице нет колонки course_uid, обязательно указать либо course_code, либо course_id. "
             "Примеры: 'PY', 'COURSE-PY-01'. "
             "Получить список курсов: GET /api/v1/meta/tasks"
         ),
@@ -197,7 +201,7 @@ class GoogleSheetsImportRequest(BaseModel):
         default=None,
         description=(
             "ID курса. Если указан, используется вместо course_code. "
-            "Обязательно указать либо course_code, либо course_id."
+            "Если в таблице нет колонки course_uid, обязательно указать либо course_code, либо course_id."
         ),
         examples=[1, 2],
     )

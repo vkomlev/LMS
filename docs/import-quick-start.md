@@ -15,7 +15,7 @@ const response = await fetch(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       spreadsheet_url: 'https://docs.google.com/spreadsheets/d/YOUR_ID/edit',
-      sheet_name: 'Лист1',
+      sheet_name: 'Tasks',
       course_code: 'PY',
       difficulty_code: 'NORMAL',
       dry_run: false,
@@ -32,12 +32,17 @@ console.log(`Импортировано: ${result.imported}, Ошибок: ${res
 ## Обязательные поля запроса
 
 - `spreadsheet_url` - URL таблицы или spreadsheet_id
-- `course_code` ИЛИ `course_id` - курс для задач
 - `difficulty_code` ИЛИ `difficulty_id` - уровень сложности
+
+### Курс для заданий
+
+- **Либо** `course_code` ИЛИ `course_id` - один курс на весь импорт
+- **Либо** добавьте в таблицу колонку `course_uid` и заполняйте курс для каждой строки (курс на строке)
 
 ## Опциональные поля
 
 - `sheet_name` - название листа (по умолчанию "Лист1")
+- По умолчанию лист берётся из `GSHEETS_WORKSHEET_NAME` (теперь **`Tasks`**), если `sheet_name` не указан.
 - `column_mapping` - кастомный маппинг колонок
 - `dry_run` - режим проверки без сохранения (по умолчанию false)
 

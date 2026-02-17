@@ -605,22 +605,17 @@ async def import_from_google_sheets(
     
     # 2. Определяем course_id и difficulty_id
     course_id = payload.course_id
+    invalid_payload_course_code: str | None = None
     if not course_id and payload.course_code:
         try:
             course = await courses_service.get_by_course_uid(db, payload.course_code)
             course_id = course.id
         except Exception as e:
-            logger.exception("Ошибка при поиске курса: %s", e)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Курс с кодом '{payload.course_code}' не найден",
-            ) from e
-    
-    if not course_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Необходимо указать course_id или course_code",
-        )
+            # Если курс задан неверно, но в таблице есть course_uid "на строке",
+            # импорт всё равно может быть выполнен для строк с валидными course_uid.
+            logger.warning("Курс с кодом '%s' не найден: %s", payload.course_code, e)
+            invalid_payload_course_code = payload.course_code
+            course_id = None
     
     difficulty_id = payload.difficulty_id
     if not difficulty_id and payload.difficulty_code:
@@ -686,6 +681,31 @@ async def import_from_google_sheets(
     
     # Создаем маппинг колонок
     column_mapping = payload.column_mapping or {}
+
+    # Поддержка двух форматов column_mapping:
+    # 1) field -> header (ожидаемый парсером)
+    # 2) header -> field (встречается в примерах клиентов)
+    if column_mapping:
+        known_fields = {
+            "external_uid",
+            "type",
+            "stem",
+            "options",
+            "correct_answer",
+            "max_score",
+            "course_uid",
+            "code",
+            "title",
+            "prompt",
+            "input_link",
+            "accepted_answers",
+        }
+        if not any(k in known_fields for k in column_mapping.keys()) and any(
+            v in known_fields for v in column_mapping.values()
+        ):
+            # header -> field  ==>  field -> header
+            column_mapping = {field: header for header, field in column_mapping.items()}
+
     if not column_mapping:
         # Стандартный маппинг: ищем колонки по названиям
         column_mapping = {}
@@ -694,6 +714,9 @@ async def import_from_google_sheets(
             # Маппинг стандартных названий
             if header_lower in ("external_uid", "uid", "id", "код"):
                 column_mapping["external_uid"] = header
+            elif header_lower in ("course_uid", "course_code", "course code", "курс", "course"):
+                # курс для строки (если указан, переопределяет course_id/course_code из payload)
+                column_mapping["course_uid"] = header
             elif header_lower in ("type", "тип", "task_type"):
                 column_mapping["type"] = header
             elif header_lower in ("stem", "question", "вопрос", "задача"):
@@ -714,6 +737,42 @@ async def import_from_google_sheets(
                 column_mapping["input_link"] = header
             elif header_lower in ("accepted_answers", "принятые"):
                 column_mapping["accepted_answers"] = header
+
+    # Если курс не задан в payload, допускаем курс "на строке" через колонку course_uid
+    has_row_course_uid = "course_uid" in column_mapping and bool(column_mapping.get("course_uid"))
+    if not course_id and not has_row_course_uid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Необходимо указать course_id/course_code или добавить колонку course_uid в таблицу"
+                + (f". course_code='{invalid_payload_course_code}' не найден" if invalid_payload_course_code else "")
+            ),
+        )
+
+    # Если есть course_uid на строке — заранее получаем id курсов одним запросом
+    course_uid_to_id: dict[str, int] = {}
+    course_uid_column = column_mapping.get("course_uid") if has_row_course_uid else None
+    if course_uid_column:
+        from app.models.courses import Courses
+
+        requested_uids: set[str] = set()
+        for row_data in rows[1:]:
+            if not row_data:
+                continue
+            # берем значение по индексу колонки
+            row_dict: dict[str, str] = {}
+            for idx, value in enumerate(row_data):
+                if idx < len(headers):
+                    row_dict[headers[idx]] = str(value) if value else ""
+            uid = (row_dict.get(course_uid_column) or "").strip()
+            if uid:
+                requested_uids.add(uid)
+
+        if requested_uids:
+            res = await db.execute(
+                select(Courses.course_uid, Courses.id).where(Courses.course_uid.in_(list(requested_uids)))
+            )
+            course_uid_to_id = {course_uid: course_id_ for course_uid, course_id_ in res.all()}
     
     # 5. Парсим строки данных
     parsed_tasks: List[Dict[str, Any]] = []
@@ -731,11 +790,40 @@ async def import_from_google_sheets(
             continue
         
         try:
+            # Определяем курс для текущей строки:
+            # - если в строке заполнен course_uid → используем его
+            # - иначе берём course_id из payload (если задан)
+            row_course_uid = None
+            effective_course_id = course_id
+            if course_uid_column:
+                row_course_uid = (row_dict.get(course_uid_column) or "").strip() or None
+                if row_course_uid:
+                    effective_course_id = course_uid_to_id.get(row_course_uid)
+                    if not effective_course_id:
+                        errors.append(
+                            GoogleSheetsImportError(
+                                row_index=row_index,
+                                external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                                error=f"Курс с course_uid='{row_course_uid}' не найден",
+                            )
+                        )
+                        continue
+
+            if not effective_course_id:
+                errors.append(
+                    GoogleSheetsImportError(
+                        row_index=row_index,
+                        external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                        error="Не указан курс: заполните course_uid в строке или передайте course_id/course_code в запросе",
+                    )
+                )
+                continue
+
             # Парсим строку
             task_content, solution_rules, metadata = parser_service.parse_task_row(
                 row=row_dict,
                 column_mapping=column_mapping,
-                course_id=course_id,
+                course_id=effective_course_id,
                 difficulty_id=difficulty_id,
             )
             
@@ -746,7 +834,7 @@ async def import_from_google_sheets(
                 solution_rules=solution_rules.model_dump(),
                 difficulty_id=difficulty_id,
                 difficulty_code=payload.difficulty_code,  # Передаем для валидации
-                course_code=payload.course_code,  # Передаем для валидации (если есть)
+                course_code=row_course_uid or payload.course_code,  # Передаем фактический курс строки (если есть)
                 external_uid=metadata["external_uid"],
             )
             
@@ -761,7 +849,7 @@ async def import_from_google_sheets(
             # Формируем данные для bulk_upsert
             task_data = {
                 "external_uid": metadata["external_uid"],
-                "course_id": course_id,
+                "course_id": effective_course_id,
                 "difficulty_id": difficulty_id,
                 "task_content": task_content.model_dump(),
                 "solution_rules": solution_rules.model_dump(),
