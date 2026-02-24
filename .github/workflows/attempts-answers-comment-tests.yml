@@ -1,0 +1,36 @@
+# Запуск автотестов контракта комментария (SA_COM response.comment).
+# Требуется доступный API и БД с тестовыми данными (user, course, задача SA_COM).
+# Настройка: секрет TEST_API_KEY; при необходимости vars: TEST_API_HOST, TEST_USER_ID, TEST_COURSE_ID, TEST_TASK_ID.
+# Без TEST_API_KEY тест завершится с SKIP (exit 0).
+
+name: Attempts answers comment contract
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  comment-contract-tests:
+    runs-on: ubuntu-latest
+    env:
+      HOST: ${{ vars.TEST_API_HOST || 'http://localhost:8000' }}
+      API_KEY: ${{ secrets.TEST_API_KEY }}
+      USER_ID: ${{ vars.TEST_USER_ID || '2' }}
+      COURSE_ID: ${{ vars.TEST_COURSE_ID || '1' }}
+      TASK_ID: ${{ vars.TEST_TASK_ID || '30' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt python-dotenv
+
+      - name: Run comment contract tests
+        run: python tests/test_attempts_answers_comment.py
