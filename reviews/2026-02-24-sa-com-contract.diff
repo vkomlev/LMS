@@ -1,0 +1,183 @@
+﻿diff --git a/app/api/main.py b/app/api/main.py
+index 7fabaf7..99a4659 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -125,7 +125,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
+         if "ctx" in error:
+             serializable_error["ctx"] = {k: str(v) for k, v in error["ctx"].items()}
+         serializable_errors.append(serializable_error)
+-    
++
++    # Observability: ╨┤╨╗╤П attempts/answers ╨╗╨╛╨│╨╕╤А╤Г╨╡╨╝ ╨║╨╛╨╜╤В╨╡╨║╤Б╤В ╨┐╨╛ answer.type
++    path = request.url.path or ""
++    if "/attempts/" in path and "/answers" in path:
++        answer_types_from_errors = []
++        for err in errors:
++            loc = err.get("loc") or []
++            if "answer" in loc or "type" in loc:
++                inp = err.get("input")
++                if inp is not None:
++                    answer_types_from_errors.append({"loc": loc, "input": inp})
++        if answer_types_from_errors:
++            logger.warning(
++                "╨Ю╤И╨╕╨▒╨║╨░ ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╨╕ POST /attempts/.../answers (answer.type): path=%s, detail=%s",
++                path,
++                answer_types_from_errors,
++            )
++
+     logger.warning("Validation error at %s: %s", request.url.path, serializable_errors)
+     return JSONResponse(
+         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 0e6d4fe..76445e0 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -35,8 +35,10 @@ from app.services.checking_service import CheckingService
+ 
+ from app.utils.exceptions import DomainError
+ 
++import logging
+ 
+ router = APIRouter(tags=["attempts"])
++logger = logging.getLogger("api.attempts")
+ 
+ attempts_service = AttemptsService()
+ task_results_service = TaskResultsService()
+@@ -214,6 +216,10 @@ async def submit_attempt_answers(
+ 
+     # ╨Т╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕: ╨┐╤А╨╛╨▓╨╡╤А╨║╨░, ╤З╤В╨╛ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░
+     if attempt.finished_at is not None:
++        logger.warning(
++            "POST /attempts/%s/answers: ╨┐╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░",
++            attempt_id,
++        )
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░. ╨Э╨╡╨╗╤М╨╖╤П ╨╛╤В╨┐╤А╨░╨▓╨╗╤П╤В╤М ╨╛╤В╨▓╨╡╤В╤Л ╨▓ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
+@@ -225,12 +231,20 @@ async def submit_attempt_answers(
+         if time_limit_seconds and isinstance(time_limit_seconds, (int, float)):
+             elapsed = datetime.now(timezone.utc) - attempt.created_at
+             if elapsed > timedelta(seconds=time_limit_seconds):
++                logger.warning(
++                    "POST /attempts/%s/answers: ╨╕╤Б╤В╨╡╨║╨╗╨╛ ╨▓╤А╨╡╨╝╤П ╨╜╨░ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╕╨╡",
++                    attempt_id,
++                )
+                 raise HTTPException(
+                     status_code=status.HTTP_400_BAD_REQUEST,
+                     detail="╨Т╤А╨╡╨╝╤П ╨╜╨░ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╕╨╡ ╨╕╤Б╤В╨╡╨║╨╗╨╛.",
+                 )
+ 
+     if not payload.items:
++        logger.warning(
++            "POST /attempts/%s/answers: ╨┐╤Г╤Б╤В╨╛╨╣ ╤Б╨┐╨╕╤Б╨╛╨║ ╨╛╤В╨▓╨╡╤В╨╛╨▓",
++            attempt_id,
++        )
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="╨б╨┐╨╕╤Б╨╛╨║ ╨╛╤В╨▓╨╡╤В╨╛╨▓ ╨╜╨╡ ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М ╨┐╤Г╤Б╤В╤Л╨╝.",
+@@ -249,6 +263,13 @@ async def submit_attempt_answers(
+             task = await tasks_service.get_by_external_uid(db, item.external_uid)
+ 
+         if task is None:
++            logger.warning(
++                "POST /attempts/%s/answers: ╨╖╨░╨┤╨░╤З╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░ (task_id=%s, external_uid=%r), answer.type=%s",
++                attempt_id,
++                item.task_id,
++                item.external_uid,
++                getattr(item.answer, "type", None),
++            )
+             raise HTTPException(
+                 status_code=status.HTTP_400_BAD_REQUEST,
+                 detail=(
+@@ -264,6 +285,12 @@ async def submit_attempt_answers(
+         # 2.3 ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝ ╨╛╤В╨▓╨╡╤В
+         answer: StudentAnswer = item.answer
+         if answer.type != task_content.type:
++            logger.warning(
++                "POST /attempts/%s/answers: ╨╜╨╡╤Б╨╛╨▓╨┐╨░╨┤╨╡╨╜╨╕╨╡ ╤В╨╕╨┐╨░ ╨╛╤В╨▓╨╡╤В╨░ ╤Б ╤В╨╕╨┐╨╛╨╝ ╨╖╨░╨┤╨░╤З╨╕ (answer.type=%s, task.type=%s)",
++                attempt_id,
++                answer.type,
++                task_content.type,
++            )
+             raise HTTPException(
+                 status_code=status.HTTP_400_BAD_REQUEST,
+                 detail=(
+diff --git a/app/schemas/checking.py b/app/schemas/checking.py
+index a7ad701..38263e2 100644
+--- a/app/schemas/checking.py
++++ b/app/schemas/checking.py
+@@ -1,12 +1,28 @@
+ from __future__ import annotations
+ 
+-from typing import Any, Dict, List, Optional
++import logging
++from typing import Annotated, Any, Dict, List, Optional
+ 
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, BeforeValidator
+ 
+ from app.schemas.task_content import TaskType, TaskContent
+ from app.schemas.solution_rules import SolutionRules
+ 
++logger = logging.getLogger(__name__)
++
++
++def _normalize_answer_type(v: Any) -> TaskType:
++    """
++    ╨Э╨╛╤А╨╝╨░╨╗╨╕╨╖╤Г╨╡╤В ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░: ╨░╨╗╨╕╨░╤Б SA+COM ╨┐╤А╨╕╨▓╨╛╨┤╨╕╤В╤Б╤П ╨║ ╨║╨░╨╜╨╛╨╜╨╕╤З╨╡╤Б╨║╨╛╨╝╤Г SA_COM ╤Б ╨╗╨╛╨│╨╛╨╝ deprecation.
++    """
++    if v == "SA+COM":
++        logger.warning(
++            "Deprecation: ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░ 'SA+COM' ╤Г╤Б╤В╨░╤А╨╡╨╗, ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╣╤В╨╡ 'SA_COM'. "
++            "╨Р╨╗╨╕╨░╤Б ╨▒╤Г╨┤╨╡╤В ╤Г╨┤╨░╨╗╤С╨╜ ╨▓ ╨▒╤Г╨┤╤Г╤Й╨╡╨╣ ╨▓╨╡╤А╤Б╨╕╨╕."
++        )
++        return "SA_COM"
++    return v
++
+ 
+ class StudentResponse(BaseModel):
+     """
+@@ -57,10 +73,10 @@ class StudentAnswer(BaseModel):
+         description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╤Г╤Б╤В╨╛╨╣╤З╨╕╨▓╤Л╨╣ ╨╕╨┤╨╡╨╜╤В╨╕╤Д╨╕╨║╨░╤В╨╛╤А ╨╖╨░╨┤╨░╤З╨╕ (╨╡╤Б╨╗╨╕ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П).",
+         examples=["TASK-SC-001", "TASK-MC-002", None],
+     )
+-    type: TaskType = Field(
++    type: Annotated[TaskType, BeforeValidator(_normalize_answer_type)] = Field(
+         ...,
+-        description="╨в╨╕╨┐ ╨╖╨░╨┤╨░╤З╨╕, ╨┤╨╛╨╗╨╢╨╡╨╜ ╤Б╨╛╨▓╨┐╨░╨┤╨░╤В╤М ╤Б task_content.type.",
+-        examples=["SC", "MC", "SA", "TA"],
++        description="╨в╨╕╨┐ ╨╖╨░╨┤╨░╤З╨╕, ╨┤╨╛╨╗╨╢╨╡╨╜ ╤Б╨╛╨▓╨┐╨░╨┤╨░╤В╤М ╤Б task_content.type. ╨Ф╨╛╨┐╤Г╤Б╤В╨╕╨╝ ╨░╨╗╨╕╨░╤Б SA+COM (deprecated).",
++        examples=["SC", "MC", "SA", "SA_COM", "TA"],
+     )
+     response: StudentResponse = Field(
+         ...,
+diff --git a/run.bat b/run.bat
+index 0f509c5..bcd8d5a 100644
+--- a/run.bat
++++ b/run.bat
+@@ -5,7 +5,11 @@ setlocal
+ set "ROOT=%~dp0"
+ cd /d "%ROOT%"
+ 
+-if not exist "venv\Scripts\activate.bat" (
++set "ACTIVATE="
++if exist ".venv\Scripts\activate.bat" set "ACTIVATE=.venv\Scripts\activate.bat"
++if exist "venv\Scripts\activate.bat"     set "ACTIVATE=venv\Scripts\activate.bat"
++
++if not defined ACTIVATE (
+     echo ╨б╨╛╨╖╨┤╨░╨╜╨╕╨╡ ╨▓╨╕╤А╤В╤Г╨░╨╗╤М╨╜╨╛╨╣ ╤Б╤А╨╡╨┤╤Л...
+     python -m venv venv
+     if errorlevel 1 (
+@@ -13,10 +17,11 @@ if not exist "venv\Scripts\activate.bat" (
+         pause
+         exit /b 1
+     )
++    set "ACTIVATE=venv\Scripts\activate.bat"
+ )
+ 
+ echo ╨Р╨║╤В╨╕╨▓╨░╤Ж╨╕╤П ╨▓╨╕╤А╤В╤Г╨░╨╗╤М╨╜╨╛╨╣ ╤Б╤А╨╡╨┤╤Л...
+-call venv\Scripts\activate.bat
++call "%ACTIVATE%"
+ 
+ if exist "requirements.txt" (
+     echo ╨Я╤А╨╛╨▓╨╡╤А╨║╨░ ╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╡╨╣...

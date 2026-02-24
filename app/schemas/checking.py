@@ -1,11 +1,27 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import logging
+from typing import Annotated, Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, BeforeValidator
 
 from app.schemas.task_content import TaskType, TaskContent
 from app.schemas.solution_rules import SolutionRules
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_answer_type(v: Any) -> TaskType:
+    """
+    Нормализует тип ответа: алиас SA+COM приводится к каноническому SA_COM с логом deprecation.
+    """
+    if v == "SA+COM":
+        logger.warning(
+            "Deprecation: тип ответа 'SA+COM' устарел, используйте 'SA_COM'. "
+            "Алиас будет удалён в будущей версии."
+        )
+        return "SA_COM"
+    return v
 
 
 class StudentResponse(BaseModel):
@@ -57,10 +73,10 @@ class StudentAnswer(BaseModel):
         description="Внешний устойчивый идентификатор задачи (если используется).",
         examples=["TASK-SC-001", "TASK-MC-002", None],
     )
-    type: TaskType = Field(
+    type: Annotated[TaskType, BeforeValidator(_normalize_answer_type)] = Field(
         ...,
-        description="Тип задачи, должен совпадать с task_content.type.",
-        examples=["SC", "MC", "SA", "TA"],
+        description="Тип задачи, должен совпадать с task_content.type. Допустим алиас SA+COM (deprecated).",
+        examples=["SC", "MC", "SA", "SA_COM", "TA"],
     )
     response: StudentResponse = Field(
         ...,

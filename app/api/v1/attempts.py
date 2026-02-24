@@ -35,8 +35,10 @@ from app.services.checking_service import CheckingService
 
 from app.utils.exceptions import DomainError
 
+import logging
 
 router = APIRouter(tags=["attempts"])
+logger = logging.getLogger("api.attempts")
 
 attempts_service = AttemptsService()
 task_results_service = TaskResultsService()
@@ -214,6 +216,10 @@ async def submit_attempt_answers(
 
     # Валидация попытки: проверка, что попытка не завершена
     if attempt.finished_at is not None:
+        logger.warning(
+            "POST /attempts/%s/answers: попытка уже завершена",
+            attempt_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Попытка уже завершена. Нельзя отправлять ответы в завершенную попытку.",
@@ -225,12 +231,20 @@ async def submit_attempt_answers(
         if time_limit_seconds and isinstance(time_limit_seconds, (int, float)):
             elapsed = datetime.now(timezone.utc) - attempt.created_at
             if elapsed > timedelta(seconds=time_limit_seconds):
+                logger.warning(
+                    "POST /attempts/%s/answers: истекло время на выполнение",
+                    attempt_id,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Время на выполнение истекло.",
                 )
 
     if not payload.items:
+        logger.warning(
+            "POST /attempts/%s/answers: пустой список ответов",
+            attempt_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Список ответов не может быть пустым.",
@@ -249,6 +263,13 @@ async def submit_attempt_answers(
             task = await tasks_service.get_by_external_uid(db, item.external_uid)
 
         if task is None:
+            logger.warning(
+                "POST /attempts/%s/answers: задача не найдена (task_id=%s, external_uid=%r), answer.type=%s",
+                attempt_id,
+                item.task_id,
+                item.external_uid,
+                getattr(item.answer, "type", None),
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -264,6 +285,12 @@ async def submit_attempt_answers(
         # 2.3 Проверяем ответ
         answer: StudentAnswer = item.answer
         if answer.type != task_content.type:
+            logger.warning(
+                "POST /attempts/%s/answers: несовпадение типа ответа с типом задачи (answer.type=%s, task.type=%s)",
+                attempt_id,
+                answer.type,
+                task_content.type,
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(

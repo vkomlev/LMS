@@ -125,7 +125,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         if "ctx" in error:
             serializable_error["ctx"] = {k: str(v) for k, v in error["ctx"].items()}
         serializable_errors.append(serializable_error)
-    
+
+    # Observability: для attempts/answers логируем контекст по answer.type
+    path = request.url.path or ""
+    if "/attempts/" in path and "/answers" in path:
+        answer_types_from_errors = []
+        for err in errors:
+            loc = err.get("loc") or []
+            if "answer" in loc or "type" in loc:
+                inp = err.get("input")
+                if inp is not None:
+                    answer_types_from_errors.append({"loc": loc, "input": inp})
+        if answer_types_from_errors:
+            logger.warning(
+                "Ошибка валидации POST /attempts/.../answers (answer.type): path=%s, detail=%s",
+                path,
+                answer_types_from_errors,
+            )
+
     logger.warning("Validation error at %s: %s", request.url.path, serializable_errors)
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
