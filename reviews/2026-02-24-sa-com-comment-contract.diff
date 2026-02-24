@@ -1,0 +1,168 @@
+﻿diff --git a/app/schemas/checking.py b/app/schemas/checking.py
+index 38263e2..42f4001 100644
+--- a/app/schemas/checking.py
++++ b/app/schemas/checking.py
+@@ -1,15 +1,18 @@
+ from __future__ import annotations
+ 
+ import logging
+-from typing import Annotated, Any, Dict, List, Optional
++from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+ 
+-from pydantic import BaseModel, Field, BeforeValidator
++from pydantic import BaseModel, Field, model_validator
+ 
+ from app.schemas.task_content import TaskType, TaskContent
+ from app.schemas.solution_rules import SolutionRules
+ 
+ logger = logging.getLogger(__name__)
+ 
++# ╨Т╤Е╨╛╨┤╨╜╨╛╨╣ ╤В╨╕╨┐ ╨┤╨╗╤П ╨┐╨╛╨╗╤П type: ╨║╨░╨╜╨╛╨╜╨╕╤З╨╡╤Б╨║╨╕╨╡ ╨╖╨╜╨░╤З╨╡╨╜╨╕╤П + ╨░╨╗╨╕╨░╤Б SA+COM (deprecated)
++AnswerTypeInput = Union[TaskType, Literal["SA+COM"]]
++
+ 
+ def _normalize_answer_type(v: Any) -> TaskType:
+     """
+@@ -21,6 +24,8 @@ def _normalize_answer_type(v: Any) -> TaskType:
+             "╨Р╨╗╨╕╨░╤Б ╨▒╤Г╨┤╨╡╤В ╤Г╨┤╨░╨╗╤С╨╜ ╨▓ ╨▒╤Г╨┤╤Г╤Й╨╡╨╣ ╨▓╨╡╤А╤Б╨╕╨╕."
+         )
+         return "SA_COM"
++    if v not in ("SC", "MC", "SA", "SA_COM", "TA"):
++        raise ValueError(f"╨Э╨╡╨┤╨╛╨┐╤Г╤Б╤В╨╕╨╝╤Л╨╣ ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░: {v!r}")
+     return v
+ 
+ 
+@@ -30,7 +35,7 @@ class StudentResponse(BaseModel):
+ 
+     ╨Ф╨╗╤П ╤А╨░╨╖╨╜╤Л╤Е ╤В╨╕╨┐╨╛╨▓ ╨╖╨░╨┤╨░╤З ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╤О╤В╤Б╤П ╤А╨░╨╖╨╜╤Л╨╡ ╨┐╨╛╨╗╤П:
+     - SC/MC: selected_option_ids;
+-    - SA/SA_COM: value;
++    - SA/SA_COM: value; ╨┤╨╗╤П ╤В╨╕╨┐╨╛╨▓ ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝ (SA_COM ╨╕ ╤В.╨┐.) тАФ ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ comment;
+     - TA: text.
+     """
+ 
+@@ -49,6 +54,11 @@ class StudentResponse(BaseModel):
+         description="╨а╨░╨╖╨▓╤С╤А╨╜╤Г╤В╤Л╨╣ ╨╛╤В╨▓╨╡╤В (TA).",
+         examples=["╨а╨░╨╖╨▓╨╡╤А╨╜╤Г╤В╤Л╨╣ ╨╛╤В╨▓╨╡╤В ╤Г╤З╨╡╨╜╨╕╨║╨░...", None],
+     )
++    comment: Optional[str] = Field(
++        default=None,
++        description="╨Ъ╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╣ ╤Г╤З╨╡╨╜╨╕╨║╨░ (SA_COM ╨╕ ╨┤╤А. ╤В╨╕╨┐╤Л ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝). ╨в╨╛╨╗╤М╨║╨╛ ╤Е╤А╨░╨╜╨╡╨╜╨╕╨╡ ╨╕ ╨▓╤Л╨┤╨░╤З╨░, ╨╜╨░ ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г/╨▒╨░╨╗╨╗╤Л ╨╜╨╡ ╨▓╨╗╨╕╤П╨╡╤В.",
++        examples=["╨Ь╨╛╨╣ ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╣ ╨║ ╨╛╤В╨▓╨╡╤В╤Г", "", None],
++    )
+     meta: Optional[Dict[str, Any]] = Field(
+         default=None,
+         description="╨Я╤А╨╛╨╕╨╖╨▓╨╛╨╗╤М╨╜╤Л╨╡ ╨╝╨╡╤В╨░╨┤╨░╨╜╨╜╤Л╨╡ (╨▓╤А╨╡╨╝╤П, ╨╜╨╛╨╝╨╡╤А ╨┐╨╛╨┐╤Л╤В╨║╨╕, ╨╕╤Б╤В╨╛╤З╨╜╨╕╨║ ╨╕ ╤В.╨┐.).",
+@@ -73,7 +83,7 @@ class StudentAnswer(BaseModel):
+         description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╤Г╤Б╤В╨╛╨╣╤З╨╕╨▓╤Л╨╣ ╨╕╨┤╨╡╨╜╤В╨╕╤Д╨╕╨║╨░╤В╨╛╤А ╨╖╨░╨┤╨░╤З╨╕ (╨╡╤Б╨╗╨╕ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П).",
+         examples=["TASK-SC-001", "TASK-MC-002", None],
+     )
+-    type: Annotated[TaskType, BeforeValidator(_normalize_answer_type)] = Field(
++    type: AnswerTypeInput = Field(
+         ...,
+         description="╨в╨╕╨┐ ╨╖╨░╨┤╨░╤З╨╕, ╨┤╨╛╨╗╨╢╨╡╨╜ ╤Б╨╛╨▓╨┐╨░╨┤╨░╤В╤М ╤Б task_content.type. ╨Ф╨╛╨┐╤Г╤Б╤В╨╕╨╝ ╨░╨╗╨╕╨░╤Б SA+COM (deprecated).",
+         examples=["SC", "MC", "SA", "SA_COM", "TA"],
+@@ -84,10 +94,22 @@ class StudentAnswer(BaseModel):
+         examples=[
+             {"selected_option_ids": ["A"]},
+             {"value": "42"},
++            {"value": "42", "comment": "╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╣ ╤Г╤З╨╡╨╜╨╕╨║╨░"},
+             {"text": "╨а╨░╨╖╨▓╨╡╤А╨╜╤Г╤В╤Л╨╣ ╨╛╤В╨▓╨╡╤В..."},
+         ],
+     )
+ 
++    @model_validator(mode="after")
++    def normalize_answer_type(self) -> "StudentAnswer":
++        """╨Э╨╛╤А╨╝╨░╨╗╨╕╨╖╤Г╨╡╤В ╨░╨╗╨╕╨░╤Б SA+COM ╨▓ SA_COM ╤Б ╨╗╨╛╨│╨╛╨╝ deprecation."""
++        if getattr(self, "type", None) == "SA+COM":
++            logger.warning(
++                "Deprecation: ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░ 'SA+COM' ╤Г╤Б╤В╨░╤А╨╡╨╗, ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╣╤В╨╡ 'SA_COM'. "
++                "╨Р╨╗╨╕╨░╤Б ╨▒╤Г╨┤╨╡╤В ╤Г╨┤╨░╨╗╤С╨╜ ╨▓ ╨▒╤Г╨┤╤Г╤Й╨╡╨╣ ╨▓╨╡╤А╤Б╨╕╨╕."
++            )
++            object.__setattr__(self, "type", "SA_COM")
++        return self
++
+ 
+ class CheckResultDetails(BaseModel):
+     """
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index 5a5c844..4579b5b 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -408,7 +408,13 @@ class CheckingService:
+         solution_rules: SolutionRules,
+         answer: StudentAnswer,
+     ) -> CheckResult:
+-        # ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝ ╨╜╨░╨╗╨╕╤З╨╕╨╡ ╨╛╤В╨▓╨╡╤В╨░
++        """
++        ╨Я╤А╨╛╨▓╨╡╤А╨║╨░ ╨║╨╛╤А╨╛╤В╨║╨╛╨│╨╛ ╨╛╤В╨▓╨╡╤В╨░ (SA/SA_COM).
++
++        ╨Т ╤А╨░╤Б╤З╤С╤В╨╡ ╨▒╨░╨╗╨╗╨╛╨▓ ╤Г╤З╨░╤Б╤В╨▓╤Г╨╡╤В ╤В╨╛╨╗╤М╨║╨╛ response.value.
++        ╨Я╨╛╨╗╨╡ response.comment ╨╜╨╡ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨┤╨╗╤П scoring ╨╕ ╤В╨╛╨╗╤М╨║╨╛ ╤Б╨╛╤Е╤А╨░╨╜╤П╨╡╤В╤Б╤П ╨▓ answer_json.
++        """
++        # ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝ ╨╜╨░╨╗╨╕╤З╨╕╨╡ ╨╛╤В╨▓╨╡╤В╨░ (comment ╨╜╨╡ ╨▓╨╗╨╕╤П╨╡╤В ╨╜╨░ ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г)
+         value_raw = answer.response.value or ""
+         missing_answer = not value_raw or value_raw.strip() == ""
+         
+diff --git a/docs/api-examples.md b/docs/api-examples.md
+index 34c4220..e3e9283 100644
+--- a/docs/api-examples.md
++++ b/docs/api-examples.md
+@@ -722,6 +722,27 @@ curl -X POST "http://localhost:8000/api/v1/attempts?api_key=bot-key-1" \
+ 
+ ╨Ю╤В╨┐╤А╨░╨▓╨║╨░ ╨╛╤В╨▓╨╡╤В╨╛╨▓ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨░╨╝ ╨▓ ╤А╨░╨╝╨║╨░╤Е ╨┐╨╛╨┐╤Л╤В╨║╨╕.
+ 
++╨Ф╨╗╤П ╨╖╨░╨┤╨░╤З ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝ (SA_COM): ╨▓ `response` ╨╝╨╛╨╢╨╜╨╛ ╨┐╨╡╤А╨╡╨┤╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `comment` (string | null). ╨Ю╨╜╨╛ ╤Б╨╛╤Е╤А╨░╨╜╤П╨╡╤В╤Б╤П ╨▓ `task_results.answer_json` ╨╕ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П ╨▓ API; ╨╜╨░ ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г ╨╕ ╨▒╨░╨╗╨╗╤Л ╨╜╨╡ ╨▓╨╗╨╕╤П╨╡╤В.
++
++#### ╨Я╤А╨╕╨╝╨╡╤А ╤В╨╡╨╗╨░ ╨┤╨╗╤П SA_COM ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝
++
++```json
++{
++  "items": [
++    {
++      "task_id": 2,
++      "answer": {
++        "type": "SA_COM",
++        "response": {
++          "value": "╨╛╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╨╛╤В╨▓╨╡╤В",
++          "comment": "╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╣ ╤Г╤З╨╡╨╜╨╕╨║╨░"
++        }
++      }
++    }
++  ]
++}
++```
++
+ #### ╨Ч╨░╨┐╤А╨╛╤Б
+ 
+ ```bash
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 938a43b..1cf82d9 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -412,6 +412,8 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ - `attempt_id` (path, int) - ID ╨┐╨╛╨┐╤Л╤В╨║╨╕
+ 
+ **╨в╨╡╨╗╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨░:**
++- ╨Ф╨╗╤П ╨╖╨░╨┤╨░╤З ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝ (SA_COM): ╨▓ `response` ╨┤╨╛╨┐╤Г╤Б╨║╨░╨╡╤В╤Б╤П ╨┐╨╛╨╗╨╡ `comment` (string | null), ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛; ╨╜╨░ ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г/╨▒╨░╨╗╨╗╤Л ╨╜╨╡ ╨▓╨╗╨╕╤П╨╡╤В.
++
+ ```json
+ {
+   "items": [
+@@ -423,6 +425,16 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+           "selected_option_ids": ["A"]
+         }
+       }
++    },
++    {
++      "task_id": 2,
++      "answer": {
++        "type": "SA_COM",
++        "response": {
++          "value": "╨╛╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╨╛╤В╨▓╨╡╤В",
++          "comment": "╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╣ ╤Г╤З╨╡╨╜╨╕╨║╨░"
++        }
++      }
+     }
+   ]
+ }

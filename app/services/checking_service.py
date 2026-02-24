@@ -408,7 +408,13 @@ class CheckingService:
         solution_rules: SolutionRules,
         answer: StudentAnswer,
     ) -> CheckResult:
-        # Проверяем наличие ответа
+        """
+        Проверка короткого ответа (SA/SA_COM).
+
+        В расчёте баллов участвует только response.value.
+        Поле response.comment не используется для scoring и только сохраняется в answer_json.
+        """
+        # Проверяем наличие ответа (comment не влияет на проверку)
         value_raw = answer.response.value or ""
         missing_answer = not value_raw or value_raw.strip() == ""
         

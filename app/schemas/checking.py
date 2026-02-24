@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, BeforeValidator
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.task_content import TaskType, TaskContent
 from app.schemas.solution_rules import SolutionRules
 
 logger = logging.getLogger(__name__)
+
+# Входной тип для поля type: канонические значения + алиас SA+COM (deprecated)
+AnswerTypeInput = Union[TaskType, Literal["SA+COM"]]
 
 
 def _normalize_answer_type(v: Any) -> TaskType:
@@ -21,6 +24,8 @@ def _normalize_answer_type(v: Any) -> TaskType:
             "Алиас будет удалён в будущей версии."
         )
         return "SA_COM"
+    if v not in ("SC", "MC", "SA", "SA_COM", "TA"):
+        raise ValueError(f"Недопустимый тип ответа: {v!r}")
     return v
 
 
@@ -30,7 +35,7 @@ class StudentResponse(BaseModel):
 
     Для разных типов задач используются разные поля:
     - SC/MC: selected_option_ids;
-    - SA/SA_COM: value;
+    - SA/SA_COM: value; для типов с комментарием (SA_COM и т.п.) — опционально comment;
     - TA: text.
     """
 
@@ -48,6 +53,11 @@ class StudentResponse(BaseModel):
         default=None,
         description="Развёрнутый ответ (TA).",
         examples=["Развернутый ответ ученика...", None],
+    )
+    comment: Optional[str] = Field(
+        default=None,
+        description="Комментарий ученика (SA_COM и др. типы с комментарием). Только хранение и выдача, на проверку/баллы не влияет.",
+        examples=["Мой комментарий к ответу", "", None],
     )
     meta: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -73,7 +83,7 @@ class StudentAnswer(BaseModel):
         description="Внешний устойчивый идентификатор задачи (если используется).",
         examples=["TASK-SC-001", "TASK-MC-002", None],
     )
-    type: Annotated[TaskType, BeforeValidator(_normalize_answer_type)] = Field(
+    type: AnswerTypeInput = Field(
         ...,
         description="Тип задачи, должен совпадать с task_content.type. Допустим алиас SA+COM (deprecated).",
         examples=["SC", "MC", "SA", "SA_COM", "TA"],
@@ -84,9 +94,21 @@ class StudentAnswer(BaseModel):
         examples=[
             {"selected_option_ids": ["A"]},
             {"value": "42"},
+            {"value": "42", "comment": "комментарий ученика"},
             {"text": "Развернутый ответ..."},
         ],
     )
+
+    @model_validator(mode="after")
+    def normalize_answer_type(self) -> "StudentAnswer":
+        """Нормализует алиас SA+COM в SA_COM с логом deprecation."""
+        if getattr(self, "type", None) == "SA+COM":
+            logger.warning(
+                "Deprecation: тип ответа 'SA+COM' устарел, используйте 'SA_COM'. "
+                "Алиас будет удалён в будущей версии."
+            )
+            object.__setattr__(self, "type", "SA_COM")
+        return self
 
 
 class CheckResultDetails(BaseModel):

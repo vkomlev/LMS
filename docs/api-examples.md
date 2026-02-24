@@ -722,6 +722,27 @@ curl -X POST "http://localhost:8000/api/v1/attempts?api_key=bot-key-1" \
 
 Отправка ответов по задачам в рамках попытки.
 
+Для задач с комментарием (SA_COM): в `response` можно передать опциональное поле `comment` (string | null). Оно сохраняется в `task_results.answer_json` и возвращается в API; на проверку и баллы не влияет.
+
+#### Пример тела для SA_COM с комментарием
+
+```json
+{
+  "items": [
+    {
+      "task_id": 2,
+      "answer": {
+        "type": "SA_COM",
+        "response": {
+          "value": "основной ответ",
+          "comment": "комментарий ученика"
+        }
+      }
+    }
+  ]
+}
+```
+
 #### Запрос
 
 ```bash

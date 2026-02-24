@@ -1,0 +1,61 @@
+﻿diff --git a/app/schemas/checking.py b/app/schemas/checking.py
+index 38263e2..60c7d06 100644
+--- a/app/schemas/checking.py
++++ b/app/schemas/checking.py
+@@ -1,15 +1,18 @@
+ from __future__ import annotations
+ 
+ import logging
+-from typing import Annotated, Any, Dict, List, Optional
++from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+ 
+-from pydantic import BaseModel, Field, BeforeValidator
++from pydantic import BaseModel, Field, model_validator
+ 
+ from app.schemas.task_content import TaskType, TaskContent
+ from app.schemas.solution_rules import SolutionRules
+ 
+ logger = logging.getLogger(__name__)
+ 
++# ╨Т╤Е╨╛╨┤╨╜╨╛╨╣ ╤В╨╕╨┐ ╨┤╨╗╤П ╨┐╨╛╨╗╤П type: ╨║╨░╨╜╨╛╨╜╨╕╤З╨╡╤Б╨║╨╕╨╡ ╨╖╨╜╨░╤З╨╡╨╜╨╕╤П + ╨░╨╗╨╕╨░╤Б SA+COM (deprecated)
++AnswerTypeInput = Union[TaskType, Literal["SA+COM"]]
++
+ 
+ def _normalize_answer_type(v: Any) -> TaskType:
+     """
+@@ -21,6 +24,8 @@ def _normalize_answer_type(v: Any) -> TaskType:
+             "╨Р╨╗╨╕╨░╤Б ╨▒╤Г╨┤╨╡╤В ╤Г╨┤╨░╨╗╤С╨╜ ╨▓ ╨▒╤Г╨┤╤Г╤Й╨╡╨╣ ╨▓╨╡╤А╤Б╨╕╨╕."
+         )
+         return "SA_COM"
++    if v not in ("SC", "MC", "SA", "SA_COM", "TA"):
++        raise ValueError(f"╨Э╨╡╨┤╨╛╨┐╤Г╤Б╤В╨╕╨╝╤Л╨╣ ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░: {v!r}")
+     return v
+ 
+ 
+@@ -73,7 +78,7 @@ class StudentAnswer(BaseModel):
+         description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╤Г╤Б╤В╨╛╨╣╤З╨╕╨▓╤Л╨╣ ╨╕╨┤╨╡╨╜╤В╨╕╤Д╨╕╨║╨░╤В╨╛╤А ╨╖╨░╨┤╨░╤З╨╕ (╨╡╤Б╨╗╨╕ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П).",
+         examples=["TASK-SC-001", "TASK-MC-002", None],
+     )
+-    type: Annotated[TaskType, BeforeValidator(_normalize_answer_type)] = Field(
++    type: AnswerTypeInput = Field(
+         ...,
+         description="╨в╨╕╨┐ ╨╖╨░╨┤╨░╤З╨╕, ╨┤╨╛╨╗╨╢╨╡╨╜ ╤Б╨╛╨▓╨┐╨░╨┤╨░╤В╤М ╤Б task_content.type. ╨Ф╨╛╨┐╤Г╤Б╤В╨╕╨╝ ╨░╨╗╨╕╨░╤Б SA+COM (deprecated).",
+         examples=["SC", "MC", "SA", "SA_COM", "TA"],
+@@ -88,6 +93,17 @@ class StudentAnswer(BaseModel):
+         ],
+     )
+ 
++    @model_validator(mode="after")
++    def normalize_answer_type(self) -> "StudentAnswer":
++        """╨Э╨╛╤А╨╝╨░╨╗╨╕╨╖╤Г╨╡╤В ╨░╨╗╨╕╨░╤Б SA+COM ╨▓ SA_COM ╤Б ╨╗╨╛╨│╨╛╨╝ deprecation."""
++        if getattr(self, "type", None) == "SA+COM":
++            logger.warning(
++                "Deprecation: ╤В╨╕╨┐ ╨╛╤В╨▓╨╡╤В╨░ 'SA+COM' ╤Г╤Б╤В╨░╤А╨╡╨╗, ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╣╤В╨╡ 'SA_COM'. "
++                "╨Р╨╗╨╕╨░╤Б ╨▒╤Г╨┤╨╡╤В ╤Г╨┤╨░╨╗╤С╨╜ ╨▓ ╨▒╤Г╨┤╤Г╤Й╨╡╨╣ ╨▓╨╡╤А╤Б╨╕╨╕."
++            )
++            object.__setattr__(self, "type", "SA_COM")
++        return self
++
+ 
+ class CheckResultDetails(BaseModel):
+     """
