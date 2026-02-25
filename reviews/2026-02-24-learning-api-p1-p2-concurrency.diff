@@ -1,0 +1,60 @@
+﻿diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index b5bab0f..e43c642 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -5,7 +5,7 @@ from __future__ import annotations
+ 
+ import logging
+ from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
+-from sqlalchemy import select
++from sqlalchemy import select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_db
+@@ -39,6 +39,9 @@ users_service = UsersService()
+ 
+ 
+ # ----- GET /learning/next-item -----
++# ╨Т╨╜╨╕╨╝╨░╨╜╨╕╨╡: GET ╨▓╤Л╨┐╨╛╨╗╨╜╤П╨╡╤В ╨╖╨░╨┐╨╕╤Б╤М ╨▓ ╨С╨Ф (upsert student_course_state ╨┐╤А╨╕ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╡ ╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╡╨╣).
++# ╨н╤В╨╛ ╤Б╨╛╨╖╨┤╨░╤С╤В write-╨░╨╝╨┐╨╗╨╕╤Д╨╕╨║╨░╤Ж╨╕╤О ╨┐╤А╨╕ ╤З╨░╤Б╤В╤Л╤Е ╨▓╤Л╨╖╨╛╨▓╨░╤Е; ╨┤╨╗╤П read-only ╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╡╨▓ ╨╝╨╛╨╢╨╜╨╛ ╨▓╤Л╨╜╨╡╤Б╤В╨╕
++# ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╤П ╨▓ ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓ ╨╕╨╗╨╕ ╨║╤Н╤И.
+ 
+ @router.get(
+     "/next-item",
+@@ -124,6 +127,13 @@ async def start_or_get_attempt(
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
+     course_id = task.course_id
+ 
++    # Concurrency-safe: ╨╛╨┤╨╕╨╜ ╨░╨║╤В╨╕╨▓╨╜╤Л╨╣ attempt ╨╜╨░ (user_id, course_id).
++    # Advisory lock ╤Б╨╡╤А╨╕╨░╨╗╨╕╨╖╤Г╨╡╤В ╨┐╨░╤А╨░╨╗╨╗╨╡╨╗╤М╨╜╤Л╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╨┤╨╗╤П ╤Н╤В╨╛╨╣ ╨┐╨░╤А╤Л.
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": body.student_id, "k2": course_id},
++    )
++
+     # ╨Р╨║╤В╨╕╨▓╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╤Н╤В╨╛╨╝╤Г ╨║╤Г╤А╤Б╤Г (finished_at IS NULL)
+     stmt = (
+         select(Attempts)
+diff --git a/app/services/learning_events_service.py b/app/services/learning_events_service.py
+index 1ba87fb..fdb4df9 100644
+--- a/app/services/learning_events_service.py
++++ b/app/services/learning_events_service.py
+@@ -28,9 +28,18 @@ async def record_help_requested(
+     ╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ help_requested. ╨Ф╨╡╨┤╤Г╨┐: ╨╡╤Б╨╗╨╕ ╨╖╨░ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╡ N ╨╝╨╕╨╜╤Г╤В ╨╡╤Б╤В╤М
+     ╤Б╨╛╨▒╤Л╤В╨╕╨╡ ╤Б ╤В╨╡╨╝ ╨╢╨╡ (student_id, task_id, message), ╨▓╨╡╤А╨╜╤Г╤В╤М ╨╡╨│╨╛ event_id ╨╕ deduplicated=True.
+ 
++    ╨Р╤В╨╛╨╝╨░╤А╨╜╨╛╤Б╤В╤М ╨┤╨╡╨┤╤Г╨┐╨░: advisory lock ╨┐╨╛ (student_id, task_id) ╤Б╨╡╤А╨╕╨░╨╗╨╕╨╖╤Г╨╡╤В
++    ╨┐╨░╤А╨░╨╗╨╗╨╡╨╗╤М╨╜╤Л╨╡ ╨▓╤Л╨╖╨╛╨▓╤Л, ╤З╤В╨╛╨▒╤Л ╨╜╨╡ ╨▓╤Б╤В╨░╨▓╨╕╤В╤М ╨┤╤Г╨▒╨╗╨╕╨║╨░╤В.
++
+     Returns:
+         (event_id, deduplicated)
+     """
++    # ╨б╨╡╤А╨╕╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П ╨┐╨╛ (student_id, task_id) ╨┤╨╗╤П ╨░╤В╨╛╨╝╨░╤А╨╜╨╛╨│╨╛ check-then-insert
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": student_id, "k2": task_id},
++    )
++
+     since = datetime.now(timezone.utc) - timedelta(minutes=HELP_DEDUPE_MINUTES)
+     msg_normalized = (message or "").strip() or None
+ 

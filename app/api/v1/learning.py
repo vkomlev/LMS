@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -39,6 +39,9 @@ users_service = UsersService()
 
 
 # ----- GET /learning/next-item -----
+# Внимание: GET выполняет запись в БД (upsert student_course_state при проверке зависимостей).
+# Это создаёт write-амплификацию при частых вызовах; для read-only сценариев можно вынести
+# обновление состояния в отдельный вызов или кэш.
 
 @router.get(
     "/next-item",
@@ -123,6 +126,13 @@ async def start_or_get_attempt(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     course_id = task.course_id
+
+    # Concurrency-safe: один активный attempt на (user_id, course_id).
+    # Advisory lock сериализует параллельные запросы для этой пары.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": body.student_id, "k2": course_id},
+    )
 
     # Активная попытка по этому курсу (finished_at IS NULL)
     stmt = (

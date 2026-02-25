@@ -28,9 +28,18 @@ async def record_help_requested(
     Записать событие help_requested. Дедуп: если за последние N минут есть
     событие с тем же (student_id, task_id, message), вернуть его event_id и deduplicated=True.
 
+    Атомарность дедупа: advisory lock по (student_id, task_id) сериализует
+    параллельные вызовы, чтобы не вставить дубликат.
+
     Returns:
         (event_id, deduplicated)
     """
+    # Сериализация по (student_id, task_id) для атомарного check-then-insert
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": task_id},
+    )
+
     since = datetime.now(timezone.utc) - timedelta(minutes=HELP_DEDUPE_MINUTES)
     msg_normalized = (message or "").strip() or None
 
