@@ -1,0 +1,75 @@
+﻿diff --git a/app/schemas/tasks.py b/app/schemas/tasks.py
+index 110b2ff..461a879 100644
+--- a/app/schemas/tasks.py
++++ b/app/schemas/tasks.py
+@@ -1,8 +1,29 @@
+ from __future__ import annotations
+ 
+-from typing import Any, Optional, List, Literal, Dict
++from typing import Any, Optional, List, Literal, Dict, Tuple
+ 
+-from pydantic import BaseModel, ConfigDict, Field
++from pydantic import BaseModel, ConfigDict, Field, model_validator
++
++
++def extract_hints_from_task_content(task_content: Any) -> Tuple[List[str], List[str], bool]:
++    """
++    ╨Ш╨╖╨▓╨╗╨╡╤З╤М hints_text, hints_video ╨╕╨╖ task_content (JSON).
++    ╨Э╨╛╤А╨╝╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П: ╤В╨╛╨╗╤М╨║╨╛ ╤Б╤В╤А╨╛╨║╨╛╨▓╤Л╨╡ ╤Н╨╗╨╡╨╝╨╡╨╜╤В╤Л; null ╨╕ ╨╜╨╡-╤Б╤В╤А╨╛╨║╨╕ ╨╛╤В╤Д╨╕╨╗╤М╤В╤А╨╛╨▓╤Л╨▓╨░╤О╤В╤Б╤П.
++    has_hints = (len(hints_text) > 0 or len(hints_video) > 0).
++    ╨Э╨╡ ╨┐╨░╨┤╨░╨╡╤В ╨┐╤А╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╕/╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝ ╤В╨╕╨┐╨╡ ╨┐╨╛╨╗╨╡╨╣ тАФ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В [], [], False.
++    """
++    if not isinstance(task_content, dict):
++        return ([], [], False)
++    hints_text_raw = task_content.get("hints_text")
++    hints_video_raw = task_content.get("hints_video")
++    hints_text: List[str] = []
++    hints_video: List[str] = []
++    if isinstance(hints_text_raw, list):
++        hints_text = [x for x in hints_text_raw if isinstance(x, str)]
++    if isinstance(hints_video_raw, list):
++        hints_video = [x for x in hints_video_raw if isinstance(x, str)]
++    has_hints = len(hints_text) > 0 or len(hints_video) > 0
++    return (hints_text, hints_video, has_hints)
+ 
+ 
+ class TaskCreate(BaseModel):
+@@ -38,6 +59,7 @@ class TaskUpdate(BaseModel):
+ class TaskRead(BaseModel):
+     """
+     ╨б╤Е╨╡╨╝╨░ ╤З╤В╨╡╨╜╨╕╤П ╨╖╨░╨┤╨░╨╜╨╕╤П.
++    Learning Engine V1, ╤Н╤В╨░╨┐ 5: hints_text, hints_video, has_hints ╨╕╨╖ task_content.
+     """
+     id: int
+     task_content: Any
+@@ -48,8 +70,30 @@ class TaskRead(BaseModel):
+     external_uid: Optional[str] = None
+     max_score: Optional[int] = None
+ 
++    hints_text: List[str] = Field(
++        default_factory=list,
++        description="╨в╨╡╨║╤Б╤В╨╛╨▓╤Л╨╡ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ ╨╕╨╖ task_content.hints_text.",
++    )
++    hints_video: List[str] = Field(
++        default_factory=list,
++        description="╨б╤Б╤Л╨╗╨║╨╕ ╨╜╨░ ╨▓╨╕╨┤╨╡╨╛-╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ ╨╕╨╖ task_content.hints_video.",
++    )
++    has_hints: bool = Field(
++        default=False,
++        description="True, ╨╡╤Б╨╗╨╕ ╨╡╤Б╤В╤М ╤Е╨╛╤В╤П ╨▒╤Л ╨╛╨┤╨╜╨░ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨░ (╤В╨╡╨║╤Б╤В ╨╕╨╗╨╕ ╨▓╨╕╨┤╨╡╨╛).",
++    )
++
+     model_config = ConfigDict(from_attributes=True)
+ 
++    @model_validator(mode="after")
++    def fill_hints_from_task_content(self) -> "TaskRead":
++        if isinstance(self.task_content, dict):
++            ht, hv, hh = extract_hints_from_task_content(self.task_content)
++            object.__setattr__(self, "hints_text", ht)
++            object.__setattr__(self, "hints_video", hv)
++            object.__setattr__(self, "has_hints", hh)
++        return self
++
+ class TaskUpsertItem(BaseModel):
+     """
+     ╨Ю╨┤╨╕╨╜ ╤Н╨╗╨╡╨╝╨╡╨╜╤В ╨┤╨╗╤П ╨╝╨░╤Б╤Б╨╛╨▓╨╛╨│╨╛ upsert'╨░ ╨╖╨░╨┤╨░╤З╨╕.

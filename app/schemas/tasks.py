@@ -1,8 +1,29 @@
 from __future__ import annotations
 
-from typing import Any, Optional, List, Literal, Dict
+from typing import Any, Optional, List, Literal, Dict, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def extract_hints_from_task_content(task_content: Any) -> Tuple[List[str], List[str], bool]:
+    """
+    Извлечь hints_text, hints_video из task_content (JSON).
+    Нормализация: только строковые элементы; null и не-строки отфильтровываются.
+    has_hints = (len(hints_text) > 0 or len(hints_video) > 0).
+    Не падает при отсутствии/невалидном типе полей — возвращает [], [], False.
+    """
+    if not isinstance(task_content, dict):
+        return ([], [], False)
+    hints_text_raw = task_content.get("hints_text")
+    hints_video_raw = task_content.get("hints_video")
+    hints_text: List[str] = []
+    hints_video: List[str] = []
+    if isinstance(hints_text_raw, list):
+        hints_text = [x for x in hints_text_raw if isinstance(x, str)]
+    if isinstance(hints_video_raw, list):
+        hints_video = [x for x in hints_video_raw if isinstance(x, str)]
+    has_hints = len(hints_text) > 0 or len(hints_video) > 0
+    return (hints_text, hints_video, has_hints)
 
 
 class TaskCreate(BaseModel):
@@ -38,6 +59,7 @@ class TaskUpdate(BaseModel):
 class TaskRead(BaseModel):
     """
     Схема чтения задания.
+    Learning Engine V1, этап 5: hints_text, hints_video, has_hints из task_content.
     """
     id: int
     task_content: Any
@@ -48,7 +70,29 @@ class TaskRead(BaseModel):
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
 
+    hints_text: List[str] = Field(
+        default_factory=list,
+        description="Текстовые подсказки из task_content.hints_text.",
+    )
+    hints_video: List[str] = Field(
+        default_factory=list,
+        description="Ссылки на видео-подсказки из task_content.hints_video.",
+    )
+    has_hints: bool = Field(
+        default=False,
+        description="True, если есть хотя бы одна подсказка (текст или видео).",
+    )
+
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def fill_hints_from_task_content(self) -> "TaskRead":
+        if isinstance(self.task_content, dict):
+            ht, hv, hh = extract_hints_from_task_content(self.task_content)
+            object.__setattr__(self, "hints_text", ht)
+            object.__setattr__(self, "hints_video", hv)
+            object.__setattr__(self, "has_hints", hh)
+        return self
 
 class TaskUpsertItem(BaseModel):
     """
