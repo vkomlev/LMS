@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Optional
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Integer,
     String,
@@ -85,6 +86,12 @@ class Attempts(Base):
         JSONB,
         nullable=True,
         comment="Дополнительные метаданные (таймлимит, заголовок, план задач и т.п.)",
+    )
+    time_expired: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment="Попытка завершена по таймауту (Learning Engine V1)",
     )
 
     user: Mapped["Users"] = relationship(

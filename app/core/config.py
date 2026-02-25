@@ -50,3 +50,6 @@ class Settings:
         self.default_points_short_answer: int = int(os.getenv("DEFAULT_POINTS_SHORT_ANSWER", "10"))
         self.prepend_input_link: bool = os.getenv("PREPEND_INPUT_LINK", "true").lower() == "true"
         self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "Входные данные")
+
+        # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
+        self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional, List
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Integer,
     SmallInteger,
@@ -61,6 +62,12 @@ class UserCourses(Base):
         server_default=text("now()"),
         nullable=False,
         comment="Когда добавлен",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+        comment="План курса активен (student_course_plan)",
     )
     order_number: Mapped[Optional[int]] = mapped_column(
         SmallInteger,

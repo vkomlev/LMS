@@ -83,6 +83,16 @@ class Tasks(Base):
         JSONB,
         comment="Правила проверки решения",
     )
+    max_attempts: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Лимит попыток (null => default на уровне сервиса, Learning Engine V1)",
+    )
+    time_limit_sec: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Лимит времени на попытку в секундах (Learning Engine V1)",
+    )
 
     course: Mapped["Courses"] = relationship(
         "Courses",

@@ -1,0 +1,86 @@
+﻿diff --git a/app/core/config.py b/app/core/config.py
+index 9bf98d9..0f736a3 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -49,4 +49,7 @@ class Settings:
+         # тЬЕ Default settings ╨┤╨╗╤П ╨╕╨╝╨┐╨╛╤А╤В╨░
+         self.default_points_short_answer: int = int(os.getenv("DEFAULT_POINTS_SHORT_ANSWER", "10"))
+         self.prepend_input_link: bool = os.getenv("PREPEND_INPUT_LINK", "true").lower() == "true"
+-        self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "╨Т╤Е╨╛╨┤╨╜╤Л╨╡ ╨┤╨░╨╜╨╜╤Л╨╡")
+\ No newline at end of file
++        self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "╨Т╤Е╨╛╨┤╨╜╤Л╨╡ ╨┤╨░╨╜╨╜╤Л╨╡")
++
++        # Learning Engine V1 (╤Н╤В╨░╨┐ 1: ╤В╨╛╨╗╤М╨║╨╛ ╨С╨Ф, ╨▒╨╡╨╖ ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╤П ╨┐╨╛╨▓╨╡╨┤╨╡╨╜╨╕╤П API)
++        self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
+\ No newline at end of file
+diff --git a/app/models/attempts.py b/app/models/attempts.py
+index f804634..295d1a1 100644
+--- a/app/models/attempts.py
++++ b/app/models/attempts.py
+@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Optional
+ from datetime import datetime
+ 
+ from sqlalchemy import (
++    Boolean,
+     DateTime,
+     Integer,
+     String,
+@@ -86,6 +87,12 @@ class Attempts(Base):
+         nullable=True,
+         comment="╨Ф╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨╝╨╡╤В╨░╨┤╨░╨╜╨╜╤Л╨╡ (╤В╨░╨╣╨╝╨╗╨╕╨╝╨╕╤В, ╨╖╨░╨│╨╛╨╗╨╛╨▓╨╛╨║, ╨┐╨╗╨░╨╜ ╨╖╨░╨┤╨░╤З ╨╕ ╤В.╨┐.)",
+     )
++    time_expired: Mapped[bool] = mapped_column(
++        Boolean,
++        nullable=False,
++        server_default=text("false"),
++        comment="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╨┐╨╛ ╤В╨░╨╣╨╝╨░╤Г╤В╤Г (Learning Engine V1)",
++    )
+ 
+     user: Mapped["Users"] = relationship(
+         "Users",
+diff --git a/app/models/tasks.py b/app/models/tasks.py
+index 4a88ad2..31d71e4 100644
+--- a/app/models/tasks.py
++++ b/app/models/tasks.py
+@@ -83,6 +83,16 @@ class Tasks(Base):
+         JSONB,
+         comment="╨Я╤А╨░╨▓╨╕╨╗╨░ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ ╤А╨╡╤И╨╡╨╜╨╕╤П",
+     )
++    max_attempts: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        nullable=True,
++        comment="╨Ы╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║ (null => default ╨╜╨░ ╤Г╤А╨╛╨▓╨╜╨╡ ╤Б╨╡╤А╨▓╨╕╤Б╨░, Learning Engine V1)",
++    )
++    time_limit_sec: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        nullable=True,
++        comment="╨Ы╨╕╨╝╨╕╤В ╨▓╤А╨╡╨╝╨╡╨╜╨╕ ╨╜╨░ ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨▓ ╤Б╨╡╨║╤Г╨╜╨┤╨░╤Е (Learning Engine V1)",
++    )
+ 
+     course: Mapped["Courses"] = relationship(
+         "Courses",
+diff --git a/app/models/user_courses.py b/app/models/user_courses.py
+index ab0fe04..08a8c75 100644
+--- a/app/models/user_courses.py
++++ b/app/models/user_courses.py
+@@ -4,6 +4,7 @@ from datetime import datetime
+ from typing import TYPE_CHECKING, Optional, List
+ 
+ from sqlalchemy import (
++    Boolean,
+     DateTime,
+     Integer,
+     SmallInteger,
+@@ -62,6 +63,12 @@ class UserCourses(Base):
+         nullable=False,
+         comment="╨Ъ╨╛╨│╨┤╨░ ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜",
+     )
++    is_active: Mapped[bool] = mapped_column(
++        Boolean,
++        nullable=False,
++        server_default=text("true"),
++        comment="╨Я╨╗╨░╨╜ ╨║╤Г╤А╤Б╨░ ╨░╨║╤В╨╕╨▓╨╡╨╜ (student_course_plan)",
++    )
+     order_number: Mapped[Optional[int]] = mapped_column(
+         SmallInteger,
+         comment=(
