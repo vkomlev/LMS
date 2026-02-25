@@ -1,0 +1,270 @@
+﻿diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 76445e0..27a33bb 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -32,6 +32,7 @@ from app.services.attempts_service import AttemptsService
+ from app.services.task_results_service import TaskResultsService
+ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
++from app.services.learning_engine_service import LearningEngineService
+ 
+ from app.utils.exceptions import DomainError
+ 
+@@ -44,6 +45,7 @@ attempts_service = AttemptsService()
+ task_results_service = TaskResultsService()
+ tasks_service = TasksService()
+ checking_service = CheckingService()
++learning_engine_service = LearningEngineService()
+ 
+ 
+ # ---------- ╨Т╨╜╤Г╤В╤А╨╡╨╜╨╜╨╕╨╣ helper ╨┤╨╗╤П ╤Б╨▒╨╛╤А╨║╨╕ AttemptWithResults ----------
+@@ -93,6 +95,24 @@ async def _build_attempt_with_results(
+     )
+ 
+ 
++async def _enrich_attempt_with_learning_fields(
++    db: AsyncSession,
++    attempt_with_results: AttemptWithResults,
++    attempt: Attempts,
++) -> None:
++    """
++    ╨Ч╨░╨┐╨╛╨╗╨╜╤П╨╡╤В attempts_used, attempts_limit_effective, last_based_status
++    ╨┐╨╛ ╨┐╨╡╤А╨▓╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╡ ╨▓ ╨┐╨╛╨┐╤Л╤В╨║╨╡ (Learning Engine V1, ╤Н╤В╨░╨┐ 4).
++    """
++    if not attempt_with_results.results:
++        return
++    first_task_id = attempt_with_results.results[0].task_id
++    state = await learning_engine_service.compute_task_state(db, attempt.user_id, first_task_id)
++    attempt_with_results.attempts_used = state.attempts_used
++    attempt_with_results.attempts_limit_effective = state.attempts_limit_effective
++    attempt_with_results.last_based_status = state.state
++
++
+ # ---------- ╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ----------
+ 
+ 
+@@ -225,20 +245,8 @@ async def submit_attempt_answers(
+             detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░. ╨Э╨╡╨╗╤М╨╖╤П ╨╛╤В╨┐╤А╨░╨▓╨╗╤П╤В╤М ╨╛╤В╨▓╨╡╤В╤Л ╨▓ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
+         )
+ 
+-    # ╨Т╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕: ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╤В╨░╨╣╨╝╨╗╨╕╨╝╨╕╤В╨░ (╨╡╤Б╨╗╨╕ ╤Г╨║╨░╨╖╨░╨╜ ╨▓ meta)
+-    if attempt.meta and isinstance(attempt.meta, dict) and "time_limit" in attempt.meta:
+-        time_limit_seconds = attempt.meta.get("time_limit")
+-        if time_limit_seconds and isinstance(time_limit_seconds, (int, float)):
+-            elapsed = datetime.now(timezone.utc) - attempt.created_at
+-            if elapsed > timedelta(seconds=time_limit_seconds):
+-                logger.warning(
+-                    "POST /attempts/%s/answers: ╨╕╤Б╤В╨╡╨║╨╗╨╛ ╨▓╤А╨╡╨╝╤П ╨╜╨░ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╕╨╡",
+-                    attempt_id,
+-                )
+-                raise HTTPException(
+-                    status_code=status.HTTP_400_BAD_REQUEST,
+-                    detail="╨Т╤А╨╡╨╝╤П ╨╜╨░ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╕╨╡ ╨╕╤Б╤В╨╡╨║╨╗╨╛.",
+-                )
++    # ╨в╨░╨╣╨╝╨╗╨╕╨╝╨╕╤В ╨┐╤А╨╛╨▓╨╡╤А╤П╨╡╤В╤Б╤П ╨┐╨╛ ╨║╨░╨╢╨┤╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╡ (tasks.time_limit_sec) ╨╜╨╕╨╢╨╡; ╨┐╤А╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨║╨╡
++    # ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛╨╝╨╡╤З╨░╨╡╤В╤Б╤П time_expired=true ╨╕ ╨┐╨╛ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╤Л╨╝ ╨╖╨░╨┤╨░╨╜╨╕╤П╨╝ ╨┐╨╕╤И╨╡╤В╤Б╤П score=0.
+ 
+     if not payload.items:
+         logger.warning(
+@@ -305,6 +313,25 @@ async def submit_attempt_answers(
+             answer=answer,
+         )
+ 
++        # 2.3b Learning Engine V1: ╤В╨░╨╣╨╝╨╗╨╕╨╝╨╕╤В ╨╕╨╖ tasks.time_limit_sec; ╨┐╤А╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨║╨╡ score=0
++        now = datetime.now(timezone.utc)
++        task_deadline_sec = getattr(task, "time_limit_sec", None) or (
++            attempt.meta.get("time_limit") if isinstance(attempt.meta, dict) else None
++        )
++        if attempt.time_expired:
++            check_result = CheckResult(score=0, max_score=check_result.max_score, is_correct=False)
++        elif task_deadline_sec and isinstance(task_deadline_sec, (int, float)):
++            deadline = attempt.created_at + timedelta(seconds=float(task_deadline_sec))
++            if now > deadline:
++                # ╨Я╤А╨╛╤Б╤А╨╛╤З╨║╨░: ╨╖╨░╨▓╨╡╤А╤И╨░╨╡╨╝ ╨┐╨╛╨┐╤Л╤В╨║╤Г (finished_at + time_expired), ╨╜╨╡ ╤В╨╛╨╗╤М╨║╨╛ ╤Д╨╗╨░╨│
++                attempt = await attempts_service.finish_attempt(db, attempt.id, time_expired=True) or attempt
++                attempt.time_expired = True
++                check_result = CheckResult(score=0, max_score=check_result.max_score, is_correct=False)
++                logger.warning(
++                    "POST /attempts/%s/answers: ╨┐╤А╨╛╤Б╤А╨╛╤З╨║╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡ task_id=%s, ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░",
++                    attempt_id, task.id,
++                )
++
+         # 2.4 ╨Ч╨░╨┐╨╕╤Б╤Л╨▓╨░╨╡╨╝ ╨▓ task_results
+         await task_results_service.create_from_check_result(
+             db=db,
+@@ -346,23 +373,25 @@ async def finish_attempt(
+     """
+     ╨Ч╨░╨▓╨╡╤А╤И╨╕╤В╤М ╨┐╨╛╨┐╤Л╤В╨║╤Г:
+ 
+-    1. ╨Я╤А╨╛╤Б╤В╨░╨▓╨╕╤В╤М finished_at ╤З╨╡╤А╨╡╨╖ AttemptsService.finish_attempt.
+-    2. ╨б╨╛╨▒╤А╨░╤В╤М AttemptWithResults (╨▓╤Б╨╡ task_results ╨┐╨╛ ╨┐╨╛╨┐╤Л╤В╨║╨╡, ╤Б╤Г╨╝╨╝╤Л ╨▒╨░╨╗╨╗╨╛╨▓).
++    1. ╨Я╤А╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨║╨╡ ╨┐╨╛ tasks.time_limit_sec ╨┐╨╛╨╝╨╡╤З╨░╨╡╨╝ time_expired ╨╕ ╨╖╨░╨▓╨╡╤А╤И╨░╨╡╨╝.
++    2. ╨Я╤А╨╛╤Б╤В╨░╨▓╨╕╤В╤М finished_at ╤З╨╡╤А╨╡╨╖ AttemptsService.finish_attempt.
++    3. ╨б╨╛╨▒╤А╨░╤В╤М AttemptWithResults (╨▓╤Б╨╡ task_results, ╤Б╤Г╨╝╨╝╤Л ╨▒╨░╨╗╨╗╨╛╨▓, LE V1 ╨┐╨╛╨╗╤П).
+     """
+-    try:
+-        attempt = await attempts_service.finish_attempt(db, attempt_id)
+-    except DomainError as exc:
+-        raise HTTPException(
+-            status_code=status.HTTP_404_NOT_FOUND,
+-            detail=str(exc),
+-        ) from exc
++    attempt = await attempts_service.get_by_id(db, attempt_id)
++    if attempt is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
+ 
+-    attempt_with_results = await _build_attempt_with_results(db, attempt)
++    time_expired = bool(attempt.time_expired)
++    if attempt.finished_at is None:
++        time_expired = time_expired or await attempts_service.check_attempt_deadline_expired(db, attempt)
++        attempt = await attempts_service.finish_attempt(db, attempt_id, time_expired=time_expired)
++        if attempt is None:
++            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
+ 
+-    # тмЗя╕П ╨║╨╗╤О╤З╨╡╨▓╨░╤П ╨┐╤А╨░╨▓╨║╨░
+-    return AttemptFinishResponse.model_validate(
+-        attempt_with_results.model_dump()
+-    )
++    attempt_with_results = await _build_attempt_with_results(db, attempt)
++    # Learning Engine V1: attempts_used, attempts_limit_effective, last_based_status
++    await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
++    return AttemptFinishResponse.model_validate(attempt_with_results.model_dump())
+ 
+ 
+ @router.get(
+@@ -377,19 +406,17 @@ async def get_attempt(
+     """
+     ╨Т╨╡╤А╨╜╤Г╤В╤М ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨╕ ╨▓╤Б╨╡ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╤Л ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨░╨╝:
+ 
+-    - ╨╝╨╡╤В╨░╨┤╨░╨╜╨╜╤Л╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕,
+-    - ╤Б╨┐╨╕╤Б╨╛╨║ task_results ╨▓ ╤Б╨▓╨╡╤А╨╜╤Г╤В╨╛╨╝ ╨▓╨╕╨┤╨╡ (AttemptTaskResultShort),
+-    - total_score ╨╕ total_max_score.
++    - ╨╝╨╡╤В╨░╨┤╨░╨╜╨╜╤Л╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕ (╨▓╨║╨╗╤О╤З╨░╤П time_expired),
++    - ╤Б╨┐╨╕╤Б╨╛╨║ task_results ╨▓ ╤Б╨▓╨╡╤А╨╜╤Г╤В╨╛╨╝ ╨▓╨╕╨┤╨╡,
++    - total_score, total_max_score,
++    - ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ attempts_used, attempts_limit_effective, last_based_status (LE V1).
+     """
+-    try:
+-        attempt = await attempts_service.get_by_id(db, attempt_id)
+-    except DomainError as exc:
+-        raise HTTPException(
+-            status_code=status.HTTP_404_NOT_FOUND,
+-            detail=str(exc),
+-        ) from exc
++    attempt = await attempts_service.get_by_id(db, attempt_id)
++    if attempt is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
+ 
+     attempt_with_results = await _build_attempt_with_results(db, attempt)
++    await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
+     return attempt_with_results
+ 
+ 
+diff --git a/app/services/attempts_service.py b/app/services/attempts_service.py
+index 810ecac..ff70c00 100644
+--- a/app/services/attempts_service.py
++++ b/app/services/attempts_service.py
+@@ -1,11 +1,14 @@
+ from __future__ import annotations
+ 
+ from typing import Any, Optional
+-from datetime import datetime, timezone
++from datetime import datetime, timezone, timedelta
+ 
++from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.attempts import Attempts
++from app.models.task_results import TaskResults
++from app.models.tasks import Tasks
+ from app.repos.attempts_repo import AttemptsRepository
+ from app.services.base import BaseService
+ 
+@@ -43,13 +46,73 @@ class AttemptsService(BaseService[Attempts]):
+         # BaseService.create ╨╛╨╢╨╕╨┤╨░╨╡╤В dict[str, Any]
+         return await self.create(db, data)
+ 
++    async def _get_task_ids_for_deadline_check(
++        self,
++        db: AsyncSession,
++        attempt_id: int,
++        course_id: Optional[int],
++    ) -> list[int]:
++        """ID ╨╖╨░╨┤╨░╤З ╨┤╨╗╤П ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ ╨┤╨╡╨┤╨╗╨░╨╣╨╜╨░: ╨╕╨╖ task_results ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╨╕╨╗╨╕ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г."""
++        r = await db.execute(
++            select(TaskResults.task_id).where(TaskResults.attempt_id == attempt_id)
++        )
++        task_ids = [row[0] for row in r.fetchall()]
++        if not task_ids and course_id is not None:
++            r = await db.execute(
++                select(Tasks.id).where(
++                    Tasks.course_id == course_id,
++                    Tasks.time_limit_sec.isnot(None),
++                )
++            )
++            task_ids = [row[0] for row in r.fetchall()]
++        return task_ids
++
++    async def check_attempt_deadline_expired(
++        self,
++        db: AsyncSession,
++        attempt: Attempts,
++    ) -> bool:
++        """
++        True, ╨╡╤Б╨╗╨╕ ╤В╨╡╨║╤Г╤Й╨╡╨╡ ╨▓╤А╨╡╨╝╤П ╨▒╨╛╨╗╤М╤И╨╡ ╨╗╤О╨▒╨╛╨│╨╛ ╨┤╨╡╨┤╨╗╨░╨╣╨╜╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨░╨╝ ╨┐╨╛╨┐╤Л╤В╨║╨╕/╨║╤Г╤А╤Б╨░
++        (tasks.time_limit_sec). ╨Ш╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ finish ╨┤╨╗╤П ╨▓╤Л╨▒╨╛╤А╨░ time_expired.
++        """
++        from app.services.tasks_service import TasksService
++        now = datetime.now(timezone.utc)
++        task_ids = await self._get_task_ids_for_deadline_check(db, attempt.id, attempt.course_id)
++        tasks_svc = TasksService()
++        for tid in task_ids:
++            task = await tasks_svc.get_by_id(db, tid)
++            if task and getattr(task, "time_limit_sec", None):
++                deadline = attempt.created_at + timedelta(seconds=task.time_limit_sec)
++                if now > deadline:
++                    return True
++        return False
++
++    async def set_time_expired(
++        self,
++        db: AsyncSession,
++        attempt_id: int,
++    ) -> Optional[Attempts]:
++        """
++        ╨Я╨╛╨╝╨╡╤З╨░╨╡╤В ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨║╨░╨║ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╤Г╤О (time_expired=true).
++        ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╨┐╨╛╨▓╤В╨╛╤А╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓ ╨╜╨╡ ╨╝╨╡╨╜╤П╨╡╤В ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡.
++        """
++        attempt = await self.get_by_id(db, attempt_id)
++        if attempt is None:
++            return None
++        if attempt.time_expired:
++            return attempt
++        return await self.update(db, db_obj=attempt, obj_in={"time_expired": True})
++
+     async def finish_attempt(
+         self,
+         db: AsyncSession,
+         attempt_id: int,
++        *,
++        time_expired: bool = False,
+     ) -> Optional[Attempts]:
+         """
+-        ╨Я╨╛╨╝╨╡╤З╨░╨╡╤В ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨║╨░╨║ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Г╤О (╨┐╤А╨╛╤Б╤В╨░╨▓╨╗╤П╨╡╤В finished_at).
++        ╨Я╨╛╨╝╨╡╤З╨░╨╡╤В ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨║╨░╨║ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Г╤О (╨┐╤А╨╛╤Б╤В╨░╨▓╨╗╤П╨╡╤В finished_at ╨╕ ╨┐╤А╨╕ ╨╜╨╡╨╛╨▒╤Е╨╛╨┤╨╕╨╝╨╛╤Б╤В╨╕ time_expired).
+ 
+         ╨Х╤Б╨╗╨╕ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░, ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В None.
+         ╨Ю╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ ╤Г╤А╨╛╨▓╨╡╨╜╤М (╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В) ╤Г╨╢╨╡ ╤А╨╡╤И╨╕╤В, ╨▒╤А╨╛╤Б╨░╤В╤М ╨╗╨╕ DomainError/HTTP 404.
+@@ -58,9 +121,11 @@ class AttemptsService(BaseService[Attempts]):
+         if attempt is None:
+             return None
+ 
+-        update_data = {
++        update_data: dict[str, Any] = {
+             "finished_at": datetime.now(timezone.utc),
+         }
++        if time_expired:
++            update_data["time_expired"] = True
+         return await self.update(db, db_obj=attempt, obj_in=update_data)
+ 
+     async def get_by_user(

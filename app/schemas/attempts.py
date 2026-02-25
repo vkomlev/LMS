@@ -72,6 +72,12 @@ class AttemptRead(BaseModel):
     source_system: Optional[str] = Field(None, description="Источник создания попытки", examples=["web", "tg_bot", "lms"])
     meta: Optional[Dict[str, Any]] = Field(None, description="Произвольные метаданные попытки", examples=[{}, {"time_limit": 3600, "task_ids": [1, 2, 3]}])
 
+    # Learning Engine V1, этап 4
+    time_expired: bool = Field(
+        default=False,
+        description="Попытка помечена как просроченная по tasks.time_limit_sec",
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -105,6 +111,7 @@ class AttemptWithResults(BaseModel):
     - сама попытка,
     - список результатов по задачам,
     - суммарные баллы.
+    Learning Engine V1 (этап 4): опционально attempts_used, attempts_limit_effective, last_based_status.
     """
 
     attempt: AttemptRead = Field(
@@ -122,6 +129,19 @@ class AttemptWithResults(BaseModel):
     total_max_score: int = Field(
         ...,
         description="Суммарный максимальный балл по всем задачам попытки.",
+    )
+    # Learning Engine V1, этап 4 (optional, backward-compatible)
+    attempts_used: Optional[int] = Field(
+        None,
+        description="Число завершённых попыток по задаче контекста (по первой задане попытки).",
+    )
+    attempts_limit_effective: Optional[int] = Field(
+        None,
+        description="Эффективный лимит попыток: override -> task.max_attempts -> 3.",
+    )
+    last_based_status: Optional[str] = Field(
+        None,
+        description="Статус по последней завершённой попытке: PASSED | FAILED | BLOCKED_LIMIT | IN_PROGRESS.",
     )
 
 

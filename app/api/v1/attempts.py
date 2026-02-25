@@ -32,6 +32,7 @@ from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
+from app.services.learning_engine_service import LearningEngineService
 
 from app.utils.exceptions import DomainError
 
@@ -44,6 +45,7 @@ attempts_service = AttemptsService()
 task_results_service = TaskResultsService()
 tasks_service = TasksService()
 checking_service = CheckingService()
+learning_engine_service = LearningEngineService()
 
 
 # ---------- Внутренний helper для сборки AttemptWithResults ----------
@@ -91,6 +93,24 @@ async def _build_attempt_with_results(
         total_score=total_score,
         total_max_score=total_max_score,
     )
+
+
+async def _enrich_attempt_with_learning_fields(
+    db: AsyncSession,
+    attempt_with_results: AttemptWithResults,
+    attempt: Attempts,
+) -> None:
+    """
+    Заполняет attempts_used, attempts_limit_effective, last_based_status
+    по первой задаче в попытке (Learning Engine V1, этап 4).
+    """
+    if not attempt_with_results.results:
+        return
+    first_task_id = attempt_with_results.results[0].task_id
+    state = await learning_engine_service.compute_task_state(db, attempt.user_id, first_task_id)
+    attempt_with_results.attempts_used = state.attempts_used
+    attempt_with_results.attempts_limit_effective = state.attempts_limit_effective
+    attempt_with_results.last_based_status = state.state
 
 
 # ---------- Эндпойнты ----------
@@ -225,20 +245,8 @@ async def submit_attempt_answers(
             detail="Попытка уже завершена. Нельзя отправлять ответы в завершенную попытку.",
         )
 
-    # Валидация попытки: проверка таймлимита (если указан в meta)
-    if attempt.meta and isinstance(attempt.meta, dict) and "time_limit" in attempt.meta:
-        time_limit_seconds = attempt.meta.get("time_limit")
-        if time_limit_seconds and isinstance(time_limit_seconds, (int, float)):
-            elapsed = datetime.now(timezone.utc) - attempt.created_at
-            if elapsed > timedelta(seconds=time_limit_seconds):
-                logger.warning(
-                    "POST /attempts/%s/answers: истекло время на выполнение",
-                    attempt_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Время на выполнение истекло.",
-                )
+    # Таймлимит проверяется по каждой задаче (tasks.time_limit_sec) ниже; при просрочке
+    # попытка помечается time_expired=true и по просроченным заданиям пишется score=0.
 
     if not payload.items:
         logger.warning(
@@ -305,6 +313,25 @@ async def submit_attempt_answers(
             answer=answer,
         )
 
+        # 2.3b Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
+        now = datetime.now(timezone.utc)
+        task_deadline_sec = getattr(task, "time_limit_sec", None) or (
+            attempt.meta.get("time_limit") if isinstance(attempt.meta, dict) else None
+        )
+        if attempt.time_expired:
+            check_result = CheckResult(score=0, max_score=check_result.max_score, is_correct=False)
+        elif task_deadline_sec and isinstance(task_deadline_sec, (int, float)):
+            deadline = attempt.created_at + timedelta(seconds=float(task_deadline_sec))
+            if now > deadline:
+                # Просрочка: завершаем попытку (finished_at + time_expired), не только флаг
+                attempt = await attempts_service.finish_attempt(db, attempt.id, time_expired=True) or attempt
+                attempt.time_expired = True
+                check_result = CheckResult(score=0, max_score=check_result.max_score, is_correct=False)
+                logger.warning(
+                    "POST /attempts/%s/answers: просрочка по задаче task_id=%s, попытка завершена",
+                    attempt_id, task.id,
+                )
+
         # 2.4 Записываем в task_results
         await task_results_service.create_from_check_result(
             db=db,
@@ -346,23 +373,25 @@ async def finish_attempt(
     """
     Завершить попытку:
 
-    1. Проставить finished_at через AttemptsService.finish_attempt.
-    2. Собрать AttemptWithResults (все task_results по попытке, суммы баллов).
+    1. При просрочке по tasks.time_limit_sec помечаем time_expired и завершаем.
+    2. Проставить finished_at через AttemptsService.finish_attempt.
+    3. Собрать AttemptWithResults (все task_results, суммы баллов, LE V1 поля).
     """
-    try:
-        attempt = await attempts_service.finish_attempt(db, attempt_id)
-    except DomainError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+    attempt = await attempts_service.get_by_id(db, attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+
+    time_expired = bool(attempt.time_expired)
+    if attempt.finished_at is None:
+        time_expired = time_expired or await attempts_service.check_attempt_deadline_expired(db, attempt)
+        attempt = await attempts_service.finish_attempt(db, attempt_id, time_expired=time_expired)
+        if attempt is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
 
     attempt_with_results = await _build_attempt_with_results(db, attempt)
-
-    # ⬇️ ключевая правка
-    return AttemptFinishResponse.model_validate(
-        attempt_with_results.model_dump()
-    )
+    # Learning Engine V1: attempts_used, attempts_limit_effective, last_based_status
+    await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
+    return AttemptFinishResponse.model_validate(attempt_with_results.model_dump())
 
 
 @router.get(
@@ -377,19 +406,17 @@ async def get_attempt(
     """
     Вернуть попытку и все результаты по задачам:
 
-    - метаданные попытки,
-    - список task_results в свернутом виде (AttemptTaskResultShort),
-    - total_score и total_max_score.
+    - метаданные попытки (включая time_expired),
+    - список task_results в свернутом виде,
+    - total_score, total_max_score,
+    - опционально attempts_used, attempts_limit_effective, last_based_status (LE V1).
     """
-    try:
-        attempt = await attempts_service.get_by_id(db, attempt_id)
-    except DomainError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+    attempt = await attempts_service.get_by_id(db, attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
 
     attempt_with_results = await _build_attempt_with_results(db, attempt)
+    await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
     return attempt_with_results
 
 

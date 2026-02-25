@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.attempts import Attempts
+from app.models.task_results import TaskResults
+from app.models.tasks import Tasks
 from app.repos.attempts_repo import AttemptsRepository
 from app.services.base import BaseService
 
@@ -43,13 +46,73 @@ class AttemptsService(BaseService[Attempts]):
         # BaseService.create ожидает dict[str, Any]
         return await self.create(db, data)
 
-    async def finish_attempt(
+    async def _get_task_ids_for_deadline_check(
+        self,
+        db: AsyncSession,
+        attempt_id: int,
+        course_id: Optional[int],
+    ) -> list[int]:
+        """ID задач для проверки дедлайна: из task_results попытки или по курсу."""
+        r = await db.execute(
+            select(TaskResults.task_id).where(TaskResults.attempt_id == attempt_id)
+        )
+        task_ids = [row[0] for row in r.fetchall()]
+        if not task_ids and course_id is not None:
+            r = await db.execute(
+                select(Tasks.id).where(
+                    Tasks.course_id == course_id,
+                    Tasks.time_limit_sec.isnot(None),
+                )
+            )
+            task_ids = [row[0] for row in r.fetchall()]
+        return task_ids
+
+    async def check_attempt_deadline_expired(
+        self,
+        db: AsyncSession,
+        attempt: Attempts,
+    ) -> bool:
+        """
+        True, если текущее время больше любого дедлайна по задачам попытки/курса
+        (tasks.time_limit_sec). Используется в finish для выбора time_expired.
+        """
+        from app.services.tasks_service import TasksService
+        now = datetime.now(timezone.utc)
+        task_ids = await self._get_task_ids_for_deadline_check(db, attempt.id, attempt.course_id)
+        tasks_svc = TasksService()
+        for tid in task_ids:
+            task = await tasks_svc.get_by_id(db, tid)
+            if task and getattr(task, "time_limit_sec", None):
+                deadline = attempt.created_at + timedelta(seconds=task.time_limit_sec)
+                if now > deadline:
+                    return True
+        return False
+
+    async def set_time_expired(
         self,
         db: AsyncSession,
         attempt_id: int,
     ) -> Optional[Attempts]:
         """
-        Помечает попытку как завершённую (проставляет finished_at).
+        Помечает попытку как просроченную (time_expired=true).
+        Идемпотентно: повторный вызов не меняет состояние.
+        """
+        attempt = await self.get_by_id(db, attempt_id)
+        if attempt is None:
+            return None
+        if attempt.time_expired:
+            return attempt
+        return await self.update(db, db_obj=attempt, obj_in={"time_expired": True})
+
+    async def finish_attempt(
+        self,
+        db: AsyncSession,
+        attempt_id: int,
+        *,
+        time_expired: bool = False,
+    ) -> Optional[Attempts]:
+        """
+        Помечает попытку как завершённую (проставляет finished_at и при необходимости time_expired).
 
         Если попытка не найдена, возвращает None.
         Отдельный уровень (эндпойнт) уже решит, бросать ли DomainError/HTTP 404.
@@ -58,9 +121,11 @@ class AttemptsService(BaseService[Attempts]):
         if attempt is None:
             return None
 
-        update_data = {
+        update_data: dict[str, Any] = {
             "finished_at": datetime.now(timezone.utc),
         }
+        if time_expired:
+            update_data["time_expired"] = True
         return await self.update(db, db_obj=attempt, obj_in=update_data)
 
     async def get_by_user(
