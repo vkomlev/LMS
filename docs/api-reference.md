@@ -606,9 +606,11 @@ Stateless-проверка одной задачи без сохранения �
 
 ## Эндпойнты статистики
 
+**Learning Engine V1, этап 6:** основной статус и прогресс считаются по **последней завершённой попытке** (last-attempt). Поля `average_score`, `total_attempts`, `total_score`, `total_max_score`, `min_score`, `max_score` остаются дополнительными (по всем попыткам). Подробнее: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md).
+
 ### GET /task-results/stats/by-task/{task_id}
 
-Статистика по задаче.
+Статистика по задаче. Основные показатели: `progress_percent`, `passed_tasks_count`, `failed_tasks_count` (по last-attempt).
 
 **Параметры:**
 - `task_id` (path, int) - ID задачи
@@ -622,11 +624,12 @@ Stateless-проверка одной задачи без сохранения �
   "correct_percentage": 60.0,
   "min_score": 0,
   "max_score": 10,
-  "score_distribution": {
-    "0": 2,
-    "5": 2,
-    "10": 6
-  }
+  "score_distribution": {},
+  "progress_percent": 70.0,
+  "passed_tasks_count": 7,
+  "failed_tasks_count": 3,
+  "last_passed_count": 7,
+  "last_failed_count": 3
 }
 ```
 
@@ -637,7 +640,7 @@ Stateless-проверка одной задачи без сохранения �
 
 ### GET /task-results/stats/by-course/{course_id}
 
-Статистика по курсу.
+Статистика по курсу. Основные показатели: `progress_percent`, `passed_tasks_count`, `failed_tasks_count` (по last-attempt).
 
 **Параметры:**
 - `course_id` (path, int) - ID курса
@@ -649,7 +652,10 @@ Stateless-проверка одной задачи без сохранения �
   "total_attempts": 50,
   "average_score": 75.5,
   "correct_percentage": 65.0,
-  "tasks_count": 28
+  "tasks_count": 28,
+  "progress_percent": 65.0,
+  "passed_tasks_count": 120,
+  "failed_tasks_count": 65
 }
 ```
 
@@ -660,7 +666,7 @@ Stateless-проверка одной задачи без сохранения �
 
 ### GET /task-results/stats/by-user/{user_id}
 
-Статистика по пользователю.
+Статистика по пользователю. Основной прогресс: `progress_percent`, `passed_tasks_count`, `failed_tasks_count`, `current_score`, `current_ratio`, `last_score`, `last_max_score`, `last_ratio` (по last-attempt).
 
 **Параметры:**
 - `user_id` (path, int) - ID пользователя
@@ -674,7 +680,15 @@ Stateless-проверка одной задачи без сохранения �
   "correct_percentage": 80.0,
   "total_score": 40,
   "total_max_score": 50,
-  "completion_percentage": 80.0
+  "completion_percentage": 80.0,
+  "progress_percent": 75.0,
+  "passed_tasks_count": 3,
+  "failed_tasks_count": 1,
+  "current_score": 24,
+  "current_ratio": 0.8,
+  "last_score": 24,
+  "last_max_score": 30,
+  "last_ratio": 0.8
 }
 ```
 

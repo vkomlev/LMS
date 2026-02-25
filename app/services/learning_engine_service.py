@@ -202,21 +202,30 @@ class LearningEngineService:
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
 
-        # Число заданий в дереве, по которым есть результат в завершённой попытке
-        with_result_stmt = text("""
-            SELECT COUNT(DISTINCT tr.task_id)
-            FROM task_results tr
-            INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
-            INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
+        # Число заданий в дереве, по которым последняя завершённая попытка — PASS (Learning Engine V1, этап 6)
+        tasks_with_last_pass_stmt = text("""
+            WITH last_per_task AS (
+                SELECT DISTINCT ON (tr.task_id)
+                    tr.task_id, tr.score AS last_score, tr.max_score AS last_max
+                FROM task_results tr
+                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
+                INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
+                ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
+            )
+            SELECT COUNT(*) FROM last_per_task
+            WHERE last_max > 0 AND (last_score::float / last_max) >= :pass_threshold
         """)
-        r = await db.execute(with_result_stmt, {"student_id": student_id, "course_ids": tree_ids})
-        tasks_with_result = r.scalar() or 0
+        r = await db.execute(
+            tasks_with_last_pass_stmt,
+            {"student_id": student_id, "course_ids": tree_ids, "pass_threshold": PASS_THRESHOLD_RATIO},
+        )
+        tasks_with_last_pass = r.scalar() or 0
 
         if total_tasks == 0:
             state: CourseStateType = "NOT_STARTED"
-        elif tasks_with_result == 0:
+        elif tasks_with_last_pass == 0:
             state = "NOT_STARTED"
-        elif tasks_with_result >= total_tasks:
+        elif tasks_with_last_pass >= total_tasks:
             state = "COMPLETED"
         else:
             state = "IN_PROGRESS"

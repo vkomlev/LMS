@@ -1,0 +1,427 @@
+﻿diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 14e3ff0..0412189 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -202,21 +202,30 @@ class LearningEngineService:
+         r = await db.execute(tasks_count_stmt)
+         total_tasks = r.scalar() or 0
+ 
+-        # ╨з╨╕╤Б╨╗╨╛ ╨╖╨░╨┤╨░╨╜╨╕╨╣ ╨▓ ╨┤╨╡╤А╨╡╨▓╨╡, ╨┐╨╛ ╨║╨╛╤В╨╛╤А╤Л╨╝ ╨╡╤Б╤В╤М ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╨▓ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡
+-        with_result_stmt = text("""
+-            SELECT COUNT(DISTINCT tr.task_id)
+-            FROM task_results tr
+-            INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
+-            INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
++        # ╨з╨╕╤Б╨╗╨╛ ╨╖╨░╨┤╨░╨╜╨╕╨╣ ╨▓ ╨┤╨╡╤А╨╡╨▓╨╡, ╨┐╨╛ ╨║╨╛╤В╨╛╤А╤Л╨╝ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ тАФ PASS (Learning Engine V1, ╤Н╤В╨░╨┐ 6)
++        tasks_with_last_pass_stmt = text("""
++            WITH last_per_task AS (
++                SELECT DISTINCT ON (tr.task_id)
++                    tr.task_id, tr.score AS last_score, tr.max_score AS last_max
++                FROM task_results tr
++                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
++                INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
++                ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
++            )
++            SELECT COUNT(*) FROM last_per_task
++            WHERE last_max > 0 AND (last_score::float / last_max) >= :pass_threshold
+         """)
+-        r = await db.execute(with_result_stmt, {"student_id": student_id, "course_ids": tree_ids})
+-        tasks_with_result = r.scalar() or 0
++        r = await db.execute(
++            tasks_with_last_pass_stmt,
++            {"student_id": student_id, "course_ids": tree_ids, "pass_threshold": PASS_THRESHOLD_RATIO},
++        )
++        tasks_with_last_pass = r.scalar() or 0
+ 
+         if total_tasks == 0:
+             state: CourseStateType = "NOT_STARTED"
+-        elif tasks_with_result == 0:
++        elif tasks_with_last_pass == 0:
+             state = "NOT_STARTED"
+-        elif tasks_with_result >= total_tasks:
++        elif tasks_with_last_pass >= total_tasks:
+             state = "COMPLETED"
+         else:
+             state = "IN_PROGRESS"
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index fa01d90..eb3d786 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -1,7 +1,7 @@
+-from typing import Any, Dict
++from typing import Any, Dict, List, Tuple
+ 
+ from sqlalchemy.ext.asyncio import AsyncSession
+-from sqlalchemy import func, case
++from sqlalchemy import func, case, text
+ 
+ from app.models.task_results import TaskResults
+ from app.repos.task_results_repo import TaskResultsRepository
+@@ -10,6 +10,9 @@ from app.schemas.task_results import TaskResultCreate
+ from app.services.base import BaseService
+ from app.services.checking_service import CheckingService
+ 
++# Learning Engine V1, ╤Н╤В╨░╨┐ 6: ╨┐╨╛╤А╨╛╨│ ╨┤╨╗╤П PASS ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡
++PASS_THRESHOLD_RATIO = 0.5
++
+ 
+ class TaskResultsService(BaseService[TaskResults]):
+     """
+@@ -158,18 +161,72 @@ class TaskResultsService(BaseService[TaskResults]):
+             order_by=[desc(self.repo.model.submitted_at)],
+         )
+ 
++    async def _last_attempts_flat(
++        self,
++        db: AsyncSession,
++        *,
++        user_id: int | None = None,
++        task_id: int | None = None,
++        task_ids: List[int] | None = None,
++    ) -> List[Tuple[int, int, int, int]]:
++        """
++        ╨Я╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╨║╨░╨╢╨┤╨╛╨╣ ╨┐╨░╤А╨╡ (user_id, task_id).
++        ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В ╤Б╨┐╨╕╤Б╨╛╨║ (user_id, task_id, score, max_score). max_score ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М 0.
++        """
++        conditions = ["a.finished_at IS NOT NULL"]
++        params: Dict[str, Any] = {}
++        if user_id is not None:
++            conditions.append("tr.user_id = :user_id")
++            params["user_id"] = user_id
++        if task_id is not None:
++            conditions.append("tr.task_id = :task_id")
++            params["task_id"] = task_id
++        if task_ids is not None:
++            conditions.append("tr.task_id = ANY(:task_ids)")
++            params["task_ids"] = task_ids
++        where_sql = " AND ".join(conditions)
++        stmt = text(f"""
++            WITH ranked AS (
++                SELECT tr.user_id, tr.task_id, tr.score,
++                    COALESCE(tr.max_score, 0) AS max_score,
++                    ROW_NUMBER() OVER (
++                        PARTITION BY tr.user_id, tr.task_id
++                        ORDER BY a.finished_at DESC, a.id DESC
++                    ) AS rn
++                FROM task_results tr
++                INNER JOIN attempts a ON a.id = tr.attempt_id
++                WHERE {where_sql}
++            )
++            SELECT user_id, task_id, score, max_score FROM ranked WHERE rn = 1
++        """)
++        r = await db.execute(stmt, params)
++        return [(row[0], row[1], int(row[2]), int(row[3])) for row in r.fetchall()]
++
++    @staticmethod
++    def _is_pass(score: int, max_score: int) -> bool:
++        return max_score > 0 and (score / max_score) >= PASS_THRESHOLD_RATIO
++
+     async def get_stats_by_task(
+         self,
+         db: AsyncSession,
+         task_id: int,
+     ) -> Dict[str, Any]:
+-        """╨Я╨╛╨╗╤Г╤З╨╕╤В╤М ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╤Г ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡."""
++        """
++        ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. ╨Ю╤Б╨╜╨╛╨▓╨╜╤Л╨╡ ╨┐╨╛╨║╨░╨╖╨░╤В╨╡╨╗╨╕ тАФ ╨┐╨╛ last-attempt (╤Н╤В╨░╨┐ 6);
++        average_score, min_score, max_score тАФ ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ (╨┐╨╛ ╨▓╤Б╨╡╨╝ ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝).
++        """
+         from sqlalchemy import select
+-        
++
++        last_rows = await self._last_attempts_flat(db, task_id=task_id)
++        last_passed = sum(1 for _, _, s, m in last_rows if self._is_pass(s, m))
++        last_failed = len(last_rows) - last_passed
++        total_with_last = len(last_rows)
++
+         total_query = select(func.count(TaskResults.id)).where(TaskResults.task_id == task_id)
+         total_result = await db.execute(total_query)
+         total_attempts = total_result.scalar() or 0
+-        
++        progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
++
+         if total_attempts == 0:
+             return {
+                 "task_id": task_id,
+@@ -179,22 +236,27 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "min_score": 0,
+                 "max_score": 0,
+                 "score_distribution": {},
++                "progress_percent": round(progress_percent, 2),
++                "passed_tasks_count": last_passed,
++                "failed_tasks_count": last_failed,
++                "last_passed_count": last_passed,
++                "last_failed_count": last_failed,
+             }
+-        
++
+         stats_query = select(
+             func.avg(TaskResults.score).label("avg_score"),
+             func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+             func.min(TaskResults.score).label("min_score"),
+             func.max(TaskResults.score).label("max_score"),
+         ).where(TaskResults.task_id == task_id)
+-        
++
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+-        
++
+         average_score = float(stats_row.avg_score or 0)
+         correct_count = stats_row.correct_count or 0
+         correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+-        
++
+         return {
+             "task_id": task_id,
+             "total_attempts": total_attempts,
+@@ -203,6 +265,11 @@ class TaskResultsService(BaseService[TaskResults]):
+             "min_score": stats_row.min_score or 0,
+             "max_score": stats_row.max_score or 0,
+             "score_distribution": {},
++            "progress_percent": round(progress_percent, 2),
++            "passed_tasks_count": last_passed,
++            "failed_tasks_count": last_failed,
++            "last_passed_count": last_passed,
++            "last_failed_count": last_failed,
+         }
+ 
+     async def get_stats_by_course(
+@@ -210,14 +277,17 @@ class TaskResultsService(BaseService[TaskResults]):
+         db: AsyncSession,
+         course_id: int,
+     ) -> Dict[str, Any]:
+-        """╨Я╨╛╨╗╤Г╤З╨╕╤В╤М ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╤Г ╨┐╨╛ ╨║╤Г╤А╤Б╤Г."""
++        """
++        ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г. ╨Ю╤Б╨╜╨╛╨▓╨╜╤Л╨╡ ╨┐╨╛╨║╨░╨╖╨░╤В╨╡╨╗╨╕ тАФ ╨┐╨╛ last-attempt (╤Н╤В╨░╨┐ 6);
++        average_score, total_attempts тАФ ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡.
++        """
+         from sqlalchemy import select
+         from app.models.tasks import Tasks
+-        
++
+         tasks_query = select(Tasks.id).where(Tasks.course_id == course_id)
+         tasks_result = await db.execute(tasks_query)
+         task_ids = [row[0] for row in tasks_result]
+-        
++
+         if not task_ids:
+             return {
+                 "course_id": course_id,
+@@ -225,37 +295,40 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "average_score": 0.0,
+                 "correct_percentage": 0.0,
+                 "tasks_count": 0,
++                "progress_percent": 0.0,
++                "passed_tasks_count": 0,
++                "failed_tasks_count": 0,
+             }
+-        
++
++        last_rows = await self._last_attempts_flat(db, task_ids=task_ids)
++        last_passed = sum(1 for _, _, s, m in last_rows if self._is_pass(s, m))
++        last_failed = len(last_rows) - last_passed
++        total_with_last = len(last_rows)
++        progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
++
+         stats_query = select(
+             func.count(TaskResults.id).label("total_attempts"),
+             func.avg(TaskResults.score).label("avg_score"),
+             func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+         ).where(TaskResults.task_id.in_(task_ids))
+-        
++
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+-        
++
+         total_attempts = stats_row.total_attempts or 0
+-        if total_attempts == 0:
+-            return {
+-                "course_id": course_id,
+-                "total_attempts": 0,
+-                "average_score": 0.0,
+-                "correct_percentage": 0.0,
+-                "tasks_count": len(task_ids),
+-            }
+-        
+         average_score = float(stats_row.avg_score or 0)
+         correct_count = stats_row.correct_count or 0
+         correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+-        
++
+         return {
+             "course_id": course_id,
+             "total_attempts": total_attempts,
+             "average_score": round(average_score, 2),
+             "correct_percentage": round(correct_percentage, 2),
+             "tasks_count": len(task_ids),
++            "progress_percent": round(progress_percent, 2),
++            "passed_tasks_count": last_passed,
++            "failed_tasks_count": last_failed,
+         }
+ 
+     async def get_stats_by_user(
+@@ -263,9 +336,21 @@ class TaskResultsService(BaseService[TaskResults]):
+         db: AsyncSession,
+         user_id: int,
+     ) -> Dict[str, Any]:
+-        """╨Я╨╛╨╗╤Г╤З╨╕╤В╤М ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╤Г ╨┐╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О."""
++        """
++        ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О. ╨Ю╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╤Б╤В╨░╤В╤Г╤Б ╨╕ ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б тАФ ╨┐╨╛ last-attempt (╤Н╤В╨░╨┐ 6);
++        average_score, total_score, total_max_score тАФ ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ (╨┐╨╛ ╨▓╤Б╨╡╨╝ ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝).
++        """
+         from sqlalchemy import select
+-        
++
++        last_rows = await self._last_attempts_flat(db, user_id=user_id)
++        last_passed = sum(1 for _, _, s, m in last_rows if self._is_pass(s, m))
++        last_failed = len(last_rows) - last_passed
++        total_with_last = len(last_rows)
++        progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
++        last_score = sum(row[2] for row in last_rows)
++        last_max_score = sum(row[3] for row in last_rows)
++        last_ratio = (last_score / last_max_score) if last_max_score and last_max_score > 0 else 0.0
++
+         stats_query = select(
+             func.count(TaskResults.id).label("total_attempts"),
+             func.avg(TaskResults.score).label("avg_score"),
+@@ -273,12 +358,12 @@ class TaskResultsService(BaseService[TaskResults]):
+             func.sum(TaskResults.max_score).label("total_max_score"),
+             func.sum(TaskResults.score).label("total_score"),
+         ).where(TaskResults.user_id == user_id)
+-        
++
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+-        
++
+         total_attempts = stats_row.total_attempts or 0
+-        if total_attempts == 0:
++        if total_attempts == 0 and total_with_last == 0:
+             return {
+                 "user_id": user_id,
+                 "total_attempts": 0,
+@@ -287,15 +372,23 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "total_score": 0,
+                 "total_max_score": 0,
+                 "completion_percentage": 0.0,
++                "progress_percent": 0.0,
++                "passed_tasks_count": 0,
++                "failed_tasks_count": 0,
++                "current_score": 0,
++                "current_ratio": 0.0,
++                "last_score": 0,
++                "last_max_score": 0,
++                "last_ratio": 0.0,
+             }
+-        
++
+         average_score = float(stats_row.avg_score or 0)
+         correct_count = stats_row.correct_count or 0
+         correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+         total_score = stats_row.total_score or 0
+         total_max_score = stats_row.total_max_score or 0
+-        completion_percentage = (total_score / total_max_score * 100) if total_max_score > 0 else 0.0
+-        
++        completion_percentage = (total_score / total_max_score * 100) if total_max_score and total_max_score > 0 else 0.0
++
+         return {
+             "user_id": user_id,
+             "total_attempts": total_attempts,
+@@ -304,4 +397,12 @@ class TaskResultsService(BaseService[TaskResults]):
+             "total_score": total_score,
+             "total_max_score": total_max_score,
+             "completion_percentage": round(completion_percentage, 2),
++            "progress_percent": round(progress_percent, 2),
++            "passed_tasks_count": last_passed,
++            "failed_tasks_count": last_failed,
++            "current_score": last_score,
++            "current_ratio": round(last_ratio, 4),
++            "last_score": last_score,
++            "last_max_score": last_max_score,
++            "last_ratio": round(last_ratio, 4),
+         }
+\ No newline at end of file
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 1cf82d9..9c7ead5 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -606,9 +606,11 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ 
+ ## ╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕
+ 
++**Learning Engine V1, ╤Н╤В╨░╨┐ 6:** ╨╛╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╤Б╤В╨░╤В╤Г╤Б ╨╕ ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б ╤Б╤З╨╕╤В╨░╤О╤В╤Б╤П ╨┐╨╛ **╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡** (last-attempt). ╨Я╨╛╨╗╤П `average_score`, `total_attempts`, `total_score`, `total_max_score`, `min_score`, `max_score` ╨╛╤Б╤В╨░╤О╤В╤Б╤П ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╝╨╕ (╨┐╨╛ ╨▓╤Б╨╡╨╝ ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝). ╨Я╨╛╨┤╤А╨╛╨▒╨╜╨╡╨╡: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md).
++
+ ### GET /task-results/stats/by-task/{task_id}
+ 
+-╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡.
++╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. ╨Ю╤Б╨╜╨╛╨▓╨╜╤Л╨╡ ╨┐╨╛╨║╨░╨╖╨░╤В╨╡╨╗╨╕: `progress_percent`, `passed_tasks_count`, `failed_tasks_count` (╨┐╨╛ last-attempt).
+ 
+ **╨Я╨░╤А╨░╨╝╨╡╤В╤А╤Л:**
+ - `task_id` (path, int) - ID ╨╖╨░╨┤╨░╤З╨╕
+@@ -622,11 +624,12 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "correct_percentage": 60.0,
+   "min_score": 0,
+   "max_score": 10,
+-  "score_distribution": {
+-    "0": 2,
+-    "5": 2,
+-    "10": 6
+-  }
++  "score_distribution": {},
++  "progress_percent": 70.0,
++  "passed_tasks_count": 7,
++  "failed_tasks_count": 3,
++  "last_passed_count": 7,
++  "last_failed_count": 3
+ }
+ ```
+ 
+@@ -637,7 +640,7 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ 
+ ### GET /task-results/stats/by-course/{course_id}
+ 
+-╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г.
++╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г. ╨Ю╤Б╨╜╨╛╨▓╨╜╤Л╨╡ ╨┐╨╛╨║╨░╨╖╨░╤В╨╡╨╗╨╕: `progress_percent`, `passed_tasks_count`, `failed_tasks_count` (╨┐╨╛ last-attempt).
+ 
+ **╨Я╨░╤А╨░╨╝╨╡╤В╤А╤Л:**
+ - `course_id` (path, int) - ID ╨║╤Г╤А╤Б╨░
+@@ -649,7 +652,10 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "total_attempts": 50,
+   "average_score": 75.5,
+   "correct_percentage": 65.0,
+-  "tasks_count": 28
++  "tasks_count": 28,
++  "progress_percent": 65.0,
++  "passed_tasks_count": 120,
++  "failed_tasks_count": 65
+ }
+ ```
+ 
+@@ -660,7 +666,7 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ 
+ ### GET /task-results/stats/by-user/{user_id}
+ 
+-╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О.
++╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О. ╨Ю╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б: `progress_percent`, `passed_tasks_count`, `failed_tasks_count`, `current_score`, `current_ratio`, `last_score`, `last_max_score`, `last_ratio` (╨┐╨╛ last-attempt).
+ 
+ **╨Я╨░╤А╨░╨╝╨╡╤В╤А╤Л:**
+ - `user_id` (path, int) - ID ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П
+@@ -674,7 +680,15 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "correct_percentage": 80.0,
+   "total_score": 40,
+   "total_max_score": 50,
+-  "completion_percentage": 80.0
++  "completion_percentage": 80.0,
++  "progress_percent": 75.0,
++  "passed_tasks_count": 3,
++  "failed_tasks_count": 1,
++  "current_score": 24,
++  "current_ratio": 0.8,
++  "last_score": 24,
++  "last_max_score": 30,
++  "last_ratio": 0.8
+ }
+ ```
+ 
