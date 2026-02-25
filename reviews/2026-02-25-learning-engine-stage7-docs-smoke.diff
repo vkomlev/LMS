@@ -1,0 +1,94 @@
+﻿diff --git a/docs/api-examples.md b/docs/api-examples.md
+index e3e9283..176a902 100644
+--- a/docs/api-examples.md
++++ b/docs/api-examples.md
+@@ -7,6 +7,8 @@
+ 
+ > ЁЯУЦ **╨Я╨╛╨╗╨╜╨░╤П ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Ж╨╕╤П:** ╨б╨╝. [API Reference](./api-reference.md) ╨┤╨╗╤П ╨┐╨╛╨╗╨╜╨╛╨│╨╛ ╤Б╨┐╨╕╤Б╨║╨░ ╨▓╤Б╨╡╤Е ╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╨╛╨▓.
+ 
++> **Learning Engine V1:** ╨Ъ╨╛╨╜╤В╤А╨░╨║╤В╤Л ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤П╨╝, ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝, ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨░╨╝ ╨╕ Learning API (hints, last-attempt, time_expired ╨╕ ╤В.╨┤.) ╤Б╨╛╨▒╤А╨░╨╜╤Л ╨▓ [assignments-and-results-api.md](assignments-and-results-api.md). ╨Я╤А╨╕╨╝╨╡╤А╤Л ╨▓╤Л╨╖╨╛╨▓╨╛╨▓ Learning API тАФ ╨▓ [smoke-learning-api.md](smoke-learning-api.md). ╨Я╨╛╨┤╤Б╨║╨░╨╖╨║╨╕: [hints-stage5.md](hints-stage5.md). ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). ╨б╨║╨▓╨╛╨╖╨╜╨╛╨╣ smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
++
+ ---
+ 
+ ## ╨б╨╛╨┤╨╡╤А╨╢╨░╨╜╨╕╨╡
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 9c7ead5..ae9a836 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -16,10 +16,11 @@
+ 5. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨┐╤А╨╛╨▓╨╡╤А╨║╨╕)
+ 6. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨┐╨╛╨┐╤Л╤В╨╛╨║](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨┐╨╛╨┐╤Л╤В╨╛╨║)
+ 7. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨╛╨▓](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨╛╨▓)
+-8. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕)
+-9. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓)
+-10. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨╕╨╝╨┐╨╛╤А╤В╨░](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨╕╨╝╨┐╨╛╤А╤В╨░)
+-11. [╨Ъ╨╛╨┤╤Л ╨╛╤И╨╕╨▒╨╛╨║](#╨║╨╛╨┤╤Л-╨╛╤И╨╕╨▒╨╛╨║)
++8. [Learning API (Learning Engine V1)](#learning-api-learning-engine-v1)
++9. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕)
++10. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓)
++11. [╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╨╕╨╝╨┐╨╛╤А╤В╨░](#╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л-╨╕╨╝╨┐╨╛╤А╤В╨░)
++12. [╨Ъ╨╛╨┤╤Л ╨╛╤И╨╕╨▒╨╛╨║](#╨║╨╛╨┤╤Л-╨╛╤И╨╕╨▒╨╛╨║)
+ 
+ ---
+ 
+@@ -105,11 +106,16 @@ GET /api/v1/tasks/1?api_key=bot-key-1
+     },
+     "course_id": 1,
+     "difficulty_id": 3,
+-    "max_score": 10
++    "max_score": 10,
++    "hints_text": [],
++    "hints_video": [],
++    "has_hints": false
+   }
+ ]
+ ```
+ 
++╨Т ╨╛╤В╨▓╨╡╤В╨░╤Е ╨╖╨░╨┤╨░╤З (TaskRead) ╨┐╤А╨╕╤Б╤Г╤В╤Б╤В╨▓╤Г╤О╤В ╨┐╨╛╨╗╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ ╨╕╨╖ `task_content` (Learning Engine V1, ╤Н╤В╨░╨┐ 5): `hints_text`, `hints_video`, `has_hints`. ╨б╨╝. [assignments-and-results-api.md](assignments-and-results-api.md), [hints-stage5.md](hints-stage5.md).
++
+ **╨Ю╤И╨╕╨▒╨║╨╕:**
+ - `404` - ╨Ъ╤Г╤А╤Б ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜
+ 
+@@ -366,11 +372,17 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+     "source_system": "web",
+     "created_at": "2026-01-17T12:00:00Z",
+     "finished_at": null,
+-    "meta": {}
++    "meta": {},
++    "time_expired": false,
++    "attempts_used": null,
++    "attempts_limit_effective": null,
++    "last_based_status": null
+   }
+ ]
+ ```
+ 
++╨Я╨╛╨╗╤П `time_expired`, `attempts_used`, `attempts_limit_effective`, `last_based_status` (Learning Engine V1, ╤Н╤В╨░╨┐ 4) тАФ ╤Б╨╝. [assignments-and-results-api.md](assignments-and-results-api.md), [attempts-integration-stage4.md](attempts-integration-stage4.md).
++
+ ---
+ 
+ ### POST /attempts
+@@ -604,6 +616,23 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ 
+ ---
+ 
++## Learning API (Learning Engine V1)
++
++╨н╨╜╨┤╨┐╨╛╨╕╨╜╤В╤Л ╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╨╕ ╨╕ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ Learning Engine (╤Н╤В╨░╨┐ 3). ╨Ъ╨╛╨╜╤Б╨╛╨╗╨╕╨┤╨╕╤А╨╛╨▓╨░╨╜╨╜╨╛╨╡ ╨╛╨┐╨╕╤Б╨░╨╜╨╕╨╡: [assignments-and-results-api.md](assignments-and-results-api.md). ╨Я╤А╨╕╨╝╨╡╤А╤Л ╨╕ smoke: [smoke-learning-api.md](smoke-learning-api.md).
++
++| ╨Ь╨╡╤В╨╛╨┤ | ╨Я╤Г╤В╤М | ╨Ю╨┐╨╕╤Б╨░╨╜╨╕╨╡ |
++|-------|------|----------|
++| GET | `/learning/next-item?student_id=` | ╨б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╤И╨░╨│: material \| task \| none \| blocked_dependency \| blocked_limit. |
++| POST | `/learning/materials/{material_id}/complete` | ╨Ю╤В╨╝╨╡╤В╨╕╤В╤М ╨╝╨░╤В╨╡╤А╨╕╨░╨╗ ╨┐╤А╨╛╨╣╨┤╨╡╨╜╨╜╤Л╨╝ (body: `student_id`). |
++| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | ╨Э╨░╤З╨░╤В╤М ╨╕╨╗╨╕ ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╤В╨╡╨║╤Г╤Й╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. |
++| GET | `/learning/tasks/{task_id}/state?student_id=` | ╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
++| POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
++| POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
++
++╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╤В╤А╨╡╨▒╤Г╤О╤В `api_key` ╨▓ query. ╨Ю╤В╨▓╨╡╤В╤Л ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В ╨┐╨╛╨╗╤П, ╨╛╨┐╨╕╤Б╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Н╤В╨░╨┐╨╜╤Л╤Е ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Е (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` ╨╕ ╤В.╨┤.).
++
++---
++
+ ## ╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕
+ 
+ **Learning Engine V1, ╤Н╤В╨░╨┐ 6:** ╨╛╤Б╨╜╨╛╨▓╨╜╨╛╨╣ ╤Б╤В╨░╤В╤Г╤Б ╨╕ ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б ╤Б╤З╨╕╤В╨░╤О╤В╤Б╤П ╨┐╨╛ **╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡** (last-attempt). ╨Я╨╛╨╗╤П `average_score`, `total_attempts`, `total_score`, `total_max_score`, `min_score`, `max_score` ╨╛╤Б╤В╨░╤О╤В╤Б╤П ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╝╨╕ (╨┐╨╛ ╨▓╤Б╨╡╨╝ ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝). ╨Я╨╛╨┤╤А╨╛╨▒╨╜╨╡╨╡: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md).

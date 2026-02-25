@@ -7,6 +7,8 @@
 
 > 📖 **Полная документация:** См. [API Reference](./api-reference.md) для полного списка всех эндпойнтов.
 
+> **Learning Engine V1:** Контракты по заданиям, попыткам, результатам и Learning API (hints, last-attempt, time_expired и т.д.) собраны в [assignments-and-results-api.md](assignments-and-results-api.md). Примеры вызовов Learning API — в [smoke-learning-api.md](smoke-learning-api.md). Подсказки: [hints-stage5.md](hints-stage5.md). Статистика по последней попытке: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). Сквозной smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
+
 ---
 
 ## Содержание
@@ -566,7 +568,9 @@ curl -X POST "http://localhost:8000/api/v1/check/task?api_key=bot-key-1" \
     },
     "answer": {
       "type": "SC",
-      "selected_options": ["A"]
+      "response": {
+        "selected_option_ids": ["A"]
+      }
     }
   }'
 ```
@@ -635,7 +639,9 @@ curl -X POST "http://localhost:8000/api/v1/check/tasks-batch?api_key=bot-key-1" 
         "solution_rules": {...},
         "answer": {
           "type": "SC",
-          "selected_options": ["A"]
+          "response": {
+            "selected_option_ids": ["A"]
+          }
         }
       },
       {
@@ -643,7 +649,9 @@ curl -X POST "http://localhost:8000/api/v1/check/tasks-batch?api_key=bot-key-1" 
         "solution_rules": {...},
         "answer": {
           "type": "MC",
-          "selected_options": ["A", "B"]
+          "response": {
+            "selected_option_ids": ["A", "B"]
+          }
         }
       }
     ]
@@ -749,19 +757,23 @@ curl -X POST "http://localhost:8000/api/v1/attempts?api_key=bot-key-1" \
 curl -X POST "http://localhost:8000/api/v1/attempts/1/answers?api_key=bot-key-1" \
   -H "Content-Type: application/json" \
   -d '{
-    "answers": [
+    "items": [
       {
         "task_id": 1,
         "answer": {
           "type": "SC",
-          "selected_options": ["A"]
+          "response": {
+            "selected_option_ids": ["A"]
+          }
         }
       },
       {
         "task_id": 2,
         "answer": {
           "type": "MC",
-          "selected_options": ["A", "B"]
+          "response": {
+            "selected_option_ids": ["A", "B"]
+          }
         }
       }
     ]
@@ -773,8 +785,8 @@ curl -X POST "http://localhost:8000/api/v1/attempts/1/answers?api_key=bot-key-1"
 ```json
 {
   "attempt_id": 1,
-  "total_score": 25,
-  "max_score": 30,
+  "total_score_delta": 25,
+  "total_max_score_delta": 30,
   "results": [
     {
       "task_id": 1,

@@ -16,10 +16,11 @@
 5. [Эндпойнты проверки](#эндпойнты-проверки)
 6. [Эндпойнты попыток](#эндпойнты-попыток)
 7. [Эндпойнты результатов](#эндпойнты-результатов)
-8. [Эндпойнты статистики](#эндпойнты-статистики)
-9. [Эндпойнты материалов](#эндпойнты-материалов)
-10. [Эндпойнты импорта](#эндпойнты-импорта)
-11. [Коды ошибок](#коды-ошибок)
+8. [Learning API (Learning Engine V1)](#learning-api-learning-engine-v1)
+9. [Эндпойнты статистики](#эндпойнты-статистики)
+10. [Эндпойнты материалов](#эндпойнты-материалов)
+11. [Эндпойнты импорта](#эндпойнты-импорта)
+12. [Коды ошибок](#коды-ошибок)
 
 ---
 
@@ -105,10 +106,15 @@ GET /api/v1/tasks/1?api_key=bot-key-1
     },
     "course_id": 1,
     "difficulty_id": 3,
-    "max_score": 10
+    "max_score": 10,
+    "hints_text": [],
+    "hints_video": [],
+    "has_hints": false
   }
 ]
 ```
+
+В ответах задач (TaskRead) присутствуют поля подсказок из `task_content` (Learning Engine V1, этап 5): `hints_text`, `hints_video`, `has_hints`. См. [assignments-and-results-api.md](assignments-and-results-api.md), [hints-stage5.md](hints-stage5.md).
 
 **Ошибки:**
 - `404` - Курс не найден
@@ -366,10 +372,16 @@ Stateless-проверка одной задачи без сохранения �
     "source_system": "web",
     "created_at": "2026-01-17T12:00:00Z",
     "finished_at": null,
-    "meta": {}
+    "meta": {},
+    "time_expired": false,
+    "attempts_used": null,
+    "attempts_limit_effective": null,
+    "last_based_status": null
   }
 ]
 ```
+
+Поля `time_expired`, `attempts_used`, `attempts_limit_effective`, `last_based_status` (Learning Engine V1, этап 4) — см. [assignments-and-results-api.md](assignments-and-results-api.md), [attempts-integration-stage4.md](attempts-integration-stage4.md).
 
 ---
 
@@ -444,8 +456,8 @@ Stateless-проверка одной задачи без сохранения �
 ```json
 {
   "attempt_id": 1,
-  "total_score": 25,
-  "max_score": 30,
+  "total_score_delta": 25,
+  "total_max_score_delta": 30,
   "results": [
     {
       "task_id": 1,
@@ -601,6 +613,23 @@ Stateless-проверка одной задачи без сохранения �
 **Ошибки:**
 - `400` - Неверные параметры запроса (например, score > max_score)
 - `404` - Результат не найден
+
+---
+
+## Learning API (Learning Engine V1)
+
+Эндпоинты маршрутизации и состояний Learning Engine (этап 3). Консолидированное описание: [assignments-and-results-api.md](assignments-and-results-api.md). Примеры и smoke: [smoke-learning-api.md](smoke-learning-api.md).
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
+| POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
+| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. |
+| GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
+| POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
+| POST | `/teacher/task-limits/override` | Переопределение лимита попыток (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+
+Все запросы требуют `api_key` в query. Ответы содержат поля, описанные в этапных документах (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` и т.д.).
 
 ---
 
