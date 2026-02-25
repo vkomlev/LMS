@@ -1,0 +1,617 @@
+﻿diff --git a/app/api/main.py b/app/api/main.py
+index 99a4659..fbd1e38 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -27,6 +27,8 @@ from app.api.v1.meta_tasks import router as meta_tasks_router
+ from app.api.v1.checking import router as checking_router
+ from app.api.v1.attempts import router as attempts_router
+ from app.api.v1.task_results_extra import router as task_results_extra_router
++from app.api.v1.learning import router as learning_router
++from app.api.v1.teacher_learning import router as teacher_learning_router
+ 
+ # ╨б╤Е╨╡╨╝╤Л ╨╕ ╤Б╨╡╤А╨▓╨╕╤Б╤Л
+ from app.schemas.users import UserCreate, UserRead, UserUpdate
+@@ -303,4 +305,6 @@ app.include_router(meta_tasks_router, prefix=API_PREFIX)
+ 
+ app.include_router(checking_router, prefix=API_PREFIX)
+ 
+-app.include_router(attempts_router, prefix=API_PREFIX)
+\ No newline at end of file
++app.include_router(attempts_router, prefix=API_PREFIX)
++app.include_router(learning_router, prefix=API_PREFIX)
++app.include_router(teacher_learning_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+new file mode 100644
+index 0000000..b5bab0f
+--- /dev/null
++++ b/app/api/v1/learning.py
+@@ -0,0 +1,231 @@
++"""
++Learning API V1 (╤Н╤В╨░╨┐ 3): next-item, materials/complete, tasks/start-or-get-attempt, state, request-help.
++"""
++from __future__ import annotations
++
++import logging
++from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
++from sqlalchemy import select
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_db
++from app.models.attempts import Attempts
++from app.models.tasks import Tasks
++from app.schemas.learning_api import (
++    NextItemResponse,
++    MaterialCompleteRequest,
++    MaterialCompleteResponse,
++    StartOrGetAttemptRequest,
++    StartOrGetAttemptResponse,
++    TaskStateResponse,
++    RequestHelpRequest,
++    RequestHelpResponse,
++)
++from app.services.learning_engine_service import LearningEngineService
++from app.services.learning_events_service import record_help_requested, set_material_completed
++from app.services.attempts_service import AttemptsService
++from app.services.tasks_service import TasksService
++from app.services.materials_service import MaterialsService
++from app.services.users_service import UsersService
++
++router = APIRouter(prefix="/learning", tags=["learning"])
++logger = logging.getLogger("api.learning")
++
++learning_service = LearningEngineService()
++attempts_service = AttemptsService()
++tasks_service = TasksService()
++materials_service = MaterialsService()
++users_service = UsersService()
++
++
++# ----- GET /learning/next-item -----
++
++@router.get(
++    "/next-item",
++    response_model=NextItemResponse,
++    summary="╨б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╤И╨░╨│ ╨┤╨╗╤П ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░ (material | task | none | blocked_*)",
++)
++async def get_next_item(
++    student_id: int = Query(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░"),
++    db: AsyncSession = Depends(get_db),
++) -> NextItemResponse:
++    user = await users_service.get_by_id(db, student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    result = await learning_service.resolve_next_item(db, student_id)
++    if result.type in ("blocked_dependency", "blocked_limit"):
++        logger.warning(
++            "next-item: student_id=%s type=%s course_id=%s",
++            student_id, result.type, result.course_id,
++        )
++    else:
++        logger.info(
++            "next-item: student_id=%s type=%s course_id=%s material_id=%s task_id=%s",
++            student_id, result.type, result.course_id, result.material_id, result.task_id,
++        )
++    await db.commit()
++    return NextItemResponse(
++        type=result.type,
++        course_id=result.course_id,
++        material_id=result.material_id,
++        task_id=result.task_id,
++        reason=result.reason,
++        dependency_course_id=result.dependency_course_id,
++    )
++
++
++# ----- POST /learning/materials/{material_id}/complete -----
++
++@router.post(
++    "/materials/{material_id}/complete",
++    response_model=MaterialCompleteResponse,
++    summary="╨Ю╤В╨╝╨╡╤В╨╕╤В╤М ╨╝╨░╤В╨╡╤А╨╕╨░╨╗ ╨║╨░╨║ ╨┐╤А╨╛╨╣╨┤╨╡╨╜╨╜╤Л╨╣ (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛)",
++)
++async def material_complete(
++    material_id: int = Path(..., description="ID ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░"),
++    body: MaterialCompleteRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> MaterialCompleteResponse:
++    material = await materials_service.get_by_id(db, material_id)
++    if material is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ь╨░╤В╨╡╤А╨╕╨░╨╗ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    user = await users_service.get_by_id(db, body.student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    completed_at = await set_material_completed(db, body.student_id, material_id)
++    await db.commit()
++    logger.info("material complete: student_id=%s material_id=%s", body.student_id, material_id)
++    return MaterialCompleteResponse(
++        ok=True,
++        student_id=body.student_id,
++        material_id=material_id,
++        status="completed",
++        completed_at=completed_at,
++    )
++
++
++# ----- POST /learning/tasks/{task_id}/start-or-get-attempt -----
++
++@router.post(
++    "/tasks/{task_id}/start-or-get-attempt",
++    response_model=StartOrGetAttemptResponse,
++    summary="╨Э╨░╤З╨░╤В╤М ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨╕╨╗╨╕ ╨▓╨╡╤А╨╜╤Г╤В╤М ╤В╨╡╨║╤Г╤Й╤Г╤О ╨╜╨╡╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Г╤О (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛)",
++)
++async def start_or_get_attempt(
++    task_id: int = Path(..., description="ID ╨╖╨░╨┤╨░╨╜╨╕╤П"),
++    body: StartOrGetAttemptRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> StartOrGetAttemptResponse:
++    task = await tasks_service.get_by_id(db, task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛")
++    user = await users_service.get_by_id(db, body.student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    course_id = task.course_id
++
++    # ╨Р╨║╤В╨╕╨▓╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╤Н╤В╨╛╨╝╤Г ╨║╤Г╤А╤Б╤Г (finished_at IS NULL)
++    stmt = (
++        select(Attempts)
++        .where(
++            Attempts.user_id == body.student_id,
++            Attempts.course_id == course_id,
++            Attempts.finished_at.is_(None),
++        )
++        .order_by(Attempts.created_at.desc())
++        .limit(1)
++    )
++    r = await db.execute(stmt)
++    existing = r.scalar_one_or_none()
++    if existing is not None:
++        await db.commit()
++        return StartOrGetAttemptResponse(
++            attempt_id=existing.id,
++            user_id=existing.user_id,
++            course_id=existing.course_id,
++            created_at=existing.created_at,
++            finished_at=existing.finished_at,
++            source_system=existing.source_system,
++        )
++
++    attempt = await attempts_service.create_attempt(
++        db=db,
++        user_id=body.student_id,
++        course_id=course_id,
++        source_system=body.source_system or "learning_api",
++        meta=None,
++    )
++    await db.commit()
++    logger.info(
++        "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s",
++        body.student_id, task_id, attempt.id,
++    )
++    return StartOrGetAttemptResponse(
++        attempt_id=attempt.id,
++        user_id=attempt.user_id,
++        course_id=attempt.course_id,
++        created_at=attempt.created_at,
++        finished_at=attempt.finished_at,
++        source_system=attempt.source_system,
++    )
++
++
++# ----- GET /learning/tasks/{task_id}/state -----
++
++@router.get(
++    "/tasks/{task_id}/state",
++    response_model=TaskStateResponse,
++    summary="╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡",
++)
++async def get_task_state(
++    task_id: int = Path(..., description="ID ╨╖╨░╨┤╨░╨╜╨╕╤П"),
++    student_id: int = Query(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░"),
++    db: AsyncSession = Depends(get_db),
++) -> TaskStateResponse:
++    task = await tasks_service.get_by_id(db, task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛")
++    user = await users_service.get_by_id(db, student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    state = await learning_service.compute_task_state(db, student_id, task_id)
++    return TaskStateResponse(
++        task_id=task_id,
++        student_id=student_id,
++        state=state.state,
++        last_attempt_id=state.last_attempt_id,
++        last_score=state.last_score,
++        last_max_score=state.last_max_score,
++        last_finished_at=state.last_finished_at,
++        attempts_used=state.attempts_used,
++        attempts_limit_effective=state.attempts_limit_effective,
++    )
++
++
++# ----- POST /learning/tasks/{task_id}/request-help -----
++
++@router.post(
++    "/tasks/{task_id}/request-help",
++    response_model=RequestHelpResponse,
++    summary="╨Ч╨░╨┐╤А╨╛╤Б╨╕╤В╤М ╨┐╨╛╨╝╨╛╤Й╤М ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤О (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░)",
++)
++async def request_help(
++    task_id: int = Path(..., description="ID ╨╖╨░╨┤╨░╨╜╨╕╤П"),
++    body: RequestHelpRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> RequestHelpResponse:
++    task = await tasks_service.get_by_id(db, task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛")
++    user = await users_service.get_by_id(db, body.student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    event_id, deduplicated = await record_help_requested(
++        db, body.student_id, task_id, body.message
++    )
++    await db.commit()
++    logger.info(
++        "request-help: student_id=%s task_id=%s event_id=%s deduplicated=%s",
++        body.student_id, task_id, event_id, deduplicated,
++    )
++    return RequestHelpResponse(ok=True, event_id=event_id, deduplicated=deduplicated)
+diff --git a/app/api/v1/teacher_learning.py b/app/api/v1/teacher_learning.py
+new file mode 100644
+index 0000000..0ca8053
+--- /dev/null
++++ b/app/api/v1/teacher_learning.py
+@@ -0,0 +1,96 @@
++"""
++Learning API V1 (╤Н╤В╨░╨┐ 3): teacher endpoint тАФ ╨┐╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤О.
++"""
++from __future__ import annotations
++
++import logging
++from fastapi import APIRouter, Depends, HTTPException, Body, status
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_db
++from app.schemas.learning_api import TaskLimitOverrideRequest, TaskLimitOverrideResponse
++from app.services.learning_events_service import record_task_limit_override
++from app.services.users_service import UsersService
++from app.services.tasks_service import TasksService
++
++router = APIRouter(prefix="/teacher", tags=["teacher_learning"])
++logger = logging.getLogger("api.teacher_learning")
++
++users_service = UsersService()
++tasks_service = TasksService()
++
++
++# TODO: ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╤А╨╛╨╗╨╕ updated_by (teacher/methodist), ╨║╨╛╨│╨┤╨░ ╤А╨╛╨╗╨╕ ╨┤╨╛╤Б╤В╤Г╨┐╨╜╤Л ╨▓ ╨╝╨╛╨┤╨╡╨╗╨╕
++
++@router.post(
++    "/task-limits/override",
++    response_model=TaskLimitOverrideResponse,
++    summary="╨г╤Б╤В╨░╨╜╨╛╨▓╨╕╤В╤М/╨╛╨▒╨╜╨╛╨▓╨╕╤В╤М ╨╗╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║ ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤О ╨┤╨╗╤П ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░ (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛)",
++)
++async def task_limit_override(
++    body: TaskLimitOverrideRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> TaskLimitOverrideResponse:
++    student = await users_service.get_by_id(db, body.student_id)
++    if student is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    task = await tasks_service.get_by_id(db, body.task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛")
++    updated_by_user = await users_service.get_by_id(db, body.updated_by)
++    if updated_by_user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤М updated_by ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++
++    await db.execute(
++        text("""
++            INSERT INTO student_task_limit_override
++            (student_id, task_id, max_attempts_override, reason, updated_by, updated_at)
++            VALUES (:student_id, :task_id, :max_attempts_override, :reason, :updated_by, now())
++            ON CONFLICT (student_id, task_id)
++            DO UPDATE SET
++                max_attempts_override = EXCLUDED.max_attempts_override,
++                reason = EXCLUDED.reason,
++                updated_by = EXCLUDED.updated_by,
++                updated_at = now()
++        """),
++        {
++            "student_id": body.student_id,
++            "task_id": body.task_id,
++            "max_attempts_override": body.max_attempts_override,
++            "reason": body.reason,
++            "updated_by": body.updated_by,
++        },
++    )
++    await record_task_limit_override(
++        db,
++        body.student_id,
++        body.task_id,
++        body.max_attempts_override,
++        body.reason,
++        body.updated_by,
++    )
++
++    r = await db.execute(
++        text("""
++            SELECT updated_at FROM student_task_limit_override
++            WHERE student_id = :student_id AND task_id = :task_id
++        """),
++        {"student_id": body.student_id, "task_id": body.task_id},
++    )
++    row = r.fetchone()
++    updated_at = row[0] if row else None
++    await db.commit()
++    logger.info(
++        "task-limits/override: student_id=%s task_id=%s max=%s updated_by=%s",
++        body.student_id, body.task_id, body.max_attempts_override, body.updated_by,
++    )
++    if updated_at is None:
++        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="╨Ю╤И╨╕╨▒╨║╨░ ╤З╤В╨╡╨╜╨╕╤П updated_at")
++    return TaskLimitOverrideResponse(
++        ok=True,
++        student_id=body.student_id,
++        task_id=body.task_id,
++        max_attempts_override=body.max_attempts_override,
++        updated_at=updated_at,
++    )
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+new file mode 100644
+index 0000000..9bca2ec
+--- /dev/null
++++ b/app/schemas/learning_api.py
+@@ -0,0 +1,108 @@
++"""
++Pydantic-╤Б╤Е╨╡╨╝╤Л ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓ ╨╕ ╨╛╤В╨▓╨╡╤В╨╛╨▓ Learning API (╤Н╤В╨░╨┐ 3).
++
++╨н╨╜╨┤╨┐╨╛╨╕╨╜╤В╤Л: next-item, materials/complete, tasks/start-or-get-attempt,
++tasks/state, request-help, teacher/task-limits/override.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Literal, Optional
++
++from pydantic import BaseModel, Field
++
++
++# ----- Next item -----
++
++NextItemType = Literal[
++    "material", "task", "none", "blocked_dependency", "blocked_limit"
++]
++
++
++class NextItemResponse(BaseModel):
++    type: NextItemType
++    course_id: Optional[int] = None
++    material_id: Optional[int] = None
++    task_id: Optional[int] = None
++    reason: Optional[str] = None
++    dependency_course_id: Optional[int] = None
++
++
++# ----- Material complete -----
++
++class MaterialCompleteRequest(BaseModel):
++    student_id: int = Field(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░")
++
++
++class MaterialCompleteResponse(BaseModel):
++    ok: bool = True
++    student_id: int
++    material_id: int
++    status: Literal["completed"] = "completed"
++    completed_at: Optional[datetime] = None
++
++
++# ----- Start or get attempt -----
++
++class StartOrGetAttemptRequest(BaseModel):
++    student_id: int = Field(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░")
++    source_system: str = Field(default="learning_api", description="╨Ш╤Б╤В╨╛╤З╨╜╨╕╨║")
++
++
++class StartOrGetAttemptResponse(BaseModel):
++    attempt_id: int
++    user_id: int
++    course_id: Optional[int] = None
++    created_at: datetime
++    finished_at: Optional[datetime] = None
++    source_system: str
++
++
++# ----- Task state -----
++
++TaskStateType = Literal[
++    "OPEN", "IN_PROGRESS", "PASSED", "FAILED", "BLOCKED_LIMIT"
++]
++
++
++class TaskStateResponse(BaseModel):
++    task_id: int
++    student_id: int
++    state: TaskStateType
++    last_attempt_id: Optional[int] = None
++    last_score: Optional[int] = None
++    last_max_score: Optional[int] = None
++    last_finished_at: Optional[datetime] = None
++    attempts_used: int = 0
++    attempts_limit_effective: int = 3
++
++
++# ----- Request help -----
++
++class RequestHelpRequest(BaseModel):
++    student_id: int = Field(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░")
++    message: Optional[str] = Field(default=None, max_length=2000)
++
++
++class RequestHelpResponse(BaseModel):
++    ok: bool = True
++    event_id: int
++    deduplicated: bool = False
++
++
++# ----- Teacher override -----
++
++class TaskLimitOverrideRequest(BaseModel):
++    student_id: int = Field(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░")
++    task_id: int = Field(..., description="ID ╨╖╨░╨┤╨░╨╜╨╕╤П")
++    max_attempts_override: int = Field(..., gt=0, description="╨Ы╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║")
++    reason: Optional[str] = None
++    updated_by: int = Field(..., description="ID ╤Г╤З╨╕╤В╨╡╨╗╤П/╨╝╨╡╤В╨╛╨┤╨╕╤Б╤В╨░")
++
++
++class TaskLimitOverrideResponse(BaseModel):
++    ok: bool = True
++    student_id: int
++    task_id: int
++    max_attempts_override: int
++    updated_at: datetime
+diff --git a/app/services/learning_events_service.py b/app/services/learning_events_service.py
+new file mode 100644
+index 0000000..1ba87fb
+--- /dev/null
++++ b/app/services/learning_events_service.py
+@@ -0,0 +1,135 @@
++"""
++Learning Engine V1: ╨╖╨░╨┐╨╕╤Б╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╣ ╨▓ learning_events ╨╕ ╨╛╨┐╨╡╤А╨░╤Ж╨╕╨╕ ╨┐╤А╨╛╨│╤А╨╡╤Б╤Б╨░.
++
++- ╨Ч╨░╨┐╨╕╤Б╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╣ (help_requested, task_limit_override) ╤Б ╨░╨╜╤В╨╕╨┤╤Г╨▒╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╨╡╨╝.
++- ╨Ю╤В╨╝╨╡╤В╨║╨░ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░ ╨║╨░╨║ completed (student_material_progress).
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timezone, timedelta
++from typing import Any, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++logger = logging.getLogger(__name__)
++
++HELP_DEDUPE_MINUTES = 5
++
++
++async def record_help_requested(
++    db: AsyncSession,
++    student_id: int,
++    task_id: int,
++    message: Optional[str] = None,
++) -> tuple[int, bool]:
++    """
++    ╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ help_requested. ╨Ф╨╡╨┤╤Г╨┐: ╨╡╤Б╨╗╨╕ ╨╖╨░ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╡ N ╨╝╨╕╨╜╤Г╤В ╨╡╤Б╤В╤М
++    ╤Б╨╛╨▒╤Л╤В╨╕╨╡ ╤Б ╤В╨╡╨╝ ╨╢╨╡ (student_id, task_id, message), ╨▓╨╡╤А╨╜╤Г╤В╤М ╨╡╨│╨╛ event_id ╨╕ deduplicated=True.
++
++    Returns:
++        (event_id, deduplicated)
++    """
++    since = datetime.now(timezone.utc) - timedelta(minutes=HELP_DEDUPE_MINUTES)
++    msg_normalized = (message or "").strip() or None
++
++    # ╨Я╤А╨╛╨▓╨╡╤А╨║╨░ ╨┤╤Г╨▒╨╗╨╕╨║╨░╤В╨░: ╤В╨╛ ╨╢╨╡ student_id, task_id, payload.message ╨╖╨░ ╨╛╨║╨╜╨╛
++    r = await db.execute(
++        text("""
++            SELECT id FROM learning_events
++            WHERE student_id = :student_id
++              AND event_type = 'help_requested'
++              AND created_at >= :since
++              AND (
++                (payload->>'task_id')::int = :task_id
++                AND (payload->>'message' IS NOT DISTINCT FROM :msg)
++              )
++            ORDER BY created_at DESC
++            LIMIT 1
++        """),
++        {
++            "student_id": student_id,
++            "task_id": task_id,
++            "msg": msg_normalized,
++            "since": since,
++        },
++    )
++    row = r.fetchone()
++    if row is not None:
++        return (int(row[0]), True)
++
++    payload: dict[str, Any] = {"task_id": task_id}
++    if message is not None:
++        payload["message"] = message[:2000] if len(message) > 2000 else message
++
++    r = await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'help_requested', :payload, now())
++            RETURNING id
++        """),
++        {"student_id": student_id, "payload": payload},
++    )
++    event_id = r.scalar()
++    return (int(event_id), False)
++
++
++async def record_task_limit_override(
++    db: AsyncSession,
++    student_id: int,
++    task_id: int,
++    max_attempts_override: int,
++    reason: Optional[str],
++    updated_by: int,
++) -> None:
++    """
++    ╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ task_limit_override ╨▓ learning_events.
++    ╨Т╤Л╨╖╤Л╨▓╨░╨╡╤В╤Б╤П ╨┐╨╛╤Б╨╗╨╡ upsert ╨▓ student_task_limit_override.
++    """
++    payload: dict[str, Any] = {
++        "task_id": task_id,
++        "max_attempts_override": max_attempts_override,
++        "updated_by": updated_by,
++    }
++    if reason is not None:
++        payload["reason"] = reason
++
++    await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'task_limit_override', :payload, now())
++        """),
++        {"student_id": student_id, "payload": payload},
++    )
++
++
++async def set_material_completed(
++    db: AsyncSession,
++    student_id: int,
++    material_id: int,
++) -> datetime:
++    """
++    ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╤Л╨╣ upsert ╨▓ student_material_progress: status='completed', completed_at=now().
++    ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В completed_at (╤В╨╡╨║╤Г╤Й╨╡╨╡ ╨╖╨╜╨░╤З╨╡╨╜╨╕╨╡ ╨┐╨╛╤Б╨╗╨╡ upsert).
++    """
++    await db.execute(
++        text("""
++            INSERT INTO student_material_progress (student_id, material_id, status, completed_at)
++            VALUES (:student_id, :material_id, 'completed', now())
++            ON CONFLICT (student_id, material_id)
++            DO UPDATE SET status = 'completed', completed_at = COALESCE(
++                student_material_progress.completed_at, now()
++            )
++        """),
++        {"student_id": student_id, "material_id": material_id},
++    )
++    r = await db.execute(
++        text("""
++            SELECT completed_at FROM student_material_progress
++            WHERE student_id = :student_id AND material_id = :material_id
++        """),
++        {"student_id": student_id, "material_id": material_id},
++    )
++    row = r.fetchone()
++    return row[0] if row and row[0] else datetime.now(timezone.utc)

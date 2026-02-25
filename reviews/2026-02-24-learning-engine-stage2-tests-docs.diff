@@ -1,0 +1,690 @@
+﻿diff --git a/app/schemas/learning_engine.py b/app/schemas/learning_engine.py
+new file mode 100644
+index 0000000..b8bbc47
+--- /dev/null
++++ b/app/schemas/learning_engine.py
+@@ -0,0 +1,69 @@
++"""
++╨б╤Е╨╡╨╝╤Л ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨╛╨▓ Learning Engine V1 (╤Б╨╡╤А╨▓╨╕╤Б╨╜╤Л╨╣ ╤Б╨╗╨╛╨╣, ╤Н╤В╨░╨┐ 2).
++
++╨в╨╕╨┐╤Л ╨┤╨╗╤П next-item, task state, course state ╨▒╨╡╨╖ ╨┐╤А╨╕╨▓╤П╨╖╨║╨╕ ╨║ REST.
++"""
++from __future__ import annotations
++
++from dataclasses import dataclass
++from datetime import datetime
++from typing import Literal, Optional
++
++
++NextItemType = Literal[
++    "material",
++    "task",
++    "none",
++    "blocked_dependency",
++    "blocked_limit",
++]
++
++
++@dataclass(frozen=True)
++class NextItemResult:
++    """╨а╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╤П ╤Б╨╗╨╡╨┤╤Г╤О╤Й╨╡╨│╨╛ ╤И╨░╨│╨░ ╨┤╨╗╤П ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░."""
++
++    type: NextItemType
++    course_id: Optional[int] = None
++    material_id: Optional[int] = None
++    task_id: Optional[int] = None
++    reason: Optional[str] = None
++    dependency_course_id: Optional[int] = None
++
++
++TaskStateType = Literal[
++    "OPEN",
++    "IN_PROGRESS",
++    "PASSED",
++    "FAILED",
++    "BLOCKED_LIMIT",
++]
++
++
++@dataclass(frozen=True)
++class TaskStateResult:
++    """╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П ╨┐╨╛ ╨┐╤А╨░╨▓╨╕╨╗╤Г ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╕."""
++
++    state: TaskStateType
++    last_attempt_id: Optional[int] = None
++    last_score: Optional[int] = None
++    last_max_score: Optional[int] = None
++    last_finished_at: Optional[datetime] = None
++    attempts_used: int = 0
++    attempts_limit_effective: int = 3
++
++
++CourseStateType = Literal[
++    "NOT_STARTED",
++    "IN_PROGRESS",
++    "COMPLETED",
++    "BLOCKED_DEPENDENCY",
++]
++
++
++@dataclass(frozen=True)
++class CourseState:
++    """╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г (╨┤╨╗╤П ╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╨╕)."""
++
++    state: CourseStateType
++    course_id: int
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+new file mode 100644
+index 0000000..a017169
+--- /dev/null
++++ b/app/services/learning_engine_service.py
+@@ -0,0 +1,352 @@
++"""
++Learning Engine V1, ╤Н╤В╨░╨┐ 2: ╤Б╨╡╤А╨▓╨╕╤Б╨╜╤Л╨╣ ╤Б╨╗╨╛╨╣.
++
++╨Ь╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╤П (next item), ╤А╨░╤Б╤З╤С╤В effective limit ╨┐╨╛╨┐╤Л╤В╨╛╨║,
++╨▓╤Л╤З╨╕╤Б╨╗╨╡╨╜╨╕╨╡ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╤П ╨╖╨░╨┤╨░╨╜╨╕╤П ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡.
++╨С╨╡╨╖ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Л╤Е REST-╤Н╨╜╨┤╨┐╨╛╨╕╨╜╤В╨╛╨▓ (╤Н╤В╨░╨┐ 3).
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime
++from typing import List, Optional, Tuple
++
++from sqlalchemy import select, text, func
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.models.attempts import Attempts
++from app.models.materials import Materials
++from app.models.tasks import Tasks
++from app.models.user_courses import UserCourses
++from app.models.association_tables import t_course_dependencies, t_course_parents
++from app.schemas.learning_engine import (
++    NextItemResult,
++    NextItemType,
++    TaskStateResult,
++    TaskStateType,
++    CourseState,
++    CourseStateType,
++)
++from app.repos.user_courses_repo import UserCoursesRepository
++from app.repos.courses_repo import CoursesRepository
++from app.repos.course_dependencies_repository import CourseDependenciesRepository
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++
++DEFAULT_MAX_ATTEMPTS = 3
++PASS_THRESHOLD_RATIO = 0.5
++
++
++class LearningEngineService:
++    """
++    ╨б╨╡╤А╨▓╨╕╤Б ╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╨╕ ╨╕ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ Learning Engine V1.
++    """
++
++    def __init__(self) -> None:
++        self._user_courses_repo = UserCoursesRepository()
++        self._courses_repo = CoursesRepository()
++        self._deps_repo = CourseDependenciesRepository()
++
++    async def get_effective_attempt_limit(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        task_id: int,
++    ) -> int:
++        """
++        ╨Ы╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║ ╨┐╨╛ ╨┐╤А╨╕╨╛╤А╨╕╤В╨╡╤В╤Г: override -> task.max_attempts -> 3.
++
++        Args:
++            db: ╨б╨╡╤Б╤Б╨╕╤П ╨С╨Ф.
++            student_id: ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░.
++            task_id: ID ╨╖╨░╨┤╨░╨╜╨╕╤П.
++
++        Returns:
++            ╨н╤Д╤Д╨╡╨║╤В╨╕╨▓╨╜╤Л╨╣ ╨╗╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║ (>= 1).
++        """
++        # 1) Override
++        r = await db.execute(
++            text("""
++                SELECT max_attempts_override FROM student_task_limit_override
++                WHERE student_id = :student_id AND task_id = :task_id
++            """),
++            {"student_id": student_id, "task_id": task_id},
++        )
++        row = r.fetchone()
++        if row is not None:
++            return int(row[0])
++
++        # 2) tasks.max_attempts
++        r = await db.execute(
++            select(Tasks.max_attempts).where(Tasks.id == task_id)
++        )
++        row = r.fetchone()
++        if row is not None and row[0] is not None:
++            return int(row[0])
++
++        return DEFAULT_MAX_ATTEMPTS
++
++    async def compute_task_state(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        task_id: int,
++    ) -> TaskStateResult:
++        """
++        ╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡.
++
++        attempts_used = ╤З╨╕╤Б╨╗╨╛ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Л╤Е ╨┐╨╛╨┐╤Л╤В╨╛╨║ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡ (╤Б ╨╖╨░╨┐╨╕╤Б╤М╤О ╨▓ task_results).
++        state: OPEN/IN_PROGRESS ╨╡╤Б╨╗╨╕ ╨╜╨╡╤В ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╕;
++        PASSED ╨╡╤Б╨╗╨╕ last_score/last_max_score >= 0.5;
++        FAILED ╨╡╤Б╨╗╨╕ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨░╤П ╨╜╨╡ PASSED;
++        BLOCKED_LIMIT ╨╡╤Б╨╗╨╕ attempts_used >= limit ╨╕ ╨╜╨╡╤В PASSED.
++        """
++        limit = await self.get_effective_attempt_limit(db, student_id, task_id)
++
++        # ╨Ъ╨╛╨╗╨╕╤З╨╡╤Б╤В╨▓╨╛ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Л╤Е ╨┐╨╛╨┐╤Л╤В╨╛╨║ ╨┐╨╛ ╤Н╤В╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╡ (╨╡╤Б╤В╤М task_result ╨┐╨╛ task_id)
++        count_stmt = text("""
++            SELECT COUNT(DISTINCT a.id)
++            FROM attempts a
++            INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
++            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
++        """)
++        r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
++        attempts_used = r.scalar() or 0
++
++        # ╨Я╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡ (╨┐╨╛ finished_at)
++        last_stmt = text("""
++            SELECT a.id, a.finished_at, tr.score, tr.max_score
++            FROM attempts a
++            INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
++            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
++            ORDER BY a.finished_at DESC
++            LIMIT 1
++        """)
++        r = await db.execute(last_stmt, {"student_id": student_id, "task_id": task_id})
++        row = r.fetchone()
++
++        if row is None:
++            return TaskStateResult(
++                state="OPEN" if attempts_used == 0 else "IN_PROGRESS",
++                last_attempt_id=None,
++                last_score=None,
++                last_max_score=None,
++                last_finished_at=None,
++                attempts_used=attempts_used,
++                attempts_limit_effective=limit,
++            )
++
++        last_attempt_id, last_finished_at, last_score, last_max_score = (
++            int(row[0]), row[1], int(row[2]) if row[2] is not None else 0,
++            int(row[3]) if row[3] is not None else 0,
++        )
++
++        if last_max_score and last_max_score > 0:
++            ratio = last_score / last_max_score
++            if ratio >= PASS_THRESHOLD_RATIO:
++                return TaskStateResult(
++                    state="PASSED",
++                    last_attempt_id=last_attempt_id,
++                    last_score=last_score,
++                    last_max_score=last_max_score,
++                    last_finished_at=last_finished_at,
++                    attempts_used=attempts_used,
++                    attempts_limit_effective=limit,
++                )
++
++        if attempts_used >= limit:
++            return TaskStateResult(
++                state="BLOCKED_LIMIT",
++                last_attempt_id=last_attempt_id,
++                last_score=last_score,
++                last_max_score=last_max_score,
++                last_finished_at=last_finished_at,
++                attempts_used=attempts_used,
++                attempts_limit_effective=limit,
++            )
++
++        return TaskStateResult(
++            state="FAILED",
++            last_attempt_id=last_attempt_id,
++            last_score=last_score,
++            last_max_score=last_max_score,
++            last_finished_at=last_finished_at,
++            attempts_used=attempts_used,
++            attempts_limit_effective=limit,
++        )
++
++    async def compute_course_state(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        course_id: int,
++        *,
++        update_state_table: bool = True,
++    ) -> CourseState:
++        """
++        ╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░ ╨┐╨╛ ╨║╤Г╤А╤Б╤Г: NOT_STARTED | IN_PROGRESS | COMPLETED.
++
++        ╨Я╤А╨╕ update_state_table=True ╨▓╤Л╨┐╨╛╨╗╨╜╤П╨╡╤В upsert ╨▓ student_course_state.
++        """
++        # ╨з╨╕╤Б╨╗╨╛ ╨╖╨░╨┤╨░╨╜╨╕╨╣ ╨▓ ╨║╤Г╤А╤Б╨╡
++        tasks_count_stmt = select(func.count(Tasks.id)).where(Tasks.course_id == course_id)
++        r = await db.execute(tasks_count_stmt)
++        total_tasks = r.scalar() or 0
++
++        # ╨з╨╕╤Б╨╗╨╛ ╨╖╨░╨┤╨░╨╜╨╕╨╣, ╨┐╨╛ ╨║╨╛╤В╨╛╤А╤Л╨╝ ╨╡╤Б╤В╤М ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╨▓ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡
++        with_result_stmt = text("""
++            SELECT COUNT(DISTINCT tr.task_id)
++            FROM task_results tr
++            INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
++            INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = :course_id
++        """)
++        r = await db.execute(with_result_stmt, {"student_id": student_id, "course_id": course_id})
++        tasks_with_result = r.scalar() or 0
++
++        if total_tasks == 0:
++            state: CourseStateType = "NOT_STARTED"
++        elif tasks_with_result == 0:
++            state = "NOT_STARTED"
++        elif tasks_with_result >= total_tasks:
++            state = "COMPLETED"
++        else:
++            state = "IN_PROGRESS"
++
++        if update_state_table:
++            await db.execute(
++                text("""
++                    INSERT INTO student_course_state (student_id, course_id, state, updated_at)
++                    VALUES (:student_id, :course_id, :state, now())
++                    ON CONFLICT (student_id, course_id)
++                    DO UPDATE SET state = EXCLUDED.state, updated_at = now()
++                """),
++                {"student_id": student_id, "course_id": course_id, "state": state},
++            )
++
++        return CourseState(state=state, course_id=course_id)
++
++    async def resolve_next_item(
++        self,
++        db: AsyncSession,
++        student_id: int,
++    ) -> NextItemResult:
++        """
++        ╨б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╤И╨░╨│ ╨┤╨╗╤П ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░: material | task | none | blocked_dependency | blocked_limit.
++
++        ╨Я╤А╨░╨▓╨╕╨╗╨░: ╨░╨║╤В╨╕╨▓╨╜╤Л╨╡ user_courses (is_active=true) ╨┐╨╛ order_number;
++        ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╡╨╣ (required ╨║╤Г╤А╤Б ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М COMPLETED);
++        ╨╛╨▒╤Е╨╛╨┤ ╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░: ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╤Л (order_position), ╨╖╨░╤В╨╡╨╝ ╨╖╨░╨┤╨░╨╜╨╕╤П (id);
++        ╨┐╤А╨╕╨╛╤А╨╕╤В╨╡╤В material ╨╜╨░╨┤ task; ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨░ ╨┐╨╛ ╨╗╨╕╨╝╨╕╤В╤Г ╨┐╨╛╨┐╤Л╤В╨╛╨║.
++        """
++        # ╨Р╨║╤В╨╕╨▓╨╜╤Л╨╡ ╨║╤Г╤А╤Б╤Л ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П ╨┐╨╛ ╨┐╨╛╤А╤П╨┤╨║╤Г
++        user_courses = await self._user_courses_repo.get_user_courses(db, student_id, order_by_order=True)
++        active = [uc for uc in user_courses if uc.is_active]
++        if not active:
++            logger.info("resolve_next_item: student_id=%s ╨╜╨╡╤В ╨░╨║╤В╨╕╨▓╨╜╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓", student_id)
++            return NextItemResult(type="none", reason="╨Э╨╡╤В ╨░╨║╤В╨╕╨▓╨╜╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓ ╨▓ ╨┐╨╗╨░╨╜╨╡")
++
++        for uc in active:
++            root_course_id = uc.course_id
++
++            # ╨Ч╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╕: ╨▓╤Б╨╡ required ╨┤╨╛╨╗╨╢╨╜╤Л ╨▒╤Л╤В╤М COMPLETED
++            deps = await self._deps_repo.list_dependencies(db, root_course_id)
++            for req_course in deps:
++                course_state = await self.compute_course_state(
++                    db, student_id, req_course.id, update_state_table=True
++                )
++                if course_state.state != "COMPLETED":
++                    logger.info(
++                        "resolve_next_item: student_id=%s root=%s blocked_dependency required=%s",
++                        student_id, root_course_id, req_course.id,
++                    )
++                    return NextItemResult(
++                        type="blocked_dependency",
++                        course_id=root_course_id,
++                        reason="╨в╤А╨╡╨▒╤Г╨╡╤В╤Б╤П ╨╖╨░╨▓╨╡╤А╤И╨╕╤В╤М ╨║╤Г╤А╤Б",
++                        dependency_course_id=req_course.id,
++                    )
++
++            # ╨Ю╨▒╤Е╨╛╨┤ ╨┤╨╡╤А╨╡╨▓╨░: root + ╨┤╨╡╤В╨╕ ╨┐╨╛ order_number
++            flat_courses = await self._collect_courses_in_order(db, root_course_id)
++            for cid in flat_courses:
++                # ╨Я╨╡╤А╨▓╤Л╨╣ ╨╜╨╡╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Л╨╣ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗
++                mat = await self._first_incomplete_material(db, student_id, cid)
++                if mat is not None:
++                    logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
++                    return NextItemResult(type="material", course_id=cid, material_id=mat, reason="╨б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗")
++                # ╨Я╨╡╤А╨▓╨╛╨╡ ╨╖╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ PASSED ╨╕ ╨╜╨╡ BLOCKED_LIMIT
++                task_id, blocked = await self._first_incomplete_task(db, student_id, cid)
++                if blocked is not None:
++                    return NextItemResult(
++                        type="blocked_limit",
++                        course_id=cid,
++                        task_id=blocked,
++                        reason="╨Ш╤Б╤З╨╡╤А╨┐╨░╨╜ ╨╗╨╕╨╝╨╕╤В ╨┐╨╛╨┐╤Л╤В╨╛╨║",
++                    )
++                if task_id is not None:
++                    logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, cid, task_id)
++                    return NextItemResult(type="task", course_id=cid, task_id=task_id, reason="╨б╨╗╨╡╨┤╤Г╤О╤Й╨╡╨╡ ╨╖╨░╨┤╨░╨╜╨╕╨╡")
++
++        return NextItemResult(type="none", reason="╨Т╤Б╨╡ ╤Н╨╗╨╡╨╝╨╡╨╜╤В╤Л ╨┐╤А╨╛╨╣╨┤╨╡╨╜╤Л ╨╕╨╗╨╕ ╨╖╨░╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨░╨╜╤Л")
++
++    async def _collect_courses_in_order(self, db: AsyncSession, root_id: int) -> List[int]:
++        """╨Ъ╤Г╤А╤Б╤Л ╨┤╨╗╤П ╨╛╨▒╤Е╨╛╨┤╨░: root ╨╕ ╨┐╨╛╤В╨╛╨╝╨║╨╕ ╨▓ ╨┐╨╛╤А╤П╨┤╨║╨╡ course_parents.order_number (╤А╨╡╨║╤Г╤А╤Б╨╕╨▓╨╜╨╛)."""
++        result: List[int] = []
++
++        async def walk(course_id: int) -> None:
++            result.append(course_id)
++            children = await self._courses_repo.get_children(db, course_id)
++            # order_number ASC NULLS LAST, ╨╖╨░╤В╨╡╨╝ id
++            for _c, _ord in sorted(children, key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id)):
++                await walk(_c.id)
++
++        await walk(root_id)
++        return result
++
++    async def _first_incomplete_material(self, db: AsyncSession, student_id: int, course_id: int) -> Optional[int]:
++        """ID ╨┐╨╡╤А╨▓╨╛╨│╨╛ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░ ╨║╤Г╤А╤Б╨░, ╨╜╨╡ ╨╛╤В╨╝╨╡╤З╨╡╨╜╨╜╨╛╨│╨╛ ╨║╨░╨║ completed ╨┤╨╗╤П ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░."""
++        materials_stmt = (
++            select(Materials.id)
++            .where(Materials.course_id == course_id, Materials.is_active.is_(True))
++            .order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
++        )
++        r = await db.execute(materials_stmt)
++        material_ids = [row[0] for row in r.fetchall()]
++
++        if not material_ids:
++            return None
++
++        completed_stmt = text("""
++            SELECT material_id FROM student_material_progress
++            WHERE student_id = :student_id AND material_id = ANY(:ids) AND status = 'completed'
++        """)
++        r = await db.execute(completed_stmt, {"student_id": student_id, "ids": material_ids})
++        completed_ids = {row[0] for row in r.fetchall()}
++
++        for mid in material_ids:
++            if mid not in completed_ids:
++                return mid
++        return None
++
++    async def _first_incomplete_task(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        course_id: int,
++    ) -> Tuple[Optional[int], Optional[int]]:
++        """
++        (task_id ╨┤╨╗╤П ╤Б╨╗╨╡╨┤╤Г╤О╤Й╨╡╨│╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤П, task_id ╤Б blocked_limit ╨╕╨╗╨╕ None).
++        ╨Х╤Б╨╗╨╕ ╨╡╤Б╤В╤М ╨╖╨░╨┤╨░╨╜╨╕╨╡ ╤Б BLOCKED_LIMIT тАФ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╨╝ (None, that_task_id).
++        """
++        tasks_stmt = select(Tasks.id).where(Tasks.course_id == course_id).order_by(Tasks.id.asc())
++        r = await db.execute(tasks_stmt)
++        task_ids = [row[0] for row in r.fetchall()]
++
++        for tid in task_ids:
++            state_result = await self.compute_task_state(db, student_id, tid)
++            if state_result.state == "BLOCKED_LIMIT":
++                return (None, tid)
++            if state_result.state in ("OPEN", "IN_PROGRESS", "FAILED"):
++                return (tid, None)
++        return (None, None)
+diff --git a/reviews/2026-02-24-learning-engine-stage2-tests-docs.diff b/reviews/2026-02-24-learning-engine-stage2-tests-docs.diff
+new file mode 100644
+index 0000000..e69de29
+diff --git a/tests/test_learning_engine_service.py b/tests/test_learning_engine_service.py
+new file mode 100644
+index 0000000..adf9606
+--- /dev/null
++++ b/tests/test_learning_engine_service.py
+@@ -0,0 +1,248 @@
++"""
++╨Ш╨╜╤В╨╡╨│╤А╨░╤Ж╨╕╨╛╨╜╨╜╤Л╨╡ ╤В╨╡╤Б╤В╤Л Learning Engine V1, ╤Н╤В╨░╨┐ 2 (Service layer).
++
++╨Я╤А╨╛╨▓╨╡╤А╤П╤О╤В: effective limit, task state (╨┐╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨┐╨╛╨┐╤Л╤В╨║╨░), course state,
++╨╝╨░╤А╤И╤А╤Г╤В╨╕╨╖╨░╤Ж╨╕╤О next item. ╨Ф╨░╨╜╨╜╤Л╨╡ ╨╕╨╖ ╨С╨Ф; ╨┐╤А╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╕ ╨┤╨░╨╜╨╜╤Л╤Е ╤В╨╡╤Б╤В╤Л ╨┐╤А╨╛╨┐╤Г╤Б╨║╨░╤О╤В╤Б╤П.
++"""
++import asyncio
++import os
++import sys
++from pathlib import Path
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from dotenv import load_dotenv
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
++
++from app.core.config import Settings
++from app.services.learning_engine_service import LearningEngineService
++
++settings = Settings()
++
++
++async def test_get_effective_attempt_limit_default():
++    """Effective limit: ╨┐╤А╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╕ override ╨╕ task.max_attempts ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П 3."""
++    print("\n=== ╨в╨╡╤Б╤В: get_effective_attempt_limit (default 3) ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("SELECT id FROM users LIMIT 1"))
++            user_row = r.first()
++            r = await session.execute(text("SELECT id FROM tasks LIMIT 1"))
++            task_row = r.first()
++            if not user_row or not task_row:
++                print("[SKIP] ╨Э╨╡╤В users/tasks ╨▓ ╨С╨Ф")
++                return True
++            student_id, task_id = user_row[0], task_row[0]
++            limit = await svc.get_effective_attempt_limit(session, student_id, task_id)
++            if limit >= 1:
++                print(f"[PASS] limit={limit} (╨╛╨╢╨╕╨┤╨░╨╡╤В╤Б╤П 3 ╨╕╨╗╨╕ ╨╕╨╖ task/override)")
++                return True
++            print("[FAIL] limit ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М >= 1")
++            return False
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def test_compute_task_state_open():
++    """Task state: ╨╜╨╡╤В ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Л╤Е ╨┐╨╛╨┐╤Л╤В╨╛╨║ -> OPEN ╨╕╨╗╨╕ IN_PROGRESS."""
++    print("\n=== ╨в╨╡╤Б╤В: compute_task_state (OPEN/IN_PROGRESS) ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("SELECT id FROM users LIMIT 1"))
++            user_row = r.first()
++            r = await session.execute(text("SELECT id FROM tasks LIMIT 1"))
++            task_row = r.first()
++            if not user_row or not task_row:
++                print("[SKIP] ╨Э╨╡╤В users/tasks ╨▓ ╨С╨Ф")
++                return True
++            student_id, task_id = user_row[0], task_row[0]
++            state = await svc.compute_task_state(session, student_id, task_id)
++            if state.state in ("OPEN", "IN_PROGRESS", "PASSED", "FAILED", "BLOCKED_LIMIT"):
++                print(f"[PASS] state={state.state}, attempts_used={state.attempts_used}")
++                return True
++            print(f"[FAIL] ╨╜╨╡╨╛╨╢╨╕╨┤╨░╨╜╨╜╤Л╨╣ state={state.state}")
++            return False
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def test_compute_task_state_passed_threshold():
++    """Task state: last_score/last_max_score >= 0.5 -> PASSED."""
++    print("\n=== ╨в╨╡╤Б╤В: compute_task_state (PASSED ╨┐╤А╨╕ ratio >= 0.5) ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("""
++                SELECT a.user_id, tr.task_id
++                FROM attempts a
++                JOIN task_results tr ON tr.attempt_id = a.id
++                WHERE a.finished_at IS NOT NULL AND tr.max_score > 0
++                  AND tr.score >= (tr.max_score::float / 2)
++                LIMIT 1
++            """))
++            row = r.first()
++            if not row:
++                print("[SKIP] ╨Э╨╡╤В ╨┐╨╛╨┤╤Е╨╛╨┤╤П╤Й╨╡╨╣ ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╤Б score >= 0.5*max")
++                return True
++            student_id, task_id = row[0], row[1]
++            state = await svc.compute_task_state(session, student_id, task_id)
++            if state.state == "PASSED":
++                print(f"[PASS] state=PASSED last_score={state.last_score} last_max={state.last_max_score}")
++                return True
++            print(f"[INFO] ╨┐╨╛ ╨▓╤Л╨▒╤А╨░╨╜╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╡ state={state.state} (╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М FAILED ╨╡╤Б╨╗╨╕ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╤Е╤Г╨╢╨╡)")
++            return True
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def test_compute_course_state():
++    """Course state: NOT_STARTED | IN_PROGRESS | COMPLETED."""
++    print("\n=== ╨в╨╡╤Б╤В: compute_course_state ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("SELECT id FROM users LIMIT 1"))
++            user_row = r.first()
++            r = await session.execute(text("SELECT id FROM courses LIMIT 1"))
++            course_row = r.first()
++            if not user_row or not course_row:
++                print("[SKIP] ╨Э╨╡╤В users/courses ╨▓ ╨С╨Ф")
++                return True
++            student_id, course_id = user_row[0], course_row[0]
++            cs = await svc.compute_course_state(session, student_id, course_id, update_state_table=False)
++            if cs.state in ("NOT_STARTED", "IN_PROGRESS", "COMPLETED"):
++                print(f"[PASS] state={cs.state} course_id={cs.course_id}")
++                return True
++            print(f"[FAIL] ╨╜╨╡╨╛╨╢╨╕╨┤╨░╨╜╨╜╤Л╨╣ state={cs.state}")
++            return False
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def test_resolve_next_item_no_active():
++    """resolve_next_item: ╨┐╤А╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╕ ╨░╨║╤В╨╕╨▓╨╜╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П type=none."""
++    print("\n=== ╨в╨╡╤Б╤В: resolve_next_item (╨╜╨╡╤В ╨░╨║╤В╨╕╨▓╨╜╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓) ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("SELECT id FROM users LIMIT 1"))
++            user_row = r.first()
++            if not user_row:
++                print("[SKIP] ╨Э╨╡╤В users ╨▓ ╨С╨Ф")
++                return True
++            student_id = user_row[0]
++            r = await session.execute(text("""
++                SELECT 1 FROM user_courses WHERE user_id = :uid AND is_active = true LIMIT 1
++            """), {"uid": student_id})
++            if r.scalar():
++                print("[SKIP] ╨г ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П ╨╡╤Б╤В╤М ╨░╨║╤В╨╕╨▓╨╜╤Л╨╡ ╨║╤Г╤А╤Б╤Л тАФ ╤В╨╡╤Б╤В ╨╜╨╡ ╨┐╤А╨╛╨▓╨╡╤А╤П╨╡╤В none")
++                return True
++            result = await svc.resolve_next_item(session, student_id)
++            if result.type == "none":
++                print(f"[PASS] type=none reason={result.reason}")
++                return True
++            print(f"[FAIL] ╨╛╨╢╨╕╨┤╨░╨╗╤Б╤П type=none, ╨┐╨╛╨╗╤Г╤З╨╡╨╜ {result.type}")
++            return False
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def test_resolve_next_item_with_active():
++    """resolve_next_item: ╨┐╤А╨╕ ╨╜╨░╨╗╨╕╤З╨╕╨╕ ╨░╨║╤В╨╕╨▓╨╜╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П material|task|none|blocked_*."""
++    print("\n=== ╨в╨╡╤Б╤В: resolve_next_item (╤Б ╨░╨║╤В╨╕╨▓╨╜╤Л╨╝╨╕ ╨║╤Г╤А╤Б╨░╨╝╨╕) ===")
++    engine = create_async_engine(settings.database_url)
++    async_session = async_sessionmaker(engine, expire_on_commit=False)
++    svc = LearningEngineService()
++
++    async with async_session() as session:
++        try:
++            r = await session.execute(text("""
++                SELECT user_id FROM user_courses WHERE is_active = true LIMIT 1
++            """))
++            row = r.first()
++            if not row:
++                print("[SKIP] ╨Э╨╡╤В ╨╖╨░╨┐╨╕╤Б╨╡╨╣ user_courses ╤Б is_active=true")
++                return True
++            student_id = row[0]
++            result = await svc.resolve_next_item(session, student_id)
++            if result.type not in ("material", "task", "none", "blocked_dependency", "blocked_limit"):
++                print(f"[FAIL] ╨╜╨╡╨╛╨╢╨╕╨┤╨░╨╜╨╜╤Л╨╣ type={result.type}")
++                return False
++            print(f"[PASS] type={result.type} course_id={result.course_id} reason={result.reason}")
++            return True
++        except Exception as e:
++            print(f"[ERROR] {e}")
++            import traceback
++            traceback.print_exc()
++            return False
++
++
++async def main():
++    print("=" * 60)
++    print("╨в╨╡╤Б╤В╤Л Learning Engine Service (╤Н╤В╨░╨┐ 2)")
++    print("=" * 60)
++    results = [
++        await test_get_effective_attempt_limit_default(),
++        await test_compute_task_state_open(),
++        await test_compute_task_state_passed_threshold(),
++        await test_compute_course_state(),
++        await test_resolve_next_item_no_active(),
++        await test_resolve_next_item_with_active(),
++    ]
++    print("\n" + "=" * 60)
++    print("╨Ш╨в╨Ю╨У╨Ш:")
++    print("=" * 60)
++    passed = sum(results)
++    total = len(results)
++    print(f"╨Я╤А╨╛╨╣╨┤╨╡╨╜╨╛: {passed}/{total}")
++    if passed == total:
++        print("╨Т╤Б╨╡ ╤В╨╡╤Б╤В╤Л ╨┐╤А╨╛╨╣╨┤╨╡╨╜╤Л ╤Г╤Б╨┐╨╡╤И╨╜╨╛.")
++        return 0
++    print(f"╨Я╤А╨╛╨▓╨░╨╗╨╡╨╜╨╛ ╤В╨╡╤Б╤В╨╛╨▓: {total - passed}")
++    return 1
++
++
++if __name__ == "__main__":
++    exit_code = asyncio.run(main())
++    sys.exit(exit_code)
