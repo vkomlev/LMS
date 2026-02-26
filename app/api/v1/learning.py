@@ -20,9 +20,15 @@ from app.schemas.learning_api import (
     TaskStateResponse,
     RequestHelpRequest,
     RequestHelpResponse,
+    HintEventRequest,
+    HintEventResponse,
 )
 from app.services.learning_engine_service import LearningEngineService
-from app.services.learning_events_service import record_help_requested, set_material_completed
+from app.services.learning_events_service import (
+    record_help_requested,
+    record_hint_open,
+    set_material_completed,
+)
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -242,3 +248,75 @@ async def request_help(
         body.student_id, task_id, event_id, deduplicated,
     )
     return RequestHelpResponse(ok=True, event_id=event_id, deduplicated=deduplicated)
+
+
+# ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----
+
+@router.post(
+    "/tasks/{task_id}/hint-events",
+    response_model=HintEventResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Зафиксировать открытие подсказки (телеметрия, идемпотентно)",
+    responses={
+        200: {"description": "Событие записано или дедуплицировано"},
+        404: {"description": "Задание / студент / попытка не найдены"},
+        409: {"description": "attempt не принадлежит student_id; попытка завершена/отменена; или задание не в контексте попытки"},
+    },
+)
+async def hint_events(
+    task_id: int = Path(..., description="ID задания"),
+    body: HintEventRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> HintEventResponse:
+    """
+    Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
+    """
+    task = await tasks_service.get_by_id(db, task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+    user = await users_service.get_by_id(db, body.student_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+    attempt = await attempts_service.get_by_id(db, body.attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+
+    if attempt.user_id != body.student_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Попытка не принадлежит указанному студенту",
+        )
+    if attempt.finished_at is not None or attempt.cancelled_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Попытка уже завершена или отменена. События подсказок принимаются только для активной попытки.",
+        )
+    if attempt.course_id != task.course_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Попытка не соответствует курсу задания",
+        )
+    meta = attempt.meta or {}
+    task_ids = meta.get("task_ids") if isinstance(meta, dict) else None
+    if isinstance(task_ids, list) and len(task_ids) > 0 and task_id not in task_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Задание не входит в контекст попытки",
+        )
+
+    event_id, deduplicated = await record_hint_open(
+        db,
+        student_id=body.student_id,
+        attempt_id=body.attempt_id,
+        task_id=task_id,
+        hint_type=body.hint_type,
+        hint_index=body.hint_index,
+        action=body.action,
+        source=body.source,
+    )
+    await db.commit()
+    logger.info(
+        "hint-events: task_id=%s attempt_id=%s hint_type=%s hint_index=%s event_id=%s deduplicated=%s",
+        task_id, body.attempt_id, body.hint_type, body.hint_index, event_id, deduplicated,
+    )
+    return HintEventResponse(ok=True, deduplicated=deduplicated, event_id=event_id)

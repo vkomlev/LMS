@@ -7,7 +7,7 @@
 
 > 📖 **Полная документация:** См. [API Reference](./api-reference.md) для полного списка всех эндпойнтов.
 
-> **Learning Engine V1:** Контракты по заданиям, попыткам, результатам и Learning API (hints, last-attempt, time_expired и т.д.) собраны в [assignments-and-results-api.md](assignments-and-results-api.md). Примеры вызовов Learning API — в [smoke-learning-api.md](smoke-learning-api.md). Подсказки: [hints-stage5.md](hints-stage5.md). Статистика по последней попытке: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). Сквозной smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
+> **Learning Engine V1:** Контракты по заданиям, попыткам, результатам и Learning API (hints, last-attempt, time_expired и т.д.) собраны в [assignments-and-results-api.md](assignments-and-results-api.md). Примеры вызовов Learning API — в [smoke-learning-api.md](smoke-learning-api.md). Подсказки: [hints-stage5.md](hints-stage5.md). Фиксация открытия подсказок (hint-events): [tz-learning-engine-stage3-6-hint-events.md](tz-learning-engine-stage3-6-hint-events.md). Статистика по последней попытке: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). Сквозной smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
 
 ---
 
@@ -924,6 +924,27 @@ curl "http://localhost:8000/api/v1/attempts/by-user/1?api_key=bot-key-1&skip=0&l
   "detail": "Internal server error"
 }
 ```
+
+---
+
+## Learning API: фиксация открытия подсказки (hint-events, этап 3.6)
+
+Отправка события открытия подсказки (текст или видео) для аналитики. Идемпотентно в окне дедупа.
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/learning/tasks/34/hint-events?api_key=bot-key-1" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "student_id": 2,
+    "attempt_id": 47,
+    "hint_type": "text",
+    "hint_index": 0,
+    "action": "open",
+    "source": "student_execute"
+  }'
+```
+
+Ответ (200): `{"ok": true, "deduplicated": false, "event_id": 123}`. При повторном вызове в течение 5 минут: `"deduplicated": true`, тот же `event_id`.
 
 ---
 

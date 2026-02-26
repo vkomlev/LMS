@@ -5,6 +5,7 @@ from sqlalchemy import func, case, text
 
 from app.models.attempts import Attempts
 from app.models.task_results import TaskResults
+from app.services.learning_events_service import get_hint_open_counts
 from app.repos.task_results_repo import TaskResultsRepository
 from app.schemas.checking import StudentAnswer, CheckResult
 from app.schemas.task_results import TaskResultCreate
@@ -233,6 +234,8 @@ class TaskResultsService(BaseService[TaskResults]):
         total_attempts = total_result.scalar() or 0
         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
 
+        hints_total, hints_text, hints_video = await get_hint_open_counts(db, task_id=task_id)
+
         if total_attempts == 0:
             return {
                 "task_id": task_id,
@@ -247,6 +250,9 @@ class TaskResultsService(BaseService[TaskResults]):
                 "failed_tasks_count": last_failed,
                 "last_passed_count": last_passed,
                 "last_failed_count": last_failed,
+                "hints_used_count": hints_total,
+                "used_text_hints_count": hints_text,
+                "used_video_hints_count": hints_video,
             }
 
         stats_query = (
@@ -280,6 +286,9 @@ class TaskResultsService(BaseService[TaskResults]):
             "failed_tasks_count": last_failed,
             "last_passed_count": last_passed,
             "last_failed_count": last_failed,
+            "hints_used_count": hints_total,
+            "used_text_hints_count": hints_text,
+            "used_video_hints_count": hints_video,
         }
 
     async def get_stats_by_course(
@@ -308,7 +317,12 @@ class TaskResultsService(BaseService[TaskResults]):
                 "progress_percent": 0.0,
                 "passed_tasks_count": 0,
                 "failed_tasks_count": 0,
+                "hints_used_count": 0,
+                "used_text_hints_count": 0,
+                "used_video_hints_count": 0,
             }
+
+        hints_total, hints_text, hints_video = await get_hint_open_counts(db, task_ids=task_ids)
 
         last_rows = await self._last_attempts_flat(db, task_ids=task_ids)
         last_passed = sum(1 for _, _, s, m in last_rows if self._is_pass(s, m))
@@ -346,6 +360,9 @@ class TaskResultsService(BaseService[TaskResults]):
             "progress_percent": round(progress_percent, 2),
             "passed_tasks_count": last_passed,
             "failed_tasks_count": last_failed,
+            "hints_used_count": hints_total,
+            "used_text_hints_count": hints_text,
+            "used_video_hints_count": hints_video,
         }
 
     async def get_stats_by_user(
@@ -384,6 +401,8 @@ class TaskResultsService(BaseService[TaskResults]):
         stats_row = stats_result.first()
 
         total_attempts = stats_row.total_attempts or 0
+        hints_total, hints_text, hints_video = await get_hint_open_counts(db, user_id=user_id)
+
         if total_attempts == 0 and total_with_last == 0:
             return {
                 "user_id": user_id,
@@ -401,6 +420,9 @@ class TaskResultsService(BaseService[TaskResults]):
                 "last_score": 0,
                 "last_max_score": 0,
                 "last_ratio": 0.0,
+                "hints_used_count": hints_total,
+                "used_text_hints_count": hints_text,
+                "used_video_hints_count": hints_video,
             }
 
         average_score = float(stats_row.avg_score or 0)
@@ -426,4 +448,7 @@ class TaskResultsService(BaseService[TaskResults]):
             "last_score": last_score,
             "last_max_score": last_max_score,
             "last_ratio": round(last_ratio, 4),
+            "hints_used_count": hints_total,
+            "used_text_hints_count": hints_text,
+            "used_video_hints_count": hints_video,
         }

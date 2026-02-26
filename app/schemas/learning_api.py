@@ -90,6 +90,27 @@ class RequestHelpResponse(BaseModel):
     deduplicated: bool = False
 
 
+# ----- Hint events (этап 3.6) -----
+
+HintType = Literal["text", "video"]
+HintAction = Literal["open"]
+
+
+class HintEventRequest(BaseModel):
+    student_id: int = Field(..., description="ID студента")
+    attempt_id: int = Field(..., description="ID попытки")
+    hint_type: HintType = Field(..., description="Тип подсказки: text | video")
+    hint_index: int = Field(..., ge=0, description="Индекс подсказки (0-based)")
+    action: HintAction = Field("open", description="Действие (open; enum с возможностью расширения)")
+    source: str = Field(..., description="Источник события, например student_execute")
+
+
+class HintEventResponse(BaseModel):
+    ok: bool = True
+    deduplicated: bool = False
+    event_id: int = Field(..., description="ID записи в learning_events")
+
+
 # ----- Teacher override -----
 
 class TaskLimitOverrideRequest(BaseModel):

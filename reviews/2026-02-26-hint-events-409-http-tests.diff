@@ -1,0 +1,489 @@
+﻿diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 282e330..3209289 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -20,9 +20,15 @@ from app.schemas.learning_api import (
+     TaskStateResponse,
+     RequestHelpRequest,
+     RequestHelpResponse,
++    HintEventRequest,
++    HintEventResponse,
+ )
+ from app.services.learning_engine_service import LearningEngineService
+-from app.services.learning_events_service import record_help_requested, set_material_completed
++from app.services.learning_events_service import (
++    record_help_requested,
++    record_hint_open,
++    set_material_completed,
++)
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+ from app.services.materials_service import MaterialsService
+@@ -242,3 +248,75 @@ async def request_help(
+         body.student_id, task_id, event_id, deduplicated,
+     )
+     return RequestHelpResponse(ok=True, event_id=event_id, deduplicated=deduplicated)
++
++
++# ----- POST /learning/tasks/{task_id}/hint-events (╤Н╤В╨░╨┐ 3.6) -----
++
++@router.post(
++    "/tasks/{task_id}/hint-events",
++    response_model=HintEventResponse,
++    status_code=status.HTTP_200_OK,
++    summary="╨Ч╨░╤Д╨╕╨║╤Б╨╕╤А╨╛╨▓╨░╤В╤М ╨╛╤В╨║╤А╤Л╤В╨╕╨╡ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤В╨╡╨╗╨╡╨╝╨╡╤В╤А╨╕╤П, ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛)",
++    responses={
++        200: {"description": "╨б╨╛╨▒╤Л╤В╨╕╨╡ ╨╖╨░╨┐╨╕╤Б╨░╨╜╨╛ ╨╕╨╗╨╕ ╨┤╨╡╨┤╤Г╨┐╨╗╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╜╨╛"},
++        404: {"description": "╨Ч╨░╨┤╨░╨╜╨╕╨╡ / ╤Б╤В╤Г╨┤╨╡╨╜╤В / ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╤Л"},
++        409: {"description": "attempt ╨╜╨╡ ╨┐╤А╨╕╨╜╨░╨┤╨╗╨╡╨╢╨╕╤В student_id; ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░/╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░; ╨╕╨╗╨╕ ╨╖╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨▓ ╨║╨╛╨╜╤В╨╡╨║╤Б╤В╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕"},
++    },
++)
++async def hint_events(
++    task_id: int = Path(..., description="ID ╨╖╨░╨┤╨░╨╜╨╕╤П"),
++    body: HintEventRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> HintEventResponse:
++    """
++    ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (text/video) ╨┤╨╗╤П ╨░╨╜╨░╨╗╨╕╤В╨╕╨║╨╕. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░.
++    """
++    task = await tasks_service.get_by_id(db, task_id)
++    if task is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨╛")
++    user = await users_service.get_by_id(db, body.student_id)
++    if user is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
++    attempt = await attempts_service.get_by_id(db, body.attempt_id)
++    if attempt is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
++
++    if attempt.user_id != body.student_id:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨┐╤А╨╕╨╜╨░╨┤╨╗╨╡╨╢╨╕╤В ╤Г╨║╨░╨╖╨░╨╜╨╜╨╛╨╝╤Г ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г",
++        )
++    if attempt.finished_at is not None or attempt.cancelled_at is not None:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╨╕╨╗╨╕ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░. ╨б╨╛╨▒╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ ╨┐╤А╨╕╨╜╨╕╨╝╨░╤О╤В╤Б╤П ╤В╨╛╨╗╤М╨║╨╛ ╨┤╨╗╤П ╨░╨║╤В╨╕╨▓╨╜╨╛╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╕.",
++        )
++    if attempt.course_id != task.course_id:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╤Б╨╛╨╛╤В╨▓╨╡╤В╤Б╤В╨▓╤Г╨╡╤В ╨║╤Г╤А╤Б╤Г ╨╖╨░╨┤╨░╨╜╨╕╤П",
++        )
++    meta = attempt.meta or {}
++    task_ids = meta.get("task_ids") if isinstance(meta, dict) else None
++    if isinstance(task_ids, list) and len(task_ids) > 0 and task_id not in task_ids:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Ч╨░╨┤╨░╨╜╨╕╨╡ ╨╜╨╡ ╨▓╤Е╨╛╨┤╨╕╤В ╨▓ ╨║╨╛╨╜╤В╨╡╨║╤Б╤В ╨┐╨╛╨┐╤Л╤В╨║╨╕",
++        )
++
++    event_id, deduplicated = await record_hint_open(
++        db,
++        student_id=body.student_id,
++        attempt_id=body.attempt_id,
++        task_id=task_id,
++        hint_type=body.hint_type,
++        hint_index=body.hint_index,
++        action=body.action,
++        source=body.source,
++    )
++    await db.commit()
++    logger.info(
++        "hint-events: task_id=%s attempt_id=%s hint_type=%s hint_index=%s event_id=%s deduplicated=%s",
++        task_id, body.attempt_id, body.hint_type, body.hint_index, event_id, deduplicated,
++    )
++    return HintEventResponse(ok=True, deduplicated=deduplicated, event_id=event_id)
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 9bca2ec..92b31ac 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -90,6 +90,27 @@ class RequestHelpResponse(BaseModel):
+     deduplicated: bool = False
+ 
+ 
++# ----- Hint events (╤Н╤В╨░╨┐ 3.6) -----
++
++HintType = Literal["text", "video"]
++HintAction = Literal["open"]
++
++
++class HintEventRequest(BaseModel):
++    student_id: int = Field(..., description="ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░")
++    attempt_id: int = Field(..., description="ID ╨┐╨╛╨┐╤Л╤В╨║╨╕")
++    hint_type: HintType = Field(..., description="╨в╨╕╨┐ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕: text | video")
++    hint_index: int = Field(..., ge=0, description="╨Ш╨╜╨┤╨╡╨║╤Б ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (0-based)")
++    action: HintAction = Field("open", description="╨Ф╨╡╨╣╤Б╤В╨▓╨╕╨╡ (open; enum ╤Б ╨▓╨╛╨╖╨╝╨╛╨╢╨╜╨╛╤Б╤В╤М╤О ╤А╨░╤Б╤И╨╕╤А╨╡╨╜╨╕╤П)")
++    source: str = Field(..., description="╨Ш╤Б╤В╨╛╤З╨╜╨╕╨║ ╤Б╨╛╨▒╤Л╤В╨╕╤П, ╨╜╨░╨┐╤А╨╕╨╝╨╡╤А student_execute")
++
++
++class HintEventResponse(BaseModel):
++    ok: bool = True
++    deduplicated: bool = False
++    event_id: int = Field(..., description="ID ╨╖╨░╨┐╨╕╤Б╨╕ ╨▓ learning_events")
++
++
+ # ----- Teacher override -----
+ 
+ class TaskLimitOverrideRequest(BaseModel):
+diff --git a/app/services/learning_events_service.py b/app/services/learning_events_service.py
+index ea55e8e..8358ea7 100644
+--- a/app/services/learning_events_service.py
++++ b/app/services/learning_events_service.py
+@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ logger = logging.getLogger(__name__)
+ 
+ HELP_DEDUPE_MINUTES = 5
++HINT_DEDUPE_MINUTES = 5
+ 
+ 
+ async def record_help_requested(
+@@ -85,6 +86,119 @@ async def record_help_requested(
+     return (int(event_id), False)
+ 
+ 
++async def record_hint_open(
++    db: AsyncSession,
++    student_id: int,
++    attempt_id: int,
++    task_id: int,
++    hint_type: str,
++    hint_index: int,
++    action: str,
++    source: str,
++) -> tuple[int, bool]:
++    """
++    ╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (hint_open). ╨Ф╨╡╨┤╤Г╨┐ ╨┐╨╛ ╨║╨╗╤О╤З╤Г
++    (attempt_id, task_id, hint_type, hint_index, action) ╨▓ ╨╛╨║╨╜╨╡ HINT_DEDUPE_MINUTES.
++
++    Returns:
++        (event_id, deduplicated)
++    """
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": attempt_id, "k2": task_id},
++    )
++
++    since = datetime.now(timezone.utc) - timedelta(minutes=HINT_DEDUPE_MINUTES)
++
++    r = await db.execute(
++        text("""
++            SELECT id FROM learning_events
++            WHERE student_id = :student_id
++              AND event_type = 'hint_open'
++              AND created_at >= :since
++              AND (payload->>'attempt_id')::int = :attempt_id
++              AND (payload->>'task_id')::int = :task_id
++              AND payload->>'hint_type' = :hint_type
++              AND (payload->>'hint_index')::int = :hint_index
++              AND payload->>'action' = :action
++            ORDER BY created_at DESC
++            LIMIT 1
++        """),
++        {
++            "student_id": student_id,
++            "since": since,
++            "attempt_id": attempt_id,
++            "task_id": task_id,
++            "hint_type": hint_type,
++            "hint_index": hint_index,
++            "action": action,
++        },
++    )
++    row = r.fetchone()
++    if row is not None:
++        return (int(row[0]), True)
++
++    payload: dict[str, Any] = {
++        "attempt_id": attempt_id,
++        "task_id": task_id,
++        "hint_type": hint_type,
++        "hint_index": hint_index,
++        "action": action,
++        "source": source[:500] if len(source) > 500 else source,
++    }
++
++    r = await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'hint_open', CAST(:payload AS jsonb), now())
++            RETURNING id
++        """),
++        {"student_id": student_id, "payload": json.dumps(payload)},
++    )
++    event_id = r.scalar()
++    return (int(event_id), False)
++
++
++async def get_hint_open_counts(
++    db: AsyncSession,
++    *,
++    task_id: Optional[int] = None,
++    user_id: Optional[int] = None,
++    task_ids: Optional[list[int]] = None,
++) -> tuple[int, int, int]:
++    """
++    ╨Я╨╛╨┤╤Б╤З╤С╤В ╤Б╨╛╨▒╤Л╤В╨╕╨╣ hint_open ╨┤╨╗╤П ╨░╨╜╨░╨╗╨╕╤В╨╕╨║╨╕. ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (total, text_count, video_count).
++    """
++    conditions = ["event_type = 'hint_open'"]
++    params: dict[str, Any] = {}
++    if task_id is not None:
++        conditions.append("(payload->>'task_id')::int = :task_id")
++        params["task_id"] = task_id
++    if task_ids is not None and len(task_ids) > 0:
++        conditions.append("(payload->>'task_id')::int = ANY(:task_ids)")
++        params["task_ids"] = task_ids
++    if user_id is not None:
++        conditions.append("student_id = :user_id")
++        params["user_id"] = user_id
++
++    where_sql = " AND ".join(conditions)
++    r = await db.execute(
++        text(f"""
++            SELECT
++                COUNT(*) AS total,
++                COUNT(*) FILTER (WHERE payload->>'hint_type' = 'text') AS text_count,
++                COUNT(*) FILTER (WHERE payload->>'hint_type' = 'video') AS video_count
++            FROM learning_events
++            WHERE {where_sql}
++        """),
++        params,
++    )
++    row = r.fetchone()
++    if not row:
++        return (0, 0, 0)
++    return (int(row[0] or 0), int(row[1] or 0), int(row[2] or 0))
++
++
+ async def record_task_limit_override(
+     db: AsyncSession,
+     student_id: int,
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index 5f52cc1..630530f 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -5,6 +5,7 @@ from sqlalchemy import func, case, text
+ 
+ from app.models.attempts import Attempts
+ from app.models.task_results import TaskResults
++from app.services.learning_events_service import get_hint_open_counts
+ from app.repos.task_results_repo import TaskResultsRepository
+ from app.schemas.checking import StudentAnswer, CheckResult
+ from app.schemas.task_results import TaskResultCreate
+@@ -233,6 +234,8 @@ class TaskResultsService(BaseService[TaskResults]):
+         total_attempts = total_result.scalar() or 0
+         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
+ 
++        hints_total, hints_text, hints_video = await get_hint_open_counts(db, task_id=task_id)
++
+         if total_attempts == 0:
+             return {
+                 "task_id": task_id,
+@@ -247,6 +250,9 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "failed_tasks_count": last_failed,
+                 "last_passed_count": last_passed,
+                 "last_failed_count": last_failed,
++                "hints_used_count": hints_total,
++                "used_text_hints_count": hints_text,
++                "used_video_hints_count": hints_video,
+             }
+ 
+         stats_query = (
+@@ -280,6 +286,9 @@ class TaskResultsService(BaseService[TaskResults]):
+             "failed_tasks_count": last_failed,
+             "last_passed_count": last_passed,
+             "last_failed_count": last_failed,
++            "hints_used_count": hints_total,
++            "used_text_hints_count": hints_text,
++            "used_video_hints_count": hints_video,
+         }
+ 
+     async def get_stats_by_course(
+@@ -308,8 +317,13 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "progress_percent": 0.0,
+                 "passed_tasks_count": 0,
+                 "failed_tasks_count": 0,
++                "hints_used_count": 0,
++                "used_text_hints_count": 0,
++                "used_video_hints_count": 0,
+             }
+ 
++        hints_total, hints_text, hints_video = await get_hint_open_counts(db, task_ids=task_ids)
++
+         last_rows = await self._last_attempts_flat(db, task_ids=task_ids)
+         last_passed = sum(1 for _, _, s, m in last_rows if self._is_pass(s, m))
+         last_failed = len(last_rows) - last_passed
+@@ -346,6 +360,9 @@ class TaskResultsService(BaseService[TaskResults]):
+             "progress_percent": round(progress_percent, 2),
+             "passed_tasks_count": last_passed,
+             "failed_tasks_count": last_failed,
++            "hints_used_count": hints_total,
++            "used_text_hints_count": hints_text,
++            "used_video_hints_count": hints_video,
+         }
+ 
+     async def get_stats_by_user(
+@@ -384,6 +401,8 @@ class TaskResultsService(BaseService[TaskResults]):
+         stats_row = stats_result.first()
+ 
+         total_attempts = stats_row.total_attempts or 0
++        hints_total, hints_text, hints_video = await get_hint_open_counts(db, user_id=user_id)
++
+         if total_attempts == 0 and total_with_last == 0:
+             return {
+                 "user_id": user_id,
+@@ -401,6 +420,9 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "last_score": 0,
+                 "last_max_score": 0,
+                 "last_ratio": 0.0,
++                "hints_used_count": hints_total,
++                "used_text_hints_count": hints_text,
++                "used_video_hints_count": hints_video,
+             }
+ 
+         average_score = float(stats_row.avg_score or 0)
+@@ -426,4 +448,7 @@ class TaskResultsService(BaseService[TaskResults]):
+             "last_score": last_score,
+             "last_max_score": last_max_score,
+             "last_ratio": round(last_ratio, 4),
++            "hints_used_count": hints_total,
++            "used_text_hints_count": hints_text,
++            "used_video_hints_count": hints_video,
+         }
+\ No newline at end of file
+diff --git a/docs/api-examples.md b/docs/api-examples.md
+index e698dba..93fca18 100644
+--- a/docs/api-examples.md
++++ b/docs/api-examples.md
+@@ -7,7 +7,7 @@
+ 
+ > ЁЯУЦ **╨Я╨╛╨╗╨╜╨░╤П ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Ж╨╕╤П:** ╨б╨╝. [API Reference](./api-reference.md) ╨┤╨╗╤П ╨┐╨╛╨╗╨╜╨╛╨│╨╛ ╤Б╨┐╨╕╤Б╨║╨░ ╨▓╤Б╨╡╤Е ╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╨╛╨▓.
+ 
+-> **Learning Engine V1:** ╨Ъ╨╛╨╜╤В╤А╨░╨║╤В╤Л ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤П╨╝, ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝, ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨░╨╝ ╨╕ Learning API (hints, last-attempt, time_expired ╨╕ ╤В.╨┤.) ╤Б╨╛╨▒╤А╨░╨╜╤Л ╨▓ [assignments-and-results-api.md](assignments-and-results-api.md). ╨Я╤А╨╕╨╝╨╡╤А╤Л ╨▓╤Л╨╖╨╛╨▓╨╛╨▓ Learning API тАФ ╨▓ [smoke-learning-api.md](smoke-learning-api.md). ╨Я╨╛╨┤╤Б╨║╨░╨╖╨║╨╕: [hints-stage5.md](hints-stage5.md). ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). ╨б╨║╨▓╨╛╨╖╨╜╨╛╨╣ smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
++> **Learning Engine V1:** ╨Ъ╨╛╨╜╤В╤А╨░╨║╤В╤Л ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤П╨╝, ╨┐╨╛╨┐╤Л╤В╨║╨░╨╝, ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨░╨╝ ╨╕ Learning API (hints, last-attempt, time_expired ╨╕ ╤В.╨┤.) ╤Б╨╛╨▒╤А╨░╨╜╤Л ╨▓ [assignments-and-results-api.md](assignments-and-results-api.md). ╨Я╤А╨╕╨╝╨╡╤А╤Л ╨▓╤Л╨╖╨╛╨▓╨╛╨▓ Learning API тАФ ╨▓ [smoke-learning-api.md](smoke-learning-api.md). ╨Я╨╛╨┤╤Б╨║╨░╨╖╨║╨╕: [hints-stage5.md](hints-stage5.md). ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ (hint-events): [tz-learning-engine-stage3-6-hint-events.md](tz-learning-engine-stage3-6-hint-events.md). ╨б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨░ ╨┐╨╛ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡: [last-attempt-statistics-stage6.md](last-attempt-statistics-stage6.md). ╨б╨║╨▓╨╛╨╖╨╜╨╛╨╣ smoke: [smoke-learning-engine-stage7.md](smoke-learning-engine-stage7.md).
+ 
+ ---
+ 
+@@ -927,6 +927,27 @@ curl "http://localhost:8000/api/v1/attempts/by-user/1?api_key=bot-key-1&skip=0&l
+ 
+ ---
+ 
++## Learning API: ╤Д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (hint-events, ╤Н╤В╨░╨┐ 3.6)
++
++╨Ю╤В╨┐╤А╨░╨▓╨║╨░ ╤Б╨╛╨▒╤Л╤В╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤В╨╡╨║╤Б╤В ╨╕╨╗╨╕ ╨▓╨╕╨┤╨╡╨╛) ╨┤╨╗╤П ╨░╨╜╨░╨╗╨╕╤В╨╕╨║╨╕. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░.
++
++```bash
++curl -X POST "http://localhost:8000/api/v1/learning/tasks/34/hint-events?api_key=bot-key-1" \
++  -H "Content-Type: application/json" \
++  -d '{
++    "student_id": 2,
++    "attempt_id": 47,
++    "hint_type": "text",
++    "hint_index": 0,
++    "action": "open",
++    "source": "student_execute"
++  }'
++```
++
++╨Ю╤В╨▓╨╡╤В (200): `{"ok": true, "deduplicated": false, "event_id": 123}`. ╨Я╤А╨╕ ╨┐╨╛╨▓╤В╨╛╤А╨╜╨╛╨╝ ╨▓╤Л╨╖╨╛╨▓╨╡ ╨▓ ╤В╨╡╤З╨╡╨╜╨╕╨╡ 5 ╨╝╨╕╨╜╤Г╤В: `"deduplicated": true`, ╤В╨╛╤В ╨╢╨╡ `event_id`.
++
++---
++
+ ## ╨Ф╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ ╤А╨╡╤Б╤Г╤А╤Б╤Л
+ 
+ - [╨Я╨╛╨╗╨╜╨░╤П ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Ж╨╕╤П API](./api-reference.md) - ╨Я╨╛╨╗╨╜╤Л╨╣ ╤Б╨┐╨╕╤Б╨╛╨║ ╨▓╤Б╨╡╤Е ╤Н╨╜╨┤╨┐╨╛╨╣╨╜╤В╨╛╨▓
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index f884320..67ecf91 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -663,10 +663,38 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | ╨Э╨░╤З╨░╤В╤М ╨╕╨╗╨╕ ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╤В╨╡╨║╤Г╤Й╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. ╨У╨░╤А╨░╨╜╤В╨╕╤П: ╨▓ ╨╛╤В╨▓╨╡╤В╨╡ `GET /attempts/{id}` ╨┐╨╛╨╗╨╡ `attempt.meta.task_ids` (int[]) ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В ╨║╨░╨║ ╨╝╨╕╨╜╨╕╨╝╤Г╨╝ ╤Н╤В╨╛╤В `task_id`; ╨┐╤А╨╕ ╨┐╤Г╤Б╤В╨╛╨╝/╨▒╨╕╤В╨╛╨╝ `meta` backend ╨▓╨╛╤Б╤Б╤В╨░╨╜╨░╨▓╨╗╨╕╨▓╨░╨╡╤В ╨╡╨│╨╛ ╨┐╤А╨╕ ╨▓╤Л╨╖╨╛╨▓╨╡. |
+ | GET | `/learning/tasks/{task_id}/state?student_id=` | ╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
+ | POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
++| POST | `/learning/tasks/{task_id}/hint-events` | ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤Н╤В╨░╨┐ 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░. |
+ | POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+ 
+ ╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╤В╤А╨╡╨▒╤Г╤О╤В `api_key` ╨▓ query. ╨Ю╤В╨▓╨╡╤В╤Л ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В ╨┐╨╛╨╗╤П, ╨╛╨┐╨╕╤Б╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Н╤В╨░╨┐╨╜╤Л╤Е ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Е (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` ╨╕ ╤В.╨┤.).
+ 
++### POST /learning/tasks/{task_id}/hint-events (╤Н╤В╨░╨┐ 3.6)
++
++╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (text/video) ╨┤╨╗╤П ╨░╨╜╨░╨╗╨╕╤В╨╕╨║╨╕. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╨┐╨╛╨▓╤В╨╛╤А ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░ (5 ╨╝╨╕╨╜) ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В ╤В╨╛╤В ╨╢╨╡ `event_id` ╨╕ `deduplicated: true`.
++
++**╨в╨╡╨╗╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨░:**
++```json
++{
++  "student_id": 2,
++  "attempt_id": 47,
++  "hint_type": "text",
++  "hint_index": 0,
++  "action": "open",
++  "source": "student_execute"
++}
++```
++
++**╨Ю╤В╨▓╨╡╤В (200 OK):**
++```json
++{
++  "ok": true,
++  "deduplicated": false,
++  "event_id": 123
++}
++```
++
++**╨Ю╤И╨╕╨▒╨║╨╕:** `404` тАФ ╨╖╨░╨┤╨░╨╜╨╕╨╡/╤Б╤В╤Г╨┤╨╡╨╜╤В/╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╤Л; `409` тАФ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨┐╤А╨╕╨╜╨░╨┤╨╗╨╡╨╢╨╕╤В ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г ╨╕╨╗╨╕ ╨╜╨╡ ╨▓ ╨║╨╛╨╜╤В╨╡╨║╤Б╤В╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П/╨║╤Г╤А╤Б╨░.
++
+ ---
+ 
+ ## ╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╕
+@@ -694,10 +722,15 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "passed_tasks_count": 7,
+   "failed_tasks_count": 3,
+   "last_passed_count": 7,
+-  "last_failed_count": 3
++  "last_failed_count": 3,
++  "hints_used_count": 12,
++  "used_text_hints_count": 8,
++  "used_video_hints_count": 4
+ }
+ ```
+ 
++**╨Я╨╛╨╗╤П ╤Н╤В╨░╨┐╨░ 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` тАФ ╤З╨╕╤Б╨╗╨╛ ╤Б╨╛╨▒╤Л╤В╨╕╨╣ ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ (╨┐╨╛ `learning_events` ╤Б `event_type='hint_open'`).
++
+ **╨Ю╤И╨╕╨▒╨║╨╕:**
+ - `404` - ╨Ч╨░╨┤╨░╤З╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░
+ 
+@@ -720,10 +753,15 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "tasks_count": 28,
+   "progress_percent": 65.0,
+   "passed_tasks_count": 120,
+-  "failed_tasks_count": 65
++  "failed_tasks_count": 65,
++  "hints_used_count": 45,
++  "used_text_hints_count": 30,
++  "used_video_hints_count": 15
+ }
+ ```
+ 
++**╨Я╨╛╨╗╤П ╤Н╤В╨░╨┐╨░ 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` тАФ ╨░╨│╤А╨╡╨│╨░╤В ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨░╨╝ ╨║╤Г╤А╤Б╨░.
++
+ **╨Ю╤И╨╕╨▒╨║╨╕:**
+ - `404` - ╨Ъ╤Г╤А╤Б ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜
+ 
+@@ -753,10 +791,15 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+   "current_ratio": 0.8,
+   "last_score": 24,
+   "last_max_score": 30,
+-  "last_ratio": 0.8
++  "last_ratio": 0.8,
++  "hints_used_count": 5,
++  "used_text_hints_count": 3,
++  "used_video_hints_count": 2
+ }
+ ```
+ 
++**╨Я╨╛╨╗╤П ╤Н╤В╨░╨┐╨░ 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` тАФ ╤З╨╕╤Б╨╗╨╛ ╨╛╤В╨║╤А╤Л╤В╨╕╨╣ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╨╡╨╝.
++
+ **╨Ю╤И╨╕╨▒╨║╨╕:**
+ - `404` - ╨Я╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤М ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜
+ 

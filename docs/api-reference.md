@@ -663,9 +663,37 @@ Stateless-проверка одной задачи без сохранения �
 | POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
 | GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
 | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
+| POST | `/learning/tasks/{task_id}/hint-events` | Фиксация открытия подсказки (этап 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. Идемпотентно в окне дедупа. |
 | POST | `/teacher/task-limits/override` | Переопределение лимита попыток (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
 
 Все запросы требуют `api_key` в query. Ответы содержат поля, описанные в этапных документах (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` и т.д.).
+
+### POST /learning/tasks/{task_id}/hint-events (этап 3.6)
+
+Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно: повтор в окне дедупа (5 мин) возвращает тот же `event_id` и `deduplicated: true`.
+
+**Тело запроса:**
+```json
+{
+  "student_id": 2,
+  "attempt_id": 47,
+  "hint_type": "text",
+  "hint_index": 0,
+  "action": "open",
+  "source": "student_execute"
+}
+```
+
+**Ответ (200 OK):**
+```json
+{
+  "ok": true,
+  "deduplicated": false,
+  "event_id": 123
+}
+```
+
+**Ошибки:** `404` — задание/студент/попытка не найдены; `409` — попытка не принадлежит студенту или не в контексте задания/курса.
 
 ---
 
@@ -694,9 +722,14 @@ Stateless-проверка одной задачи без сохранения �
   "passed_tasks_count": 7,
   "failed_tasks_count": 3,
   "last_passed_count": 7,
-  "last_failed_count": 3
+  "last_failed_count": 3,
+  "hints_used_count": 12,
+  "used_text_hints_count": 8,
+  "used_video_hints_count": 4
 }
 ```
+
+**Поля этапа 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` — число событий открытия подсказок (по `learning_events` с `event_type='hint_open'`).
 
 **Ошибки:**
 - `404` - Задача не найдена
@@ -720,9 +753,14 @@ Stateless-проверка одной задачи без сохранения �
   "tasks_count": 28,
   "progress_percent": 65.0,
   "passed_tasks_count": 120,
-  "failed_tasks_count": 65
+  "failed_tasks_count": 65,
+  "hints_used_count": 45,
+  "used_text_hints_count": 30,
+  "used_video_hints_count": 15
 }
 ```
+
+**Поля этапа 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` — агрегат по задачам курса.
 
 **Ошибки:**
 - `404` - Курс не найден
@@ -753,9 +791,14 @@ Stateless-проверка одной задачи без сохранения �
   "current_ratio": 0.8,
   "last_score": 24,
   "last_max_score": 30,
-  "last_ratio": 0.8
+  "last_ratio": 0.8,
+  "hints_used_count": 5,
+  "used_text_hints_count": 3,
+  "used_video_hints_count": 2
 }
 ```
+
+**Поля этапа 3.6:** `hints_used_count`, `used_text_hints_count`, `used_video_hints_count` — число открытий подсказок пользователем.
 
 **Ошибки:**
 - `404` - Пользователь не найден
