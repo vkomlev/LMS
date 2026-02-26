@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+import logging
+from typing import Any, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.attempts import Attempts
+
+logger = logging.getLogger(__name__)
 from app.models.task_results import TaskResults
 from app.models.tasks import Tasks
 from app.repos.attempts_repo import AttemptsRepository
@@ -45,6 +48,46 @@ class AttemptsService(BaseService[Attempts]):
         }
         # BaseService.create ожидает dict[str, Any]
         return await self.create(db, data)
+
+    async def ensure_attempt_task_ids(
+        self,
+        db: AsyncSession,
+        attempt: Attempts,
+        task_id: int,
+    ) -> Attempts:
+        """
+        Гарантирует, что attempt.meta — объект, attempt.meta.task_ids — массив int[],
+        содержащий task_id (merge, без дублей). Сохраняет изменения в БД.
+        Логирует WARN при восстановлении битого meta (null, не dict, не list в task_ids).
+        """
+        meta: dict[str, Any]
+        if attempt.meta is None or not isinstance(attempt.meta, dict):
+            if attempt.meta is not None:
+                logger.warning(
+                    "attempt.meta не dict (id=%s), восстанавливаем meta.task_ids",
+                    attempt.id,
+                )
+            meta = {}
+        else:
+            meta = dict(attempt.meta)
+
+        raw = meta.get("task_ids")
+        if raw is None or not isinstance(raw, list):
+            if raw is not None:
+                logger.warning(
+                    "attempt.meta.task_ids не список (id=%s), восстанавливаем",
+                    attempt.id,
+                )
+            task_ids: List[int] = []
+        else:
+            task_ids = [x for x in raw if isinstance(x, int)]
+
+        if task_id not in task_ids:
+            task_ids.append(task_id)
+
+        meta["task_ids"] = task_ids
+        updated = await self.update(db, db_obj=attempt, obj_in={"meta": meta})
+        return updated
 
     async def _get_task_ids_for_deadline_check(
         self,

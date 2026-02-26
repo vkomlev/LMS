@@ -148,6 +148,7 @@ async def start_or_get_attempt(
     r = await db.execute(stmt)
     existing = r.scalar_one_or_none()
     if existing is not None:
+        existing = await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
         await db.commit()
         return StartOrGetAttemptResponse(
             attempt_id=existing.id,
@@ -163,8 +164,9 @@ async def start_or_get_attempt(
         user_id=body.student_id,
         course_id=course_id,
         source_system=body.source_system or "learning_api",
-        meta=None,
+        meta={"task_ids": [task_id]},
     )
+    attempt = await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
     await db.commit()
     logger.info(
         "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s",

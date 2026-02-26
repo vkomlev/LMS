@@ -372,7 +372,7 @@ Stateless-проверка одной задачи без сохранения �
     "source_system": "web",
     "created_at": "2026-01-17T12:00:00Z",
     "finished_at": null,
-    "meta": {},
+    "meta": {"task_ids": [123]},
     "time_expired": false,
     "attempts_used": null,
     "attempts_limit_effective": null,
@@ -624,7 +624,7 @@ Stateless-проверка одной задачи без сохранения �
 |-------|------|----------|
 | GET | `/learning/next-item?student_id=` | Следующий шаг: material \| task \| none \| blocked_dependency \| blocked_limit. |
 | POST | `/learning/materials/{material_id}/complete` | Отметить материал пройденным (body: `student_id`). |
-| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. |
+| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | Начать или получить текущую попытку по задаче. Гарантия: в ответе `GET /attempts/{id}` поле `attempt.meta.task_ids` (int[]) содержит как минимум этот `task_id`; при пустом/битом `meta` backend восстанавливает его при вызове. |
 | GET | `/learning/tasks/{task_id}/state?student_id=` | Состояние задания: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
 | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
 | POST | `/teacher/task-limits/override` | Переопределение лимита попыток (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |

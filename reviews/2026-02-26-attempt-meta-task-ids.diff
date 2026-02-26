@@ -1,0 +1,113 @@
+﻿diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index e43c642..aedcaae 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -148,6 +148,7 @@ async def start_or_get_attempt(
+     r = await db.execute(stmt)
+     existing = r.scalar_one_or_none()
+     if existing is not None:
++        existing = await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
+         await db.commit()
+         return StartOrGetAttemptResponse(
+             attempt_id=existing.id,
+@@ -163,8 +164,9 @@ async def start_or_get_attempt(
+         user_id=body.student_id,
+         course_id=course_id,
+         source_system=body.source_system or "learning_api",
+-        meta=None,
++        meta={"task_ids": [task_id]},
+     )
++    attempt = await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
+     await db.commit()
+     logger.info(
+         "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s",
+diff --git a/app/services/attempts_service.py b/app/services/attempts_service.py
+index ff70c00..d0117a4 100644
+--- a/app/services/attempts_service.py
++++ b/app/services/attempts_service.py
+@@ -1,12 +1,15 @@
+ from __future__ import annotations
+ 
+-from typing import Any, Optional
++import logging
++from typing import Any, List, Optional
+ from datetime import datetime, timezone, timedelta
+ 
+ from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.attempts import Attempts
++
++logger = logging.getLogger(__name__)
+ from app.models.task_results import TaskResults
+ from app.models.tasks import Tasks
+ from app.repos.attempts_repo import AttemptsRepository
+@@ -46,6 +49,46 @@ class AttemptsService(BaseService[Attempts]):
+         # BaseService.create ╨╛╨╢╨╕╨┤╨░╨╡╤В dict[str, Any]
+         return await self.create(db, data)
+ 
++    async def ensure_attempt_task_ids(
++        self,
++        db: AsyncSession,
++        attempt: Attempts,
++        task_id: int,
++    ) -> Attempts:
++        """
++        ╨У╨░╤А╨░╨╜╤В╨╕╤А╤Г╨╡╤В, ╤З╤В╨╛ attempt.meta тАФ ╨╛╨▒╤К╨╡╨║╤В, attempt.meta.task_ids тАФ ╨╝╨░╤Б╤Б╨╕╨▓ int[],
++        ╤Б╨╛╨┤╨╡╤А╨╢╨░╤Й╨╕╨╣ task_id (merge, ╨▒╨╡╨╖ ╨┤╤Г╨▒╨╗╨╡╨╣). ╨б╨╛╤Е╤А╨░╨╜╤П╨╡╤В ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╤П ╨▓ ╨С╨Ф.
++        ╨Ы╨╛╨│╨╕╤А╤Г╨╡╤В WARN ╨┐╤А╨╕ ╨▓╨╛╤Б╤Б╤В╨░╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╕ ╨▒╨╕╤В╨╛╨│╨╛ meta (null, ╨╜╨╡ dict, ╨╜╨╡ list ╨▓ task_ids).
++        """
++        meta: dict[str, Any]
++        if attempt.meta is None or not isinstance(attempt.meta, dict):
++            if attempt.meta is not None:
++                logger.warning(
++                    "attempt.meta ╨╜╨╡ dict (id=%s), ╨▓╨╛╤Б╤Б╤В╨░╨╜╨░╨▓╨╗╨╕╨▓╨░╨╡╨╝ meta.task_ids",
++                    attempt.id,
++                )
++            meta = {}
++        else:
++            meta = dict(attempt.meta)
++
++        raw = meta.get("task_ids")
++        if raw is None or not isinstance(raw, list):
++            if raw is not None:
++                logger.warning(
++                    "attempt.meta.task_ids ╨╜╨╡ ╤Б╨┐╨╕╤Б╨╛╨║ (id=%s), ╨▓╨╛╤Б╤Б╤В╨░╨╜╨░╨▓╨╗╨╕╨▓╨░╨╡╨╝",
++                    attempt.id,
++                )
++            task_ids: List[int] = []
++        else:
++            task_ids = [x for x in raw if isinstance(x, int)]
++
++        if task_id not in task_ids:
++            task_ids.append(task_id)
++
++        meta["task_ids"] = task_ids
++        updated = await self.update(db, db_obj=attempt, obj_in={"meta": meta})
++        return updated
++
+     async def _get_task_ids_for_deadline_check(
+         self,
+         db: AsyncSession,
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 0ff342a..06555ce 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -372,7 +372,7 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+     "source_system": "web",
+     "created_at": "2026-01-17T12:00:00Z",
+     "finished_at": null,
+-    "meta": {},
++    "meta": {"task_ids": [123]},
+     "time_expired": false,
+     "attempts_used": null,
+     "attempts_limit_effective": null,
+@@ -624,7 +624,7 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ |-------|------|----------|
+ | GET | `/learning/next-item?student_id=` | ╨б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╤И╨░╨│: material \| task \| none \| blocked_dependency \| blocked_limit. |
+ | POST | `/learning/materials/{material_id}/complete` | ╨Ю╤В╨╝╨╡╤В╨╕╤В╤М ╨╝╨░╤В╨╡╤А╨╕╨░╨╗ ╨┐╤А╨╛╨╣╨┤╨╡╨╜╨╜╤Л╨╝ (body: `student_id`). |
+-| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | ╨Э╨░╤З╨░╤В╤М ╨╕╨╗╨╕ ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╤В╨╡╨║╤Г╤Й╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. |
++| POST | `/learning/tasks/{task_id}/start-or-get-attempt` | ╨Э╨░╤З╨░╤В╤М ╨╕╨╗╨╕ ╨┐╨╛╨╗╤Г╤З╨╕╤В╤М ╤В╨╡╨║╤Г╤Й╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡. ╨У╨░╤А╨░╨╜╤В╨╕╤П: ╨▓ ╨╛╤В╨▓╨╡╤В╨╡ `GET /attempts/{id}` ╨┐╨╛╨╗╨╡ `attempt.meta.task_ids` (int[]) ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В ╨║╨░╨║ ╨╝╨╕╨╜╨╕╨╝╤Г╨╝ ╤Н╤В╨╛╤В `task_id`; ╨┐╤А╨╕ ╨┐╤Г╤Б╤В╨╛╨╝/╨▒╨╕╤В╨╛╨╝ `meta` backend ╨▓╨╛╤Б╤Б╤В╨░╨╜╨░╨▓╨╗╨╕╨▓╨░╨╡╤В ╨╡╨│╨╛ ╨┐╤А╨╕ ╨▓╤Л╨╖╨╛╨▓╨╡. |
+ | GET | `/learning/tasks/{task_id}/state?student_id=` | ╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П: OPEN \| IN_PROGRESS \| PASSED \| FAILED \| BLOCKED_LIMIT. |
+ | POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
+ | POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
