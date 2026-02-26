@@ -6,6 +6,7 @@ Learning Engine V1: запись событий в learning_events и опера
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
@@ -75,10 +76,10 @@ async def record_help_requested(
     r = await db.execute(
         text("""
             INSERT INTO learning_events (student_id, event_type, payload, created_at)
-            VALUES (:student_id, 'help_requested', :payload, now())
+            VALUES (:student_id, 'help_requested', CAST(:payload AS jsonb), now())
             RETURNING id
         """),
-        {"student_id": student_id, "payload": payload},
+        {"student_id": student_id, "payload": json.dumps(payload)},
     )
     event_id = r.scalar()
     return (int(event_id), False)
@@ -107,9 +108,9 @@ async def record_task_limit_override(
     await db.execute(
         text("""
             INSERT INTO learning_events (student_id, event_type, payload, created_at)
-            VALUES (:student_id, 'task_limit_override', :payload, now())
+            VALUES (:student_id, 'task_limit_override', CAST(:payload AS jsonb), now())
         """),
-        {"student_id": student_id, "payload": payload},
+        {"student_id": student_id, "payload": json.dumps(payload)},
     )
 
 
