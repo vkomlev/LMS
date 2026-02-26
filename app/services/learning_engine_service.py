@@ -109,7 +109,7 @@ class LearningEngineService:
             SELECT COUNT(DISTINCT a.id)
             FROM attempts a
             INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
+            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
         """)
         r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
         attempts_used = r.scalar() or 0
@@ -119,7 +119,7 @@ class LearningEngineService:
             SELECT a.id, a.finished_at, tr.score, tr.max_score
             FROM attempts a
             INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
+            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
             ORDER BY a.finished_at DESC
             LIMIT 1
         """)
@@ -208,7 +208,7 @@ class LearningEngineService:
                 SELECT DISTINCT ON (tr.task_id)
                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
                 FROM task_results tr
-                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
+                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
                 INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
                 ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
             )

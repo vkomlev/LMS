@@ -20,6 +20,8 @@ from app.schemas.attempts import (
     AttemptAnswersResponse,
     AttemptAnswerResult,
     AttemptFinishResponse,
+    AttemptCancelRequest,
+    AttemptCancelResponse,
 )
 from app.schemas.checking import (
     StudentAnswer,
@@ -234,7 +236,7 @@ async def submit_attempt_answers(
             detail=str(exc),
         ) from exc
 
-    # Валидация попытки: проверка, что попытка не завершена
+    # Валидация попытки: проверка, что попытка не завершена и не отменена
     if attempt.finished_at is not None:
         logger.warning(
             "POST /attempts/%s/answers: попытка уже завершена",
@@ -243,6 +245,15 @@ async def submit_attempt_answers(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Попытка уже завершена. Нельзя отправлять ответы в завершенную попытку.",
+        )
+    if attempt.cancelled_at is not None:
+        logger.warning(
+            "POST /attempts/%s/answers: попытка отменена",
+            attempt_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Попытка отменена. Нельзя отправлять ответы в отменённую попытку.",
         )
 
     # Таймлимит проверяется по каждой задаче (tasks.time_limit_sec) ниже; при просрочке
@@ -362,6 +373,45 @@ async def submit_attempt_answers(
 
 
 @router.post(
+    "/attempts/{attempt_id}/cancel",
+    response_model=AttemptCancelResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Аннулировать активную попытку (Learning Engine V1, этап 3.5)",
+    responses={
+        200: {"description": "Попытка отменена или уже была отменена (идемпотентно)"},
+        404: {"description": "Попытка не найдена"},
+        409: {"description": "Попытка уже завершена (finished_at задан), отменять нельзя"},
+    },
+)
+async def cancel_attempt(
+    attempt_id: int,
+    payload: Optional[AttemptCancelRequest] = Body(None, description="Опционально: причина отмены"),
+    db: AsyncSession = Depends(get_db),
+) -> AttemptCancelResponse:
+    """
+    Аннулировать активную попытку. Идемпотентно: повторный вызов возвращает 200 и already_cancelled=true.
+    Завершённые попытки (finished_at задан) отменять нельзя — 409.
+    """
+    attempt, error, already_cancelled = await attempts_service.cancel_attempt(
+        db, attempt_id, reason=payload.reason if payload else None
+    )
+    if error == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if error == "already_finished":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Попытка уже завершена. Аннулировать можно только активную попытку.",
+        )
+    assert attempt is not None
+    return AttemptCancelResponse(
+        attempt_id=attempt.id,
+        status="cancelled",
+        cancelled_at=attempt.cancelled_at,
+        already_cancelled=already_cancelled,
+    )
+
+
+@router.post(
     "/attempts/{attempt_id}/finish",
     response_model=AttemptFinishResponse,
     summary="Завершить попытку и вернуть агрегированные результаты",
@@ -380,6 +430,11 @@ async def finish_attempt(
     attempt = await attempts_service.get_by_id(db, attempt_id)
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if attempt.cancelled_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Попытка отменена. Завершать можно только активную попытку.",
+        )
 
     time_expired = bool(attempt.time_expired)
     if attempt.finished_at is None:

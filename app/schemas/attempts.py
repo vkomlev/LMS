@@ -77,8 +77,44 @@ class AttemptRead(BaseModel):
         default=False,
         description="Попытка помечена как просроченная по tasks.time_limit_sec",
     )
+    # Learning Engine V1, этап 3.5
+    cancelled_at: Optional[datetime] = Field(
+        None,
+        description="Время аннулирования попытки (null, если не отменена)",
+    )
+    cancel_reason: Optional[str] = Field(
+        None,
+        description="Причина аннулирования (опционально)",
+    )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------- Аннулирование попытки (этап 3.5) ----------
+
+
+class AttemptCancelRequest(BaseModel):
+    """Тело запроса для POST /attempts/{id}/cancel (опционально)."""
+
+    reason: Optional[str] = Field(
+        None,
+        description="Причина аннулирования (например, user_exit_to_main_menu).",
+    )
+
+
+class AttemptCancelResponse(BaseModel):
+    """Ответ для POST /attempts/{id}/cancel."""
+
+    attempt_id: int = Field(..., description="ID попытки")
+    status: str = Field("cancelled", description="Статус: cancelled")
+    cancelled_at: Optional[datetime] = Field(
+        ...,
+        description="Время аннулирования (ISO8601)",
+    )
+    already_cancelled: bool = Field(
+        False,
+        description="True, если попытка уже была отменена (идемпотентный вызов)",
+    )
 
 
 # ---------- Результаты по задачам внутри попытки ----------

@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Integer,
     String,
+    Text,
     ForeignKeyConstraint,
     PrimaryKeyConstraint,
     Index,
@@ -92,6 +93,16 @@ class Attempts(Base):
         nullable=False,
         server_default=text("false"),
         comment="Попытка завершена по таймауту (Learning Engine V1)",
+    )
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Время аннулирования попытки (Learning Engine V1, этап 3.5)",
+    )
+    cancel_reason: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Причина аннулирования (опционально)",
     )
 
     user: Mapped["Users"] = relationship(

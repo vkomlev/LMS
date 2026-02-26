@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, case, text
 
+from app.models.attempts import Attempts
 from app.models.task_results import TaskResults
 from app.repos.task_results_repo import TaskResultsRepository
 from app.schemas.checking import StudentAnswer, CheckResult
@@ -173,7 +174,7 @@ class TaskResultsService(BaseService[TaskResults]):
         Последняя завершённая попытка по каждой паре (user_id, task_id).
         Возвращает список (user_id, task_id, score, max_score). max_score может быть 0.
         """
-        conditions = ["a.finished_at IS NOT NULL"]
+        conditions = ["a.finished_at IS NOT NULL", "a.cancelled_at IS NULL"]
         params: Dict[str, Any] = {}
         if user_id is not None:
             conditions.append("tr.user_id = :user_id")
@@ -222,7 +223,12 @@ class TaskResultsService(BaseService[TaskResults]):
         last_failed = len(last_rows) - last_passed
         total_with_last = len(last_rows)
 
-        total_query = select(func.count(TaskResults.id)).where(TaskResults.task_id == task_id)
+        total_query = (
+            select(func.count(TaskResults.id))
+            .select_from(TaskResults)
+            .join(Attempts, TaskResults.attempt_id == Attempts.id)
+            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
+        )
         total_result = await db.execute(total_query)
         total_attempts = total_result.scalar() or 0
         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
@@ -243,13 +249,17 @@ class TaskResultsService(BaseService[TaskResults]):
                 "last_failed_count": last_failed,
             }
 
-        stats_query = select(
-            func.avg(TaskResults.score).label("avg_score"),
-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
-            func.min(TaskResults.score).label("min_score"),
-            func.max(TaskResults.score).label("max_score"),
-        ).where(TaskResults.task_id == task_id)
-
+        stats_query = (
+            select(
+                func.avg(TaskResults.score).label("avg_score"),
+                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+                func.min(TaskResults.score).label("min_score"),
+                func.max(TaskResults.score).label("max_score"),
+            )
+            .select_from(TaskResults)
+            .join(Attempts, TaskResults.attempt_id == Attempts.id)
+            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
+        )
         stats_result = await db.execute(stats_query)
         stats_row = stats_result.first()
 
@@ -306,12 +316,19 @@ class TaskResultsService(BaseService[TaskResults]):
         total_with_last = len(last_rows)
         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
 
-        stats_query = select(
-            func.count(TaskResults.id).label("total_attempts"),
-            func.avg(TaskResults.score).label("avg_score"),
-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
-        ).where(TaskResults.task_id.in_(task_ids))
-
+        stats_query = (
+            select(
+                func.count(TaskResults.id).label("total_attempts"),
+                func.avg(TaskResults.score).label("avg_score"),
+                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+            )
+            .select_from(TaskResults)
+            .join(Attempts, TaskResults.attempt_id == Attempts.id)
+            .where(
+                TaskResults.task_id.in_(task_ids),
+                Attempts.cancelled_at.is_(None),
+            )
+        )
         stats_result = await db.execute(stats_query)
         stats_row = stats_result.first()
 
@@ -351,14 +368,18 @@ class TaskResultsService(BaseService[TaskResults]):
         last_max_score = sum(row[3] for row in last_rows)
         last_ratio = (last_score / last_max_score) if last_max_score and last_max_score > 0 else 0.0
 
-        stats_query = select(
-            func.count(TaskResults.id).label("total_attempts"),
-            func.avg(TaskResults.score).label("avg_score"),
-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
-            func.sum(TaskResults.max_score).label("total_max_score"),
-            func.sum(TaskResults.score).label("total_score"),
-        ).where(TaskResults.user_id == user_id)
-
+        stats_query = (
+            select(
+                func.count(TaskResults.id).label("total_attempts"),
+                func.avg(TaskResults.score).label("avg_score"),
+                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+                func.sum(TaskResults.max_score).label("total_max_score"),
+                func.sum(TaskResults.score).label("total_score"),
+            )
+            .select_from(TaskResults)
+            .join(Attempts, TaskResults.attempt_id == Attempts.id)
+            .where(TaskResults.user_id == user_id, Attempts.cancelled_at.is_(None))
+        )
         stats_result = await db.execute(stats_query)
         stats_row = stats_result.first()
 

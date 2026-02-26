@@ -1,0 +1,429 @@
+﻿diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 27a33bb..30448cf 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -20,6 +20,8 @@ from app.schemas.attempts import (
+     AttemptAnswersResponse,
+     AttemptAnswerResult,
+     AttemptFinishResponse,
++    AttemptCancelRequest,
++    AttemptCancelResponse,
+ )
+ from app.schemas.checking import (
+     StudentAnswer,
+@@ -234,7 +236,7 @@ async def submit_attempt_answers(
+             detail=str(exc),
+         ) from exc
+ 
+-    # ╨Т╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕: ╨┐╤А╨╛╨▓╨╡╤А╨║╨░, ╤З╤В╨╛ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░
++    # ╨Т╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕: ╨┐╤А╨╛╨▓╨╡╤А╨║╨░, ╤З╤В╨╛ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╨╕ ╨╜╨╡ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░
+     if attempt.finished_at is not None:
+         logger.warning(
+             "POST /attempts/%s/answers: ╨┐╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░",
+@@ -244,6 +246,15 @@ async def submit_attempt_answers(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░. ╨Э╨╡╨╗╤М╨╖╤П ╨╛╤В╨┐╤А╨░╨▓╨╗╤П╤В╤М ╨╛╤В╨▓╨╡╤В╤Л ╨▓ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
+         )
++    if attempt.cancelled_at is not None:
++        logger.warning(
++            "POST /attempts/%s/answers: ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░",
++            attempt_id,
++        )
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░. ╨Э╨╡╨╗╤М╨╖╤П ╨╛╤В╨┐╤А╨░╨▓╨╗╤П╤В╤М ╨╛╤В╨▓╨╡╤В╤Л ╨▓ ╨╛╤В╨╝╨╡╨╜╤С╨╜╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
++        )
+ 
+     # ╨в╨░╨╣╨╝╨╗╨╕╨╝╨╕╤В ╨┐╤А╨╛╨▓╨╡╤А╤П╨╡╤В╤Б╤П ╨┐╨╛ ╨║╨░╨╢╨┤╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╡ (tasks.time_limit_sec) ╨╜╨╕╨╢╨╡; ╨┐╤А╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨║╨╡
+     # ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛╨╝╨╡╤З╨░╨╡╤В╤Б╤П time_expired=true ╨╕ ╨┐╨╛ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╤Л╨╝ ╨╖╨░╨┤╨░╨╜╨╕╤П╨╝ ╨┐╨╕╤И╨╡╤В╤Б╤П score=0.
+@@ -361,6 +372,45 @@ async def submit_attempt_answers(
+     )
+ 
+ 
++@router.post(
++    "/attempts/{attempt_id}/cancel",
++    response_model=AttemptCancelResponse,
++    status_code=status.HTTP_200_OK,
++    summary="╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г (Learning Engine V1, ╤Н╤В╨░╨┐ 3.5)",
++    responses={
++        200: {"description": "╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░ ╨╕╨╗╨╕ ╤Г╨╢╨╡ ╨▒╤Л╨╗╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░ (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛)"},
++        404: {"description": "╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░"},
++        409: {"description": "╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ (finished_at ╨╖╨░╨┤╨░╨╜), ╨╛╤В╨╝╨╡╨╜╤П╤В╤М ╨╜╨╡╨╗╤М╨╖╤П"},
++    },
++)
++async def cancel_attempt(
++    attempt_id: int,
++    payload: Optional[AttemptCancelRequest] = Body(None, description="╨Ю╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛: ╨┐╤А╨╕╤З╨╕╨╜╨░ ╨╛╤В╨╝╨╡╨╜╤Л"),
++    db: AsyncSession = Depends(get_db),
++) -> AttemptCancelResponse:
++    """
++    ╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╨┐╨╛╨▓╤В╨╛╤А╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В 200 ╨╕ already_cancelled=true.
++    ╨Ч╨░╨▓╨╡╤А╤И╤С╨╜╨╜╤Л╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕ (finished_at ╨╖╨░╨┤╨░╨╜) ╨╛╤В╨╝╨╡╨╜╤П╤В╤М ╨╜╨╡╨╗╤М╨╖╤П тАФ 409.
++    """
++    attempt, error, already_cancelled = await attempts_service.cancel_attempt(
++        db, attempt_id, reason=payload.reason if payload else None
++    )
++    if error == "not_found":
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
++    if error == "already_finished":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░. ╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨╝╨╛╨╢╨╜╨╛ ╤В╨╛╨╗╤М╨║╨╛ ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
++        )
++    assert attempt is not None
++    return AttemptCancelResponse(
++        attempt_id=attempt.id,
++        status="cancelled",
++        cancelled_at=attempt.cancelled_at,
++        already_cancelled=already_cancelled,
++    )
++
++
+ @router.post(
+     "/attempts/{attempt_id}/finish",
+     response_model=AttemptFinishResponse,
+@@ -380,6 +430,11 @@ async def finish_attempt(
+     attempt = await attempts_service.get_by_id(db, attempt_id)
+     if attempt is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
++    if attempt.cancelled_at is not None:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░. ╨Ч╨░╨▓╨╡╤А╤И╨░╤В╤М ╨╝╨╛╨╢╨╜╨╛ ╤В╨╛╨╗╤М╨║╨╛ ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г.",
++        )
+ 
+     time_expired = bool(attempt.time_expired)
+     if attempt.finished_at is None:
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index aedcaae..282e330 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -134,13 +134,14 @@ async def start_or_get_attempt(
+         {"k1": body.student_id, "k2": course_id},
+     )
+ 
+-    # ╨Р╨║╤В╨╕╨▓╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╤Н╤В╨╛╨╝╤Г ╨║╤Г╤А╤Б╤Г (finished_at IS NULL)
++    # ╨Р╨║╤В╨╕╨▓╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╤Н╤В╨╛╨╝╤Г ╨║╤Г╤А╤Б╤Г (╨╜╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╨╕ ╨╜╨╡ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░)
+     stmt = (
+         select(Attempts)
+         .where(
+             Attempts.user_id == body.student_id,
+             Attempts.course_id == course_id,
+             Attempts.finished_at.is_(None),
++            Attempts.cancelled_at.is_(None),
+         )
+         .order_by(Attempts.created_at.desc())
+         .limit(1)
+diff --git a/app/models/attempts.py b/app/models/attempts.py
+index 295d1a1..f24a694 100644
+--- a/app/models/attempts.py
++++ b/app/models/attempts.py
+@@ -8,6 +8,7 @@ from sqlalchemy import (
+     DateTime,
+     Integer,
+     String,
++    Text,
+     ForeignKeyConstraint,
+     PrimaryKeyConstraint,
+     Index,
+@@ -93,6 +94,16 @@ class Attempts(Base):
+         server_default=text("false"),
+         comment="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╨┐╨╛ ╤В╨░╨╣╨╝╨░╤Г╤В╤Г (Learning Engine V1)",
+     )
++    cancelled_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True),
++        nullable=True,
++        comment="╨Т╤А╨╡╨╝╤П ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕ (Learning Engine V1, ╤Н╤В╨░╨┐ 3.5)",
++    )
++    cancel_reason: Mapped[Optional[str]] = mapped_column(
++        Text,
++        nullable=True,
++        comment="╨Я╤А╨╕╤З╨╕╨╜╨░ ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П (╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛)",
++    )
+ 
+     user: Mapped["Users"] = relationship(
+         "Users",
+diff --git a/app/schemas/attempts.py b/app/schemas/attempts.py
+index 14e5986..b880344 100644
+--- a/app/schemas/attempts.py
++++ b/app/schemas/attempts.py
+@@ -77,10 +77,46 @@ class AttemptRead(BaseModel):
+         default=False,
+         description="╨Я╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛╨╝╨╡╤З╨╡╨╜╨░ ╨║╨░╨║ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╨░╤П ╨┐╨╛ tasks.time_limit_sec",
+     )
++    # Learning Engine V1, ╤Н╤В╨░╨┐ 3.5
++    cancelled_at: Optional[datetime] = Field(
++        None,
++        description="╨Т╤А╨╡╨╝╤П ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П ╨┐╨╛╨┐╤Л╤В╨║╨╕ (null, ╨╡╤Б╨╗╨╕ ╨╜╨╡ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░)",
++    )
++    cancel_reason: Optional[str] = Field(
++        None,
++        description="╨Я╤А╨╕╤З╨╕╨╜╨░ ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П (╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛)",
++    )
+ 
+     model_config = ConfigDict(from_attributes=True)
+ 
+ 
++# ---------- ╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕ (╤Н╤В╨░╨┐ 3.5) ----------
++
++
++class AttemptCancelRequest(BaseModel):
++    """╨в╨╡╨╗╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨░ ╨┤╨╗╤П POST /attempts/{id}/cancel (╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛)."""
++
++    reason: Optional[str] = Field(
++        None,
++        description="╨Я╤А╨╕╤З╨╕╨╜╨░ ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П (╨╜╨░╨┐╤А╨╕╨╝╨╡╤А, user_exit_to_main_menu).",
++    )
++
++
++class AttemptCancelResponse(BaseModel):
++    """╨Ю╤В╨▓╨╡╤В ╨┤╨╗╤П POST /attempts/{id}/cancel."""
++
++    attempt_id: int = Field(..., description="ID ╨┐╨╛╨┐╤Л╤В╨║╨╕")
++    status: str = Field("cancelled", description="╨б╤В╨░╤В╤Г╤Б: cancelled")
++    cancelled_at: Optional[datetime] = Field(
++        ...,
++        description="╨Т╤А╨╡╨╝╤П ╨░╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╨╜╨╕╤П (ISO8601)",
++    )
++    already_cancelled: bool = Field(
++        False,
++        description="True, ╨╡╤Б╨╗╨╕ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨▒╤Л╨╗╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░ (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓)",
++    )
++
++
+ # ---------- ╨а╨╡╨╖╤Г╨╗╤М╤В╨░╤В╤Л ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨░╨╝ ╨▓╨╜╤Г╤В╤А╨╕ ╨┐╨╛╨┐╤Л╤В╨║╨╕ ----------
+ 
+ 
+diff --git a/app/services/attempts_service.py b/app/services/attempts_service.py
+index d0117a4..f28f287 100644
+--- a/app/services/attempts_service.py
++++ b/app/services/attempts_service.py
+@@ -171,6 +171,37 @@ class AttemptsService(BaseService[Attempts]):
+             update_data["time_expired"] = True
+         return await self.update(db, db_obj=attempt, obj_in=update_data)
+ 
++    async def cancel_attempt(
++        self,
++        db: AsyncSession,
++        attempt_id: int,
++        *,
++        reason: Optional[str] = None,
++    ) -> tuple[Optional[Attempts], Optional[str], bool]:
++        """
++        ╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨┐╨╛╨┐╤Л╤В╨║╤Г (╤Н╤В╨░╨┐ 3.5). ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛.
++
++        Returns:
++            (attempt, error, already_cancelled)
++            - (None, "not_found", False) -> 404
++            - (attempt, "already_finished", False) -> 409
++            - (attempt, None, False) -> 200, ╤В╨╛╨╗╤М╨║╨╛ ╤З╤В╨╛ ╨╛╤В╨╝╨╡╨╜╨╕╨╗╨╕
++            - (attempt, None, True) -> 200, ╤Г╨╢╨╡ ╨▒╤Л╨╗╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░
++        """
++        attempt = await self.get_by_id(db, attempt_id)
++        if attempt is None:
++            return (None, "not_found", False)
++        if attempt.finished_at is not None:
++            return (attempt, "already_finished", False)
++        if attempt.cancelled_at is not None:
++            return (attempt, None, True)
++        now = datetime.now(timezone.utc)
++        update_data: dict[str, Any] = {"cancelled_at": now}
++        if reason is not None:
++            update_data["cancel_reason"] = reason
++        updated = await self.update(db, db_obj=attempt, obj_in=update_data)
++        return (updated, None, False)
++
+     async def get_by_user(
+         self,
+         db: AsyncSession,
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 0412189..64a511a 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -109,7 +109,7 @@ class LearningEngineService:
+             SELECT COUNT(DISTINCT a.id)
+             FROM attempts a
+             INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
+-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
++            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
+         """)
+         r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
+         attempts_used = r.scalar() or 0
+@@ -119,7 +119,7 @@ class LearningEngineService:
+             SELECT a.id, a.finished_at, tr.score, tr.max_score
+             FROM attempts a
+             INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
+-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL
++            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
+             ORDER BY a.finished_at DESC
+             LIMIT 1
+         """)
+@@ -208,7 +208,7 @@ class LearningEngineService:
+                 SELECT DISTINCT ON (tr.task_id)
+                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
+                 FROM task_results tr
+-                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL
++                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
+                 INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
+                 ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
+             )
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index eb3d786..5f52cc1 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Tuple
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import func, case, text
+ 
++from app.models.attempts import Attempts
+ from app.models.task_results import TaskResults
+ from app.repos.task_results_repo import TaskResultsRepository
+ from app.schemas.checking import StudentAnswer, CheckResult
+@@ -173,7 +174,7 @@ class TaskResultsService(BaseService[TaskResults]):
+         ╨Я╨╛╤Б╨╗╨╡╨┤╨╜╤П╤П ╨╖╨░╨▓╨╡╤А╤И╤С╨╜╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨┐╨╛ ╨║╨░╨╢╨┤╨╛╨╣ ╨┐╨░╤А╨╡ (user_id, task_id).
+         ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В ╤Б╨┐╨╕╤Б╨╛╨║ (user_id, task_id, score, max_score). max_score ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М 0.
+         """
+-        conditions = ["a.finished_at IS NOT NULL"]
++        conditions = ["a.finished_at IS NOT NULL", "a.cancelled_at IS NULL"]
+         params: Dict[str, Any] = {}
+         if user_id is not None:
+             conditions.append("tr.user_id = :user_id")
+@@ -222,7 +223,12 @@ class TaskResultsService(BaseService[TaskResults]):
+         last_failed = len(last_rows) - last_passed
+         total_with_last = len(last_rows)
+ 
+-        total_query = select(func.count(TaskResults.id)).where(TaskResults.task_id == task_id)
++        total_query = (
++            select(func.count(TaskResults.id))
++            .select_from(TaskResults)
++            .join(Attempts, TaskResults.attempt_id == Attempts.id)
++            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
++        )
+         total_result = await db.execute(total_query)
+         total_attempts = total_result.scalar() or 0
+         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
+@@ -243,13 +249,17 @@ class TaskResultsService(BaseService[TaskResults]):
+                 "last_failed_count": last_failed,
+             }
+ 
+-        stats_query = select(
+-            func.avg(TaskResults.score).label("avg_score"),
+-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+-            func.min(TaskResults.score).label("min_score"),
+-            func.max(TaskResults.score).label("max_score"),
+-        ).where(TaskResults.task_id == task_id)
+-
++        stats_query = (
++            select(
++                func.avg(TaskResults.score).label("avg_score"),
++                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
++                func.min(TaskResults.score).label("min_score"),
++                func.max(TaskResults.score).label("max_score"),
++            )
++            .select_from(TaskResults)
++            .join(Attempts, TaskResults.attempt_id == Attempts.id)
++            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
++        )
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+ 
+@@ -306,12 +316,19 @@ class TaskResultsService(BaseService[TaskResults]):
+         total_with_last = len(last_rows)
+         progress_percent = (last_passed / total_with_last * 100) if total_with_last > 0 else 0.0
+ 
+-        stats_query = select(
+-            func.count(TaskResults.id).label("total_attempts"),
+-            func.avg(TaskResults.score).label("avg_score"),
+-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+-        ).where(TaskResults.task_id.in_(task_ids))
+-
++        stats_query = (
++            select(
++                func.count(TaskResults.id).label("total_attempts"),
++                func.avg(TaskResults.score).label("avg_score"),
++                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
++            )
++            .select_from(TaskResults)
++            .join(Attempts, TaskResults.attempt_id == Attempts.id)
++            .where(
++                TaskResults.task_id.in_(task_ids),
++                Attempts.cancelled_at.is_(None),
++            )
++        )
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+ 
+@@ -351,14 +368,18 @@ class TaskResultsService(BaseService[TaskResults]):
+         last_max_score = sum(row[3] for row in last_rows)
+         last_ratio = (last_score / last_max_score) if last_max_score and last_max_score > 0 else 0.0
+ 
+-        stats_query = select(
+-            func.count(TaskResults.id).label("total_attempts"),
+-            func.avg(TaskResults.score).label("avg_score"),
+-            func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+-            func.sum(TaskResults.max_score).label("total_max_score"),
+-            func.sum(TaskResults.score).label("total_score"),
+-        ).where(TaskResults.user_id == user_id)
+-
++        stats_query = (
++            select(
++                func.count(TaskResults.id).label("total_attempts"),
++                func.avg(TaskResults.score).label("avg_score"),
++                func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
++                func.sum(TaskResults.max_score).label("total_max_score"),
++                func.sum(TaskResults.score).label("total_score"),
++            )
++            .select_from(TaskResults)
++            .join(Attempts, TaskResults.attempt_id == Attempts.id)
++            .where(TaskResults.user_id == user_id, Attempts.cancelled_at.is_(None))
++        )
+         stats_result = await db.execute(stats_query)
+         stats_row = stats_result.first()
+ 
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 06555ce..f884320 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -482,6 +482,42 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ 
+ ---
+ 
++### POST /attempts/{attempt_id}/cancel (Learning Engine V1, ╤Н╤В╨░╨┐ 3.5)
++
++╨Р╨╜╨╜╤Г╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╨┐╨╛╨▓╤В╨╛╤А╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В `200` ╨╕ `already_cancelled: true` ╨▒╨╡╨╖ ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╤П ╨┤╨░╨╜╨╜╤Л╤Е.
++
++**╨Я╨░╤А╨░╨╝╨╡╤В╤А╤Л:**
++- `attempt_id` (path, int) - ID ╨┐╨╛╨┐╤Л╤В╨║╨╕
++
++**╨в╨╡╨╗╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨░ (╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛):**
++```json
++{
++  "reason": "user_exit_to_main_menu"
++}
++```
++╨Ь╨╛╨╢╨╜╨╛ ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М ╨┐╤Г╤Б╤В╨╛╨╡ ╤В╨╡╨╗╨╛ `{}` ╨╕╨╗╨╕ ╨╜╨╡ ╨┐╨╡╤А╨╡╨┤╨░╨▓╨░╤В╤М body.
++
++**╨Ю╤В╨▓╨╡╤В (200 OK):**
++```json
++{
++  "attempt_id": 1,
++  "status": "cancelled",
++  "cancelled_at": "2026-02-26T12:00:00Z",
++  "already_cancelled": false
++}
++```
++- `already_cancelled: true` тАФ ╨┐╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨▒╤Л╨╗╨░ ╨╛╤В╨╝╨╡╨╜╨╡╨╜╨░ ╤А╨░╨╜╨╡╨╡ (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╤Л╨╣ ╨╛╤В╨▓╨╡╤В).
++
++**╨Ю╤И╨╕╨▒╨║╨╕:**
++- `404` - ╨Я╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░
++- `409` - ╨Я╨╛╨┐╤Л╤В╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ (`finished_at` ╨╖╨░╨┤╨░╨╜); ╨╛╤В╨╝╨╡╨╜╤П╤В╤М ╨╝╨╛╨╢╨╜╨╛ ╤В╨╛╨╗╤М╨║╨╛ ╨░╨║╤В╨╕╨▓╨╜╤Г╤О ╨┐╨╛╨┐╤Л╤В╨║╤Г
++
++**╨Я╨╛╨▓╨╡╨┤╨╡╨╜╨╕╨╡:**
++- ╨Ю╤В╨╝╨╡╨╜╤С╨╜╨╜╨░╤П ╨┐╨╛╨┐╤Л╤В╨║╨░ ╨╜╨╡ ╤Б╤З╨╕╤В╨░╨╡╤В╤Б╤П ╨░╨║╤В╨╕╨▓╨╜╨╛╨╣: ╨╜╨╡ ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П ╨▓ `POST /learning/tasks/{task_id}/start-or-get-attempt`.
++- ╨Т ╤Б╤В╨░╤В╨╕╤Б╤В╨╕╨║╨╡ ╨╕ ╨▓ ┬л╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╣ ╨┐╨╛╨┐╤Л╤В╨║╨╡┬╗ ╨┐╨╛ ╨╖╨░╨┤╨░╤З╨╡/╨║╤Г╤А╤Б╤Г ╨╛╤В╨╝╨╡╨╜╤С╨╜╨╜╤Л╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╨╜╨╡ ╤Г╤З╨╕╤В╤Л╨▓╨░╤О╤В╤Б╤П (╤Г╤З╨╕╤В╤Л╨▓╨░╤О╤В╤Б╤П ╤В╨╛╨╗╤М╨║╨╛ ╤Б `finished_at` ╨╕ ╨▒╨╡╨╖ `cancelled_at`).
++
++---
++
+ ## ╨н╨╜╨┤╨┐╨╛╨╣╨╜╤В╤Л ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨╛╨▓
+ 
+ ### GET /task-results/by-user/{user_id}

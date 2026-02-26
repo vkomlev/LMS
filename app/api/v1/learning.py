@@ -134,13 +134,14 @@ async def start_or_get_attempt(
         {"k1": body.student_id, "k2": course_id},
     )
 
-    # Активная попытка по этому курсу (finished_at IS NULL)
+    # Активная попытка по этому курсу (не завершена и не отменена)
     stmt = (
         select(Attempts)
         .where(
             Attempts.user_id == body.student_id,
             Attempts.course_id == course_id,
             Attempts.finished_at.is_(None),
+            Attempts.cancelled_at.is_(None),
         )
         .order_by(Attempts.created_at.desc())
         .limit(1)

@@ -171,6 +171,37 @@ class AttemptsService(BaseService[Attempts]):
             update_data["time_expired"] = True
         return await self.update(db, db_obj=attempt, obj_in=update_data)
 
+    async def cancel_attempt(
+        self,
+        db: AsyncSession,
+        attempt_id: int,
+        *,
+        reason: Optional[str] = None,
+    ) -> tuple[Optional[Attempts], Optional[str], bool]:
+        """
+        Аннулировать попытку (этап 3.5). Идемпотентно.
+
+        Returns:
+            (attempt, error, already_cancelled)
+            - (None, "not_found", False) -> 404
+            - (attempt, "already_finished", False) -> 409
+            - (attempt, None, False) -> 200, только что отменили
+            - (attempt, None, True) -> 200, уже была отменена
+        """
+        attempt = await self.get_by_id(db, attempt_id)
+        if attempt is None:
+            return (None, "not_found", False)
+        if attempt.finished_at is not None:
+            return (attempt, "already_finished", False)
+        if attempt.cancelled_at is not None:
+            return (attempt, None, True)
+        now = datetime.now(timezone.utc)
+        update_data: dict[str, Any] = {"cancelled_at": now}
+        if reason is not None:
+            update_data["cancel_reason"] = reason
+        updated = await self.update(db, db_obj=attempt, obj_in=update_data)
+        return (updated, None, False)
+
     async def get_by_user(
         self,
         db: AsyncSession,
