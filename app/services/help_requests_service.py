@@ -525,7 +525,7 @@ async def reply_help_request(
     if idempotency_key:
         r = await db.execute(
             text("""
-                SELECT message_id, thread_id FROM help_request_replies
+                SELECT message_id FROM help_request_replies
                 WHERE request_id = :request_id AND idempotency_key = :key LIMIT 1
             """),
             {"request_id": request_id, "key": idempotency_key},
@@ -535,7 +535,7 @@ async def reply_help_request(
             return ({
                 "request_id": request_id,
                 "message_id": dup[0],
-                "thread_id": dup[1],
+                "thread_id": thread_id,
                 "request_status": req_status,
                 "deduplicated": True,
             }, None)
