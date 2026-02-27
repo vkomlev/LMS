@@ -29,6 +29,7 @@ from app.services.learning_events_service import (
     record_hint_open,
     set_material_completed,
 )
+from app.services.help_requests_service import get_or_create_help_request
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -242,12 +243,23 @@ async def request_help(
     event_id, deduplicated = await record_help_requested(
         db, body.student_id, task_id, body.message
     )
+    request_id, _ = await get_or_create_help_request(
+        db,
+        student_id=body.student_id,
+        task_id=task_id,
+        event_id=event_id,
+        message=body.message,
+        course_id=task.course_id,
+        deduplicated=deduplicated,
+    )
     await db.commit()
     logger.info(
-        "request-help: student_id=%s task_id=%s event_id=%s deduplicated=%s",
-        body.student_id, task_id, event_id, deduplicated,
+        "request-help: student_id=%s task_id=%s event_id=%s deduplicated=%s request_id=%s",
+        body.student_id, task_id, event_id, deduplicated, request_id,
     )
-    return RequestHelpResponse(ok=True, event_id=event_id, deduplicated=deduplicated)
+    return RequestHelpResponse(
+        ok=True, event_id=event_id, deduplicated=deduplicated, request_id=request_id
+    )
 
 
 # ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----

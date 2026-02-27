@@ -27,6 +27,10 @@ def test_learning_api_routes_registered():
         "/api/v1/learning/tasks/{task_id}/state",
         "/api/v1/learning/tasks/{task_id}/request-help",
         "/api/v1/teacher/task-limits/override",
+        "/api/v1/teacher/help-requests",
+        "/api/v1/teacher/help-requests/{request_id}",
+        "/api/v1/teacher/help-requests/{request_id}/close",
+        "/api/v1/teacher/help-requests/{request_id}/reply",
     ]
     for p in expected:
         assert p in paths, f"Ожидался путь {p} в OpenAPI. Найдены: {paths}"

@@ -1,0 +1,199 @@
+﻿diff --git a/app/api/main.py b/app/api/main.py
+index fbd1e38..3c8bf04 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -29,6 +29,7 @@ from app.api.v1.attempts import router as attempts_router
+ from app.api.v1.task_results_extra import router as task_results_extra_router
+ from app.api.v1.learning import router as learning_router
+ from app.api.v1.teacher_learning import router as teacher_learning_router
++from app.api.v1.teacher_help_requests import router as teacher_help_requests_router
+ 
+ # ╨б╤Е╨╡╨╝╤Л ╨╕ ╤Б╨╡╤А╨▓╨╕╤Б╤Л
+ from app.schemas.users import UserCreate, UserRead, UserUpdate
+@@ -307,4 +308,5 @@ app.include_router(checking_router, prefix=API_PREFIX)
+ 
+ app.include_router(attempts_router, prefix=API_PREFIX)
+ app.include_router(learning_router, prefix=API_PREFIX)
+-app.include_router(teacher_learning_router, prefix=API_PREFIX)
+\ No newline at end of file
++app.include_router(teacher_learning_router, prefix=API_PREFIX)
++app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 3209289..4c7e1d1 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -29,6 +29,7 @@ from app.services.learning_events_service import (
+     record_hint_open,
+     set_material_completed,
+ )
++from app.services.help_requests_service import get_or_create_help_request
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+ from app.services.materials_service import MaterialsService
+@@ -242,12 +243,23 @@ async def request_help(
+     event_id, deduplicated = await record_help_requested(
+         db, body.student_id, task_id, body.message
+     )
++    request_id, _ = await get_or_create_help_request(
++        db,
++        student_id=body.student_id,
++        task_id=task_id,
++        event_id=event_id,
++        message=body.message,
++        course_id=task.course_id,
++        deduplicated=deduplicated,
++    )
+     await db.commit()
+     logger.info(
+-        "request-help: student_id=%s task_id=%s event_id=%s deduplicated=%s",
+-        body.student_id, task_id, event_id, deduplicated,
++        "request-help: student_id=%s task_id=%s event_id=%s deduplicated=%s request_id=%s",
++        body.student_id, task_id, event_id, deduplicated, request_id,
++    )
++    return RequestHelpResponse(
++        ok=True, event_id=event_id, deduplicated=deduplicated, request_id=request_id
+     )
+-    return RequestHelpResponse(ok=True, event_id=event_id, deduplicated=deduplicated)
+ 
+ 
+ # ----- POST /learning/tasks/{task_id}/hint-events (╤Н╤В╨░╨┐ 3.6) -----
+diff --git a/app/db/base.py b/app/db/base.py
+index ab460b3..4cee1e2 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -22,4 +22,6 @@ import app.models.tasks
+ import app.models.user_achievements
+ import app.models.user_courses
+ import app.models.task_results
++import app.models.help_requests
++import app.models.help_request_replies
+ 
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 92b31ac..b1c372e 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -88,6 +88,7 @@ class RequestHelpResponse(BaseModel):
+     ok: bool = True
+     event_id: int
+     deduplicated: bool = False
++    request_id: Optional[int] = Field(None, description="ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests (╤Н╤В╨░╨┐ 3.8, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛)")
+ 
+ 
+ # ----- Hint events (╤Н╤В╨░╨┐ 3.6) -----
+diff --git a/app/services/learning_events_service.py b/app/services/learning_events_service.py
+index 8358ea7..1416083 100644
+--- a/app/services/learning_events_service.py
++++ b/app/services/learning_events_service.py
+@@ -228,6 +228,79 @@ async def record_task_limit_override(
+     )
+ 
+ 
++# ----- ╨Р╤Г╨┤╨╕╤В ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8) -----
++
++
++async def record_help_request_opened(
++    db: AsyncSession,
++    student_id: int,
++    request_id: int,
++    event_id: int,
++    task_id: int,
++    course_id: Optional[int] = None,
++) -> None:
++    """╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ help_request_opened ╨▓ learning_events."""
++    payload: dict[str, Any] = {
++        "request_id": request_id,
++        "event_id": event_id,
++        "task_id": task_id,
++    }
++    if course_id is not None:
++        payload["course_id"] = course_id
++    await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'help_request_opened', CAST(:payload AS jsonb), now())
++        """),
++        {"student_id": student_id, "payload": json.dumps(payload)},
++    )
++
++
++async def record_help_request_closed(
++    db: AsyncSession,
++    student_id: int,
++    request_id: int,
++    closed_by: int,
++    resolution_comment: Optional[str] = None,
++) -> None:
++    """╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ help_request_closed ╨▓ learning_events."""
++    payload: dict[str, Any] = {"request_id": request_id, "closed_by": closed_by}
++    if resolution_comment is not None:
++        payload["resolution_comment"] = resolution_comment[:2000]
++    await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'help_request_closed', CAST(:payload AS jsonb), now())
++        """),
++        {"student_id": student_id, "payload": json.dumps(payload)},
++    )
++
++
++async def record_help_request_replied(
++    db: AsyncSession,
++    student_id: int,
++    request_id: int,
++    teacher_id: int,
++    message_id: int,
++    thread_id: Optional[int] = None,
++) -> None:
++    """╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ help_request_replied ╨▓ learning_events."""
++    payload: dict[str, Any] = {
++        "request_id": request_id,
++        "teacher_id": teacher_id,
++        "message_id": message_id,
++    }
++    if thread_id is not None:
++        payload["thread_id"] = thread_id
++    await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'help_request_replied', CAST(:payload AS jsonb), now())
++        """),
++        {"student_id": student_id, "payload": json.dumps(payload)},
++    )
++
++
+ async def set_material_completed(
+     db: AsyncSession,
+     student_id: int,
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 67ecf91..26598bf 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -665,6 +665,12 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ | POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
+ | POST | `/learning/tasks/{task_id}/hint-events` | ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤Н╤В╨░╨┐ 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░. |
+ | POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
++| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&limit=&offset=` | ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8). ACL: ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╜╤Л╨╣ teacher, student_teacher_links, teacher_courses ╨╕╨╗╨╕ ╤А╨╛╨╗╤М methodist. |
++| GET | `/teacher/help-requests/{request_id}?teacher_id=` | ╨Ъ╨░╤А╤В╨╛╤З╨║╨░ ╨╖╨░╤П╨▓╨║╨╕ (╨┐╨╛╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ + message, closed_at, closed_by, resolution_comment, history). |
++| POST | `/teacher/help-requests/{request_id}/close` | ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г (body: `closed_by`, `resolution_comment`). ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛. |
++| POST | `/teacher/help-requests/{request_id}/reply` | ╨Ю╤В╨▓╨╡╤В╨╕╤В╤М ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`). ╨б╨╛╨╖╨┤╨░╤С╤В ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ messages, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ ╨╖╨░╨║╤А╤Л╨▓╨░╨╡╤В ╨╖╨░╤П╨▓╨║╤Г. |
++
++╨Ю╤В╨▓╨╡╤В `POST /learning/tasks/{task_id}/request-help` ╤Б ╤Н╤В╨░╨┐╨░ 3.8 ╨╝╨╛╨╢╨╡╤В ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `request_id` (ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests). Smoke-╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ ╨╖╨░╤П╨▓╨╛╨║: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md).
+ 
+ ╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╤В╤А╨╡╨▒╤Г╤О╤В `api_key` ╨▓ query. ╨Ю╤В╨▓╨╡╤В╤Л ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В ╨┐╨╛╨╗╤П, ╨╛╨┐╨╕╤Б╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Н╤В╨░╨┐╨╜╤Л╤Е ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Е (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` ╨╕ ╤В.╨┤.).
+ 
+diff --git a/tests/test_learning_api_routes.py b/tests/test_learning_api_routes.py
+index 508c7a8..b381522 100644
+--- a/tests/test_learning_api_routes.py
++++ b/tests/test_learning_api_routes.py
+@@ -27,6 +27,10 @@ def test_learning_api_routes_registered():
+         "/api/v1/learning/tasks/{task_id}/state",
+         "/api/v1/learning/tasks/{task_id}/request-help",
+         "/api/v1/teacher/task-limits/override",
++        "/api/v1/teacher/help-requests",
++        "/api/v1/teacher/help-requests/{request_id}",
++        "/api/v1/teacher/help-requests/{request_id}/close",
++        "/api/v1/teacher/help-requests/{request_id}/reply",
+     ]
+     for p in expected:
+         assert p in paths, f"╨Ю╨╢╨╕╨┤╨░╨╗╤Б╤П ╨┐╤Г╤В╤М {p} ╨▓ OpenAPI. ╨Э╨░╨╣╨┤╨╡╨╜╤Л: {paths}"

@@ -665,6 +665,12 @@ Stateless-проверка одной задачи без сохранения �
 | POST | `/learning/tasks/{task_id}/request-help` | Запрос помощи (body: `student_id`, `message`). |
 | POST | `/learning/tasks/{task_id}/hint-events` | Фиксация открытия подсказки (этап 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. Идемпотентно в окне дедупа. |
 | POST | `/teacher/task-limits/override` | Переопределение лимита попыток (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&limit=&offset=` | Список заявок на помощь (этап 3.8). ACL: назначенный teacher, student_teacher_links, teacher_courses или роль methodist. |
+| GET | `/teacher/help-requests/{request_id}?teacher_id=` | Карточка заявки (поля списка + message, closed_at, closed_by, resolution_comment, history). |
+| POST | `/teacher/help-requests/{request_id}/close` | Закрыть заявку (body: `closed_by`, `resolution_comment`). Идемпотентно. |
+| POST | `/teacher/help-requests/{request_id}/reply` | Ответить студенту (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`). Создаёт сообщение в messages, опционально закрывает заявку. |
+
+Ответ `POST /learning/tasks/{task_id}/request-help` с этапа 3.8 может содержать опциональное поле `request_id` (ID заявки в help_requests). Smoke-сценарий заявок: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md).
 
 Все запросы требуют `api_key` в query. Ответы содержат поля, описанные в этапных документах (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` и т.д.).
 

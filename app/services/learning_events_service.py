@@ -228,6 +228,79 @@ async def record_task_limit_override(
     )
 
 
+# ----- Аудит заявок на помощь (этап 3.8) -----
+
+
+async def record_help_request_opened(
+    db: AsyncSession,
+    student_id: int,
+    request_id: int,
+    event_id: int,
+    task_id: int,
+    course_id: Optional[int] = None,
+) -> None:
+    """Записать событие help_request_opened в learning_events."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "event_id": event_id,
+        "task_id": task_id,
+    }
+    if course_id is not None:
+        payload["course_id"] = course_id
+    await db.execute(
+        text("""
+            INSERT INTO learning_events (student_id, event_type, payload, created_at)
+            VALUES (:student_id, 'help_request_opened', CAST(:payload AS jsonb), now())
+        """),
+        {"student_id": student_id, "payload": json.dumps(payload)},
+    )
+
+
+async def record_help_request_closed(
+    db: AsyncSession,
+    student_id: int,
+    request_id: int,
+    closed_by: int,
+    resolution_comment: Optional[str] = None,
+) -> None:
+    """Записать событие help_request_closed в learning_events."""
+    payload: dict[str, Any] = {"request_id": request_id, "closed_by": closed_by}
+    if resolution_comment is not None:
+        payload["resolution_comment"] = resolution_comment[:2000]
+    await db.execute(
+        text("""
+            INSERT INTO learning_events (student_id, event_type, payload, created_at)
+            VALUES (:student_id, 'help_request_closed', CAST(:payload AS jsonb), now())
+        """),
+        {"student_id": student_id, "payload": json.dumps(payload)},
+    )
+
+
+async def record_help_request_replied(
+    db: AsyncSession,
+    student_id: int,
+    request_id: int,
+    teacher_id: int,
+    message_id: int,
+    thread_id: Optional[int] = None,
+) -> None:
+    """Записать событие help_request_replied в learning_events."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "teacher_id": teacher_id,
+        "message_id": message_id,
+    }
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    await db.execute(
+        text("""
+            INSERT INTO learning_events (student_id, event_type, payload, created_at)
+            VALUES (:student_id, 'help_request_replied', CAST(:payload AS jsonb), now())
+        """),
+        {"student_id": student_id, "payload": json.dumps(payload)},
+    )
+
+
 async def set_material_completed(
     db: AsyncSession,
     student_id: int,

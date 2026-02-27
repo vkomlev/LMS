@@ -22,4 +22,6 @@ import app.models.tasks
 import app.models.user_achievements
 import app.models.user_courses
 import app.models.task_results
+import app.models.help_requests
+import app.models.help_request_replies
 

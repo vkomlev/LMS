@@ -29,6 +29,7 @@ from app.api.v1.attempts import router as attempts_router
 from app.api.v1.task_results_extra import router as task_results_extra_router
 from app.api.v1.learning import router as learning_router
 from app.api.v1.teacher_learning import router as teacher_learning_router
+from app.api.v1.teacher_help_requests import router as teacher_help_requests_router
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -308,3 +309,4 @@ app.include_router(checking_router, prefix=API_PREFIX)
 app.include_router(attempts_router, prefix=API_PREFIX)
 app.include_router(learning_router, prefix=API_PREFIX)
 app.include_router(teacher_learning_router, prefix=API_PREFIX)
+app.include_router(teacher_help_requests_router, prefix=API_PREFIX)

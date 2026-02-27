@@ -88,6 +88,7 @@ class RequestHelpResponse(BaseModel):
     ok: bool = True
     event_id: int
     deduplicated: bool = False
+    request_id: Optional[int] = Field(None, description="ID заявки в help_requests (этап 3.8, опционально)")
 
 
 # ----- Hint events (этап 3.6) -----

@@ -1,0 +1,15 @@
+﻿diff --git a/tests/test_teacher_help_requests_stage38.py b/tests/test_teacher_help_requests_stage38.py
+index ec01e7d..bc90416 100644
+--- a/tests/test_teacher_help_requests_stage38.py
++++ b/tests/test_teacher_help_requests_stage38.py
+@@ -362,8 +362,8 @@ async def test_reply_creates_message_and_dedupe():
+         )
+         row = r.fetchone()
+         if not row:
+-            print("[SKIP] ╨Э╨╡╤В ╨╛╤В╨║╤А╤Л╤В╨╛╨╣ ╨╖╨░╤П╨▓╨║╨╕ ╨┤╨╗╤П reply")
+-            return True
++            print("[SKIP] ╨Э╨╡╤В ╨╛╤В╨║╤А╤Л╤В╨╛╨╣ ╨╖╨░╤П╨▓╨║╨╕ ╨┤╨╗╤П reply (╨║╤А╨╕╤В╨╕╤З╨╜╤Л╨╣ ╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ reply/dedupe ╨╜╨╡ ╨┐╤А╨╛╨│╨╜╨░╨╜)")
++            return False
+         request_id, student_id, thread_before = row[0], row[1], row[2]
+         r = await session.execute(
+             text("SELECT teacher_id FROM student_teacher_links WHERE student_id = :sid LIMIT 1"),
