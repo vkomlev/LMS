@@ -1,13 +1,15 @@
 """
-Сервис заявок на помощь (Learning Engine V1, этап 3.8).
+Сервис заявок на помощь (Learning Engine V1, этап 3.8 / 3.8.1).
 
-- Создание/обновление заявки при request-help.
+- Создание/обновление заявки при request-help (manual_help).
+- Auto-create при BLOCKED_LIMIT (blocked_limit, этап 3.8.1).
 - Назначение преподавателя (student_teacher_links → teacher_courses).
 - ACL: teacher/methodist по назначению, связям или роли.
 - Закрытие и ответ с идемпотентностью.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional, Tuple
@@ -21,6 +23,7 @@ from app.services.learning_events_service import (
     record_help_request_opened,
     record_help_request_closed,
     record_help_request_replied,
+    record_attempt_limit_reached,
 )
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
@@ -91,8 +94,8 @@ async def get_or_create_help_request(
     r = await db.execute(
         text("""
             INSERT INTO help_requests
-            (status, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id, created_at, updated_at)
-            VALUES ('open', :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id, now(), now())
+            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id, created_at, updated_at)
+            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id, now(), now())
             RETURNING id
         """),
         {
@@ -110,6 +113,82 @@ async def get_or_create_help_request(
         db, student_id, new_id, event_id, task_id, course_id
     )
     return (int(new_id), True)
+
+
+async def get_or_create_blocked_limit_help_request(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_id: int,
+    course_id: Optional[int] = None,
+    attempt_id: Optional[int] = None,
+    attempts_used: int = 0,
+    attempts_limit_effective: int = 3,
+    last_based_status: str = "BLOCKED_LIMIT",
+) -> Tuple[int, bool, bool]:
+    """
+    Получить или создать open заявку типа blocked_limit для пары (student_id, task_id).
+    Идемпотентно: одна open заявка blocked_limit на пару; повтор — обновление updated_at/context.
+    Returns: (request_id, created, deduplicated).
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": task_id},
+    )
+    r = await db.execute(
+        text("""
+            SELECT id, attempt_id, context_json FROM help_requests
+            WHERE student_id = :student_id AND task_id = :task_id
+              AND status = 'open' AND request_type = 'blocked_limit'
+            LIMIT 1
+        """),
+        {"student_id": student_id, "task_id": task_id},
+    )
+    row = r.fetchone()
+    context = {
+        "attempts_used": attempts_used,
+        "attempts_limit_effective": attempts_limit_effective,
+        "last_based_status": last_based_status,
+        "trigger": "blocked_limit",
+    }
+    context_str = json.dumps(context)
+    if row is not None:
+        request_id = int(row[0])
+        await db.execute(
+            text("""
+                UPDATE help_requests
+                SET updated_at = now(), attempt_id = COALESCE(:attempt_id, attempt_id),
+                    context_json = :context_json
+                WHERE id = :id
+            """),
+            {"id": request_id, "attempt_id": attempt_id, "context_json": context_str},
+        )
+        await record_attempt_limit_reached(
+            db, student_id, request_id, task_id, attempts_used, attempts_limit_effective, course_id
+        )
+        return (request_id, False, True)
+    assigned = await resolve_assigned_teacher(db, student_id, course_id)
+    r = await db.execute(
+        text("""
+            INSERT INTO help_requests
+            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at)
+            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now())
+            RETURNING id
+        """),
+        {
+            "context_json": context_str,
+            "student_id": student_id,
+            "task_id": task_id,
+            "course_id": course_id,
+            "attempt_id": attempt_id,
+            "assigned_teacher_id": assigned,
+        },
+    )
+    new_id = r.scalar()
+    await record_attempt_limit_reached(
+        db, student_id, new_id, task_id, attempts_used, attempts_limit_effective, course_id
+    )
+    return (int(new_id), True, False)
 
 
 async def help_request_exists(db: AsyncSession, request_id: int) -> bool:
@@ -181,11 +260,13 @@ async def list_help_requests(
     db: AsyncSession,
     teacher_id: int,
     status_filter: str = "open",
+    request_type_filter: str = "all",
     limit: int = 20,
     offset: int = 0,
 ) -> Tuple[list[dict[str, Any]], int]:
     """
     Список заявок с ACL. status_filter: open | closed | all.
+    request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
     Возвращает (items, total). items — словари для HelpRequestListItem.
     """
     status_cond = ""
@@ -193,6 +274,11 @@ async def list_help_requests(
         status_cond = "AND hr.status = 'open'"
     elif status_filter == "closed":
         status_cond = "AND hr.status = 'closed'"
+    type_cond = ""
+    if request_type_filter == "manual_help":
+        type_cond = "AND hr.request_type = 'manual_help'"
+    elif request_type_filter == "blocked_limit":
+        type_cond = "AND hr.request_type = 'blocked_limit'"
 
     acl_sql = """
         (hr.assigned_teacher_id = :teacher_id
@@ -205,7 +291,7 @@ async def list_help_requests(
     r = await db.execute(
         text(f"""
             SELECT COUNT(*) FROM help_requests hr
-            WHERE {acl_sql} {status_cond}
+            WHERE {acl_sql} {status_cond} {type_cond}
         """),
         params,
     )
@@ -213,7 +299,8 @@ async def list_help_requests(
 
     r = await db.execute(
         text(f"""
-            SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
+            SELECT hr.id, hr.status, hr.request_type, hr.auto_created, hr.context_json,
+                   hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
@@ -222,7 +309,7 @@ async def list_help_requests(
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
-            WHERE {acl_sql} {status_cond}
+            WHERE {acl_sql} {status_cond} {type_cond}
             ORDER BY hr.updated_at DESC
             LIMIT :limit OFFSET :offset
         """),
@@ -231,20 +318,24 @@ async def list_help_requests(
     rows = r.fetchall()
     items = []
     for row in rows:
+        ctx = row[4] if row[4] is not None else {}
         items.append({
             "request_id": row[0],
             "status": row[1],
-            "student_id": row[2],
-            "task_id": row[3],
-            "course_id": row[4],
-            "attempt_id": row[5],
-            "created_at": row[6],
-            "updated_at": row[7],
-            "thread_id": row[8],
-            "event_id": row[9],
-            "student_name": row[10],
-            "task_title": _task_title_display(row[3], row[11]) if row[11] or row[3] else None,
-            "course_title": row[12],
+            "request_type": row[2] or "manual_help",
+            "auto_created": bool(row[3]) if row[3] is not None else False,
+            "context": ctx if isinstance(ctx, dict) else {},
+            "student_id": row[5],
+            "task_id": row[6],
+            "course_id": row[7],
+            "attempt_id": row[8],
+            "created_at": row[9],
+            "updated_at": row[10],
+            "thread_id": row[11],
+            "event_id": row[12],
+            "student_name": row[13],
+            "task_title": _task_title_display(row[6], row[14]) if row[14] or row[6] else None,
+            "course_title": row[15],
         })
     return (items, total)
 
@@ -272,6 +363,7 @@ async def get_help_request_detail(
         text("""
             SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
+                   hr.request_type, hr.auto_created, hr.context_json,
                    hr.message, hr.closed_at, hr.closed_by, hr.resolution_comment,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
@@ -287,6 +379,9 @@ async def get_help_request_detail(
     row = r.fetchone()
     if row is None:
         return (None, "not_found")
+    ctx = row[12] if row[12] is not None else {}
+    if not isinstance(ctx, dict):
+        ctx = {}
 
     r2 = await db.execute(
         text("""
@@ -320,13 +415,16 @@ async def get_help_request_detail(
         "updated_at": row[7],
         "thread_id": row[8],
         "event_id": row[9],
-        "message": row[10],
-        "closed_at": row[11],
-        "closed_by": row[12],
-        "resolution_comment": row[13],
-        "student_name": row[14],
-        "task_title": _task_title_display(row[3], row[15]) if row[15] or row[3] else None,
-        "course_title": row[16],
+        "request_type": row[10] or "manual_help",
+        "auto_created": bool(row[11]) if row[11] is not None else False,
+        "context": ctx,
+        "message": row[13],
+        "closed_at": row[14],
+        "closed_by": row[15],
+        "resolution_comment": row[16],
+        "student_name": row[17],
+        "task_title": _task_title_display(row[3], row[18]) if row[18] or row[3] else None,
+        "course_title": row[19],
         "history": replies,
     }, None)
 

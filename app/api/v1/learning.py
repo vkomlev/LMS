@@ -29,7 +29,10 @@ from app.services.learning_events_service import (
     record_hint_open,
     set_material_completed,
 )
-from app.services.help_requests_service import get_or_create_help_request
+from app.services.help_requests_service import (
+    get_or_create_help_request,
+    get_or_create_blocked_limit_help_request,
+)
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -63,6 +66,18 @@ async def get_next_item(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     result = await learning_service.resolve_next_item(db, student_id)
+    if result.type == "blocked_limit" and result.task_id is not None:
+        state = await learning_service.compute_task_state(db, student_id, result.task_id)
+        await get_or_create_blocked_limit_help_request(
+            db,
+            student_id=student_id,
+            task_id=result.task_id,
+            course_id=result.course_id,
+            attempt_id=state.last_attempt_id,
+            attempts_used=state.attempts_used,
+            attempts_limit_effective=state.attempts_limit_effective,
+            last_based_status=state.state,
+        )
     if result.type in ("blocked_dependency", "blocked_limit"):
         logger.warning(
             "next-item: student_id=%s type=%s course_id=%s",
@@ -209,6 +224,18 @@ async def get_task_state(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     state = await learning_service.compute_task_state(db, student_id, task_id)
+    if state.state == "BLOCKED_LIMIT":
+        await get_or_create_blocked_limit_help_request(
+            db,
+            student_id=student_id,
+            task_id=task_id,
+            course_id=task.course_id,
+            attempt_id=state.last_attempt_id,
+            attempts_used=state.attempts_used,
+            attempts_limit_effective=state.attempts_limit_effective,
+            last_based_status=state.state,
+        )
+        await db.commit()
     return TaskStateResponse(
         task_id=task_id,
         student_id=student_id,

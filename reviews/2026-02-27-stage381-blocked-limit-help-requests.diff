@@ -1,0 +1,468 @@
+﻿diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 4c7e1d1..a0cd39a 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -29,7 +29,10 @@ from app.services.learning_events_service import (
+     record_hint_open,
+     set_material_completed,
+ )
+-from app.services.help_requests_service import get_or_create_help_request
++from app.services.help_requests_service import (
++    get_or_create_help_request,
++    get_or_create_blocked_limit_help_request,
++)
+ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+ from app.services.materials_service import MaterialsService
+@@ -63,6 +66,18 @@ async def get_next_item(
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
+     result = await learning_service.resolve_next_item(db, student_id)
++    if result.type == "blocked_limit" and result.task_id is not None:
++        state = await learning_service.compute_task_state(db, student_id, result.task_id)
++        await get_or_create_blocked_limit_help_request(
++            db,
++            student_id=student_id,
++            task_id=result.task_id,
++            course_id=result.course_id,
++            attempt_id=state.last_attempt_id,
++            attempts_used=state.attempts_used,
++            attempts_limit_effective=state.attempts_limit_effective,
++            last_based_status=state.state,
++        )
+     if result.type in ("blocked_dependency", "blocked_limit"):
+         logger.warning(
+             "next-item: student_id=%s type=%s course_id=%s",
+@@ -209,6 +224,18 @@ async def get_task_state(
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨б╤В╤Г╨┤╨╡╨╜╤В ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜")
+     state = await learning_service.compute_task_state(db, student_id, task_id)
++    if state.state == "BLOCKED_LIMIT":
++        await get_or_create_blocked_limit_help_request(
++            db,
++            student_id=student_id,
++            task_id=task_id,
++            course_id=task.course_id,
++            attempt_id=state.last_attempt_id,
++            attempts_used=state.attempts_used,
++            attempts_limit_effective=state.attempts_limit_effective,
++            last_based_status=state.state,
++        )
++        await db.commit()
+     return TaskStateResponse(
+         task_id=task_id,
+         student_id=student_id,
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 403d59c..34ce5f6 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -46,6 +46,7 @@ logger = logging.getLogger("api.teacher_help_requests")
+ async def help_requests_list(
+     teacher_id: int = Query(..., description="ID ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П/╨╝╨╡╤В╨╛╨┤╨╕╤Б╤В╨░"),
+     status_filter: str = Query("open", description="open | closed | all", alias="status"),
++    request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
+     limit: int = Query(20, ge=1, le=100),
+     offset: int = Query(0, ge=0),
+     db: AsyncSession = Depends(get_db),
+@@ -55,7 +56,14 @@ async def help_requests_list(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+             detail="status ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М open, closed ╨╕╨╗╨╕ all",
+         )
+-    items, total = await list_help_requests(db, teacher_id, status_filter, limit, offset)
++    if request_type_filter not in ("manual_help", "blocked_limit", "all"):
++        raise HTTPException(
++            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
++            detail="request_type ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М manual_help, blocked_limit ╨╕╨╗╨╕ all",
++        )
++    items, total = await list_help_requests(
++        db, teacher_id, status_filter, request_type_filter, limit, offset
++    )
+     return HelpRequestListResponse(
+         items=[HelpRequestListItem(**it) for it in items],
+         total=total,
+diff --git a/app/models/help_requests.py b/app/models/help_requests.py
+index 26bdacc..af7f643 100644
+--- a/app/models/help_requests.py
++++ b/app/models/help_requests.py
+@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, List, Optional
+ 
+ from sqlalchemy import (
+     BigInteger,
++    Boolean,
+     DateTime,
+     ForeignKeyConstraint,
+     Integer,
+@@ -14,6 +15,7 @@ from sqlalchemy import (
+     Text,
+     text,
+ )
++from sqlalchemy.dialects.postgresql import JSONB
+ from sqlalchemy.orm import Mapped, mapped_column, relationship
+ 
+ from app.db.base import Base
+@@ -64,6 +66,18 @@ class HelpRequests(Base):
+ 
+     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
++    request_type: Mapped[str] = mapped_column(
++        String(32), nullable=False, server_default=text("'manual_help'"),
++        comment="manual_help | blocked_limit (╤Н╤В╨░╨┐ 3.8.1)",
++    )
++    auto_created: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("false"),
++        comment="╨б╨╛╨╖╨┤╨░╨╜╨░ ╨░╨▓╤В╨╛╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ ╨┐╤А╨╕ BLOCKED_LIMIT (╤Н╤В╨░╨┐ 3.8.1)",
++    )
++    context_json: Mapped[dict] = mapped_column(
++        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
++        comment="╨Ъ╨╛╨╜╤В╨╡╨║╤Б╤В ╨╖╨░╤П╨▓╨║╨╕ (attempts_used, trigger ╨╕ ╤В.╨┤.)",
++    )
+     student_id: Mapped[int] = mapped_column(Integer, nullable=False)
+     task_id: Mapped[int] = mapped_column(Integer, nullable=False)
+     course_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 1071608..1cfe310 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -1,14 +1,16 @@
+-"""╨б╤Е╨╡╨╝╤Л API ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П (Learning Engine V1, ╤Н╤В╨░╨┐ 3.8)."""
++"""╨б╤Е╨╡╨╝╤Л API ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П (Learning Engine V1, ╤Н╤В╨░╨┐ 3.8 / 3.8.1)."""
+ from __future__ import annotations
+ 
+ from datetime import datetime
+-from typing import Literal, Optional
++from typing import Any, Dict, Literal, Optional
+ 
+ from pydantic import BaseModel, Field
+ 
+ 
+ HelpRequestStatus = Literal["open", "closed"]
+ HelpRequestStatusFilter = Literal["open", "closed", "all"]
++HelpRequestType = Literal["manual_help", "blocked_limit"]
++HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "all"]
+ 
+ 
+ # ----- GET list -----
+@@ -17,6 +19,9 @@ class HelpRequestListItem(BaseModel):
+     """╨н╨╗╨╡╨╝╨╡╨╜╤В ╤Б╨┐╨╕╤Б╨║╨░ ╨╖╨░╤П╨▓╨╛╨║."""
+     request_id: int = Field(..., description="ID ╨╖╨░╤П╨▓╨║╨╕")
+     status: HelpRequestStatus
++    request_type: HelpRequestType = Field("manual_help", description="╨в╨╕╨┐ ╨╖╨░╤П╨▓╨║╨╕ (╤Н╤В╨░╨┐ 3.8.1)")
++    auto_created: bool = Field(False, description="╨б╨╛╨╖╨┤╨░╨╜╨░ ╨░╨▓╤В╨╛╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ ╨┐╤А╨╕ BLOCKED_LIMIT")
++    context: Dict[str, Any] = Field(default_factory=dict, description="╨Ъ╨╛╨╜╤В╨╡╨║╤Б╤В (attempts_used, attempts_limit_effective ╨╕ ╨┤╤А.)")
+     student_id: int
+     student_name: Optional[str] = None
+     task_id: int
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 8804e3e..3133a48 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -1,13 +1,15 @@
+ """
+-╨б╨╡╤А╨▓╨╕╤Б ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (Learning Engine V1, ╤Н╤В╨░╨┐ 3.8).
++╨б╨╡╤А╨▓╨╕╤Б ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (Learning Engine V1, ╤Н╤В╨░╨┐ 3.8 / 3.8.1).
+ 
+-- ╨б╨╛╨╖╨┤╨░╨╜╨╕╨╡/╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ ╨╖╨░╤П╨▓╨║╨╕ ╨┐╤А╨╕ request-help.
++- ╨б╨╛╨╖╨┤╨░╨╜╨╕╨╡/╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ ╨╖╨░╤П╨▓╨║╨╕ ╨┐╤А╨╕ request-help (manual_help).
++- Auto-create ╨┐╤А╨╕ BLOCKED_LIMIT (blocked_limit, ╤Н╤В╨░╨┐ 3.8.1).
+ - ╨Э╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╨╡ ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П (student_teacher_links тЖТ teacher_courses).
+ - ACL: teacher/methodist ╨┐╨╛ ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╤О, ╤Б╨▓╤П╨╖╤П╨╝ ╨╕╨╗╨╕ ╤А╨╛╨╗╨╕.
+ - ╨Ч╨░╨║╤А╤Л╤В╨╕╨╡ ╨╕ ╨╛╤В╨▓╨╡╤В ╤Б ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╤Б╤В╤М╤О.
+ """
+ from __future__ import annotations
+ 
++import json
+ import logging
+ from datetime import datetime, timezone
+ from typing import Any, Optional, Tuple
+@@ -21,6 +23,7 @@ from app.services.learning_events_service import (
+     record_help_request_opened,
+     record_help_request_closed,
+     record_help_request_replied,
++    record_attempt_limit_reached,
+ )
+ from app.services.messages_service import MessagesService
+ from app.services.student_teacher_links_service import StudentTeacherLinksService
+@@ -91,8 +94,8 @@ async def get_or_create_help_request(
+     r = await db.execute(
+         text("""
+             INSERT INTO help_requests
+-            (status, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id, created_at, updated_at)
+-            VALUES ('open', :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id, now(), now())
++            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, message, assigned_teacher_id, created_at, updated_at)
++            VALUES ('open', 'manual_help', false, '{}'::jsonb, :student_id, :task_id, :course_id, :attempt_id, :event_id, :message, :assigned_teacher_id, now(), now())
+             RETURNING id
+         """),
+         {
+@@ -112,6 +115,82 @@ async def get_or_create_help_request(
+     return (int(new_id), True)
+ 
+ 
++async def get_or_create_blocked_limit_help_request(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    course_id: Optional[int] = None,
++    attempt_id: Optional[int] = None,
++    attempts_used: int = 0,
++    attempts_limit_effective: int = 3,
++    last_based_status: str = "BLOCKED_LIMIT",
++) -> Tuple[int, bool, bool]:
++    """
++    ╨Я╨╛╨╗╤Г╤З╨╕╤В╤М ╨╕╨╗╨╕ ╤Б╨╛╨╖╨┤╨░╤В╤М open ╨╖╨░╤П╨▓╨║╤Г ╤В╨╕╨┐╨░ blocked_limit ╨┤╨╗╤П ╨┐╨░╤А╤Л (student_id, task_id).
++    ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╨╛╨┤╨╜╨░ open ╨╖╨░╤П╨▓╨║╨░ blocked_limit ╨╜╨░ ╨┐╨░╤А╤Г; ╨┐╨╛╨▓╤В╨╛╤А тАФ ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ updated_at/context.
++    Returns: (request_id, created, deduplicated).
++    """
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": student_id, "k2": task_id},
++    )
++    r = await db.execute(
++        text("""
++            SELECT id, attempt_id, context_json FROM help_requests
++            WHERE student_id = :student_id AND task_id = :task_id
++              AND status = 'open' AND request_type = 'blocked_limit'
++            LIMIT 1
++        """),
++        {"student_id": student_id, "task_id": task_id},
++    )
++    row = r.fetchone()
++    context = {
++        "attempts_used": attempts_used,
++        "attempts_limit_effective": attempts_limit_effective,
++        "last_based_status": last_based_status,
++        "trigger": "blocked_limit",
++    }
++    context_str = json.dumps(context)
++    if row is not None:
++        request_id = int(row[0])
++        await db.execute(
++            text("""
++                UPDATE help_requests
++                SET updated_at = now(), attempt_id = COALESCE(:attempt_id, attempt_id),
++                    context_json = :context_json
++                WHERE id = :id
++            """),
++            {"id": request_id, "attempt_id": attempt_id, "context_json": context_str},
++        )
++        await record_attempt_limit_reached(
++            db, student_id, request_id, task_id, attempts_used, attempts_limit_effective, course_id
++        )
++        return (request_id, False, True)
++    assigned = await resolve_assigned_teacher(db, student_id, course_id)
++    r = await db.execute(
++        text("""
++            INSERT INTO help_requests
++            (status, request_type, auto_created, context_json, student_id, task_id, course_id, attempt_id, event_id, assigned_teacher_id, created_at, updated_at)
++            VALUES ('open', 'blocked_limit', true, :context_json, :student_id, :task_id, :course_id, :attempt_id, NULL, :assigned_teacher_id, now(), now())
++            RETURNING id
++        """),
++        {
++            "context_json": context_str,
++            "student_id": student_id,
++            "task_id": task_id,
++            "course_id": course_id,
++            "attempt_id": attempt_id,
++            "assigned_teacher_id": assigned,
++        },
++    )
++    new_id = r.scalar()
++    await record_attempt_limit_reached(
++        db, student_id, new_id, task_id, attempts_used, attempts_limit_effective, course_id
++    )
++    return (int(new_id), True, False)
++
++
+ async def help_request_exists(db: AsyncSession, request_id: int) -> bool:
+     """╨Я╤А╨╛╨▓╨╡╤А╨║╨░ ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╤П ╨╖╨░╤П╨▓╨║╨╕ ╨┐╨╛ id (╨▒╨╡╨╖ ACL)."""
+     r = await db.execute(
+@@ -181,11 +260,13 @@ async def list_help_requests(
+     db: AsyncSession,
+     teacher_id: int,
+     status_filter: str = "open",
++    request_type_filter: str = "all",
+     limit: int = 20,
+     offset: int = 0,
+ ) -> Tuple[list[dict[str, Any]], int]:
+     """
+     ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╤Б ACL. status_filter: open | closed | all.
++    request_type_filter: manual_help | blocked_limit | all (╤Н╤В╨░╨┐ 3.8.1).
+     ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (items, total). items тАФ ╤Б╨╗╨╛╨▓╨░╤А╨╕ ╨┤╨╗╤П HelpRequestListItem.
+     """
+     status_cond = ""
+@@ -193,6 +274,11 @@ async def list_help_requests(
+         status_cond = "AND hr.status = 'open'"
+     elif status_filter == "closed":
+         status_cond = "AND hr.status = 'closed'"
++    type_cond = ""
++    if request_type_filter == "manual_help":
++        type_cond = "AND hr.request_type = 'manual_help'"
++    elif request_type_filter == "blocked_limit":
++        type_cond = "AND hr.request_type = 'blocked_limit'"
+ 
+     acl_sql = """
+         (hr.assigned_teacher_id = :teacher_id
+@@ -205,7 +291,7 @@ async def list_help_requests(
+     r = await db.execute(
+         text(f"""
+             SELECT COUNT(*) FROM help_requests hr
+-            WHERE {acl_sql} {status_cond}
++            WHERE {acl_sql} {status_cond} {type_cond}
+         """),
+         params,
+     )
+@@ -213,7 +299,8 @@ async def list_help_requests(
+ 
+     r = await db.execute(
+         text(f"""
+-            SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
++            SELECT hr.id, hr.status, hr.request_type, hr.auto_created, hr.context_json,
++                   hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
+                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+@@ -222,7 +309,7 @@ async def list_help_requests(
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+             LEFT JOIN courses c ON c.id = hr.course_id
+-            WHERE {acl_sql} {status_cond}
++            WHERE {acl_sql} {status_cond} {type_cond}
+             ORDER BY hr.updated_at DESC
+             LIMIT :limit OFFSET :offset
+         """),
+@@ -231,20 +318,24 @@ async def list_help_requests(
+     rows = r.fetchall()
+     items = []
+     for row in rows:
++        ctx = row[4] if row[4] is not None else {}
+         items.append({
+             "request_id": row[0],
+             "status": row[1],
+-            "student_id": row[2],
+-            "task_id": row[3],
+-            "course_id": row[4],
+-            "attempt_id": row[5],
+-            "created_at": row[6],
+-            "updated_at": row[7],
+-            "thread_id": row[8],
+-            "event_id": row[9],
+-            "student_name": row[10],
+-            "task_title": _task_title_display(row[3], row[11]) if row[11] or row[3] else None,
+-            "course_title": row[12],
++            "request_type": row[2] or "manual_help",
++            "auto_created": bool(row[3]) if row[3] is not None else False,
++            "context": ctx if isinstance(ctx, dict) else {},
++            "student_id": row[5],
++            "task_id": row[6],
++            "course_id": row[7],
++            "attempt_id": row[8],
++            "created_at": row[9],
++            "updated_at": row[10],
++            "thread_id": row[11],
++            "event_id": row[12],
++            "student_name": row[13],
++            "task_title": _task_title_display(row[6], row[14]) if row[14] or row[6] else None,
++            "course_title": row[15],
+         })
+     return (items, total)
+ 
+@@ -272,6 +363,7 @@ async def get_help_request_detail(
+         text("""
+             SELECT hr.id, hr.status, hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
+                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
++                   hr.request_type, hr.auto_created, hr.context_json,
+                    hr.message, hr.closed_at, hr.closed_by, hr.resolution_comment,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+@@ -287,6 +379,9 @@ async def get_help_request_detail(
+     row = r.fetchone()
+     if row is None:
+         return (None, "not_found")
++    ctx = row[12] if row[12] is not None else {}
++    if not isinstance(ctx, dict):
++        ctx = {}
+ 
+     r2 = await db.execute(
+         text("""
+@@ -320,13 +415,16 @@ async def get_help_request_detail(
+         "updated_at": row[7],
+         "thread_id": row[8],
+         "event_id": row[9],
+-        "message": row[10],
+-        "closed_at": row[11],
+-        "closed_by": row[12],
+-        "resolution_comment": row[13],
+-        "student_name": row[14],
+-        "task_title": _task_title_display(row[3], row[15]) if row[15] or row[3] else None,
+-        "course_title": row[16],
++        "request_type": row[10] or "manual_help",
++        "auto_created": bool(row[11]) if row[11] is not None else False,
++        "context": ctx,
++        "message": row[13],
++        "closed_at": row[14],
++        "closed_by": row[15],
++        "resolution_comment": row[16],
++        "student_name": row[17],
++        "task_title": _task_title_display(row[3], row[18]) if row[18] or row[3] else None,
++        "course_title": row[19],
+         "history": replies,
+     }, None)
+ 
+diff --git a/app/services/learning_events_service.py b/app/services/learning_events_service.py
+index 1416083..a45ddd6 100644
+--- a/app/services/learning_events_service.py
++++ b/app/services/learning_events_service.py
+@@ -301,6 +301,33 @@ async def record_help_request_replied(
+     )
+ 
+ 
++async def record_attempt_limit_reached(
++    db: AsyncSession,
++    student_id: int,
++    request_id: int,
++    task_id: int,
++    attempts_used: int,
++    attempts_limit_effective: int,
++    course_id: Optional[int] = None,
++) -> None:
++    """╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╤Б╨╛╨▒╤Л╤В╨╕╨╡ attempt_limit_reached (╤Н╤В╨░╨┐ 3.8.1, auto help-request ╨┐╤А╨╕ BLOCKED_LIMIT)."""
++    payload: dict[str, Any] = {
++        "request_id": request_id,
++        "task_id": task_id,
++        "attempts_used": attempts_used,
++        "attempts_limit_effective": attempts_limit_effective,
++    }
++    if course_id is not None:
++        payload["course_id"] = course_id
++    await db.execute(
++        text("""
++            INSERT INTO learning_events (student_id, event_type, payload, created_at)
++            VALUES (:student_id, 'attempt_limit_reached', CAST(:payload AS jsonb), now())
++        """),
++        {"student_id": student_id, "payload": json.dumps(payload)},
++    )
++
++
+ async def set_material_completed(
+     db: AsyncSession,
+     student_id: int,
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 26598bf..46c1d06 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -665,12 +665,12 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ | POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
+ | POST | `/learning/tasks/{task_id}/hint-events` | ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤Н╤В╨░╨┐ 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░. |
+ | POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+-| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&limit=&offset=` | ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8). ACL: ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╜╤Л╨╣ teacher, student_teacher_links, teacher_courses ╨╕╨╗╨╕ ╤А╨╛╨╗╤М methodist. |
+-| GET | `/teacher/help-requests/{request_id}?teacher_id=` | ╨Ъ╨░╤А╤В╨╛╤З╨║╨░ ╨╖╨░╤П╨▓╨║╨╕ (╨┐╨╛╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ + message, closed_at, closed_by, resolution_comment, history). |
++| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&request_type=manual_help\|blocked_limit\|all&limit=&offset=` | ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8/3.8.1). ╨Я╨╛╨╗╤П: request_type, auto_created, context. ╨д╨╕╨╗╤М╤В╤А request_type тАФ ╨┐╨╛ ╤В╨╕╨┐╤Г ╨╖╨░╤П╨▓╨║╨╕. ACL: ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╜╤Л╨╣ teacher, student_teacher_links, teacher_courses ╨╕╨╗╨╕ ╤А╨╛╨╗╤М methodist. |
++| GET | `/teacher/help-requests/{request_id}?teacher_id=` | ╨Ъ╨░╤А╤В╨╛╤З╨║╨░ ╨╖╨░╤П╨▓╨║╨╕ (╨┐╨╛╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ + message, closed_at, closed_by, resolution_comment, history). ╨Т ╤Б╨┐╨╕╤Б╨║╨╡ ╨╕ ╨║╨░╤А╤В╨╛╤З╨║╨╡: request_type, auto_created, context (╤Н╤В╨░╨┐ 3.8.1). |
+ | POST | `/teacher/help-requests/{request_id}/close` | ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г (body: `closed_by`, `resolution_comment`). ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛. |
+ | POST | `/teacher/help-requests/{request_id}/reply` | ╨Ю╤В╨▓╨╡╤В╨╕╤В╤М ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`). ╨б╨╛╨╖╨┤╨░╤С╤В ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ messages, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ ╨╖╨░╨║╤А╤Л╨▓╨░╨╡╤В ╨╖╨░╤П╨▓╨║╤Г. |
+ 
+-╨Ю╤В╨▓╨╡╤В `POST /learning/tasks/{task_id}/request-help` ╤Б ╤Н╤В╨░╨┐╨░ 3.8 ╨╝╨╛╨╢╨╡╤В ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `request_id` (ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests). Smoke-╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ ╨╖╨░╤П╨▓╨╛╨║: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md).
++╨Ю╤В╨▓╨╡╤В `POST /learning/tasks/{task_id}/request-help` ╤Б ╤Н╤В╨░╨┐╨░ 3.8 ╨╝╨╛╨╢╨╡╤В ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `request_id` (ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests). ╨б ╤Н╤В╨░╨┐╨░ 3.8.1 ╨┐╤А╨╕ `GET /learning/next-item` ╨╕╨╗╨╕ `GET /learning/tasks/{task_id}/state` ╤Б ╤В╨╕╨┐╨╛╨╝/╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡╨╝ `blocked_limit`/`BLOCKED_LIMIT` ╨╖╨░╤П╨▓╨║╨░ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╤Б╨╛╨╖╨┤╨░╤С╤В╤Б╤П ╨░╨▓╤В╨╛╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ (request_type=blocked_limit, auto_created=true, context ╤Б attempts_used/attempts_limit_effective). ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╝╨╛╨╢╨╜╨╛ ╤Д╨╕╨╗╤М╤В╤А╨╛╨▓╨░╤В╤М ╨┐╨╛ `request_type=manual_help|blocked_limit|all`. Smoke-╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ ╨╖╨░╤П╨▓╨╛╨║: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md).
+ 
+ ╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╤В╤А╨╡╨▒╤Г╤О╤В `api_key` ╨▓ query. ╨Ю╤В╨▓╨╡╤В╤Л ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В ╨┐╨╛╨╗╤П, ╨╛╨┐╨╕╤Б╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Н╤В╨░╨┐╨╜╤Л╤Е ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Е (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` ╨╕ ╤В.╨┤.).
+ 

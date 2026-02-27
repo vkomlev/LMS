@@ -46,6 +46,7 @@ logger = logging.getLogger("api.teacher_help_requests")
 async def help_requests_list(
     teacher_id: int = Query(..., description="ID преподавателя/методиста"),
     status_filter: str = Query("open", description="open | closed | all", alias="status"),
+    request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
@@ -55,7 +56,14 @@ async def help_requests_list(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="status должен быть open, closed или all",
         )
-    items, total = await list_help_requests(db, teacher_id, status_filter, limit, offset)
+    if request_type_filter not in ("manual_help", "blocked_limit", "all"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="request_type должен быть manual_help, blocked_limit или all",
+        )
+    items, total = await list_help_requests(
+        db, teacher_id, status_filter, request_type_filter, limit, offset
+    )
     return HelpRequestListResponse(
         items=[HelpRequestListItem(**it) for it in items],
         total=total,

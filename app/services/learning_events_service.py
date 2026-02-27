@@ -301,6 +301,33 @@ async def record_help_request_replied(
     )
 
 
+async def record_attempt_limit_reached(
+    db: AsyncSession,
+    student_id: int,
+    request_id: int,
+    task_id: int,
+    attempts_used: int,
+    attempts_limit_effective: int,
+    course_id: Optional[int] = None,
+) -> None:
+    """Записать событие attempt_limit_reached (этап 3.8.1, auto help-request при BLOCKED_LIMIT)."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "task_id": task_id,
+        "attempts_used": attempts_used,
+        "attempts_limit_effective": attempts_limit_effective,
+    }
+    if course_id is not None:
+        payload["course_id"] = course_id
+    await db.execute(
+        text("""
+            INSERT INTO learning_events (student_id, event_type, payload, created_at)
+            VALUES (:student_id, 'attempt_limit_reached', CAST(:payload AS jsonb), now())
+        """),
+        {"student_id": student_id, "payload": json.dumps(payload)},
+    )
+
+
 async def set_material_completed(
     db: AsyncSession,
     student_id: int,

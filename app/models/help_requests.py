@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKeyConstraint,
     Integer,
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Text,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -64,6 +66,18 @@ class HelpRequests(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
+    request_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'manual_help'"),
+        comment="manual_help | blocked_limit (этап 3.8.1)",
+    )
+    auto_created: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"),
+        comment="Создана автоматически при BLOCKED_LIMIT (этап 3.8.1)",
+    )
+    context_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        comment="Контекст заявки (attempts_used, trigger и т.д.)",
+    )
     student_id: Mapped[int] = mapped_column(Integer, nullable=False)
     task_id: Mapped[int] = mapped_column(Integer, nullable=False)
     course_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

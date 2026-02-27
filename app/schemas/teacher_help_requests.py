@@ -1,14 +1,16 @@
-"""Схемы API заявок на помощь преподавателя (Learning Engine V1, этап 3.8)."""
+"""Схемы API заявок на помощь преподавателя (Learning Engine V1, этап 3.8 / 3.8.1)."""
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 HelpRequestStatus = Literal["open", "closed"]
 HelpRequestStatusFilter = Literal["open", "closed", "all"]
+HelpRequestType = Literal["manual_help", "blocked_limit"]
+HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "all"]
 
 
 # ----- GET list -----
@@ -17,6 +19,9 @@ class HelpRequestListItem(BaseModel):
     """Элемент списка заявок."""
     request_id: int = Field(..., description="ID заявки")
     status: HelpRequestStatus
+    request_type: HelpRequestType = Field("manual_help", description="Тип заявки (этап 3.8.1)")
+    auto_created: bool = Field(False, description="Создана автоматически при BLOCKED_LIMIT")
+    context: Dict[str, Any] = Field(default_factory=dict, description="Контекст (attempts_used, attempts_limit_effective и др.)")
     student_id: int
     student_name: Optional[str] = None
     task_id: int
