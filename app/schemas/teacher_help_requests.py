@@ -33,6 +33,10 @@ class HelpRequestListItem(BaseModel):
     updated_at: datetime
     thread_id: Optional[int] = None
     event_id: Optional[int] = None
+    # Этап 3.9: SLA/приоритет
+    priority: int = Field(100, description="Приоритет (меньше — выше)")
+    due_at: Optional[datetime] = Field(None, description="Желательный срок обработки")
+    is_overdue: bool = Field(False, description="Просрочена ли по due_at")
 
 
 class HelpRequestListResponse(BaseModel):
@@ -68,6 +72,7 @@ class HelpRequestCloseRequest(BaseModel):
     """Тело запроса закрытия заявки."""
     closed_by: int = Field(..., description="ID пользователя, закрывающего заявку")
     resolution_comment: Optional[str] = Field(None, max_length=2000)
+    lock_token: Optional[str] = Field(None, description="Токен блокировки (этап 3.9); при невалидном/просроченном — 409")
 
 
 class HelpRequestCloseResponse(BaseModel):
@@ -87,6 +92,7 @@ class HelpRequestReplyRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000, description="Текст ответа студенту")
     close_after_reply: bool = Field(False, description="Закрыть заявку после отправки ответа")
     idempotency_key: Optional[str] = Field(None, max_length=128, description="Ключ идемпотентности")
+    lock_token: Optional[str] = Field(None, description="Токен блокировки (этап 3.9); при невалидном/просроченном — 409")
 
 
 class HelpRequestReplyResponse(BaseModel):

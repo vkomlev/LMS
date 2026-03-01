@@ -1,0 +1,4 @@
+﻿interface:
+  display_name: "TechLead Code Reviewer"
+  short_description: "Strict production-readiness code review"
+  default_prompt: "Review this change as a tech lead and return PASS/FAIL with blocking findings."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "FastAPI API Developer"
+  short_description: "Build and debug FastAPI with MCP + logs"
+  default_prompt: "Implement this FastAPI change with MCP DB checks and log-driven debugging."

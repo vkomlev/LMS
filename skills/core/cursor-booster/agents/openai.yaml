@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cursor Booster"
+  short_description: "Design and roll out advanced Cursor workflows"
+  default_prompt: "Map latest Cursor capabilities and produce a rollout plan for plugins, subagents, skills, and MCP."

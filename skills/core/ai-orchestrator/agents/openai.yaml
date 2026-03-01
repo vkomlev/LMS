@@ -1,0 +1,4 @@
+interface:
+  display_name: "AI Orchestrator"
+  short_description: "Route work across tiers and projects"
+  default_prompt: "Orchestrate this task using contours, tier routing, and quality gates."

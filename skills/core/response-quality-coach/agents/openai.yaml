@@ -1,0 +1,4 @@
+interface:
+  display_name: "Response Quality Coach"
+  short_description: "Audit and improve AI text responses"
+  default_prompt: "Review this response quality, classify defects, and propose a durable fix."

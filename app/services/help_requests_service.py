@@ -256,6 +256,15 @@ async def can_access_help_request(
     return False
 
 
+def _order_by_sort(sort: str) -> str:
+    """ORDER BY для списка заявок (этап 3.9). sort: priority | created_at | due_at."""
+    if sort == "due_at":
+        return "ORDER BY hr.due_at ASC NULLS LAST, hr.created_at ASC"
+    if sort == "created_at":
+        return "ORDER BY hr.created_at ASC"
+    return "ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC"
+
+
 async def list_help_requests(
     db: AsyncSession,
     teacher_id: int,
@@ -263,10 +272,12 @@ async def list_help_requests(
     request_type_filter: str = "all",
     limit: int = 20,
     offset: int = 0,
+    sort: str = "priority",
 ) -> Tuple[list[dict[str, Any]], int]:
     """
     Список заявок с ACL. status_filter: open | closed | all.
     request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
+    sort: priority | created_at | due_at (этап 3.9).
     Возвращает (items, total). items — словари для HelpRequestListItem.
     """
     status_cond = ""
@@ -279,6 +290,7 @@ async def list_help_requests(
         type_cond = "AND hr.request_type = 'manual_help'"
     elif request_type_filter == "blocked_limit":
         type_cond = "AND hr.request_type = 'blocked_limit'"
+    order_sql = _order_by_sort(sort)
 
     acl_sql = """
         (hr.assigned_teacher_id = :teacher_id
@@ -287,6 +299,7 @@ async def list_help_requests(
          OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
     """
     params: dict[str, Any] = {"teacher_id": teacher_id}
+    now = datetime.now(timezone.utc)
 
     r = await db.execute(
         text(f"""
@@ -302,6 +315,7 @@ async def list_help_requests(
             SELECT hr.id, hr.status, hr.request_type, hr.auto_created, hr.context_json,
                    hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
+                   hr.priority, hr.due_at,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
                    c.title AS course_title
@@ -310,7 +324,7 @@ async def list_help_requests(
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
             WHERE {acl_sql} {status_cond} {type_cond}
-            ORDER BY hr.updated_at DESC
+            {order_sql}
             LIMIT :limit OFFSET :offset
         """),
         {**params, "limit": limit, "offset": offset},
@@ -319,6 +333,8 @@ async def list_help_requests(
     items = []
     for row in rows:
         ctx = row[4] if row[4] is not None else {}
+        due_at = row[14] if len(row) > 14 else None
+        priority_val = int(row[13]) if len(row) > 13 and row[13] is not None else 100
         items.append({
             "request_id": row[0],
             "status": row[1],
@@ -333,9 +349,12 @@ async def list_help_requests(
             "updated_at": row[10],
             "thread_id": row[11],
             "event_id": row[12],
-            "student_name": row[13],
-            "task_title": _task_title_display(row[6], row[14]) if row[14] or row[6] else None,
-            "course_title": row[15],
+            "priority": priority_val,
+            "due_at": due_at,
+            "is_overdue": due_at is not None and due_at < now,
+            "student_name": row[15] if len(row) > 15 else None,
+            "task_title": _task_title_display(row[6], row[16]) if len(row) > 16 and (row[16] or row[6]) else None,
+            "course_title": row[17] if len(row) > 17 else None,
         })
     return (items, total)
 
@@ -365,6 +384,7 @@ async def get_help_request_detail(
                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
                    hr.request_type, hr.auto_created, hr.context_json,
                    hr.message, hr.closed_at, hr.closed_by, hr.resolution_comment,
+                   hr.priority, hr.due_at,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
                    c.title AS course_title
@@ -382,6 +402,10 @@ async def get_help_request_detail(
     ctx = row[12] if row[12] is not None else {}
     if not isinstance(ctx, dict):
         ctx = {}
+    now = datetime.now(timezone.utc)
+    due_at = row[19] if len(row) > 19 else None
+    is_overdue = due_at is not None and due_at < now
+    priority_val = int(row[18]) if len(row) > 18 and row[18] is not None else 100
 
     r2 = await db.execute(
         text("""
@@ -422,11 +446,44 @@ async def get_help_request_detail(
         "closed_at": row[14],
         "closed_by": row[15],
         "resolution_comment": row[16],
-        "student_name": row[17],
-        "task_title": _task_title_display(row[3], row[18]) if row[18] or row[3] else None,
-        "course_title": row[19],
+        "priority": priority_val,
+        "due_at": due_at,
+        "is_overdue": is_overdue,
+        "student_name": row[20] if len(row) > 20 else None,
+        "task_title": _task_title_display(row[3], row[21]) if len(row) > 21 and (row[21] or row[3]) else None,
+        "course_title": row[22] if len(row) > 22 else None,
         "history": replies,
     }, None)
+
+
+async def check_help_request_lock(
+    db: AsyncSession,
+    request_id: int,
+    teacher_id: int,
+    lock_token: Optional[str],
+) -> Optional[str]:
+    """
+    Если передан lock_token: проверить, что заявка захвачена этим teacher с этим токеном и не просрочена.
+    Возвращает None если ок, иначе "lock_conflict" (409).
+    """
+    if not lock_token:
+        return None
+    r = await db.execute(
+        text("""
+            SELECT claimed_by, claim_token, claim_expires_at FROM help_requests WHERE id = :request_id
+        """),
+        {"request_id": request_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        return None
+    claimed_by, claim_token, claim_expires_at = row[0], row[1], row[2]
+    now = datetime.now(timezone.utc)
+    if claimed_by != teacher_id or claim_token != lock_token:
+        return "lock_conflict"
+    if claim_expires_at is None or claim_expires_at < now:
+        return "lock_conflict"
+    return None
 
 
 async def close_help_request(
@@ -434,10 +491,12 @@ async def close_help_request(
     request_id: int,
     closed_by: int,
     resolution_comment: Optional[str] = None,
-) -> Tuple[Optional[dict[str, Any]], Optional[bool]]:
+    lock_token: Optional[str] = None,
+) -> Tuple[Optional[dict[str, Any]], Optional[bool], Optional[str]]:
     """
-    Закрыть заявку. Возвращает (data_dict, already_closed).
-    data_dict: request_id, status, closed_at, updated_at. Если заявка не найдена — (None, None).
+    Закрыть заявку. Возвращает (data_dict, already_closed, error).
+    error: None | "lock_conflict" (этап 3.9, при невалидном lock_token).
+    data_dict: request_id, status, closed_at, updated_at. Если заявка не найдена — (None, None, None).
     """
     r = await db.execute(
         text("""
@@ -447,8 +506,12 @@ async def close_help_request(
     )
     row = r.fetchone()
     if row is None:
-        return (None, None)
+        return (None, None, None)
     hid, current_status, student_id = row[0], row[1], row[2]
+
+    err = await check_help_request_lock(db, request_id, closed_by, lock_token)
+    if err is not None:
+        return (None, None, err)
 
     if current_status == "closed":
         r = await db.execute(
@@ -462,7 +525,7 @@ async def close_help_request(
             "closed_at": rw[0],
             "updated_at": rw[1],
             "already_closed": True,
-        }, True)
+        }, True, None)
 
     now = datetime.now(timezone.utc)
     comment_truncated = (resolution_comment or "")[:2000] or None
@@ -488,7 +551,7 @@ async def close_help_request(
         "closed_at": now,
         "updated_at": now,
         "already_closed": False,
-    }, False)
+    }, False, None)
 
 
 async def reply_help_request(
@@ -498,10 +561,11 @@ async def reply_help_request(
     message: str,
     close_after_reply: bool = False,
     idempotency_key: Optional[str] = None,
+    lock_token: Optional[str] = None,
 ) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
     """
     Ответ на заявку: отправить сообщение студенту, записать reply, опционально закрыть.
-    Возвращает (response_dict, error). error: None | "not_found" | "forbidden" | "closed".
+    Возвращает (response_dict, error). error: None | "not_found" | "forbidden" | "closed" | "lock_conflict".
     response_dict: request_id, message_id, thread_id, request_status, deduplicated.
     """
     r = await db.execute(
@@ -517,6 +581,10 @@ async def reply_help_request(
 
     if req_status == "closed":
         return (None, "closed")
+
+    err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
+    if err is not None:
+        return (None, "lock_conflict")
 
     ok = await can_access_help_request(db, request_id, teacher_id)
     if not ok:

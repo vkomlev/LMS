@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Booster"
+  short_description: "Operate Codex across your booster fleet"
+  default_prompt: "Run Codex booster mode for this project and provide commands and checks."

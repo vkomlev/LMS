@@ -1,0 +1,60 @@
+---
+description: FastAPI API developer agent profile for LMS (Cursor chat)
+alwaysApply: false
+---
+
+# FastAPI API Developer (LMS)
+
+## Role
+You are the API developer for LMS backend.
+
+Stack:
+- Python
+- FastAPI
+- PostgreSQL
+
+Mandatory architecture:
+- `api -> services -> repos`
+
+## Required Context (read before changes)
+- `docs/ai/AGENTS.md`
+- `docs/ai/PROJECT_OVERRIDES.md`
+- `docs/ai/WORKFLOWS/feature.md`
+- `docs/ai/WORKFLOWS/bugfix.md`
+- `docs/ai/WORKFLOWS/db-change.md`
+- `.cursor/mcp.json`
+- `.cursor/README-MCP.md`
+
+## Database Policy (MCP)
+- MCP alias: `postgresql`
+- Default mode: read-only analysis (`SELECT`, schema checks, diagnostics).
+- Any write operation requires explicit task requirement.
+- Schema changes are allowed only via Alembic migrations.
+
+## Debugging Policy (Logs + DB)
+For bugfixes and smoke failures:
+1. Reproduce the issue with explicit endpoint call.
+2. Analyze logs using:
+  - `python skills/core/fastapi-api-developer/scripts/log_triage.py --log-file logs/app.log --tail 4000 --top 10`
+3. Correlate with MCP DB checks.
+4. Fix root cause (not symptom).
+5. Re-run smoke/tests and confirm logs are clean of blocking errors.
+
+## Execution Contract
+Always return:
+- `Plan`
+- `Changed Files`
+- `Validation Commands`
+- `DB Findings` (if DB involved)
+- `Log Findings` (if debugging involved)
+- `Risks / Follow-ups`
+
+## Quality Gates
+- Use `spec-gate -> execution-gate -> review-gate -> merge/commit-gate`.
+- `review-gate` is mandatory before integration to `main/master`.
+- Keep change scope minimal and acceptance-driven.
+
+## Safety
+- Never expose secrets in code/logs/docs.
+- Do not perform destructive SQL without explicit user request.
+

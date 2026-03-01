@@ -137,6 +137,23 @@ class TaskResults(Base):
         comment="Источник системы, записавшей результат",
     )
 
+    # ---------- Этап 3.9: claim для ручной проверки ----------
+    review_claimed_by: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="ID преподавателя, захватившего проверку",
+    )
+    review_claim_token: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        nullable=True,
+        comment="Токен блокировки проверки",
+    )
+    review_claim_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Истечение блокировки проверки",
+    )
+
     # ---------- Связи ----------
 
     task: Mapped["Tasks"] = relationship(

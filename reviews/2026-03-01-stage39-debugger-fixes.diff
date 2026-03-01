@@ -1,0 +1,628 @@
+﻿diff --git a/app/api/main.py b/app/api/main.py
+index 3c8bf04..ea035d7 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -30,6 +30,8 @@ from app.api.v1.task_results_extra import router as task_results_extra_router
+ from app.api.v1.learning import router as learning_router
+ from app.api.v1.teacher_learning import router as teacher_learning_router
+ from app.api.v1.teacher_help_requests import router as teacher_help_requests_router
++from app.api.v1.teacher_reviews import router as teacher_reviews_router
++from app.api.v1.teacher_workload import router as teacher_workload_router
+ 
+ # ╨б╤Е╨╡╨╝╤Л ╨╕ ╤Б╨╡╤А╨▓╨╕╤Б╤Л
+ from app.schemas.users import UserCreate, UserRead, UserUpdate
+@@ -309,4 +311,6 @@ app.include_router(checking_router, prefix=API_PREFIX)
+ app.include_router(attempts_router, prefix=API_PREFIX)
+ app.include_router(learning_router, prefix=API_PREFIX)
+ app.include_router(teacher_learning_router, prefix=API_PREFIX)
+-app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
+\ No newline at end of file
++app.include_router(teacher_workload_router, prefix=API_PREFIX)
++app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
++app.include_router(teacher_reviews_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index 6f662c7..e57be61 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -285,6 +285,25 @@ async def manual_check_task_result(
+             status_code=status.HTTP_404_NOT_FOUND,
+             detail=f"╨а╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╤Б ID {result_id} ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜",
+         )
++
++    # ╨н╤В╨░╨┐ 3.9: ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨░╤П ╨┐╤А╨╛╨▓╨╡╤А╨║╨░ lock_token ╨┤╨╗╤П claim (╨╜╨╛╤А╨╝╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П timezone тАФ P1 fix)
++    lock_token = payload.get("lock_token")
++    if lock_token:
++        from datetime import timezone
++        now = datetime.now(timezone.utc)
++        expires_at = getattr(result, "review_claim_expires_at", None)
++        if expires_at is not None and expires_at.tzinfo is None:
++            expires_at = expires_at.replace(tzinfo=timezone.utc)
++        if (
++            getattr(result, "review_claimed_by", None) != checked_by
++            or getattr(result, "review_claim_token", None) != lock_token
++            or not getattr(result, "review_claim_expires_at", None)
++            or (expires_at is not None and expires_at < now)
++        ):
++            raise HTTPException(
++                status_code=status.HTTP_409_CONFLICT,
++                detail="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╡╨╜ ╨╕╨╗╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜",
++            )
+     
+     # ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝, ╤З╤В╨╛ score ╨╜╨╡ ╨┐╤А╨╡╨▓╤Л╤И╨░╨╡╤В max_score
+     max_score = result.max_score or 0
+@@ -300,7 +319,7 @@ async def manual_check_task_result(
+             detail="score ╨╜╨╡ ╨╝╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М ╨╛╤В╤А╨╕╤Ж╨░╤В╨╡╨╗╤М╨╜╤Л╨╝",
+         )
+     
+-    # ╨Ю╨▒╨╜╨╛╨▓╨╗╤П╨╡╨╝ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В
++    # ╨Ю╨▒╨╜╨╛╨▓╨╗╤П╨╡╨╝ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В; ╤Н╤В╨░╨┐ 3.9: ╤Б╨▒╤А╨░╤Б╤Л╨▓╨░╨╡╨╝ claim ╨┐╨╛╤Б╨╗╨╡ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕
+     update_data = TaskResultUpdate(
+         score=score,
+         checked_by=checked_by,
+@@ -308,13 +327,13 @@ async def manual_check_task_result(
+         is_correct=payload.get("is_correct"),
+         metrics=payload.get("metrics"),
+     )
+-    
+-    # BaseService.update ╨╛╨╢╨╕╨┤╨░╨╡╤В ╨╛╨▒╤К╨╡╨║╤В ╨С╨Ф ╨╕ dict, ╨┐╨╛╤Н╤В╨╛╨╝╤Г ╤Б╨╜╨░╤З╨░╨╗╨░ ╨┐╨╛╨╗╤Г╤З╨░╨╡╨╝ ╨╛╨▒╤К╨╡╨║╤В
+-    updated_result = await task_results_service.update(
+-        db, 
+-        result, 
+-        update_data.model_dump(exclude_unset=True)
+-    )
++    update_dict = update_data.model_dump(exclude_unset=True)
++    update_dict["review_claimed_by"] = None
++    update_dict["review_claim_token"] = None
++    update_dict["review_claim_expires_at"] = None
++
++    # BaseService.update ╨╛╨╢╨╕╨┤╨░╨╡╤В ╨╛╨▒╤К╨╡╨║╤В ╨С╨Ф ╨╕ dict
++    updated_result = await task_results_service.update(db, result, update_dict)
+     return TaskResultRead.model_validate(updated_result)
+ 
+ 
+@@ -465,13 +484,21 @@ async def get_pending_review_results(
+     Returns:
+         ╨б╨┐╨╕╤Б╨╛╨║ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╨╛╨▓, ╤В╤А╨╡╨▒╤Г╤О╤Й╨╕╤Е ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕
+     """
++    from datetime import timezone
+     from sqlalchemy import select, and_, or_
+     from app.models.task_results import TaskResults
+     from app.models.tasks import Tasks
+-    
+-    # ╨С╨░╨╖╨╛╨▓╨╛╨╡ ╤Г╤Б╨╗╨╛╨▓╨╕╨╡: ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╤Л ╨╜╨╡ ╨┐╤А╨╛╨▓╨╡╤А╨╡╨╜╤Л
+-    conditions = [TaskResults.checked_at.is_(None)]
+-    
++
++    now = datetime.now(timezone.utc)
++    # ╨С╨░╨╖╨╛╨▓╨╛╨╡ ╤Г╤Б╨╗╨╛╨▓╨╕╨╡: ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В╤Л ╨╜╨╡ ╨┐╤А╨╛╨▓╨╡╤А╨╡╨╜╤Л; ╤Н╤В╨░╨┐ 3.9: ╨╜╨╡ ╨┐╨╛╨║╨░╨╖╤Л╨▓╨░╤В╤М ╨╖╨░╤Е╨▓╨░╤З╨╡╨╜╨╜╤Л╨╡ ╨┐╨╛ TTL
++    conditions = [
++        TaskResults.checked_at.is_(None),
++        or_(
++            TaskResults.review_claim_expires_at.is_(None),
++            TaskResults.review_claim_expires_at < now,
++        ),
++    ]
++
+     # ╨Ф╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╡ ╤Д╨╕╨╗╤М╤В╤А╤Л
+     if course_id is not None:
+         # ╨Э╤Г╨╢╨╜╨╛ ╨┐╤А╨╕╤Б╨╛╨╡╨┤╨╕╨╜╨╕╤В╤М tasks ╨┤╨╗╤П ╤Д╨╕╨╗╤М╤В╤А╨░╤Ж╨╕╨╕ ╨┐╨╛ course_id
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 34ce5f6..57ac407 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -25,6 +25,13 @@ from app.schemas.teacher_help_requests import (
+     HelpRequestReplyRequest,
+     HelpRequestReplyResponse,
+ )
++from app.schemas.teacher_next_modes import (
++    HelpRequestClaimNextRequest,
++    HelpRequestClaimNextResponse,
++    HelpRequestClaimItem,
++    HelpRequestReleaseRequest,
++    HelpRequestReleaseResponse,
++)
+ from app.services.help_requests_service import (
+     list_help_requests,
+     get_help_request_detail,
+@@ -33,11 +40,50 @@ from app.services.help_requests_service import (
+     close_help_request,
+     reply_help_request,
+ )
++from app.services.teacher_queue_service import (
++    claim_next_help_request,
++    release_help_request_claim,
++)
+ 
+ router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
+ logger = logging.getLogger("api.teacher_help_requests")
+ 
+ 
++# ----- ╨н╤В╨░╨┐ 3.9: claim-next (╨╝╨░╤А╤И╤А╤Г╤В ╨┤╨╛ /{request_id}, ╤З╤В╨╛╨▒╤Л "claim-next" ╨╜╨╡ ╨╖╨░╤Е╨▓╨░╤В╤Л╨▓╨░╨╗╤Б╤П ╨║╨░╨║ id) -----
++
++@router.post(
++    "/claim-next",
++    response_model=HelpRequestClaimNextResponse,
++    status_code=status.HTTP_200_OK,
++    summary="╨Т╨╖╤П╤В╤М ╤Б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╨╛╤В╨║╤А╤Л╤В╤Л╨╣ help-request (╨░╤В╨╛╨╝╨░╤А╨╜╤Л╨╣ claim)",
++    responses={
++        200: {"description": "╨Ъ╨╡╨╣╤Б ╨▓╤Л╨┤╨░╨╜ ╨╕╨╗╨╕ empty=true"},
++        422: {"description": "╨Э╨╡╨▓╨░╨╗╨╕╨┤╨╜╤Л╨╡ ╨┐╨░╤А╨░╨╝╨╡╤В╤А╤Л"},
++    },
++)
++async def help_request_claim_next(
++    body: HelpRequestClaimNextRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> HelpRequestClaimNextResponse:
++    item, lock_token, lock_expires_at = await claim_next_help_request(
++        db,
++        teacher_id=body.teacher_id,
++        request_type=body.request_type,
++        ttl_sec=body.ttl_sec,
++        course_id=body.course_id,
++        idempotency_key=body.idempotency_key,
++    )
++    await db.commit()
++    if item is None:
++        return HelpRequestClaimNextResponse(empty=True, item=None, lock_token=None, lock_expires_at=None)
++    return HelpRequestClaimNextResponse(
++        empty=False,
++        item=HelpRequestClaimItem(**item),
++        lock_token=lock_token,
++        lock_expires_at=lock_expires_at,
++    )
++
++
+ @router.get(
+     "",
+     response_model=HelpRequestListResponse,
+@@ -47,6 +93,7 @@ async def help_requests_list(
+     teacher_id: int = Query(..., description="ID ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П/╨╝╨╡╤В╨╛╨┤╨╕╤Б╤В╨░"),
+     status_filter: str = Query("open", description="open | closed | all", alias="status"),
+     request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
++    sort: str = Query("priority", description="priority | created_at | due_at (╤Н╤В╨░╨┐ 3.9)", alias="sort"),
+     limit: int = Query(20, ge=1, le=100),
+     offset: int = Query(0, ge=0),
+     db: AsyncSession = Depends(get_db),
+@@ -61,8 +108,13 @@ async def help_requests_list(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+             detail="request_type ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М manual_help, blocked_limit ╨╕╨╗╨╕ all",
+         )
++    if sort not in ("priority", "created_at", "due_at"):
++        raise HTTPException(
++            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
++            detail="sort ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М priority, created_at ╨╕╨╗╨╕ due_at",
++        )
+     items, total = await list_help_requests(
+-        db, teacher_id, status_filter, request_type_filter, limit, offset
++        db, teacher_id, status_filter, request_type_filter, limit, offset, sort=sort
+     )
+     return HelpRequestListResponse(
+         items=[HelpRequestListItem(**it) for it in items],
+@@ -107,15 +159,50 @@ async def help_request_close(
+     ok = await can_access_help_request(db, request_id, body.closed_by)
+     if not ok:
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="╨Э╨╡╤В ╨┤╨╛╤Б╤В╤Г╨┐╨░ ╨║ ╨╖╨░╤П╨▓╨║╨╡")
+-    data, already = await close_help_request(
+-        db, request_id, body.closed_by, body.resolution_comment
++    data, already, lock_err = await close_help_request(
++        db, request_id, body.closed_by, body.resolution_comment, lock_token=body.lock_token
+     )
++    if lock_err == "lock_conflict":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╡╨╜ ╨╕╨╗╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜",
++        )
+     if data is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
+     await db.commit()
+     return HelpRequestCloseResponse(**data)
+ 
+ 
++@router.post(
++    "/{request_id}/release",
++    response_model=HelpRequestReleaseResponse,
++    status_code=status.HTTP_200_OK,
++    summary="╨Ю╤Б╨▓╨╛╨▒╨╛╨┤╨╕╤В╤М ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╤Г ╨╖╨░╤П╨▓╨║╨╕ (╤Н╤В╨░╨┐ 3.9)",
++    responses={
++        200: {"description": "released=true ╨╕╨╗╨╕ ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ released=false"},
++        404: {"description": "╨Ч╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░"},
++        409: {"description": "╨в╨╛╨║╨╡╨╜ ╨╜╨╡ ╤Б╨╛╨▓╨┐╨░╨╗ ╨╕╨╗╨╕ ╨║╨╡╨╣╤Б ╤Г ╨┤╤А╤Г╨│╨╛╨│╨╛ ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П"},
++    },
++)
++async def help_request_release(
++    request_id: int = Path(..., description="ID ╨╖╨░╤П╨▓╨║╨╕"),
++    body: HelpRequestReleaseRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> HelpRequestReleaseResponse:
++    if not await help_request_exists(db, request_id):
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
++    released, err = await release_help_request_claim(
++        db, request_id, body.teacher_id, body.lock_token
++    )
++    if err == "forbidden":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨╜╨╡ ╤Б╨╛╨▓╨┐╨░╨┤╨░╨╡╤В ╨╕╨╗╨╕ ╨╖╨░╤П╨▓╨║╨░ ╨╖╨░╤Е╨▓╨░╤З╨╡╨╜╨░ ╨┤╤А╤Г╨│╨╕╨╝ ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╨╡╨╝",
++        )
++    await db.commit()
++    return HelpRequestReleaseResponse(released=released)
++
++
+ @router.post(
+     "/{request_id}/reply",
+     response_model=HelpRequestReplyResponse,
+@@ -139,6 +226,7 @@ async def help_request_reply(
+         body.message,
+         close_after_reply=body.close_after_reply,
+         idempotency_key=body.idempotency_key,
++        lock_token=body.lock_token,
+     )
+     if err == "not_found":
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="╨Ч╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░")
+@@ -149,5 +237,10 @@ async def help_request_reply(
+             status_code=status.HTTP_409_CONFLICT,
+             detail="╨Ч╨░╤П╨▓╨║╨░ ╤Г╨╢╨╡ ╨╖╨░╨║╤А╤Л╤В╨░. ╨Ю╤В╨▓╨╡╤В ╨▓ ╨╖╨░╨║╤А╤Л╤В╤Г╤О ╨╖╨░╤П╨▓╨║╤Г ╨╖╨░╨┐╤А╨╡╤Й╤С╨╜.",
+         )
++    if err == "lock_conflict":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╡╨╜ ╨╕╨╗╨╕ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜",
++        )
+     await db.commit()
+     return HelpRequestReplyResponse(**data)
+diff --git a/app/models/help_requests.py b/app/models/help_requests.py
+index af7f643..344770c 100644
+--- a/app/models/help_requests.py
++++ b/app/models/help_requests.py
+@@ -11,6 +11,7 @@ from sqlalchemy import (
+     ForeignKeyConstraint,
+     Integer,
+     PrimaryKeyConstraint,
++    SmallInteger,
+     String,
+     Text,
+     text,
+@@ -60,6 +61,9 @@ class HelpRequests(Base):
+         ForeignKeyConstraint(
+             ["closed_by"], ["users.id"], ondelete="SET NULL", name="help_requests_closed_by_fkey"
+         ),
++        ForeignKeyConstraint(
++            ["claimed_by"], ["users.id"], ondelete="SET NULL", name="help_requests_claimed_by_fkey"
++        ),
+         PrimaryKeyConstraint("id", name="help_requests_pkey"),
+         {"comment": "╨Ч╨░╤П╨▓╨║╨╕ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╨┐╨╛ ╨╖╨░╨┤╨░╨╜╨╕╤О (Learning Engine V1, ╤Н╤В╨░╨┐ 3.8)"},
+     )
+@@ -96,6 +100,13 @@ class HelpRequests(Base):
+     closed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+     resolution_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+ 
++    # ╨н╤В╨░╨┐ 3.9: claim/lock ╨╕ SLA
++    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("100"))
++    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
++    claimed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    claim_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
++    claim_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
++
+     replies: Mapped[List["HelpRequestReplies"]] = relationship(
+         "HelpRequestReplies",
+         back_populates="help_request",
+diff --git a/app/models/task_results.py b/app/models/task_results.py
+index 45dda2d..a059361 100644
+--- a/app/models/task_results.py
++++ b/app/models/task_results.py
+@@ -137,6 +137,23 @@ class TaskResults(Base):
+         comment="╨Ш╤Б╤В╨╛╤З╨╜╨╕╨║ ╤Б╨╕╤Б╤В╨╡╨╝╤Л, ╨╖╨░╨┐╨╕╤Б╨░╨▓╤И╨╡╨╣ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В",
+     )
+ 
++    # ---------- ╨н╤В╨░╨┐ 3.9: claim ╨┤╨╗╤П ╤А╤Г╤З╨╜╨╛╨╣ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ ----------
++    review_claimed_by: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        nullable=True,
++        comment="ID ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П, ╨╖╨░╤Е╨▓╨░╤В╨╕╨▓╤И╨╡╨│╨╛ ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г",
++    )
++    review_claim_token: Mapped[Optional[str]] = mapped_column(
++        String(64),
++        nullable=True,
++        comment="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕",
++    )
++    review_claim_expires_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True),
++        nullable=True,
++        comment="╨Ш╤Б╤В╨╡╤З╨╡╨╜╨╕╨╡ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕",
++    )
++
+     # ---------- ╨б╨▓╤П╨╖╨╕ ----------
+ 
+     task: Mapped["Tasks"] = relationship(
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 1cfe310..0fba74b 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -33,6 +33,10 @@ class HelpRequestListItem(BaseModel):
+     updated_at: datetime
+     thread_id: Optional[int] = None
+     event_id: Optional[int] = None
++    # ╨н╤В╨░╨┐ 3.9: SLA/╨┐╤А╨╕╨╛╤А╨╕╤В╨╡╤В
++    priority: int = Field(100, description="╨Я╤А╨╕╨╛╤А╨╕╤В╨╡╤В (╨╝╨╡╨╜╤М╤И╨╡ тАФ ╨▓╤Л╤И╨╡)")
++    due_at: Optional[datetime] = Field(None, description="╨Ц╨╡╨╗╨░╤В╨╡╨╗╤М╨╜╤Л╨╣ ╤Б╤А╨╛╨║ ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨╕")
++    is_overdue: bool = Field(False, description="╨Я╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨░ ╨╗╨╕ ╨┐╨╛ due_at")
+ 
+ 
+ class HelpRequestListResponse(BaseModel):
+@@ -68,6 +72,7 @@ class HelpRequestCloseRequest(BaseModel):
+     """╨в╨╡╨╗╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨░ ╨╖╨░╨║╤А╤Л╤В╨╕╤П ╨╖╨░╤П╨▓╨║╨╕."""
+     closed_by: int = Field(..., description="ID ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П, ╨╖╨░╨║╤А╤Л╨▓╨░╤О╤Й╨╡╨│╨╛ ╨╖╨░╤П╨▓╨║╤Г")
+     resolution_comment: Optional[str] = Field(None, max_length=2000)
++    lock_token: Optional[str] = Field(None, description="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ (╤Н╤В╨░╨┐ 3.9); ╨┐╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝/╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╨╛╨╝ тАФ 409")
+ 
+ 
+ class HelpRequestCloseResponse(BaseModel):
+@@ -87,6 +92,7 @@ class HelpRequestReplyRequest(BaseModel):
+     message: str = Field(..., min_length=1, max_length=4000, description="╨в╨╡╨║╤Б╤В ╨╛╤В╨▓╨╡╤В╨░ ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г")
+     close_after_reply: bool = Field(False, description="╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г ╨┐╨╛╤Б╨╗╨╡ ╨╛╤В╨┐╤А╨░╨▓╨║╨╕ ╨╛╤В╨▓╨╡╤В╨░")
+     idempotency_key: Optional[str] = Field(None, max_length=128, description="╨Ъ╨╗╤О╤З ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╤Б╤В╨╕")
++    lock_token: Optional[str] = Field(None, description="╨в╨╛╨║╨╡╨╜ ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ (╤Н╤В╨░╨┐ 3.9); ╨┐╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝/╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨╜╨╛╨╝ тАФ 409")
+ 
+ 
+ class HelpRequestReplyResponse(BaseModel):
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 0a585d5..4d77d54 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -256,6 +256,15 @@ async def can_access_help_request(
+     return False
+ 
+ 
++def _order_by_sort(sort: str) -> str:
++    """ORDER BY ╨┤╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ ╨╖╨░╤П╨▓╨╛╨║ (╤Н╤В╨░╨┐ 3.9). sort: priority | created_at | due_at."""
++    if sort == "due_at":
++        return "ORDER BY hr.due_at ASC NULLS LAST, hr.created_at ASC"
++    if sort == "created_at":
++        return "ORDER BY hr.created_at ASC"
++    return "ORDER BY hr.priority ASC, hr.due_at ASC NULLS LAST, hr.created_at ASC"
++
++
+ async def list_help_requests(
+     db: AsyncSession,
+     teacher_id: int,
+@@ -263,10 +272,12 @@ async def list_help_requests(
+     request_type_filter: str = "all",
+     limit: int = 20,
+     offset: int = 0,
++    sort: str = "priority",
+ ) -> Tuple[list[dict[str, Any]], int]:
+     """
+     ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╤Б ACL. status_filter: open | closed | all.
+     request_type_filter: manual_help | blocked_limit | all (╤Н╤В╨░╨┐ 3.8.1).
++    sort: priority | created_at | due_at (╤Н╤В╨░╨┐ 3.9).
+     ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (items, total). items тАФ ╤Б╨╗╨╛╨▓╨░╤А╨╕ ╨┤╨╗╤П HelpRequestListItem.
+     """
+     status_cond = ""
+@@ -279,6 +290,7 @@ async def list_help_requests(
+         type_cond = "AND hr.request_type = 'manual_help'"
+     elif request_type_filter == "blocked_limit":
+         type_cond = "AND hr.request_type = 'blocked_limit'"
++    order_sql = _order_by_sort(sort)
+ 
+     acl_sql = """
+         (hr.assigned_teacher_id = :teacher_id
+@@ -287,6 +299,7 @@ async def list_help_requests(
+          OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
+     """
+     params: dict[str, Any] = {"teacher_id": teacher_id}
++    now = datetime.now(timezone.utc)
+ 
+     r = await db.execute(
+         text(f"""
+@@ -302,6 +315,7 @@ async def list_help_requests(
+             SELECT hr.id, hr.status, hr.request_type, hr.auto_created, hr.context_json,
+                    hr.student_id, hr.task_id, hr.course_id, hr.attempt_id,
+                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
++                   hr.priority, hr.due_at,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+                    c.title AS course_title
+@@ -310,7 +324,7 @@ async def list_help_requests(
+             LEFT JOIN tasks t ON t.id = hr.task_id
+             LEFT JOIN courses c ON c.id = hr.course_id
+             WHERE {acl_sql} {status_cond} {type_cond}
+-            ORDER BY hr.updated_at DESC
++            {order_sql}
+             LIMIT :limit OFFSET :offset
+         """),
+         {**params, "limit": limit, "offset": offset},
+@@ -319,6 +333,8 @@ async def list_help_requests(
+     items = []
+     for row in rows:
+         ctx = row[4] if row[4] is not None else {}
++        due_at = row[14] if len(row) > 14 else None
++        priority_val = int(row[13]) if len(row) > 13 and row[13] is not None else 100
+         items.append({
+             "request_id": row[0],
+             "status": row[1],
+@@ -333,9 +349,12 @@ async def list_help_requests(
+             "updated_at": row[10],
+             "thread_id": row[11],
+             "event_id": row[12],
+-            "student_name": row[13],
+-            "task_title": _task_title_display(row[6], row[14]) if row[14] or row[6] else None,
+-            "course_title": row[15],
++            "priority": priority_val,
++            "due_at": due_at,
++            "is_overdue": due_at is not None and due_at < now,
++            "student_name": row[15] if len(row) > 15 else None,
++            "task_title": _task_title_display(row[6], row[16]) if len(row) > 16 and (row[16] or row[6]) else None,
++            "course_title": row[17] if len(row) > 17 else None,
+         })
+     return (items, total)
+ 
+@@ -365,6 +384,7 @@ async def get_help_request_detail(
+                    hr.created_at, hr.updated_at, hr.thread_id, hr.event_id,
+                    hr.request_type, hr.auto_created, hr.context_json,
+                    hr.message, hr.closed_at, hr.closed_by, hr.resolution_comment,
++                   hr.priority, hr.due_at,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+                    c.title AS course_title
+@@ -382,6 +402,10 @@ async def get_help_request_detail(
+     ctx = row[12] if row[12] is not None else {}
+     if not isinstance(ctx, dict):
+         ctx = {}
++    now = datetime.now(timezone.utc)
++    due_at = row[19] if len(row) > 19 else None
++    is_overdue = due_at is not None and due_at < now
++    priority_val = int(row[18]) if len(row) > 18 and row[18] is not None else 100
+ 
+     r2 = await db.execute(
+         text("""
+@@ -422,22 +446,57 @@ async def get_help_request_detail(
+         "closed_at": row[14],
+         "closed_by": row[15],
+         "resolution_comment": row[16],
+-        "student_name": row[17],
+-        "task_title": _task_title_display(row[3], row[18]) if row[18] or row[3] else None,
+-        "course_title": row[19],
++        "priority": priority_val,
++        "due_at": due_at,
++        "is_overdue": is_overdue,
++        "student_name": row[20] if len(row) > 20 else None,
++        "task_title": _task_title_display(row[3], row[21]) if len(row) > 21 and (row[21] or row[3]) else None,
++        "course_title": row[22] if len(row) > 22 else None,
+         "history": replies,
+     }, None)
+ 
+ 
++async def check_help_request_lock(
++    db: AsyncSession,
++    request_id: int,
++    teacher_id: int,
++    lock_token: Optional[str],
++) -> Optional[str]:
++    """
++    ╨Х╤Б╨╗╨╕ ╨┐╨╡╤А╨╡╨┤╨░╨╜ lock_token: ╨┐╤А╨╛╨▓╨╡╤А╨╕╤В╤М, ╤З╤В╨╛ ╨╖╨░╤П╨▓╨║╨░ ╨╖╨░╤Е╨▓╨░╤З╨╡╨╜╨░ ╤Н╤В╨╕╨╝ teacher ╤Б ╤Н╤В╨╕╨╝ ╤В╨╛╨║╨╡╨╜╨╛╨╝ ╨╕ ╨╜╨╡ ╨┐╤А╨╛╤Б╤А╨╛╤З╨╡╨╜╨░.
++    ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В None ╨╡╤Б╨╗╨╕ ╨╛╨║, ╨╕╨╜╨░╤З╨╡ "lock_conflict" (409).
++    """
++    if not lock_token:
++        return None
++    r = await db.execute(
++        text("""
++            SELECT claimed_by, claim_token, claim_expires_at FROM help_requests WHERE id = :request_id
++        """),
++        {"request_id": request_id},
++    )
++    row = r.fetchone()
++    if row is None:
++        return None
++    claimed_by, claim_token, claim_expires_at = row[0], row[1], row[2]
++    now = datetime.now(timezone.utc)
++    if claimed_by != teacher_id or claim_token != lock_token:
++        return "lock_conflict"
++    if claim_expires_at is None or claim_expires_at < now:
++        return "lock_conflict"
++    return None
++
++
+ async def close_help_request(
+     db: AsyncSession,
+     request_id: int,
+     closed_by: int,
+     resolution_comment: Optional[str] = None,
+-) -> Tuple[Optional[dict[str, Any]], Optional[bool]]:
++    lock_token: Optional[str] = None,
++) -> Tuple[Optional[dict[str, Any]], Optional[bool], Optional[str]]:
+     """
+-    ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г. ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (data_dict, already_closed).
+-    data_dict: request_id, status, closed_at, updated_at. ╨Х╤Б╨╗╨╕ ╨╖╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░ тАФ (None, None).
++    ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г. ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (data_dict, already_closed, error).
++    error: None | "lock_conflict" (╤Н╤В╨░╨┐ 3.9, ╨┐╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝ lock_token).
++    data_dict: request_id, status, closed_at, updated_at. ╨Х╤Б╨╗╨╕ ╨╖╨░╤П╨▓╨║╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░ тАФ (None, None, None).
+     """
+     r = await db.execute(
+         text("""
+@@ -447,9 +506,13 @@ async def close_help_request(
+     )
+     row = r.fetchone()
+     if row is None:
+-        return (None, None)
++        return (None, None, None)
+     hid, current_status, student_id = row[0], row[1], row[2]
+ 
++    err = await check_help_request_lock(db, request_id, closed_by, lock_token)
++    if err is not None:
++        return (None, None, err)
++
+     if current_status == "closed":
+         r = await db.execute(
+             text("SELECT closed_at, updated_at FROM help_requests WHERE id = :id"),
+@@ -462,7 +525,7 @@ async def close_help_request(
+             "closed_at": rw[0],
+             "updated_at": rw[1],
+             "already_closed": True,
+-        }, True)
++        }, True, None)
+ 
+     now = datetime.now(timezone.utc)
+     comment_truncated = (resolution_comment or "")[:2000] or None
+@@ -488,7 +551,7 @@ async def close_help_request(
+         "closed_at": now,
+         "updated_at": now,
+         "already_closed": False,
+-    }, False)
++    }, False, None)
+ 
+ 
+ async def reply_help_request(
+@@ -498,10 +561,11 @@ async def reply_help_request(
+     message: str,
+     close_after_reply: bool = False,
+     idempotency_key: Optional[str] = None,
++    lock_token: Optional[str] = None,
+ ) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+     """
+     ╨Ю╤В╨▓╨╡╤В ╨╜╨░ ╨╖╨░╤П╨▓╨║╤Г: ╨╛╤В╨┐╤А╨░╨▓╨╕╤В╤М ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г, ╨╖╨░╨┐╨╕╤Б╨░╤В╤М reply, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ ╨╖╨░╨║╤А╤Л╤В╤М.
+-    ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (response_dict, error). error: None | "not_found" | "forbidden" | "closed".
++    ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (response_dict, error). error: None | "not_found" | "forbidden" | "closed" | "lock_conflict".
+     response_dict: request_id, message_id, thread_id, request_status, deduplicated.
+     """
+     r = await db.execute(
+@@ -518,6 +582,10 @@ async def reply_help_request(
+     if req_status == "closed":
+         return (None, "closed")
+ 
++    err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
++    if err is not None:
++        return (None, "lock_conflict")
++
+     ok = await can_access_help_request(db, request_id, teacher_id)
+     if not ok:
+         return (None, "forbidden")
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 46c1d06..5fbc7b1 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -665,12 +665,18 @@ Stateless-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨╛╨┤╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕ ╨▒╨╡╨╖ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П 
+ | POST | `/learning/tasks/{task_id}/request-help` | ╨Ч╨░╨┐╤А╨╛╤Б ╨┐╨╛╨╝╨╛╤Й╨╕ (body: `student_id`, `message`). |
+ | POST | `/learning/tasks/{task_id}/hint-events` | ╨д╨╕╨║╤Б╨░╤Ж╨╕╤П ╨╛╤В╨║╤А╤Л╤В╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (╤Н╤В╨░╨┐ 3.6). Body: `student_id`, `attempt_id`, `hint_type`, `hint_index`, `action`, `source`. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛ ╨▓ ╨╛╨║╨╜╨╡ ╨┤╨╡╨┤╤Г╨┐╨░. |
+ | POST | `/teacher/task-limits/override` | ╨Я╨╡╤А╨╡╨╛╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╨╗╨╕╨╝╨╕╤В╨░ ╨┐╨╛╨┐╤Л╤В╨╛╨║ (body: `student_id`, `task_id`, `max_attempts_override`, `updated_by`). |
+-| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&request_type=manual_help\|blocked_limit\|all&limit=&offset=` | ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8/3.8.1). ╨Я╨╛╨╗╤П: request_type, auto_created, context. ╨д╨╕╨╗╤М╤В╤А request_type тАФ ╨┐╨╛ ╤В╨╕╨┐╤Г ╨╖╨░╤П╨▓╨║╨╕. ACL: ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╜╤Л╨╣ teacher, student_teacher_links, teacher_courses ╨╕╨╗╨╕ ╤А╨╛╨╗╤М methodist. |
+-| GET | `/teacher/help-requests/{request_id}?teacher_id=` | ╨Ъ╨░╤А╤В╨╛╤З╨║╨░ ╨╖╨░╤П╨▓╨║╨╕ (╨┐╨╛╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ + message, closed_at, closed_by, resolution_comment, history). ╨Т ╤Б╨┐╨╕╤Б╨║╨╡ ╨╕ ╨║╨░╤А╤В╨╛╤З╨║╨╡: request_type, auto_created, context (╤Н╤В╨░╨┐ 3.8.1). |
+-| POST | `/teacher/help-requests/{request_id}/close` | ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г (body: `closed_by`, `resolution_comment`). ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛. |
+-| POST | `/teacher/help-requests/{request_id}/reply` | ╨Ю╤В╨▓╨╡╤В╨╕╤В╤М ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`). ╨б╨╛╨╖╨┤╨░╤С╤В ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ messages, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ ╨╖╨░╨║╤А╤Л╨▓╨░╨╡╤В ╨╖╨░╤П╨▓╨║╤Г. |
+-
+-╨Ю╤В╨▓╨╡╤В `POST /learning/tasks/{task_id}/request-help` ╤Б ╤Н╤В╨░╨┐╨░ 3.8 ╨╝╨╛╨╢╨╡╤В ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `request_id` (ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests). ╨б ╤Н╤В╨░╨┐╨░ 3.8.1 ╨┐╤А╨╕ `GET /learning/next-item` ╨╕╨╗╨╕ `GET /learning/tasks/{task_id}/state` ╤Б ╤В╨╕╨┐╨╛╨╝/╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡╨╝ `blocked_limit`/`BLOCKED_LIMIT` ╨╖╨░╤П╨▓╨║╨░ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╤Б╨╛╨╖╨┤╨░╤С╤В╤Б╤П ╨░╨▓╤В╨╛╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ (request_type=blocked_limit, auto_created=true, context ╤Б attempts_used/attempts_limit_effective). ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╝╨╛╨╢╨╜╨╛ ╤Д╨╕╨╗╤М╤В╤А╨╛╨▓╨░╤В╤М ╨┐╨╛ `request_type=manual_help|blocked_limit|all`. Smoke-╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ ╨╖╨░╤П╨▓╨╛╨║: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md).
++| GET | `/teacher/help-requests?teacher_id=&status=open\|closed\|all&request_type=manual_help\|blocked_limit\|all&sort=priority\|created_at\|due_at&limit=&offset=` | ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М (╤Н╤В╨░╨┐ 3.8/3.8.1/3.9). ╨Я╨╛╨╗╤П: request_type, auto_created, context, priority, due_at, is_overdue. ╨д╨╕╨╗╤М╤В╤А request_type; sort ╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О priority. ACL: ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╜╤Л╨╣ teacher, student_teacher_links, teacher_courses ╨╕╨╗╨╕ ╤А╨╛╨╗╤М methodist. |
++| GET | `/teacher/help-requests/{request_id}?teacher_id=` | ╨Ъ╨░╤А╤В╨╛╤З╨║╨░ ╨╖╨░╤П╨▓╨║╨╕ (╨┐╨╛╨╗╤П ╤Б╨┐╨╕╤Б╨║╨░ + message, closed_at, closed_by, resolution_comment, history, priority, due_at, is_overdue). |
++| POST | `/teacher/help-requests/{request_id}/close` | ╨Ч╨░╨║╤А╤Л╤В╤М ╨╖╨░╤П╨▓╨║╤Г (body: `closed_by`, `resolution_comment`, ╨╛╨┐╤Ж. `lock_token`). ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛. ╨Я╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝ lock_token тАФ 409 (╤Н╤В╨░╨┐ 3.9). |
++| POST | `/teacher/help-requests/{request_id}/reply` | ╨Ю╤В╨▓╨╡╤В╨╕╤В╤М ╤Б╤В╤Г╨┤╨╡╨╜╤В╤Г (body: `teacher_id`, `message`, `close_after_reply`, `idempotency_key`, ╨╛╨┐╤Ж. `lock_token`). ╨б╨╛╨╖╨┤╨░╤С╤В ╤Б╨╛╨╛╨▒╤Й╨╡╨╜╨╕╨╡ ╨▓ messages, ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ ╨╖╨░╨║╤А╤Л╨▓╨░╨╡╤В ╨╖╨░╤П╨▓╨║╤Г. ╨Я╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝ lock_token тАФ 409 (╤Н╤В╨░╨┐ 3.9). |
++| POST | `/teacher/help-requests/claim-next` | ╨Т╨╖╤П╤В╤М ╤Б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╨╛╤В╨║╤А╤Л╤В╤Л╨╣ help-request (╤Н╤В╨░╨┐ 3.9). Body: `teacher_id`, `request_type` (manual_help\|blocked_limit\|all), `status` (open), `ttl_sec` (30..600), ╨╛╨┐╤Ж. `idempotency_key`, `course_id`. ╨Ю╤В╨▓╨╡╤В: `item`, `lock_token`, `lock_expires_at`, `empty`. |
++| POST | `/teacher/help-requests/{request_id}/release` | ╨Ю╤Б╨▓╨╛╨▒╨╛╨┤╨╕╤В╤М ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╤Г ╨╖╨░╤П╨▓╨║╨╕ (╤Н╤В╨░╨┐ 3.9). Body: `teacher_id`, `lock_token`. 409 ╨┐╤А╨╕ ╨╜╨╡╨▓╨╡╤А╨╜╨╛╨╝ ╤В╨╛╨║╨╡╨╜╨╡. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛: ╤Г╨╢╨╡ ╤Б╨▓╨╛╨▒╨╛╨┤╨╜╨╛ тАФ 200, `released: false`. |
++| GET | `/teacher/workload?teacher_id=` | ╨б╨▓╨╛╨┤╨║╨░ ╨╜╨░╨│╤А╤Г╨╖╨║╨╕ ╨┐╤А╨╡╨┐╨╛╨┤╨░╨▓╨░╤В╨╡╨╗╤П (╤Н╤В╨░╨┐ 3.9): open_help_requests_total, open_blocked_limit_total, open_manual_help_total, pending_manual_reviews_total, overdue_total. |
++| POST | `/teacher/reviews/claim-next` | ╨Т╨╖╤П╤В╤М ╤Б╨╗╨╡╨┤╤Г╤О╤Й╨╕╨╣ ╤А╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╨╜╨░ ╤А╤Г╤З╨╜╤Г╤О ╨┐╤А╨╛╨▓╨╡╤А╨║╤Г (╤Н╤В╨░╨┐ 3.9). Body: `teacher_id`, `ttl_sec`, ╨╛╨┐╤Ж. `course_id`, `user_id`, `idempotency_key`. ╨Ю╤В╨▓╨╡╤В: `item`, `lock_token`, `lock_expires_at`, `empty`. |
++| POST | `/teacher/reviews/{result_id}/release` | ╨Ю╤Б╨▓╨╛╨▒╨╛╨┤╨╕╤В╤М ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╤Г ╨┐╤А╨╛╨▓╨╡╤А╨║╨╕ (╤Н╤В╨░╨┐ 3.9). Body: `teacher_id`, `lock_token`. 409 ╨┐╤А╨╕ ╨╜╨╡╨▓╨╡╤А╨╜╨╛╨╝ ╤В╨╛╨║╨╡╨╜╨╡. ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛. |
++| | | ╨Т ╤Б╨┐╨╕╤Б╨║╨╡/╨║╨░╤А╤В╨╛╤З╨║╨╡ help-requests ╤Б ╤Н╤В╨░╨┐╨░ 3.9: `priority`, `due_at`, `is_overdue`. Query `sort=priority\|created_at\|due_at`. Close/reply ╨┐╤А╨╕╨╜╨╕╨╝╨░╤О╤В ╨╛╨┐╤Ж. `lock_token`; ╨┐╤А╨╕ ╨╜╨╡╨▓╨░╨╗╨╕╨┤╨╜╨╛╨╝ тАФ 409. |
++
++╨Ю╤В╨▓╨╡╤В `POST /learning/tasks/{task_id}/request-help` ╤Б ╤Н╤В╨░╨┐╨░ 3.8 ╨╝╨╛╨╢╨╡╤В ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В╤М ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛╨╡ ╨┐╨╛╨╗╨╡ `request_id` (ID ╨╖╨░╤П╨▓╨║╨╕ ╨▓ help_requests). ╨б ╤Н╤В╨░╨┐╨░ 3.8.1 ╨┐╤А╨╕ `GET /learning/next-item` ╨╕╨╗╨╕ `GET /learning/tasks/{task_id}/state` ╤Б ╤В╨╕╨┐╨╛╨╝/╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡╨╝ `blocked_limit`/`BLOCKED_LIMIT` ╨╖╨░╤П╨▓╨║╨░ ╨╜╨░ ╨┐╨╛╨╝╨╛╤Й╤М ╤Б╨╛╨╖╨┤╨░╤С╤В╤Б╤П ╨░╨▓╤В╨╛╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ (request_type=blocked_limit, auto_created=true, context ╤Б attempts_used/attempts_limit_effective). ╨б╨┐╨╕╤Б╨╛╨║ ╨╖╨░╤П╨▓╨╛╨║ ╨╝╨╛╨╢╨╜╨╛ ╤Д╨╕╨╗╤М╤В╤А╨╛╨▓╨░╤В╤М ╨┐╨╛ `request_type=manual_help|blocked_limit|all`. ╨б ╤Н╤В╨░╨┐╨░ 3.9: claim-next/release ╨┤╨╗╤П help-requests ╨╕ reviews, workload, ╨┐╤А╨╕╨╛╤А╨╕╤В╨╡╤В/SLA ╨▓ ╤Б╨┐╨╕╤Б╨║╨╡. Smoke: [smoke-learning-engine-stage3-8-help-requests.md](smoke-learning-engine-stage3-8-help-requests.md), [smoke-learning-engine-stage3-9-next-modes.md](smoke-learning-engine-stage3-9-next-modes.md).
+ 
+ ╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╤В╤А╨╡╨▒╤Г╤О╤В `api_key` ╨▓ query. ╨Ю╤В╨▓╨╡╤В╤Л ╤Б╨╛╨┤╨╡╤А╨╢╨░╤В ╨┐╨╛╨╗╤П, ╨╛╨┐╨╕╤Б╨░╨╜╨╜╤Л╨╡ ╨▓ ╤Н╤В╨░╨┐╨╜╤Л╤Е ╨┤╨╛╨║╤Г╨╝╨╡╨╜╤В╨░╤Е (state: `attempts_used`, `attempts_limit_effective`, `last_attempt_id` ╨╕ ╤В.╨┤.).
+ 

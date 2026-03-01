@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Integer,
     PrimaryKeyConstraint,
+    SmallInteger,
     String,
     Text,
     text,
@@ -60,6 +61,9 @@ class HelpRequests(Base):
         ForeignKeyConstraint(
             ["closed_by"], ["users.id"], ondelete="SET NULL", name="help_requests_closed_by_fkey"
         ),
+        ForeignKeyConstraint(
+            ["claimed_by"], ["users.id"], ondelete="SET NULL", name="help_requests_claimed_by_fkey"
+        ),
         PrimaryKeyConstraint("id", name="help_requests_pkey"),
         {"comment": "Заявки на помощь по заданию (Learning Engine V1, этап 3.8)"},
     )
@@ -95,6 +99,13 @@ class HelpRequests(Base):
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     resolution_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Этап 3.9: claim/lock и SLA
+    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("100"))
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    claim_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    claim_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     replies: Mapped[List["HelpRequestReplies"]] = relationship(
         "HelpRequestReplies",

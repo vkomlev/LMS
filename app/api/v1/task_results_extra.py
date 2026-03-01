@@ -285,6 +285,25 @@ async def manual_check_task_result(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Результат с ID {result_id} не найден",
         )
+
+    # Этап 3.9: опциональная проверка lock_token для claim (нормализация timezone — P1 fix)
+    lock_token = payload.get("lock_token")
+    if lock_token:
+        from datetime import timezone
+        now = datetime.now(timezone.utc)
+        expires_at = getattr(result, "review_claim_expires_at", None)
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if (
+            getattr(result, "review_claimed_by", None) != checked_by
+            or getattr(result, "review_claim_token", None) != lock_token
+            or not getattr(result, "review_claim_expires_at", None)
+            or (expires_at is not None and expires_at < now)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Токен блокировки невалиден или просрочен",
+            )
     
     # Проверяем, что score не превышает max_score
     max_score = result.max_score or 0
@@ -300,7 +319,7 @@ async def manual_check_task_result(
             detail="score не может быть отрицательным",
         )
     
-    # Обновляем результат
+    # Обновляем результат; этап 3.9: сбрасываем claim после проверки
     update_data = TaskResultUpdate(
         score=score,
         checked_by=checked_by,
@@ -308,13 +327,13 @@ async def manual_check_task_result(
         is_correct=payload.get("is_correct"),
         metrics=payload.get("metrics"),
     )
-    
-    # BaseService.update ожидает объект БД и dict, поэтому сначала получаем объект
-    updated_result = await task_results_service.update(
-        db, 
-        result, 
-        update_data.model_dump(exclude_unset=True)
-    )
+    update_dict = update_data.model_dump(exclude_unset=True)
+    update_dict["review_claimed_by"] = None
+    update_dict["review_claim_token"] = None
+    update_dict["review_claim_expires_at"] = None
+
+    # BaseService.update ожидает объект БД и dict
+    updated_result = await task_results_service.update(db, result, update_dict)
     return TaskResultRead.model_validate(updated_result)
 
 
@@ -465,13 +484,21 @@ async def get_pending_review_results(
     Returns:
         Список результатов, требующих проверки
     """
+    from datetime import timezone
     from sqlalchemy import select, and_, or_
     from app.models.task_results import TaskResults
     from app.models.tasks import Tasks
-    
-    # Базовое условие: результаты не проверены
-    conditions = [TaskResults.checked_at.is_(None)]
-    
+
+    now = datetime.now(timezone.utc)
+    # Базовое условие: результаты не проверены; этап 3.9: не показывать захваченные по TTL
+    conditions = [
+        TaskResults.checked_at.is_(None),
+        or_(
+            TaskResults.review_claim_expires_at.is_(None),
+            TaskResults.review_claim_expires_at < now,
+        ),
+    ]
+
     # Дополнительные фильтры
     if course_id is not None:
         # Нужно присоединить tasks для фильтрации по course_id

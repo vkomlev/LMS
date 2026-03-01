@@ -1,0 +1,59 @@
+﻿---
+description: Phase 0 AI contract activation (tier routing, workflows, review gate for main)
+alwaysApply: true
+---
+
+# Phase 0 AI Contract
+
+Use the project AI contract as the primary process source:
+- docs/ai/AGENTS.md
+- docs/ai/PROJECT_OVERRIDES.md
+- docs/ai/WORKFLOWS/feature.md
+- docs/ai/WORKFLOWS/bugfix.md
+- docs/ai/WORKFLOWS/db-change.md
+- docs/ai/ERRORS.md
+- skills/core/spec-writer/SKILL.md
+- skills/core/executor-lite/SKILL.md
+- skills/core/review-gate/SKILL.md
+- skills/core/db-check/SKILL.md
+- skills/core/encoding-guard/SKILL.md
+
+Tier mapping:
+- Tier L -> Cursor agents
+- Tier M -> Codex
+- Tier H -> Claude
+
+MCP policy:
+- Use alias `postgresql`.
+- Default DB interaction mode is read-only unless task explicitly requires writes.
+
+Review gate policy:
+- Mandatory before integration to main/master (merge or direct commit).
+- For non-main branches, review gate is recommended but optional unless requested.
+
+Feedback loop policy:
+- Log significant mistakes to docs/ai/ERRORS.md.
+- Use recurring error patterns to improve rules, workflows, and skills.
+
+Repository policy:
+- Default workflow is direct work in `main`/`master`.
+- Create separate branches only for fully autonomous agent runs.
+- For human+agent collaborative work, avoid branch overhead and strengthen pre-commit controls.
+
+Instruction consistency policy:
+- Before changing AGENTS/WORKFLOWS/rules/skills, run consistency check.
+- Record: `Consistency check: PASS`, checked files, resolved conflicts.
+- If unresolved conflict exists, do not finalize instruction change.
+
+Encoding policy:
+- Keep text files in UTF-8.
+- Before writing docs/rules, verify no mojibake markers (`РџС`, `РёР`, `С‚Р`, `Ð`, `Ñ`).
+- If markers appear, stop and restore from last valid version before proceeding.
+
+Pre-write encoding check:
+- Before saving docs/rules text files, run:
+  `python skills/core/encoding-guard/scripts/check_encoding.py --path "docs" --recursive`
+  `python skills/core/encoding-guard/scripts/check_encoding.py --path "reviews" --recursive`
+- If result contains WARN/FAIL for changed files, stop and recover before finalizing edits.
+
+
