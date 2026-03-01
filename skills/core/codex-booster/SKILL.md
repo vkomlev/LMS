@@ -14,8 +14,9 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 2. Load project inventory from [references/fleet-map.md](references/fleet-map.md).
 3. Select skills and routing strategy from [references/skill-catalog.md](references/skill-catalog.md).
 4. For rollout, use [references/rollout-ops.md](references/rollout-ops.md).
-5. Produce explicit commands, expected artifacts, and verification checklist.
-6. If request depends on latest Codex/Cursor capabilities, verify with official docs before final guidance.
+5. Enforce Cursor-agent error loop: if Cursor mistakes are found, require logging and preventive updates (see [references/cursor-error-governance.md](references/cursor-error-governance.md)).
+6. Produce explicit commands, expected artifacts, and verification checklist.
+7. If request depends on latest Codex/Cursor capabilities, verify with official docs before final guidance.
 
 ## Input Contract
 - `Mode` (`use|configure|rollout|audit`)
@@ -30,6 +31,7 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - `Commands`
 - `Expected Artifacts`
 - `Verification`
+- `Cursor Error Loop Actions`
 - `Follow-up Improvements`
 
 ## Quality Rules
@@ -37,3 +39,4 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - Use dry-run first for bulk rollout.
 - Do not claim "latest feature" without verifying source/date.
 - Prefer minimal change set with clear rollback path.
+- Never close review/audit tasks with Cursor-agent mistakes left unlogged.

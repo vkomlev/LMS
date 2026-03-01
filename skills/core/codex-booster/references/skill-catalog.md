@@ -2,6 +2,7 @@
 
 ## Orchestration and Planning
 - `ai-orchestrator`: route work across contours, tiers, and gates.
+- `cursor-booster`: design Cursor plugin/subagent/skill/MCP adoption and rollout.
 - `spec-writer`: produce implementation-ready specs.
 - `change-plan-architect`: phased plan + dependency/resource gaps.
 - `tech-spec-composer`: assignment package for Tier L execution.
@@ -9,14 +10,15 @@
 ## Execution and Review
 - `executor-lite`: low-risk deterministic implementation.
 - `review-gate`: independent PASS/FAIL quality gate.
+- `techlead-code-reviewer`: strict production-readiness review with architecture/migration/testing/security checks.
 - `db-check`: DB-centric validation and safety checks.
 - `encoding-guard`: UTF-8 checks for docs/reviews before write.
 
 ## Product and UX
 - `telegram-ux-flow-designer`: minimal aiogram/aiogram-dialog UX flows.
+- `fastapi-api-developer`: FastAPI backend execution with MCP and log-debug loop.
 
 ## Quality Improvement Loops
 - `response-quality-coach`: improve answer quality and skill outputs.
 - Coding loop register: `docs/ai/ERRORS.md` (per project).
 - Answer loop register: `d:/Work/IDE_booster/Docs/ai/ANSWER_ERRORS.md`.
-

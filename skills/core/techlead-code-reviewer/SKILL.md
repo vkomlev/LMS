@@ -26,8 +26,9 @@ Review for:
 - [references/observability-checks.md](references/observability-checks.md)
 - [references/security-checks.md](references/security-checks.md)
 4. Classify findings by severity and impact.
-5. Produce PASS/FAIL with required fixes and validation commands.
-6. Add residual risk and post-merge watchpoints if PASS.
+5. If findings indicate Cursor-agent mistakes, create error-log entries using [references/cursor-agent-error-loop.md](references/cursor-agent-error-loop.md).
+6. Produce PASS/FAIL with required fixes and validation commands.
+7. Add residual risk and post-merge watchpoints if PASS.
 
 ## Output Contract
 - `Decision` (`PASS` or `FAIL`)
@@ -41,6 +42,8 @@ Review for:
 - `Required Fixes`
 - `Required Validation Commands`
 - `Residual Risks`
+- `Cursor Agent Error Entries` (one entry per significant Cursor-agent mistake)
+- `Skill Improvement Actions` (what to change in developer skills/rules to prevent recurrence)
 
 ## Severity Model
 - `S1`: production outage/data loss/security breach risk.
@@ -52,6 +55,7 @@ Review for:
 - `FAIL` if behavior is uncertain in a production-critical path.
 - `FAIL` if migration rollback is missing for schema-affecting change.
 - `FAIL` if tests do not cover the changed behavior and key regressions.
+- `FAIL` if significant Cursor-agent mistakes are detected but not logged into project error register.
 - `PASS` only when no blocking issue remains and validation is reproducible.
 
 ## Quality Rules
@@ -61,3 +65,4 @@ Review for:
 - concrete fix direction
 - Keep focus on defects and risks, not style-only commentary.
 - Prefer evidence-based claims (tests, logs, code path reasoning).
+- Treat repeated Cursor-agent mistakes as process defects: always produce preventive skill/rule updates.
