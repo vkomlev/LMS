@@ -43,6 +43,24 @@ class TaskResultUpdate(BaseModel):
     source_system: Optional[str] = Field(None, description="Источник системы, записавшей результат", examples=["web", "tg_bot", "system"])
 
 
+class TaskResultManualCheckRequest(BaseModel):
+    """
+    Схема ручной дооценки результата.
+
+    Этап 3.9: lock_token опционален и используется для проверки владения claim в
+    режимах teacher next-modes.
+    """
+    score: int = Field(..., description="Новый балл", ge=0, examples=[8, 10, 0])
+    checked_by: int = Field(..., description="ID проверяющего (teacher/methodist)", examples=[2, 5])
+    is_correct: Optional[bool] = Field(None, description="Флаг корректности ответа", examples=[True, False, None])
+    metrics: Optional[Any] = Field(None, description="Дополнительные метрики/комментарии", examples=[{"comment": "Частично верно"}])
+    lock_token: Optional[str] = Field(
+        None,
+        description="Токен блокировки claim (этап 3.9); при невалидном/просроченном — 409",
+        examples=["5e8ae05f..."],
+    )
+
+
 class TaskResultRead(BaseModel):
     """
     Схема чтения результата по задаче.

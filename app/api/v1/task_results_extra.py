@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from typing import List, Optional
 from datetime import datetime
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
 from app.api.deps import get_db
-from app.schemas.task_results import TaskResultRead, TaskResultUpdate
+from app.schemas.task_results import TaskResultRead, TaskResultUpdate, TaskResultManualCheckRequest
 from app.services.task_results_service import TaskResultsService
 
 
@@ -20,10 +20,10 @@ task_results_service = TaskResultsService()
 @router.get(
     "/task-results/by-user/{user_id}",
     response_model=List[TaskResultRead],
-    summary="Получить результаты пользователя",
+    summary="РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ",
     responses={
         200: {
-            "description": "Список результатов пользователя",
+            "description": "РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ",
             "content": {
                 "application/json": {
                     "example": [
@@ -46,19 +46,19 @@ task_results_service = TaskResultsService()
 async def get_task_results_by_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
-    offset: int = Query(0, ge=0, description="Смещение"),
+    limit: int = Query(100, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
+    offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
 ) -> List[TaskResultRead]:
     """
-    Получить список результатов выполнения заданий пользователя с пагинацией.
+    РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РІС‹РїРѕР»РЅРµРЅРёСЏ Р·Р°РґР°РЅРёР№ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ СЃ РїР°РіРёРЅР°С†РёРµР№.
 
     Args:
-        user_id: ID пользователя.
-        limit: Максимум записей на странице (1-1000).
-        offset: Смещение для пагинации.
+        user_id: ID РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
+        limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000).
+        offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё.
 
     Returns:
-        Список результатов пользователя.
+        РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ.
     """
     results, total = await task_results_service.get_by_user(
         db,
@@ -72,10 +72,10 @@ async def get_task_results_by_user(
 @router.get(
     "/task-results/by-task/{task_id}",
     response_model=List[TaskResultRead],
-    summary="Получить результаты по задаче",
+    summary="РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ РїРѕ Р·Р°РґР°С‡Рµ",
     responses={
         200: {
-            "description": "Список результатов по задаче",
+            "description": "РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕ Р·Р°РґР°С‡Рµ",
             "content": {
                 "application/json": {
                     "example": [
@@ -94,26 +94,26 @@ async def get_task_results_by_user(
             }
         },
         404: {
-            "description": "Задача не найдена",
+            "description": "Р—Р°РґР°С‡Р° РЅРµ РЅР°Р№РґРµРЅР°",
         },
     },
 )
 async def get_task_results_by_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
-    offset: int = Query(0, ge=0, description="Смещение"),
+    limit: int = Query(100, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
+    offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
 ) -> List[TaskResultRead]:
     """
-    Получить список результатов выполнения конкретной задачи с пагинацией.
+    РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РІС‹РїРѕР»РЅРµРЅРёСЏ РєРѕРЅРєСЂРµС‚РЅРѕР№ Р·Р°РґР°С‡Рё СЃ РїР°РіРёРЅР°С†РёРµР№.
 
     Args:
-        task_id: ID задачи.
-        limit: Максимум записей на странице (1-1000).
-        offset: Смещение для пагинации.
+        task_id: ID Р·Р°РґР°С‡Рё.
+        limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000).
+        offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё.
 
     Returns:
-        Список результатов по задаче.
+        РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕ Р·Р°РґР°С‡Рµ.
     """
     results, total = await task_results_service.get_by_task(
         db,
@@ -127,10 +127,10 @@ async def get_task_results_by_task(
 @router.get(
     "/task-results/by-attempt/{attempt_id}",
     response_model=List[TaskResultRead],
-    summary="Получить результаты попытки",
+    summary="РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ РїРѕРїС‹С‚РєРё",
     responses={
         200: {
-            "description": "Список результатов попытки",
+            "description": "РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕРїС‹С‚РєРё",
             "content": {
                 "application/json": {
                     "example": [
@@ -149,26 +149,26 @@ async def get_task_results_by_task(
             }
         },
         404: {
-            "description": "Попытка не найдена",
+            "description": "РџРѕРїС‹С‚РєР° РЅРµ РЅР°Р№РґРµРЅР°",
         },
     },
 )
 async def get_task_results_by_attempt(
     attempt_id: int,
     db: AsyncSession = Depends(get_db),
-    limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
-    offset: int = Query(0, ge=0, description="Смещение"),
+    limit: int = Query(100, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
+    offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
 ) -> List[TaskResultRead]:
     """
-    Получить список результатов выполнения заданий в рамках конкретной попытки с пагинацией.
+    РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РІС‹РїРѕР»РЅРµРЅРёСЏ Р·Р°РґР°РЅРёР№ РІ СЂР°РјРєР°С… РєРѕРЅРєСЂРµС‚РЅРѕР№ РїРѕРїС‹С‚РєРё СЃ РїР°РіРёРЅР°С†РёРµР№.
 
     Args:
-        attempt_id: ID попытки.
-        limit: Максимум записей на странице (1-1000).
-        offset: Смещение для пагинации.
+        attempt_id: ID РїРѕРїС‹С‚РєРё.
+        limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000).
+        offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё.
 
     Returns:
-        Список результатов попытки.
+        РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ РїРѕРїС‹С‚РєРё.
     """
     results, total = await task_results_service.get_by_attempt(
         db,
@@ -182,10 +182,10 @@ async def get_task_results_by_attempt(
 @router.post(
     "/task-results/{result_id}/manual-check",
     response_model=TaskResultRead,
-    summary="Ручная дооценка результата",
+    summary="Р СѓС‡РЅР°СЏ РґРѕРѕС†РµРЅРєР° СЂРµР·СѓР»СЊС‚Р°С‚Р°",
     responses={
         200: {
-            "description": "Результат успешно обновлен",
+            "description": "Р РµР·СѓР»СЊС‚Р°С‚ СѓСЃРїРµС€РЅРѕ РѕР±РЅРѕРІР»РµРЅ",
             "content": {
                 "application/json": {
                     "example": {
@@ -204,35 +204,38 @@ async def get_task_results_by_attempt(
             }
         },
         400: {
-            "description": "Неверные параметры запроса",
+            "description": "РќРµРІРµСЂРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹ Р·Р°РїСЂРѕСЃР°",
             "content": {
                 "application/json": {
                     "example": {
-                        "detail": "score не может быть больше max_score"
+                        "detail": "score РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ max_score"
                     }
                 }
             }
         },
         404: {
-            "description": "Результат не найден",
+            "description": "Р РµР·СѓР»СЊС‚Р°С‚ РЅРµ РЅР°Р№РґРµРЅ",
+        },
+        409: {
+            "description": "Токен блокировки невалиден или просрочен",
         },
     },
 )
 async def manual_check_task_result(
     result_id: int,
-    payload: dict = Body(
+    payload: TaskResultManualCheckRequest = Body(
         ...,
-        description="Параметры ручной проверки",
+        description="РџР°СЂР°РјРµС‚СЂС‹ СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё",
         examples=[
             {
-                "summary": "Ручная проверка с новым баллом",
+                "summary": "Р СѓС‡РЅР°СЏ РїСЂРѕРІРµСЂРєР° СЃ РЅРѕРІС‹Рј Р±Р°Р»Р»РѕРј",
                 "value": {
                     "score": 15,
                     "checked_by": 2,
                 }
             },
             {
-                "summary": "Ручная проверка с обновлением is_correct",
+                "summary": "Р СѓС‡РЅР°СЏ РїСЂРѕРІРµСЂРєР° СЃ РѕР±РЅРѕРІР»РµРЅРёРµРј is_correct",
                 "value": {
                     "score": 10,
                     "is_correct": True,
@@ -244,50 +247,49 @@ async def manual_check_task_result(
     db: AsyncSession = Depends(get_db),
 ) -> TaskResultRead:
     """
-    Выполнить ручную дооценку результата выполнения задачи.
+    Р’С‹РїРѕР»РЅРёС‚СЊ СЂСѓС‡РЅСѓСЋ РґРѕРѕС†РµРЅРєСѓ СЂРµР·СѓР»СЊС‚Р°С‚Р° РІС‹РїРѕР»РЅРµРЅРёСЏ Р·Р°РґР°С‡Рё.
     
-    Позволяет преподавателю или администратору изменить оценку,
-    установленную автоматической проверкой, или проверить задачу,
-    требующую ручной проверки.
+    РџРѕР·РІРѕР»СЏРµС‚ РїСЂРµРїРѕРґР°РІР°С‚РµР»СЋ РёР»Рё Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ РёР·РјРµРЅРёС‚СЊ РѕС†РµРЅРєСѓ,
+    СѓСЃС‚Р°РЅРѕРІР»РµРЅРЅСѓСЋ Р°РІС‚РѕРјР°С‚РёС‡РµСЃРєРѕР№ РїСЂРѕРІРµСЂРєРѕР№, РёР»Рё РїСЂРѕРІРµСЂРёС‚СЊ Р·Р°РґР°С‡Сѓ,
+    С‚СЂРµР±СѓСЋС‰СѓСЋ СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё.
     
     Args:
-        result_id: ID результата для проверки.
-        payload: Параметры проверки:
-            - score: Новый балл (обязательно)
-            - checked_by: ID пользователя, выполняющего проверку (обязательно)
-            - is_correct: Флаг правильности ответа (опционально)
-            - metrics: Дополнительные метрики (опционально)
+        result_id: ID СЂРµР·СѓР»СЊС‚Р°С‚Р° РґР»СЏ РїСЂРѕРІРµСЂРєРё.
+        payload: РџР°СЂР°РјРµС‚СЂС‹ РїСЂРѕРІРµСЂРєРё:
+            - score: РќРѕРІС‹Р№ Р±Р°Р»Р» (РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ)
+            - checked_by: ID РїРѕР»СЊР·РѕРІР°С‚РµР»СЏ, РІС‹РїРѕР»РЅСЏСЋС‰РµРіРѕ РїСЂРѕРІРµСЂРєСѓ (РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ)
+            - is_correct: Р¤Р»Р°Рі РїСЂР°РІРёР»СЊРЅРѕСЃС‚Рё РѕС‚РІРµС‚Р° (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ)
+            - metrics: Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ РјРµС‚СЂРёРєРё (РѕРїС†РёРѕРЅР°Р»СЊРЅРѕ)
     
     Returns:
-        Обновленный результат.
+        РћР±РЅРѕРІР»РµРЅРЅС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚.
     """
-    from app.schemas.task_results import TaskResultUpdate
-    
-    score = payload.get("score")
-    checked_by = payload.get("checked_by")
+    payload_data = payload.model_dump(exclude_unset=True)
+    score = payload_data.get("score")
+    checked_by = payload_data.get("checked_by")
     
     if score is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Параметр 'score' обязателен",
+            detail="РџР°СЂР°РјРµС‚СЂ 'score' РѕР±СЏР·Р°С‚РµР»РµРЅ",
         )
     
     if checked_by is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Параметр 'checked_by' обязателен",
+            detail="РџР°СЂР°РјРµС‚СЂ 'checked_by' РѕР±СЏР·Р°С‚РµР»РµРЅ",
         )
     
-    # Получаем результат
+    # РџРѕР»СѓС‡Р°РµРј СЂРµР·СѓР»СЊС‚Р°С‚
     result = await task_results_service.get_by_id(db, result_id)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Результат с ID {result_id} не найден",
+            detail=f"Р РµР·СѓР»СЊС‚Р°С‚ СЃ ID {result_id} РЅРµ РЅР°Р№РґРµРЅ",
         )
 
-    # Этап 3.9: опциональная проверка lock_token для claim (нормализация timezone — P1 fix)
-    lock_token = payload.get("lock_token")
+    # Р­С‚Р°Рї 3.9: РѕРїС†РёРѕРЅР°Р»СЊРЅР°СЏ РїСЂРѕРІРµСЂРєР° lock_token РґР»СЏ claim (РЅРѕСЂРјР°Р»РёР·Р°С†РёСЏ timezone вЂ” P1 fix)
+    lock_token = payload_data.get("lock_token")
     if lock_token:
         from datetime import timezone
         now = datetime.now(timezone.utc)
@@ -302,47 +304,47 @@ async def manual_check_task_result(
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Токен блокировки невалиден или просрочен",
+                detail="РўРѕРєРµРЅ Р±Р»РѕРєРёСЂРѕРІРєРё РЅРµРІР°Р»РёРґРµРЅ РёР»Рё РїСЂРѕСЃСЂРѕС‡РµРЅ",
             )
     
-    # Проверяем, что score не превышает max_score
+    # РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ score РЅРµ РїСЂРµРІС‹С€Р°РµС‚ max_score
     max_score = result.max_score or 0
     if max_score > 0 and score > max_score:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"score ({score}) не может быть больше max_score ({max_score})",
+            detail=f"score ({score}) РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ Р±РѕР»СЊС€Рµ max_score ({max_score})",
         )
     
     if score < 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="score не может быть отрицательным",
+            detail="score РЅРµ РјРѕР¶РµС‚ Р±С‹С‚СЊ РѕС‚СЂРёС†Р°С‚РµР»СЊРЅС‹Рј",
         )
     
-    # Обновляем результат; этап 3.9: сбрасываем claim после проверки
+    # РћР±РЅРѕРІР»СЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚; СЌС‚Р°Рї 3.9: СЃР±СЂР°СЃС‹РІР°РµРј claim РїРѕСЃР»Рµ РїСЂРѕРІРµСЂРєРё
     update_data = TaskResultUpdate(
         score=score,
         checked_by=checked_by,
         checked_at=datetime.now(),
-        is_correct=payload.get("is_correct"),
-        metrics=payload.get("metrics"),
+        is_correct=payload_data.get("is_correct"),
+        metrics=payload_data.get("metrics"),
     )
     update_dict = update_data.model_dump(exclude_unset=True)
     update_dict["review_claimed_by"] = None
     update_dict["review_claim_token"] = None
     update_dict["review_claim_expires_at"] = None
 
-    # BaseService.update ожидает объект БД и dict
+    # BaseService.update РѕР¶РёРґР°РµС‚ РѕР±СЉРµРєС‚ Р‘Р” Рё dict
     updated_result = await task_results_service.update(db, result, update_dict)
     return TaskResultRead.model_validate(updated_result)
 
 
 @router.get(
     "/task-results/stats/by-task/{task_id}",
-    summary="Статистика по задаче",
+    summary="РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ Р·Р°РґР°С‡Рµ",
     responses={
         200: {
-            "description": "Статистика по задаче",
+            "description": "РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ Р·Р°РґР°С‡Рµ",
             "content": {
                 "application/json": {
                     "example": {
@@ -364,24 +366,24 @@ async def get_task_stats(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Получить статистику по задаче.
+    РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ Р·Р°РґР°С‡Рµ.
     
-    Возвращает:
-    - total_attempts: Общее количество попыток
-    - average_score: Средний балл
-    - correct_percentage: Процент правильных ответов
-    - min_score, max_score: Минимальный и максимальный баллы
-    - score_distribution: Распределение баллов
+    Р’РѕР·РІСЂР°С‰Р°РµС‚:
+    - total_attempts: РћР±С‰РµРµ РєРѕР»РёС‡РµСЃС‚РІРѕ РїРѕРїС‹С‚РѕРє
+    - average_score: РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»
+    - correct_percentage: РџСЂРѕС†РµРЅС‚ РїСЂР°РІРёР»СЊРЅС‹С… РѕС‚РІРµС‚РѕРІ
+    - min_score, max_score: РњРёРЅРёРјР°Р»СЊРЅС‹Р№ Рё РјР°РєСЃРёРјР°Р»СЊРЅС‹Р№ Р±Р°Р»Р»С‹
+    - score_distribution: Р Р°СЃРїСЂРµРґРµР»РµРЅРёРµ Р±Р°Р»Р»РѕРІ
     """
     return await task_results_service.get_stats_by_task(db, task_id)
 
 
 @router.get(
     "/task-results/stats/by-course/{course_id}",
-    summary="Статистика по курсу",
+    summary="РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РєСѓСЂСЃСѓ",
     responses={
         200: {
-            "description": "Статистика по курсу",
+            "description": "РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РєСѓСЂСЃСѓ",
             "content": {
                 "application/json": {
                     "example": {
@@ -401,23 +403,23 @@ async def get_course_stats(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Получить статистику по курсу.
+    РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РєСѓСЂСЃСѓ.
     
-    Возвращает агрегированную статистику по всем задачам курса:
-    - total_attempts: Общее количество попыток
-    - average_score: Средний балл
-    - correct_percentage: Процент правильных ответов
-    - tasks_count: Количество задач в курсе
+    Р’РѕР·РІСЂР°С‰Р°РµС‚ Р°РіСЂРµРіРёСЂРѕРІР°РЅРЅСѓСЋ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РІСЃРµРј Р·Р°РґР°С‡Р°Рј РєСѓСЂСЃР°:
+    - total_attempts: РћР±С‰РµРµ РєРѕР»РёС‡РµСЃС‚РІРѕ РїРѕРїС‹С‚РѕРє
+    - average_score: РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»
+    - correct_percentage: РџСЂРѕС†РµРЅС‚ РїСЂР°РІРёР»СЊРЅС‹С… РѕС‚РІРµС‚РѕРІ
+    - tasks_count: РљРѕР»РёС‡РµСЃС‚РІРѕ Р·Р°РґР°С‡ РІ РєСѓСЂСЃРµ
     """
     return await task_results_service.get_stats_by_course(db, course_id)
 
 
 @router.get(
     "/task-results/stats/by-user/{user_id}",
-    summary="Статистика по пользователю",
+    summary="РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ",
     responses={
         200: {
-            "description": "Статистика по пользователю",
+            "description": "РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ",
             "content": {
                 "application/json": {
                     "example": {
@@ -439,15 +441,15 @@ async def get_user_stats(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
-    Получить статистику по пользователю.
+    РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ.
     
-    Возвращает:
-    - total_attempts: Общее количество попыток
-    - average_score: Средний балл
-    - correct_percentage: Процент правильных ответов
-    - total_score: Сумма всех баллов
-    - total_max_score: Сумма максимальных баллов
-    - completion_percentage: Процент выполнения (total_score / total_max_score * 100)
+    Р’РѕР·РІСЂР°С‰Р°РµС‚:
+    - total_attempts: РћР±С‰РµРµ РєРѕР»РёС‡РµСЃС‚РІРѕ РїРѕРїС‹С‚РѕРє
+    - average_score: РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»
+    - correct_percentage: РџСЂРѕС†РµРЅС‚ РїСЂР°РІРёР»СЊРЅС‹С… РѕС‚РІРµС‚РѕРІ
+    - total_score: РЎСѓРјРјР° РІСЃРµС… Р±Р°Р»Р»РѕРІ
+    - total_max_score: РЎСѓРјРјР° РјР°РєСЃРёРјР°Р»СЊРЅС‹С… Р±Р°Р»Р»РѕРІ
+    - completion_percentage: РџСЂРѕС†РµРЅС‚ РІС‹РїРѕР»РЅРµРЅРёСЏ (total_score / total_max_score * 100)
     """
     return await task_results_service.get_stats_by_user(db, user_id)
 
@@ -455,34 +457,34 @@ async def get_user_stats(
 @router.get(
     "/task-results/by-pending-review",
     response_model=List[TaskResultRead],
-    summary="Получить результаты заданий, требующих ручной проверки",
+    summary="РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё",
     responses={
         200: {
-            "description": "Список результатов, требующих проверки",
+            "description": "РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё",
         },
     },
 )
 async def get_pending_review_results(
-    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
-    user_id: Optional[int] = Query(None, description="Фильтр по пользователю"),
-    limit: int = Query(50, ge=1, le=1000, description="Максимум записей на странице"),
-    offset: int = Query(0, ge=0, description="Смещение"),
+    course_id: Optional[int] = Query(None, description="Р¤РёР»СЊС‚СЂ РїРѕ РєСѓСЂСЃСѓ"),
+    user_id: Optional[int] = Query(None, description="Р¤РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ"),
+    limit: int = Query(50, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
+    offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
     db: AsyncSession = Depends(get_db),
 ) -> List[TaskResultRead]:
     """
-    Получить список результатов заданий, требующих ручной проверки.
+    РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё.
     
-    Возвращает результаты, где:
-    - checked_at = null (еще не проверены)
+    Р’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚С‹, РіРґРµ:
+    - checked_at = null (РµС‰Рµ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹)
     
     Args:
-        course_id: Опциональный фильтр по курсу
-        user_id: Опциональный фильтр по пользователю
-        limit: Максимум записей на странице (1-1000)
-        offset: Смещение для пагинации
+        course_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РєСѓСЂСЃСѓ
+        user_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ
+        limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000)
+        offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё
     
     Returns:
-        Список результатов, требующих проверки
+        РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё
     """
     from datetime import timezone
     from sqlalchemy import select, and_, or_
@@ -490,7 +492,7 @@ async def get_pending_review_results(
     from app.models.tasks import Tasks
 
     now = datetime.now(timezone.utc)
-    # Базовое условие: результаты не проверены; этап 3.9: не показывать захваченные по TTL
+    # Р‘Р°Р·РѕРІРѕРµ СѓСЃР»РѕРІРёРµ: СЂРµР·СѓР»СЊС‚Р°С‚С‹ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹; СЌС‚Р°Рї 3.9: РЅРµ РїРѕРєР°Р·С‹РІР°С‚СЊ Р·Р°С…РІР°С‡РµРЅРЅС‹Рµ РїРѕ TTL
     conditions = [
         TaskResults.checked_at.is_(None),
         or_(
@@ -499,15 +501,15 @@ async def get_pending_review_results(
         ),
     ]
 
-    # Дополнительные фильтры
+    # Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ С„РёР»СЊС‚СЂС‹
     if course_id is not None:
-        # Нужно присоединить tasks для фильтрации по course_id
+        # РќСѓР¶РЅРѕ РїСЂРёСЃРѕРµРґРёРЅРёС‚СЊ tasks РґР»СЏ С„РёР»СЊС‚СЂР°С†РёРё РїРѕ course_id
         conditions.append(Tasks.course_id == course_id)
     
     if user_id is not None:
         conditions.append(TaskResults.user_id == user_id)
     
-    # Запрос с join к tasks для фильтрации по course_id
+    # Р—Р°РїСЂРѕСЃ СЃ join Рє tasks РґР»СЏ С„РёР»СЊС‚СЂР°С†РёРё РїРѕ course_id
     query = (
         select(TaskResults)
         .join(Tasks, TaskResults.task_id == Tasks.id)
