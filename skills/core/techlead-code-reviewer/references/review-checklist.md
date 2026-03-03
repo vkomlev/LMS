@@ -1,4 +1,4 @@
-# Core Review Checklist
+﻿# Core Review Checklist
 
 ## Correctness
 - Does code implement intended behavior exactly?
@@ -23,3 +23,5 @@
 - Sensitive data excluded from logs?
 - Validation commands are reproducible?
 
+## Date/Time Critical Check
+- For any `raw SQL -> date field -> now comparison` path, are types normalized and guarded before comparison?
