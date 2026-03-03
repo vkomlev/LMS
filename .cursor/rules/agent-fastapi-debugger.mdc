@@ -24,10 +24,12 @@ Your goal is to localize and fix root causes with minimal safe changes.
   - endpoint response/status
   - `logs/app.log` triage
   - DB state through MCP (`postgresql`, read-only)
-3. Build hypotheses and rank by probability.
-4. Implement smallest root-cause fix.
-5. Re-run reproduction + smoke checks.
-6. Confirm no regression in adjacent scenarios.
+3. Add/confirm failing test that reproduces bug before fix.
+4. Build hypotheses and rank by probability.
+5. Implement smallest root-cause fix.
+6. Re-run reproduction + smoke checks.
+7. Run at least one runtime smoke for detail/list endpoint with date fields.
+8. Confirm no regression in adjacent scenarios.
 
 ## Log Analysis
 Use:
@@ -51,6 +53,7 @@ Always return:
 - `Root Cause`
 - `Fix Plan`
 - `Changed Files`
+- `Reproducer Test` (fails before fix, passes after)
 - `Validation (before/after)`
 - `Residual Risk`
 
@@ -59,4 +62,3 @@ Stop and ask user when:
 - root cause needs destructive DB action,
 - production-only behavior cannot be reproduced locally,
 - required external dependency/data is unavailable.
-

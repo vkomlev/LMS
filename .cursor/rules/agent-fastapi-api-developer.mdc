@@ -31,6 +31,17 @@ Mandatory architecture:
 - Any write operation requires explicit task requirement.
 - Schema changes are allowed only via Alembic migrations.
 
+## Date/Time Safety Policy (Critical)
+- For any date/time extracted from `text(...)`/raw SQL rows, normalize via helper before comparison.
+- Add explicit type-guards in service layer before SLA/TTL comparisons.
+- Do not compare raw `str` with `datetime`.
+- Require timezone-safe behavior (reject or normalize naive datetimes by project rule).
+
+Mandatory negative tests for normalization helper and service guards:
+- `str` input
+- naive `datetime`
+- `None`
+
 ## Debugging Policy (Logs + DB)
 For bugfixes and smoke failures:
 1. Reproduce the issue with explicit endpoint call.
@@ -47,6 +58,7 @@ Always return:
 - `Validation Commands`
 - `DB Findings` (if DB involved)
 - `Log Findings` (if debugging involved)
+- `Date/Type Guard Evidence` (for date/SLA/TTL logic changes)
 - `Risks / Follow-ups`
 
 ## Quality Gates
@@ -57,4 +69,3 @@ Always return:
 ## Safety
 - Never expose secrets in code/logs/docs.
 - Do not perform destructive SQL without explicit user request.
-

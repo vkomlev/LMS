@@ -32,6 +32,22 @@ from app.services.teacher_courses_service import TeacherCoursesService
 logger = logging.getLogger(__name__)
 
 
+def _normalize_due_at(due_at: Any) -> Optional[datetime]:
+    """Приводит due_at из сырого SQL (str или datetime) к timezone-aware datetime для сравнения с now."""
+    if due_at is None:
+        return None
+    if isinstance(due_at, str):
+        s = due_at.strip().replace("Z", "+00:00")
+        try:
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    if isinstance(due_at, datetime):
+        return due_at if due_at.tzinfo else due_at.replace(tzinfo=timezone.utc)
+    return None
+
+
 def _task_title_display(task_id: int, external_uid: Optional[str]) -> str:
     """Заголовок задания для отображения (MVP)."""
     if external_uid:
@@ -334,6 +350,7 @@ async def list_help_requests(
     for row in rows:
         ctx = row[4] if row[4] is not None else {}
         due_at = row[14] if len(row) > 14 else None
+        due_at_norm = _normalize_due_at(due_at)
         priority_val = int(row[13]) if len(row) > 13 and row[13] is not None else 100
         items.append({
             "request_id": row[0],
@@ -350,8 +367,8 @@ async def list_help_requests(
             "thread_id": row[11],
             "event_id": row[12],
             "priority": priority_val,
-            "due_at": due_at,
-            "is_overdue": due_at is not None and due_at < now,
+            "due_at": due_at_norm,
+            "is_overdue": due_at_norm is not None and due_at_norm < now,
             "student_name": row[15] if len(row) > 15 else None,
             "task_title": _task_title_display(row[6], row[16]) if len(row) > 16 and (row[16] or row[6]) else None,
             "course_title": row[17] if len(row) > 17 else None,
@@ -404,7 +421,8 @@ async def get_help_request_detail(
         ctx = {}
     now = datetime.now(timezone.utc)
     due_at = row[19] if len(row) > 19 else None
-    is_overdue = due_at is not None and due_at < now
+    due_at_norm = _normalize_due_at(due_at)
+    is_overdue = due_at_norm is not None and due_at_norm < now
     priority_val = int(row[18]) if len(row) > 18 and row[18] is not None else 100
 
     r2 = await db.execute(
@@ -447,7 +465,7 @@ async def get_help_request_detail(
         "closed_by": row[15],
         "resolution_comment": row[16],
         "priority": priority_val,
-        "due_at": due_at,
+        "due_at": due_at_norm,
         "is_overdue": is_overdue,
         "student_name": row[20] if len(row) > 20 else None,
         "task_title": _task_title_display(row[3], row[21]) if len(row) > 21 and (row[21] or row[3]) else None,

@@ -126,7 +126,7 @@ async def help_requests_list(
     "/{request_id}",
     response_model=HelpRequestDetailResponse,
     summary="РљР°СЂС‚РѕС‡РєР° Р·Р°СЏРІРєРё РЅР° РїРѕРјРѕС‰СЊ",
-    responses={         404: {"description": "Not found"},         403: {"description": "Forbidden"},         409: {"description": "Lock token is invalid or expired"},     },
+    responses={404: {"description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"}, 403: {"description": "РќРµС‚ РґРѕСЃС‚СѓРїР°"}},
 )
 async def help_request_detail(
     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
