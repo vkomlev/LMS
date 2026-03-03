@@ -15,6 +15,8 @@ Review for:
 - migration safety and rollback
 - test coverage adequacy
 - security and operational risk
+- critical UX/UI option correctness and navigation integrity
+- specification ambiguity and interpretation risks
 
 ## Workflow
 1. Read changed files and identify affected runtime paths.
@@ -25,6 +27,8 @@ Review for:
 - [references/testing-checks.md](references/testing-checks.md)
 - [references/observability-checks.md](references/observability-checks.md)
 - [references/security-checks.md](references/security-checks.md)
+- [references/ux-critical-checks.md](references/ux-critical-checks.md)
+- [references/spec-ambiguity-checks.md](references/spec-ambiguity-checks.md)
 4. Classify findings by severity and impact.
 5. If findings indicate Cursor-agent mistakes, create error-log entries using [references/cursor-agent-error-loop.md](references/cursor-agent-error-loop.md).
 6. Produce PASS/FAIL with required fixes and validation commands.
@@ -39,6 +43,8 @@ Review for:
 - `Test Adequacy Assessment`
 - `Observability Assessment`
 - `Security Assessment`
+- `UX/UI Critical Assessment`
+- `Spec Ambiguity Assessment`
 - `Required Fixes`
 - `Required Validation Commands`
 - `Residual Risks`
@@ -53,6 +59,8 @@ Review for:
 ## Decision Rules
 - `FAIL` if any `S1` remains unresolved.
 - `FAIL` if behavior is uncertain in a production-critical path.
+- `FAIL` if critical UX action is missing/broken/misdirected in actual user flow.
+- `FAIL` if unresolved specification ambiguity can change behavior of critical path.
 - `FAIL` if migration rollback is missing for schema-affecting change.
 - `FAIL` if tests do not cover the changed behavior and key regressions.
 - `FAIL` if significant Cursor-agent mistakes are detected but not logged into project error register.

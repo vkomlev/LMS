@@ -33,7 +33,15 @@ Use this mode when calibrating another skill (for example `telegram-ux-flow-desi
 1. Run one real task through the target skill.
 2. Evaluate output against the taxonomy and output contract.
 3. Propose exact SKILL.md edits (description, workflow, quality rules, output contract).
-4. Keep edits minimal and test with one follow-up prompt.
+4. Log the deficiency in `Docs/ai/ANSWER_ERRORS.md` (or project-local answer error register) with target skill name.
+5. Keep edits minimal and test with one follow-up prompt.
+
+## Planner/Spec Calibration Focus
+When calibrating planning/specification skills (for example `change-plan-architect`, `tech-spec-composer`), explicitly check:
+- `UI_BLOAT`: unnecessary intermediate screens/steps
+- `NAV_AMBIGUITY`: ambiguous navigation target definitions (Back/Next flow)
+
+Mark either issue as defect even if code quality is otherwise strong.
 
 ## Quality Rules
 - Keep critique specific and evidence-based.

@@ -12,8 +12,9 @@ description: Produce a developer-ready technical assignment for Tier L executors
 4. Specify stack and framework constraints for the target project type.
 5. Declare mandatory tools/skills/rules that Tier L must use.
 6. Write a deterministic implementation sequence with file-level hints.
-7. Define acceptance criteria, validation commands, and review artifacts.
-8. Add rollback notes and risk controls for main/master direct commits.
+7. Add explicit navigation and state-transition contract for user-facing flows.
+8. Define acceptance criteria, validation commands, and review artifacts.
+9. Add rollback notes and risk controls for main/master direct commits.
 
 ## Domain Mode Selection
 Read [references/domain-modes.md](references/domain-modes.md) and choose one mode:
@@ -31,6 +32,7 @@ Use only the selected mode checklist in the final assignment.
 - `Stack and Constraints`
 - `Required Skills/Rules`
 - `Implementation Steps`
+- `Navigation Contract` (explicit back/next targets by screen/state)
 - `Acceptance Criteria`
 - `Validation Commands`
 - `Handoff Artifacts`
@@ -41,4 +43,4 @@ Use only the selected mode checklist in the final assignment.
 - Prefer measurable criteria over qualitative wording.
 - Bind each validation command to a concrete expected result.
 - Keep steps atomic; one action per step.
-
+- Ban ambiguous navigation phrasing ("back to menu/list/etc.") without exact target screen/state id.

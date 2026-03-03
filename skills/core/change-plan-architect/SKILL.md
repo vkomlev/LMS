@@ -10,10 +10,11 @@ description: Build an implementation plan for a requested change after analyzing
 2. Inspect current implementation and list impacted components.
 3. Detect dependency gaps (API, data model, permissions, external service).
 4. Detect contract ambiguity and convert it into explicit questions/assumptions.
-5. Build phased plan with checkpoints and owner/tier mapping.
-6. Define preconditions for each phase (what must exist first).
-7. Define delivery risks, mitigations, and fallback path.
-8. Define validation and readiness gate for main/master integration.
+5. Run UX complexity guard using [references/ux-complexity-guard.md](references/ux-complexity-guard.md).
+6. Build phased plan with checkpoints and owner/tier mapping.
+7. Define preconditions for each phase (what must exist first).
+8. Define delivery risks, mitigations, and fallback path.
+9. Define validation and readiness gate for main/master integration.
 
 ## Required Gap Analysis
 Read [references/resource-gap-checklist.md](references/resource-gap-checklist.md) and include every relevant gap category in analysis.
@@ -29,10 +30,11 @@ Read [references/resource-gap-checklist.md](references/resource-gap-checklist.md
 - `Validation Plan`
 - `Risks and Mitigations`
 - `Go/No-Go Criteria`
+- `UX Complexity Decision` (why intermediate screens/steps are needed or removed)
 
 ## Quality Rules
 - Prefer explicit dependency statements over implicit assumptions.
 - Mark every unresolved contract as `Blocking` or `Non-Blocking`.
 - Keep phases short and testable.
 - Do not mix design and implementation in one unchecked phase.
-
+- Default to minimal user flow; each extra screen/step must have explicit value proof.

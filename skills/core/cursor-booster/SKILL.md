@@ -14,8 +14,9 @@ description: "Design, package, and roll out Cursor capabilities using the latest
 2. Read [references/cursor-latest-capabilities.md](references/cursor-latest-capabilities.md) and include concrete feature-date mapping.
 3. Read [references/booster-packaging-patterns.md](references/booster-packaging-patterns.md) and select packaging strategy (single plugin vs modular skills).
 4. Read [references/project-integration.md](references/project-integration.md) to align with your current project registry and tier model.
-5. Produce deterministic execution plan with commands and acceptance checks.
-6. Add risk controls (sandbox/network/permissions) and rollback path.
+5. For framework/library guidance, run factual API verification using [references/library-fact-check.md](references/library-fact-check.md).
+6. Produce deterministic execution plan with commands and acceptance checks.
+7. Add risk controls (sandbox/network/permissions) and rollback path.
 
 ## Input Contract
 - `Mode` (`research|architecture|implementation|rollout`)
@@ -31,9 +32,11 @@ description: "Design, package, and roll out Cursor capabilities using the latest
 - `Risk and Security Controls`
 - `Validation and Success Criteria`
 - `Rollback Plan`
+- `Fact-Check Evidence` (what docs/version source confirmed the API usage)
 
 ## Quality Rules
 - Always include feature dates for "latest" claims.
 - Prefer official Cursor docs/changelog/blog as primary sources.
 - Distinguish GA features from previews/experimental.
 - Keep rollout incremental: pilot -> core projects -> full fleet.
+- Never propose library APIs (for example `aiogram-dialog`) without source-backed existence check for the target version.
