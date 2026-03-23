@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architect + System Analyst"
+  short_description: "Shape implementation-ready architecture plans"
+  default_prompt: "Analyze this task and produce a compact architecture and system plan."

@@ -31,6 +31,8 @@ from app.schemas.materials import (
     MaterialBulkUpdateResponse,
     MaterialCopyRequest,
     MaterialsListResponse,
+    MaterialsBulkUpsertRequest,
+    MaterialsBulkUpsertResponse,
     MaterialsGoogleSheetsImportRequest,
     MaterialsGoogleSheetsImportResponse,
     MaterialsGoogleSheetsImportError,
@@ -75,6 +77,37 @@ async def search_materials(
         skip=skip,
         limit=limit,
     )
+
+
+@router.post(
+    "/materials/bulk-upsert",
+    response_model=MaterialsBulkUpsertResponse,
+    summary="Пакетный upsert материалов по (course_id, external_uid)",
+    status_code=status.HTTP_200_OK,
+)
+async def materials_bulk_upsert(
+    body: MaterialsBulkUpsertRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> MaterialsBulkUpsertResponse:
+    """
+    Идемпотентное создание/обновление материалов для внешних пайплайнов (WP → LMS и т.п.).
+
+    - Ключ: пара **(course_id, external_uid)**; повтор с тем же ключом не создаёт дубликат.
+    - Дубликаты ключей в одном запросе: **последний** элемент в `items` выигрывает.
+    - Валидация полей и `content` по `type` — в сервисе: битая строка даёт `items[].status=error`,
+      остальные строки обрабатываются (не весь запрос 422).
+    - Запись в БД — **одна транзакция** на весь batch: при сбое записи откатываются все изменения
+      этого вызова (повтор запроса безопасен). Ошибки только валидации не открывают транзакцию записи.
+    """
+    result = await materials_service.bulk_upsert(db, body.items)
+    logger.info(
+        "materials_bulk_upsert processed=%s created=%s updated=%s unchanged=%s",
+        result.processed,
+        result.created,
+        result.updated,
+        result.unchanged,
+    )
+    return result
 
 
 @router.get(

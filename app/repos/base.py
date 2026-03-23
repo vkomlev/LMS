@@ -144,12 +144,17 @@ class BaseRepository(Generic[ModelType]):
     async def create(
         self,
         db: AsyncSession,
-        obj_in: Dict[str, Any]
+        obj_in: Dict[str, Any],
+        *,
+        commit: bool = True,
     ) -> ModelType:
-        """Создать одну запись из словаря."""
+        """Создать одну запись из словаря. При commit=False — только flush (для внешней транзакции)."""
         obj = self.model(**obj_in)
         db.add(obj)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(obj)
         return obj
 
@@ -157,7 +162,9 @@ class BaseRepository(Generic[ModelType]):
         self,
         db: AsyncSession,
         db_obj: ModelType,
-        obj_in: Dict[str, Any]
+        obj_in: Dict[str, Any],
+        *,
+        commit: bool = True,
     ) -> ModelType:
         """
         Обновить поля существующего объекта.
@@ -186,7 +193,10 @@ class BaseRepository(Generic[ModelType]):
             setattr(db_obj, field, value)
         
         db.add(db_obj)
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         await db.refresh(db_obj)
         # Загружаем parent_courses для курсов через selectinload
         if hasattr(db_obj, 'parent_courses'):

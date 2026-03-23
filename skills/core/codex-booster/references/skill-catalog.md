@@ -3,6 +3,7 @@
 ## Orchestration and Planning
 - `ai-orchestrator`: route work across contours, tiers, and gates.
 - `cursor-booster`: design Cursor plugin/subagent/skill/MCP adoption and rollout.
+- `architect-system-analyst`: architecture + system analysis blueprint with contracts, risks, and phased rollout.
 - `spec-writer`: produce implementation-ready specs.
 - `change-plan-architect`: phased plan + dependency/resource gaps.
 - `tech-spec-composer`: assignment package for Tier L execution.

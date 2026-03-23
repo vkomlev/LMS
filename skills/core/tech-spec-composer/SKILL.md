@@ -1,46 +1,54 @@
 ---
 name: tech-spec-composer
-description: Produce a developer-ready technical assignment for Tier L executors with explicit context, constraints, stack rules, required skills, plugins/tools, acceptance criteria, and handoff artifacts. Use when preparing implementation tasks for Cursor agents, Codex executors, API work, bot work, parsers, and publishers.
+description: "Сформировать техническое задание, готовое к исполнению Tier L: с явным контекстом, ограничениями, правилами стека, обязательными скиллами/инструментами, критериями приемки и артефактами передачи/ревью. Использовать при постановке задач для Cursor-агентов и Codex-исполнителей (API, боты, парсеры, публикация)."
 ---
 
 # Tech Spec Composer
 
-## Workflow
-1. Restate business goal and user-visible outcome in one sentence.
-2. Capture implementation context: repo, modules, related services, current behavior.
-3. Define strict scope: in-scope, out-of-scope, and no-touch zones.
-4. Specify stack and framework constraints for the target project type.
-5. Declare mandatory tools/skills/rules that Tier L must use.
-6. Write a deterministic implementation sequence with file-level hints.
-7. Add explicit navigation and state-transition contract for user-facing flows.
-8. Define acceptance criteria, validation commands, and review artifacts.
-9. Add rollback notes and risk controls for main/master direct commits.
+## Назначение
+Скилл готовит короткое, однозначное ТЗ, которое можно исполнять без догадок: что менять, где менять, как проверять и какие доказательства приложить к ревью.
 
-## Domain Mode Selection
-Read [references/domain-modes.md](references/domain-modes.md) and choose one mode:
-- `telegram-bot`
-- `api-service`
-- `parser-pipeline`
-- `publisher-integration`
+## Порядок работы
+1. Сформулировать цель и пользовательский результат в одном абзаце.
+2. Зафиксировать контекст: репозиторий, затронутые модули, текущее поведение, внешние зависимости.
+3. Жёстко задать границы:
+- что входит;
+- что не входит;
+- какие зоны не трогать.
+4. Для migration/operator/CLI-задач сначала собрать `карту предметных зависимостей`:
+- какие данные, классификаторы, состояния и правила нужны для реальной работы;
+- что уже есть в target system, а что ещё нужно перенести.
+5. Выбрать один доменный режим из [references/domain-modes.md](references/domain-modes.md) и использовать только его checklist.
+6. Составить детерминированные шаги реализации с привязкой к файлам/модулям.
+7. Если есть пользовательский поток, явно описать:
+- `Контракт навигации`;
+- `Запрещённые элементы управления` на happy-path.
+8. Зафиксировать приёмку:
+- критерии;
+- команды проверки;
+- минимальные артефакты review-gate;
+- rollback и меры снижения риска.
+9. Проверить, не допускает ли ТЗ дублирование общей инфраструктуры без явного архитектурного исключения.
 
-Use only the selected mode checklist in the final assignment.
+## Формат результата
+- `Цель`
+- `Контекст`
+- `Границы задачи`
+- `Стек и ограничения`
+- `Обязательные скиллы/правила`
+- `Шаги реализации`
+- `Контракт навигации`
+- `Запрещённые элементы управления`
+- `Критерии приёмки`
+- `Команды проверки`
+- `Артефакты review-gate`
+- `Переиспользование общей инфраструктуры`
+- `Артефакты передачи`
+- `Риски и откат`
 
-## Output Contract
-- `Objective`
-- `Context`
-- `Scope`
-- `Stack and Constraints`
-- `Required Skills/Rules`
-- `Implementation Steps`
-- `Navigation Contract` (explicit back/next targets by screen/state)
-- `Acceptance Criteria`
-- `Validation Commands`
-- `Handoff Artifacts`
-- `Risks and Rollback`
-
-## Quality Rules
-- Write requirements so a Tier L agent can execute without guessing.
-- Prefer measurable criteria over qualitative wording.
-- Bind each validation command to a concrete expected result.
-- Keep steps atomic; one action per step.
-- Ban ambiguous navigation phrasing ("back to menu/list/etc.") without exact target screen/state id.
+## Правила качества
+- Основной язык: русский.
+- Требования должны быть исполнимыми без догадок и без расплывчатых формулировок.
+- Не подменять предметную функциональность списком команд/экранов, если не закрыты доменные предпосылки.
+- Один основной документ по умолчанию; дополнительные матрицы и заметки допустимы только при реальной необходимости.
+- Для next/queue-потоков отсутствие forbidden controls должно быть проверяемым критерием приёмки.

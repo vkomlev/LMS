@@ -1,0 +1,4 @@
+interface:
+  display_name: "Product Review"
+  short_description: "Pressure-test scope, value, and acceptance"
+  default_prompt: "Review this plan from a product perspective and return go/no-go with required changes."

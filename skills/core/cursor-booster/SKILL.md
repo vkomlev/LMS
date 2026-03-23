@@ -6,37 +6,59 @@ description: "Design, package, and roll out Cursor capabilities using the latest
 # Cursor Booster
 
 ## Workflow
-1. Parse request into one mode:
-- `research`: map latest Cursor capabilities and constraints.
-- `architecture`: design plugin/subagent/skill/MCP composition.
-- `implementation`: produce concrete setup steps and file changes.
-- `rollout`: stage deployment across project fleet.
-2. Read [references/cursor-latest-capabilities.md](references/cursor-latest-capabilities.md) and include concrete feature-date mapping.
-3. Read [references/booster-packaging-patterns.md](references/booster-packaging-patterns.md) and select packaging strategy (single plugin vs modular skills).
-4. Read [references/project-integration.md](references/project-integration.md) to align with your current project registry and tier model.
-5. For framework/library guidance, run factual API verification using [references/library-fact-check.md](references/library-fact-check.md).
-6. Produce deterministic execution plan with commands and acceptance checks.
-7. Add risk controls (sandbox/network/permissions) and rollback path.
+1. Choose mode:
+- `research`
+- `architecture`
+- `implementation`
+- `rollout`
+2. Determine the source case:
+- default source is the current chat if the user did not specify another;
+- identify the concrete Cursor-agent mistake, expected behavior, and affected prompts/rules/commands.
+3. Read:
+- [references/cursor-latest-capabilities.md](references/cursor-latest-capabilities.md)
+- [references/booster-packaging-patterns.md](references/booster-packaging-patterns.md)
+- [references/project-integration.md](references/project-integration.md)
+4. Before changing any Cursor agent:
+- log the incident in the error register;
+- run `5 Whys`;
+- verify library/framework facts via [references/library-fact-check.md](references/library-fact-check.md) when API usage matters.
+5. Produce a deterministic plan:
+- target architecture or change set;
+- concrete files/commands;
+- security, sandbox, and rollback controls.
+6. Add role-specific guards when relevant:
+- real logging layout must match triage commands;
+- migration/operator agents must check domain-model completeness, not only command coverage.
+7. Before closing an agent-improvement task, run an anti-bloat refactor pass:
+- collapse repeated incident-specific rules into compact invariants;
+- prefer updating references/checklists over inflating top-level prompts/rules;
+- remove wording that duplicates existing guardrails without adding new coverage.
+8. Patch the responsible Cursor agent directly; if the culprit is a Codex skill, route preventive changes to `codex-booster`.
 
 ## Input Contract
-- `Mode` (`research|architecture|implementation|rollout`)
+- `Source Case`
+- `Mode`
 - `Target Projects`
 - `Objective`
-- `Constraints` (security, budget, timeline, autonomy level)
+- `Constraints`
 
 ## Output Contract
 - `Capability Map`
+- `5 Whys`
 - `Recommended Architecture`
 - `Implementation Steps`
 - `Config/Files to Create`
 - `Risk and Security Controls`
 - `Validation and Success Criteria`
 - `Rollback Plan`
-- `Fact-Check Evidence` (what docs/version source confirmed the API usage)
+- `Fact-Check Evidence`
+- `Register Update`
+- `Target Cursor Agent to Improve`
 
 ## Quality Rules
-- Always include feature dates for "latest" claims.
-- Prefer official Cursor docs/changelog/blog as primary sources.
-- Distinguish GA features from previews/experimental.
-- Keep rollout incremental: pilot -> core projects -> full fleet.
-- Never propose library APIs (for example `aiogram-dialog`) without source-backed existence check for the target version.
+- Always attach dates to "latest" capability claims.
+- Prefer official Cursor sources.
+- Distinguish GA from preview features.
+- Never close an improvement task without: register entry, `5 Whys`, culprit patch, and validation.
+- Prefer compact invariant-based rules over long lists of incident-specific exceptions.
+- Treat agent-improvement work as incomplete if instruction growth was left unnormalized after the fix.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Change Plan Architect"
+  short_description: "Plan safe staged changes with blockers"
+  default_prompt: "Build a staged change plan with blockers, risks, and go/no-go criteria."

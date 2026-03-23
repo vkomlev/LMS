@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Prep"
+  short_description: "Prepare a deterministic release go/no-go package"
+  default_prompt: "Prepare release readiness with preflight, rollback, and go/no-go decision."

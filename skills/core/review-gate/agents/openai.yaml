@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review Gate"
+  short_description: "Independent go/no-go quality gate"
+  default_prompt: "Run the final review gate and return PASS/FAIL with required fixes."

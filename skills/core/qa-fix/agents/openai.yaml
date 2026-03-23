@@ -1,0 +1,4 @@
+interface:
+  display_name: "QA Fix"
+  short_description: "Fix QA findings with before/after evidence"
+  default_prompt: "Consume QA findings, apply the smallest safe fixes, and verify the result."

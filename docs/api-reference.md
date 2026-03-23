@@ -1,4 +1,4 @@
-﻿# РџРѕР»РЅР°СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёСЏ API Quiz СЃРёСЃС‚РµРјС‹
+# РџРѕР»РЅР°СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёСЏ API Quiz СЃРёСЃС‚РµРјС‹
 
 **Р’РµСЂСЃРёСЏ:** 2.0  
 **Р”Р°С‚Р° РѕР±РЅРѕРІР»РµРЅРёСЏ:** 2026-01-17  
@@ -841,6 +841,7 @@ API СѓС‡РµР±РЅС‹С… РјР°С‚РµСЂРёР°Р»РѕРІ Р
 - **POST** `/materials/upload` вЂ” Р·Р°РіСЂСѓР·РёС‚СЊ С„Р°Р№Р» РґР»СЏ РєРѕРЅС‚РµРЅС‚Р° РјР°С‚РµСЂРёР°Р»Р° (multipart; РІРѕР·РІСЂР°С‰Р°РµС‚ url РґР»СЏ content.sources[0].url РёР»Рё content.url)
 - **GET** `/materials/files/{file_id}` вЂ” СЃРєР°С‡Р°С‚СЊ Р·Р°РіСЂСѓР¶РµРЅРЅС‹Р№ С„Р°Р№Р» РјР°С‚РµСЂРёР°Р»Р°
 - **POST** `/materials/import/google-sheets` вЂ” РёРјРїРѕСЂС‚ РјР°С‚РµСЂРёР°Р»РѕРІ РёР· Google РўР°Р±Р»РёС†С‹ (РјРЅРѕРіРѕРєСѓСЂСЃРѕРІРѕР№; dry_run РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ)
+- **POST** `/materials/bulk-upsert` — programmatic bulk upsert by `(course_id, external_uid)`; idempotent; for external pipelines (no Google Sheets). Single DB transaction per request (rollback on write failure); per-row validation errors in response body, not whole-request 422.
 
 РўРёРїС‹ РјР°С‚РµСЂРёР°Р»РѕРІ: `text`, `video`, `audio`, `image`, `link`, `pdf`, `office_document`, `script`, `document`. РЎС‚СЂСѓРєС‚СѓСЂР° РїРѕР»СЏ `content` Р·Р°РІРёСЃРёС‚ РѕС‚ С‚РёРїР° вЂ” СЃРј. [materials-api.md](materials-api.md).
 

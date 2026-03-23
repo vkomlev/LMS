@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import text
 
@@ -254,3 +254,32 @@ class MaterialsRepository(BaseRepository[Materials]):
             "active": active,
             "inactive": inactive,
         }
+
+    async def find_by_course_external_pairs(
+        self,
+        db: AsyncSession,
+        pairs: List[Tuple[int, str]],
+    ) -> Dict[Tuple[int, str], Materials]:
+        """
+        Пакетный поиск материалов по парам (course_id, external_uid).
+        Возвращает словарь по нормализованному ключу (course_id, external_uid).
+        """
+        if not pairs:
+            return {}
+        unique: List[Tuple[int, str]] = []
+        seen: set[Tuple[int, str]] = set()
+        for cid, ext in pairs:
+            key = (cid, ext)
+            if key not in seen:
+                seen.add(key)
+                unique.append(key)
+        stmt = select(Materials).where(
+            tuple_(Materials.course_id, Materials.external_uid).in_(unique)
+        )
+        result = await db.execute(stmt)
+        rows = result.scalars().all()
+        out: Dict[Tuple[int, str], Materials] = {}
+        for m in rows:
+            if m.external_uid is not None:
+                out[(m.course_id, m.external_uid)] = m
+        return out

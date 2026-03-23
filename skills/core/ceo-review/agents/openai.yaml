@@ -1,0 +1,4 @@
+interface:
+  display_name: "CEO Review (Legacy)"
+  short_description: "Legacy alias for product-level plan review"
+  default_prompt: "Treat this as a legacy alias to product-review and keep the output product-focused."

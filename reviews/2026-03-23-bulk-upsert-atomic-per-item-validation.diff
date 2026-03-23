@@ -1,0 +1,535 @@
+﻿diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index 14a8de4..dabebfb 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -31,6 +31,8 @@ from app.schemas.materials import (
+     MaterialBulkUpdateResponse,
+     MaterialCopyRequest,
+     MaterialsListResponse,
++    MaterialsBulkUpsertRequest,
++    MaterialsBulkUpsertResponse,
+     MaterialsGoogleSheetsImportRequest,
+     MaterialsGoogleSheetsImportResponse,
+     MaterialsGoogleSheetsImportError,
+@@ -77,6 +79,37 @@ async def search_materials(
+     )
+ 
+ 
++@router.post(
++    "/materials/bulk-upsert",
++    response_model=MaterialsBulkUpsertResponse,
++    summary="╨Я╨░╨║╨╡╤В╨╜╤Л╨╣ upsert ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛ (course_id, external_uid)",
++    status_code=status.HTTP_200_OK,
++)
++async def materials_bulk_upsert(
++    body: MaterialsBulkUpsertRequest = Body(...),
++    db: AsyncSession = Depends(get_db),
++) -> MaterialsBulkUpsertResponse:
++    """
++    ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╨╡ ╤Б╨╛╨╖╨┤╨░╨╜╨╕╨╡/╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┤╨╗╤П ╨▓╨╜╨╡╤И╨╜╨╕╤Е ╨┐╨░╨╣╨┐╨╗╨░╨╣╨╜╨╛╨▓ (WP тЖТ LMS ╨╕ ╤В.╨┐.).
++
++    - ╨Ъ╨╗╤О╤З: ╨┐╨░╤А╨░ **(course_id, external_uid)**; ╨┐╨╛╨▓╤В╨╛╤А ╤Б ╤В╨╡╨╝ ╨╢╨╡ ╨║╨╗╤О╤З╨╛╨╝ ╨╜╨╡ ╤Б╨╛╨╖╨┤╨░╤С╤В ╨┤╤Г╨▒╨╗╨╕╨║╨░╤В.
++    - ╨Ф╤Г╨▒╨╗╨╕╨║╨░╤В╤Л ╨║╨╗╤О╤З╨╡╨╣ ╨▓ ╨╛╨┤╨╜╨╛╨╝ ╨╖╨░╨┐╤А╨╛╤Б╨╡: **╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╣** ╤Н╨╗╨╡╨╝╨╡╨╜╤В ╨▓ `items` ╨▓╤Л╨╕╨│╤А╤Л╨▓╨░╨╡╤В.
++    - ╨Т╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨╗╨╡╨╣ ╨╕ `content` ╨┐╨╛ `type` тАФ ╨▓ ╤Б╨╡╤А╨▓╨╕╤Б╨╡: ╨▒╨╕╤В╨░╤П ╤Б╤В╤А╨╛╨║╨░ ╨┤╨░╤С╤В `items[].status=error`,
++      ╨╛╤Б╤В╨░╨╗╤М╨╜╤Л╨╡ ╤Б╤В╤А╨╛╨║╨╕ ╨╛╨▒╤А╨░╨▒╨░╤В╤Л╨▓╨░╤О╤В╤Б╤П (╨╜╨╡ ╨▓╨╡╤Б╤М ╨╖╨░╨┐╤А╨╛╤Б 422).
++    - ╨Ч╨░╨┐╨╕╤Б╤М ╨▓ ╨С╨Ф тАФ **╨╛╨┤╨╜╨░ ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╤П** ╨╜╨░ ╨▓╨╡╤Б╤М batch: ╨┐╤А╨╕ ╤Б╨▒╨╛╨╡ ╨╖╨░╨┐╨╕╤Б╨╕ ╨╛╤В╨║╨░╤В╤Л╨▓╨░╤О╤В╤Б╤П ╨▓╤Б╨╡ ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╤П
++      ╤Н╤В╨╛╨│╨╛ ╨▓╤Л╨╖╨╛╨▓╨░ (╨┐╨╛╨▓╤В╨╛╤А ╨╖╨░╨┐╤А╨╛╤Б╨░ ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╡╨╜). ╨Ю╤И╨╕╨▒╨║╨╕ ╤В╨╛╨╗╤М╨║╨╛ ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╨╕ ╨╜╨╡ ╨╛╤В╨║╤А╤Л╨▓╨░╤О╤В ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╤О ╨╖╨░╨┐╨╕╤Б╨╕.
++    """
++    result = await materials_service.bulk_upsert(db, body.items)
++    logger.info(
++        "materials_bulk_upsert processed=%s created=%s updated=%s unchanged=%s",
++        result.processed,
++        result.created,
++        result.updated,
++        result.unchanged,
++    )
++    return result
++
++
+ @router.get(
+     "/courses/{course_id}/materials",
+     response_model=MaterialsListResponse,
+diff --git a/app/repos/base.py b/app/repos/base.py
+index 275658f..5a8d506 100644
+--- a/app/repos/base.py
++++ b/app/repos/base.py
+@@ -144,12 +144,17 @@ class BaseRepository(Generic[ModelType]):
+     async def create(
+         self,
+         db: AsyncSession,
+-        obj_in: Dict[str, Any]
++        obj_in: Dict[str, Any],
++        *,
++        commit: bool = True,
+     ) -> ModelType:
+-        """╨б╨╛╨╖╨┤╨░╤В╤М ╨╛╨┤╨╜╤Г ╨╖╨░╨┐╨╕╤Б╤М ╨╕╨╖ ╤Б╨╗╨╛╨▓╨░╤А╤П."""
++        """╨б╨╛╨╖╨┤╨░╤В╤М ╨╛╨┤╨╜╤Г ╨╖╨░╨┐╨╕╤Б╤М ╨╕╨╖ ╤Б╨╗╨╛╨▓╨░╤А╤П. ╨Я╤А╨╕ commit=False тАФ ╤В╨╛╨╗╤М╨║╨╛ flush (╨┤╨╗╤П ╨▓╨╜╨╡╤И╨╜╨╡╨╣ ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╨╕)."""
+         obj = self.model(**obj_in)
+         db.add(obj)
+-        await db.commit()
++        if commit:
++            await db.commit()
++        else:
++            await db.flush()
+         await db.refresh(obj)
+         return obj
+ 
+@@ -157,7 +162,9 @@ class BaseRepository(Generic[ModelType]):
+         self,
+         db: AsyncSession,
+         db_obj: ModelType,
+-        obj_in: Dict[str, Any]
++        obj_in: Dict[str, Any],
++        *,
++        commit: bool = True,
+     ) -> ModelType:
+         """
+         ╨Ю╨▒╨╜╨╛╨▓╨╕╤В╤М ╨┐╨╛╨╗╤П ╤Б╤Г╤Й╨╡╤Б╤В╨▓╤Г╤О╤Й╨╡╨│╨╛ ╨╛╨▒╤К╨╡╨║╤В╨░.
+@@ -186,7 +193,10 @@ class BaseRepository(Generic[ModelType]):
+             setattr(db_obj, field, value)
+         
+         db.add(db_obj)
+-        await db.commit()
++        if commit:
++            await db.commit()
++        else:
++            await db.flush()
+         await db.refresh(db_obj)
+         # ╨Ч╨░╨│╤А╤Г╨╢╨░╨╡╨╝ parent_courses ╨┤╨╗╤П ╨║╤Г╤А╤Б╨╛╨▓ ╤З╨╡╤А╨╡╨╖ selectinload
+         if hasattr(db_obj, 'parent_courses'):
+diff --git a/app/repos/courses_repo.py b/app/repos/courses_repo.py
+index 390840d..d668f5c 100644
+--- a/app/repos/courses_repo.py
++++ b/app/repos/courses_repo.py
+@@ -1,6 +1,6 @@
+ # app/repos/courses_repo.py
+ 
+-from typing import Optional, List, Dict, Any, Tuple
++from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
+ from sqlalchemy import select, text, delete, insert
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy.orm import selectinload
+@@ -273,4 +273,17 @@ class CoursesRepository(BaseRepository[Courses]):
+             .values(order_number=order_number)
+         )
+         await db.execute(stmt)
+-        await db.commit()
+\ No newline at end of file
++        await db.commit()
++
++    async def filter_existing_ids(
++        self,
++        db: AsyncSession,
++        course_ids: Iterable[int],
++    ) -> Set[int]:
++        """╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В ╨┐╨╛╨┤╨╝╨╜╨╛╨╢╨╡╤Б╤В╨▓╨╛ id ╨║╤Г╤А╤Б╨╛╨▓, ╨║╨╛╤В╨╛╤А╤Л╨╡ ╤А╨╡╨░╨╗╤М╨╜╨╛ ╨╡╤Б╤В╤М ╨▓ ╨С╨Ф (╨╛╨┤╨╕╨╜ ╨╖╨░╨┐╤А╨╛╤Б IN)."""
++        ids = list({int(x) for x in course_ids})
++        if not ids:
++            return set()
++        stmt = select(Courses.id).where(Courses.id.in_(ids))
++        result = await db.execute(stmt)
++        return {row[0] for row in result.all()}
+\ No newline at end of file
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index 498c8ce..9738679 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -2,9 +2,9 @@
+ from __future__ import annotations
+ 
+ from datetime import datetime
+-from typing import Any, Dict, List, Optional
++from typing import Any, Dict, List, Literal, Optional
+ 
+-from pydantic import BaseModel, ConfigDict, Field, model_validator
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+ 
+ from app.schemas.material_content import (
+     MaterialType,
+@@ -155,6 +155,100 @@ class MaterialBulkUpdateResponse(BaseModel):
+     updated: int = Field(..., ge=0)
+ 
+ 
++# ---------- Bulk upsert (Subsystem A / ContentBackbone, ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╤Б╤В╤М ╨┐╨╛ course_id + external_uid) ----------
++
++
++MaterialsBulkUpsertItemStatus = Literal["created", "updated", "unchanged", "error"]
++
++
++class MaterialsBulkUpsertItem(BaseModel):
++    """╨Ю╨┤╨╕╨╜ ╤Н╨╗╨╡╨╝╨╡╨╜╤В ╨┐╨░╨║╨╡╤В╨╜╨╛╨│╨╛ upsert ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓."""
++
++    course_id: int = Field(..., gt=0, description="ID ╨║╤Г╤А╤Б╨░")
++    external_uid: str = Field(..., min_length=1, max_length=255, description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╨║╨╗╤О╤З (╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╤Б╤В╤М ╨▓ ╨┐╨░╤А╨╡ ╤Б course_id)")
++    title: str = Field(..., max_length=500)
++    type: str = Field(
++        ...,
++        description="╨в╨╕╨┐: text, video, audio, image, link, pdf, office_document, script, document",
++    )
++    content: Any = Field(..., description="╨б╨╛╨┤╨╡╤А╨╢╨╕╨╝╨╛╨╡ (╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╨┐╨╛ type)")
++    description: Optional[str] = None
++    caption: Optional[str] = None
++    is_active: bool = Field(True, description="╨Р╨║╤В╨╕╨▓╨╜╨╛╤Б╤В╤М ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░")
++    order_position: Optional[int] = Field(
++        default=None,
++        description="╨Я╨╛╨╖╨╕╤Ж╨╕╤П ╨▓ ╨║╤Г╤А╤Б╨╡; None тАФ ╨┐╨╛╨▓╨╡╨┤╨╡╨╜╨╕╨╡ ╨║╨░╨║ ╨┐╤А╨╕ CRUD (╤В╤А╨╕╨│╨│╨╡╤А ╨С╨Ф)",
++    )
++
++    @field_validator("external_uid", mode="before")
++    @classmethod
++    def strip_external_uid(cls, v: Any) -> Any:
++        if isinstance(v, str):
++            return v.strip()
++        return v
++
++    @model_validator(mode="after")
++    def validate_content_by_type(self) -> "MaterialsBulkUpsertItem":
++        if self.content is not None:
++            try:
++                validated = validate_material_content(self.type, self.content)
++                object.__setattr__(self, "content", validated)
++            except Exception as e:
++                raise ValueError(f"╨Э╨╡╨║╨╛╤А╤А╨╡╨║╤В╨╜╨░╤П ╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░ content ╨┤╨╗╤П ╤В╨╕╨┐╨░ '{self.type}': {e}")
++        return self
++
++
++class MaterialsBulkUpsertRequest(BaseModel):
++    """
++    ╨Я╨░╨║╨╡╤В╨╜╤Л╨╣ upsert ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛ (course_id, external_uid).
++
++    ╨н╨╗╨╡╨╝╨╡╨╜╤В╤Л тАФ JSON-╨╛╨▒╤К╨╡╨║╤В╤Л; ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╤П ╨┐╨╛╨╗╨╡╨╣ ╨╕ content ╨┐╨╛ type ╨▓╤Л╨┐╨╛╨╗╨╜╤П╨╡╤В╤Б╤П **╨▓ ╤Б╨╡╤А╨▓╨╕╤Б╨╡**,
++    ╤З╤В╨╛╨▒╤Л ╨╛╨┤╨╜╨░ ╨▒╨╕╤В╨░╤П ╨╖╨░╨┐╨╕╤Б╤М ╨╜╨╡ ╨╛╨▒╤А╤Л╨▓╨░╨╗╨░ ╨▓╨╡╤Б╤М ╨╖╨░╨┐╤А╨╛╤Б 422 (per-item status=error).
++    """
++
++    items: List[Dict[str, Any]] = Field(
++        ...,
++        min_length=1,
++        max_length=2000,
++        description="╨б╨┐╨╕╤Б╨╛╨║ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓; ╨┤╤Г╨▒╨╗╨╕╨║╨░╤В╤Л ╨║╨╗╤О╤З╨╡╨╣ ╨▓ batch тАФ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╣ ╨▓╤Л╨╕╨│╤А╤Л╨▓╨░╨╡╤В (╨┤╨╡╤В╨╡╤А╨╝╨╕╨╜╨╕╤А╨╛╨▓╨░╨╜╨╜╨╛)",
++    )
++
++    @field_validator("items", mode="before")
++    @classmethod
++    def items_must_be_objects(cls, v: Any) -> Any:
++        if not isinstance(v, list):
++            raise ValueError("items ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М ╨╝╨░╤Б╤Б╨╕╨▓╨╛╨╝")
++        for i, row in enumerate(v):
++            if not isinstance(row, dict):
++                raise ValueError(f"items[{i}] ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М ╨╛╨▒╤К╨╡╨║╤В╨╛╨╝ JSON, ╨╜╨╡ {type(row).__name__}")
++        return v
++
++
++class MaterialsBulkUpsertResultItem(BaseModel):
++    """╨а╨╡╨╖╤Г╨╗╤М╤В╨░╤В ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨╕ ╨╛╨┤╨╜╨╛╨│╨╛ ╤Н╨╗╨╡╨╝╨╡╨╜╤В╨░ batch."""
++
++    course_id: int
++    external_uid: str
++    status: MaterialsBulkUpsertItemStatus
++    material_id: Optional[int] = None
++    error: Optional[str] = None
++    error_type: Optional[Literal["validation", "runtime", "external"]] = None
++
++
++class MaterialsBulkUpsertResponse(BaseModel):
++    """╨Ю╤В╨▓╨╡╤В ╨┐╨░╨║╨╡╤В╨╜╨╛╨│╨╛ upsert."""
++
++    processed: int = Field(..., ge=0, description="╨г╤Б╨┐╨╡╤И╨╜╨╛ ╨╛╨▒╤А╨░╨▒╨╛╤В╨░╨╜╨╛ (created+updated+unchanged)")
++    created: int = Field(..., ge=0)
++    updated: int = Field(..., ge=0)
++    unchanged: int = Field(..., ge=0)
++    items: List[MaterialsBulkUpsertResultItem] = Field(default_factory=list)
++    errors: List[str] = Field(
++        default_factory=list,
++        description="╨Ю╤И╨╕╨▒╨║╨╕ ╤Г╤А╨╛╨▓╨╜╤П batch (╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О ╨┐╤Г╤Б╤В╨╛)",
++    )
++
++
+ # ---------- ╨Ш╨╝╨┐╨╛╤А╤В ╨╕╨╖ Google Sheets ----------
+ 
+ 
+diff --git a/app/services/materials_service.py b/app/services/materials_service.py
+index 4bcf903..fa1cc75 100644
+--- a/app/services/materials_service.py
++++ b/app/services/materials_service.py
+@@ -1,17 +1,30 @@
+ # app/services/materials_service.py
+ from __future__ import annotations
+ 
+-from typing import Any, Dict, List, Optional, Tuple
++import json
++import logging
++from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+ 
++from pydantic import ValidationError
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.materials import Materials
+ from app.repos.courses_repo import CoursesRepository
+ from app.repos.materials_repo import MaterialsRepository
++from app.schemas.materials import (
++    MaterialsBulkUpsertItem,
++    MaterialsBulkUpsertResponse,
++    MaterialsBulkUpsertResultItem,
++)
+ from app.services.base import BaseService
+ from app.utils.exceptions import DomainError
+ 
++logger = logging.getLogger(__name__)
++
++# ╨Ъ╨╗╤О╤З ╨╕╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╨╛╤Б╤В╨╕ ╨╕╨╗╨╕ ┬л╨╛╤Б╨╕╤А╨╛╤В╨╡╨▓╤И╨╕╨╣┬╗ ╤Н╨╗╨╡╨╝╨╡╨╜╤В (╨▒╨╡╨╖ ╨┐╨░╤А╤Б╨░╨▒╨╡╨╗╤М╨╜╨╛╨│╨╛ course_id+external_uid)
++BulkKey = Union[Tuple[int, str], Tuple[Literal["__orphan__"], int]]
++
+ 
+ class MaterialsService(BaseService[Materials]):
+     """
+@@ -198,3 +211,231 @@ class MaterialsService(BaseService[Materials]):
+         if not course:
+             raise DomainError(f"╨Ъ╤Г╤А╤Б ╤Б ID {course_id} ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜", status_code=404)
+         return await self.repo.get_stats_by_course(db, course_id)
++
++    def _material_unchanged(self, existing: Materials, item: MaterialsBulkUpsertItem) -> bool:
++        """╨б╤А╨░╨▓╨╜╨╡╨╜╨╕╨╡ ╤Б╨╜╨╕╨╝╨║╨░ ╨┐╨╛╨╗╨╡╨╣ (╨┤╨╗╤П ╤Б╤В╨░╤В╤Г╤Б╨░ unchanged ╨▒╨╡╨╖ ╨╗╨╕╤И╨╜╨╡╨│╨╛ UPDATE)."""
++        if existing.title != item.title:
++            return False
++        if (existing.description or "") != (item.description or ""):
++            return False
++        if (existing.caption or "") != (item.caption or ""):
++            return False
++        if existing.type != item.type:
++            return False
++        if bool(existing.is_active) != bool(item.is_active):
++            return False
++        if item.order_position is not None and existing.order_position != item.order_position:
++            return False
++        try:
++            left = json.dumps(existing.content, sort_keys=True, default=str)
++            right = json.dumps(item.content, sort_keys=True, default=str)
++        except TypeError:
++            return False
++        return left == right
++
++    @staticmethod
++    def _parse_bulk_idempotency_key(raw: dict) -> Tuple[int, str] | None:
++        """╨Я╨░╤А╨░ (course_id, external_uid) ╨┤╨╗╤П ╨┤╨╡╨┤╤Г╨┐╨╗╨╕╨║╨░╤Ж╨╕╨╕; None ╨╡╤Б╨╗╨╕ ╨║╨╗╤О╤З╨░ ╨╜╨╡╤В."""
++        try:
++            c = raw.get("course_id")
++            if c is None:
++                return None
++            cid = int(c)
++            e = raw.get("external_uid")
++            if not isinstance(e, str):
++                return None
++            e = e.strip()
++            if not e:
++                return None
++            return (cid, e)
++        except (TypeError, ValueError):
++            return None
++
++    @staticmethod
++    def _format_validation_error(exc: ValidationError) -> str:
++        parts: List[str] = []
++        for err in exc.errors():
++            loc = ".".join(str(x) for x in err.get("loc", ()))
++            parts.append(f"{loc}: {err.get('msg', '')}")
++        return "; ".join(parts)[:4000]
++
++    @staticmethod
++    def _result_ids_for_row(raw: dict, key: BulkKey) -> Tuple[int, str]:
++        if key[0] == "__orphan__":
++            c = raw.get("course_id", 0)
++            try:
++                ci = int(c) if c is not None else 0
++            except (TypeError, ValueError):
++                ci = 0
++            e = raw.get("external_uid", "")
++            if not isinstance(e, str):
++                e = str(e) if e is not None else ""
++            return ci, e
++        return int(key[0]), str(key[1])
++
++    async def bulk_upsert(
++        self,
++        db: AsyncSession,
++        items: List[Dict[str, Any]],
++    ) -> MaterialsBulkUpsertResponse:
++        """
++        ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В╨╜╤Л╨╣ ╨┐╨░╨║╨╡╤В╨╜╤Л╨╣ upsert ╨┐╨╛ (course_id, external_uid).
++
++        - ╨Ф╤Г╨▒╨╗╨╕╨║╨░╤В╤Л ╨║╨╗╤О╤З╨╡╨╣ ╨▓ batch: ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╣ ╨┐╨╛ ╨┐╨╛╤А╤П╨┤╨║╤Г ╨▓╤Е╨╛╨┤╨░ ╨▓╤Л╨╕╨│╤А╤Л╨▓╨░╨╡╤В.
++        - ╨Ю╤И╨╕╨▒╨║╨╕ ╨▓╨░╨╗╨╕╨┤╨░╤Ж╨╕╨╕ ╨╛╨┤╨╜╨╛╨│╨╛ ╤Н╨╗╨╡╨╝╨╡╨╜╤В╨░ ╨╜╨╡ ╤А╨▓╤Г╤В ╨▓╨╡╤Б╤М ╨╖╨░╨┐╤А╨╛╤Б 422 тАФ per-item error.
++        - ╨д╨░╨╖╨░ ╨╖╨░╨┐╨╕╤Б╨╕ ╨▓ ╨С╨Ф: ╨╛╨┤╨╜╨░ ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╤П (flush + ╨╛╨┤╨╕╨╜ commit); ╨┐╤А╨╕ ╤Б╨▒╨╛╨╡ тАФ rollback ╨▓╤Б╨╡╨│╨╛ batch-╨╖╨░╨┐╨╕╤Б╨╡╨╣.
++        """
++        order_keys: List[BulkKey] = []
++        payload_by_key: Dict[BulkKey, dict] = {}
++        orphan_i = 0
++
++        for raw in items:
++            if not isinstance(raw, dict):
++                k: BulkKey = ("__orphan__", orphan_i)
++                orphan_i += 1
++                order_keys.append(k)
++                payload_by_key[k] = {"__invalid_shape__": True, "__raw_type__": type(raw).__name__}
++                continue
++            pk = self._parse_bulk_idempotency_key(raw)
++            if pk is None:
++                k = ("__orphan__", orphan_i)
++                orphan_i += 1
++                order_keys.append(k)
++                payload_by_key[k] = raw
++            else:
++                if pk not in payload_by_key:
++                    order_keys.append(pk)
++                payload_by_key[pk] = raw
++
++        int_course_ids = {int(k[0]) for k in order_keys if isinstance(k[0], int)}
++        existing_course_ids = await self._courses_repo.filter_existing_ids(db, int_course_ids)
++
++        val_results: Dict[BulkKey, MaterialsBulkUpsertResultItem] = {}
++        pending: List[Tuple[BulkKey, MaterialsBulkUpsertItem]] = []
++
++        for key in order_keys:
++            raw = payload_by_key[key]
++            cid_out, ext_out = self._result_ids_for_row(raw, key)
++
++            if raw.get("__invalid_shape__"):
++                val_results[key] = MaterialsBulkUpsertResultItem(
++                    course_id=cid_out,
++                    external_uid=ext_out,
++                    status="error",
++                    error=f"╨н╨╗╨╡╨╝╨╡╨╜╤В batch ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М JSON-╨╛╨▒╤К╨╡╨║╤В╨╛╨╝, ╨┐╨╛╨╗╤Г╤З╨╡╨╜ {raw.get('__raw_type__', '?')}",
++                    error_type="validation",
++                )
++                continue
++
++            try:
++                item = MaterialsBulkUpsertItem.model_validate(raw)
++            except ValidationError as e:
++                val_results[key] = MaterialsBulkUpsertResultItem(
++                    course_id=cid_out,
++                    external_uid=ext_out,
++                    status="error",
++                    error=self._format_validation_error(e),
++                    error_type="validation",
++                )
++                continue
++
++            if item.course_id not in existing_course_ids:
++                val_results[key] = MaterialsBulkUpsertResultItem(
++                    course_id=item.course_id,
++                    external_uid=item.external_uid,
++                    status="error",
++                    error=f"╨Ъ╤Г╤А╤Б ╤Б ID {item.course_id} ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜",
++                    error_type="validation",
++                )
++                continue
++
++            pending.append((key, item))
++
++        db_by_key: Dict[BulkKey, MaterialsBulkUpsertResultItem] = {}
++        batch_errors: List[str] = []
++
++        if pending:
++            try:
++                pairs = [(it.course_id, it.external_uid) for _, it in pending]
++                existing_map = await self.repo.find_by_course_external_pairs(db, pairs)
++                for key, item in pending:
++                    cid, ext = item.course_id, item.external_uid
++                    payload_data: Dict[str, Any] = {
++                        "course_id": item.course_id,
++                        "title": item.title,
++                        "type": item.type,
++                        "content": item.content,
++                        "description": item.description,
++                        "caption": item.caption,
++                        "order_position": item.order_position,
++                        "is_active": item.is_active,
++                        "external_uid": item.external_uid,
++                    }
++                    row_key = (cid, ext)
++                    existing = existing_map.get(row_key)
++                    if existing:
++                        if self._material_unchanged(existing, item):
++                            db_by_key[key] = MaterialsBulkUpsertResultItem(
++                                course_id=cid,
++                                external_uid=ext,
++                                status="unchanged",
++                                material_id=existing.id,
++                            )
++                        else:
++                            await self.repo.update(db, existing, payload_data, commit=False)
++                            await db.refresh(existing)
++                            existing_map[row_key] = existing
++                            db_by_key[key] = MaterialsBulkUpsertResultItem(
++                                course_id=cid,
++                                external_uid=ext,
++                                status="updated",
++                                material_id=existing.id,
++                            )
++                    else:
++                        new_m = await self.repo.create(db, payload_data, commit=False)
++                        existing_map[row_key] = new_m
++                        db_by_key[key] = MaterialsBulkUpsertResultItem(
++                            course_id=cid,
++                            external_uid=ext,
++                            status="created",
++                            material_id=new_m.id,
++                        )
++                await db.commit()
++            except Exception as e:
++                await db.rollback()
++                logger.exception("bulk_upsert: ╨╛╤В╨║╨░╤В ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╨╕ ╨╖╨░╨┐╨╕╤Б╨╕")
++                err_text = str(e)[:4000]
++                batch_errors.append(f"╨в╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╤П bulk-upsert ╨╛╤В╨║╨░╤В╨╡╨╜╨░: {err_text}")
++                for key, item in pending:
++                    db_by_key[key] = MaterialsBulkUpsertResultItem(
++                        course_id=item.course_id,
++                        external_uid=item.external_uid,
++                        status="error",
++                        error=err_text,
++                        error_type="runtime",
++                    )
++
++        final_items: List[MaterialsBulkUpsertResultItem] = []
++        created_n = updated_n = unchanged_n = 0
++        for key in order_keys:
++            if key in val_results:
++                final_items.append(val_results[key])
++            elif key in db_by_key:
++                r = db_by_key[key]
++                final_items.append(r)
++                if r.status == "created":
++                    created_n += 1
++                elif r.status == "updated":
++                    updated_n += 1
++                elif r.status == "unchanged":
++                    unchanged_n += 1
++
++        processed = created_n + updated_n + unchanged_n
++        return MaterialsBulkUpsertResponse(
++            processed=processed,
++            created=created_n,
++            updated=updated_n,
++            unchanged=unchanged_n,
++            items=final_items,
++            errors=batch_errors,
++        )
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index 1476e74..287e358 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -1,4 +1,4 @@
+-я╗┐# ╨а╤Я╨а╤Х╨а┬╗╨а╨Е╨а┬░╨б╨П ╨а╥С╨а╤Х╨а╤Ф╨б╤У╨а╤Ш╨а┬╡╨а╨Е╨бтАЪ╨а┬░╨бтАа╨а╤С╨б╨П API Quiz ╨б╨Г╨а╤С╨б╨Г╨бтАЪ╨а┬╡╨а╤Ш╨бтА╣
++# ╨а╤Я╨а╤Х╨а┬╗╨а╨Е╨а┬░╨б╨П ╨а╥С╨а╤Х╨а╤Ф╨б╤У╨а╤Ш╨а┬╡╨а╨Е╨бтАЪ╨а┬░╨бтАа╨а╤С╨б╨П API Quiz ╨б╨Г╨а╤С╨б╨Г╨бтАЪ╨а┬╡╨а╤Ш╨бтА╣
+ 
+ **╨атАЩ╨а┬╡╨б╨В╨б╨Г╨а╤С╨б╨П:** 2.0  
+ **╨атАЭ╨а┬░╨бтАЪ╨а┬░ ╨а╤Х╨а┬▒╨а╨Е╨а╤Х╨а╨Ж╨а┬╗╨а┬╡╨а╨Е╨а╤С╨б╨П:** 2026-01-17  
+@@ -841,6 +841,7 @@ API ╨б╤У╨бтАб╨а┬╡╨а┬▒╨а╨Е╨бтА╣╨бтАж ╨а╤Ш╨а┬░╨бтАЪ╨а┬╡╨б╨В╨а╤С╨а┬░╨а┬╗╨а╤Х╨а╨Ж ╨а
+ - **POST** `/materials/upload` ╨▓╨ВтАЭ ╨а┬╖╨а┬░╨а╤Ц╨б╨В╨б╤У╨а┬╖╨а╤С╨бтАЪ╨б╨К ╨бтАЮ╨а┬░╨атДЦ╨а┬╗ ╨а╥С╨а┬╗╨б╨П ╨а╤Ф╨а╤Х╨а╨Е╨бтАЪ╨а┬╡╨а╨Е╨бтАЪ╨а┬░ ╨а╤Ш╨а┬░╨бтАЪ╨а┬╡╨б╨В╨а╤С╨а┬░╨а┬╗╨а┬░ (multipart; ╨а╨Ж╨а╤Х╨а┬╖╨а╨Ж╨б╨В╨а┬░╨бтА░╨а┬░╨а┬╡╨бтАЪ url ╨а╥С╨а┬╗╨б╨П content.sources[0].url ╨а╤С╨а┬╗╨а╤С content.url)
+ - **GET** `/materials/files/{file_id}` ╨▓╨ВтАЭ ╨б╨Г╨а╤Ф╨а┬░╨бтАб╨а┬░╨бтАЪ╨б╨К ╨а┬╖╨а┬░╨а╤Ц╨б╨В╨б╤У╨а┬╢╨а┬╡╨а╨Е╨а╨Е╨бтА╣╨атДЦ ╨бтАЮ╨а┬░╨атДЦ╨а┬╗ ╨а╤Ш╨а┬░╨бтАЪ╨а┬╡╨б╨В╨а╤С╨а┬░╨а┬╗╨а┬░
+ - **POST** `/materials/import/google-sheets` ╨▓╨ВтАЭ ╨а╤С╨а╤Ш╨а╤Ч╨а╤Х╨б╨В╨бтАЪ ╨а╤Ш╨а┬░╨бтАЪ╨а┬╡╨б╨В╨а╤С╨а┬░╨а┬╗╨а╤Х╨а╨Ж ╨а╤С╨а┬╖ Google ╨а╤Ю╨а┬░╨а┬▒╨а┬╗╨а╤С╨бтАа╨бтА╣ (╨а╤Ш╨а╨Е╨а╤Х╨а╤Ц╨а╤Х╨а╤Ф╨б╤У╨б╨В╨б╨Г╨а╤Х╨а╨Ж╨а╤Х╨атДЦ; dry_run ╨а╤Ч╨а╤Х╨а╥С╨а╥С╨а┬╡╨б╨В╨а┬╢╨а╤С╨а╨Ж╨а┬░╨а┬╡╨бтАЪ╨б╨Г╨б╨П)
++- **POST** `/materials/bulk-upsert` тАФ programmatic bulk upsert by `(course_id, external_uid)`; idempotent; for external pipelines (no Google Sheets). Single DB transaction per request (rollback on write failure); per-row validation errors in response body, not whole-request 422.
+ 
+ ╨а╤Ю╨а╤С╨а╤Ч╨бтА╣ ╨а╤Ш╨а┬░╨бтАЪ╨а┬╡╨б╨В╨а╤С╨а┬░╨а┬╗╨а╤Х╨а╨Ж: `text`, `video`, `audio`, `image`, `link`, `pdf`, `office_document`, `script`, `document`. ╨а╨О╨бтАЪ╨б╨В╨б╤У╨а╤Ф╨бтАЪ╨б╤У╨б╨В╨а┬░ ╨а╤Ч╨а╤Х╨а┬╗╨б╨П `content` ╨а┬╖╨а┬░╨а╨Ж╨а╤С╨б╨Г╨а╤С╨бтАЪ ╨а╤Х╨бтАЪ ╨бтАЪ╨а╤С╨а╤Ч╨а┬░ ╨▓╨ВтАЭ ╨б╨Г╨а╤Ш. [materials-api.md](materials-api.md).
+ 

@@ -1,16 +1,29 @@
 # app/services/materials_service.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import json
+import logging
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.materials import Materials
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
+from app.schemas.materials import (
+    MaterialsBulkUpsertItem,
+    MaterialsBulkUpsertResponse,
+    MaterialsBulkUpsertResultItem,
+)
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
+
+logger = logging.getLogger(__name__)
+
+# Ключ идемпотентности или «осиротевший» элемент (без парсабельного course_id+external_uid)
+BulkKey = Union[Tuple[int, str], Tuple[Literal["__orphan__"], int]]
 
 
 class MaterialsService(BaseService[Materials]):
@@ -198,3 +211,231 @@ class MaterialsService(BaseService[Materials]):
         if not course:
             raise DomainError(f"Курс с ID {course_id} не найден", status_code=404)
         return await self.repo.get_stats_by_course(db, course_id)
+
+    def _material_unchanged(self, existing: Materials, item: MaterialsBulkUpsertItem) -> bool:
+        """Сравнение снимка полей (для статуса unchanged без лишнего UPDATE)."""
+        if existing.title != item.title:
+            return False
+        if (existing.description or "") != (item.description or ""):
+            return False
+        if (existing.caption or "") != (item.caption or ""):
+            return False
+        if existing.type != item.type:
+            return False
+        if bool(existing.is_active) != bool(item.is_active):
+            return False
+        if item.order_position is not None and existing.order_position != item.order_position:
+            return False
+        try:
+            left = json.dumps(existing.content, sort_keys=True, default=str)
+            right = json.dumps(item.content, sort_keys=True, default=str)
+        except TypeError:
+            return False
+        return left == right
+
+    @staticmethod
+    def _parse_bulk_idempotency_key(raw: dict) -> Tuple[int, str] | None:
+        """Пара (course_id, external_uid) для дедупликации; None если ключа нет."""
+        try:
+            c = raw.get("course_id")
+            if c is None:
+                return None
+            cid = int(c)
+            e = raw.get("external_uid")
+            if not isinstance(e, str):
+                return None
+            e = e.strip()
+            if not e:
+                return None
+            return (cid, e)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_validation_error(exc: ValidationError) -> str:
+        parts: List[str] = []
+        for err in exc.errors():
+            loc = ".".join(str(x) for x in err.get("loc", ()))
+            parts.append(f"{loc}: {err.get('msg', '')}")
+        return "; ".join(parts)[:4000]
+
+    @staticmethod
+    def _result_ids_for_row(raw: dict, key: BulkKey) -> Tuple[int, str]:
+        if key[0] == "__orphan__":
+            c = raw.get("course_id", 0)
+            try:
+                ci = int(c) if c is not None else 0
+            except (TypeError, ValueError):
+                ci = 0
+            e = raw.get("external_uid", "")
+            if not isinstance(e, str):
+                e = str(e) if e is not None else ""
+            return ci, e
+        return int(key[0]), str(key[1])
+
+    async def bulk_upsert(
+        self,
+        db: AsyncSession,
+        items: List[Dict[str, Any]],
+    ) -> MaterialsBulkUpsertResponse:
+        """
+        Идемпотентный пакетный upsert по (course_id, external_uid).
+
+        - Дубликаты ключей в batch: последний по порядку входа выигрывает.
+        - Ошибки валидации одного элемента не рвут весь запрос 422 — per-item error.
+        - Фаза записи в БД: одна транзакция (flush + один commit); при сбое — rollback всего batch-записей.
+        """
+        order_keys: List[BulkKey] = []
+        payload_by_key: Dict[BulkKey, dict] = {}
+        orphan_i = 0
+
+        for raw in items:
+            if not isinstance(raw, dict):
+                k: BulkKey = ("__orphan__", orphan_i)
+                orphan_i += 1
+                order_keys.append(k)
+                payload_by_key[k] = {"__invalid_shape__": True, "__raw_type__": type(raw).__name__}
+                continue
+            pk = self._parse_bulk_idempotency_key(raw)
+            if pk is None:
+                k = ("__orphan__", orphan_i)
+                orphan_i += 1
+                order_keys.append(k)
+                payload_by_key[k] = raw
+            else:
+                if pk not in payload_by_key:
+                    order_keys.append(pk)
+                payload_by_key[pk] = raw
+
+        int_course_ids = {int(k[0]) for k in order_keys if isinstance(k[0], int)}
+        existing_course_ids = await self._courses_repo.filter_existing_ids(db, int_course_ids)
+
+        val_results: Dict[BulkKey, MaterialsBulkUpsertResultItem] = {}
+        pending: List[Tuple[BulkKey, MaterialsBulkUpsertItem]] = []
+
+        for key in order_keys:
+            raw = payload_by_key[key]
+            cid_out, ext_out = self._result_ids_for_row(raw, key)
+
+            if raw.get("__invalid_shape__"):
+                val_results[key] = MaterialsBulkUpsertResultItem(
+                    course_id=cid_out,
+                    external_uid=ext_out,
+                    status="error",
+                    error=f"Элемент batch должен быть JSON-объектом, получен {raw.get('__raw_type__', '?')}",
+                    error_type="validation",
+                )
+                continue
+
+            try:
+                item = MaterialsBulkUpsertItem.model_validate(raw)
+            except ValidationError as e:
+                val_results[key] = MaterialsBulkUpsertResultItem(
+                    course_id=cid_out,
+                    external_uid=ext_out,
+                    status="error",
+                    error=self._format_validation_error(e),
+                    error_type="validation",
+                )
+                continue
+
+            if item.course_id not in existing_course_ids:
+                val_results[key] = MaterialsBulkUpsertResultItem(
+                    course_id=item.course_id,
+                    external_uid=item.external_uid,
+                    status="error",
+                    error=f"Курс с ID {item.course_id} не найден",
+                    error_type="validation",
+                )
+                continue
+
+            pending.append((key, item))
+
+        db_by_key: Dict[BulkKey, MaterialsBulkUpsertResultItem] = {}
+        batch_errors: List[str] = []
+
+        if pending:
+            try:
+                pairs = [(it.course_id, it.external_uid) for _, it in pending]
+                existing_map = await self.repo.find_by_course_external_pairs(db, pairs)
+                for key, item in pending:
+                    cid, ext = item.course_id, item.external_uid
+                    payload_data: Dict[str, Any] = {
+                        "course_id": item.course_id,
+                        "title": item.title,
+                        "type": item.type,
+                        "content": item.content,
+                        "description": item.description,
+                        "caption": item.caption,
+                        "order_position": item.order_position,
+                        "is_active": item.is_active,
+                        "external_uid": item.external_uid,
+                    }
+                    row_key = (cid, ext)
+                    existing = existing_map.get(row_key)
+                    if existing:
+                        if self._material_unchanged(existing, item):
+                            db_by_key[key] = MaterialsBulkUpsertResultItem(
+                                course_id=cid,
+                                external_uid=ext,
+                                status="unchanged",
+                                material_id=existing.id,
+                            )
+                        else:
+                            await self.repo.update(db, existing, payload_data, commit=False)
+                            await db.refresh(existing)
+                            existing_map[row_key] = existing
+                            db_by_key[key] = MaterialsBulkUpsertResultItem(
+                                course_id=cid,
+                                external_uid=ext,
+                                status="updated",
+                                material_id=existing.id,
+                            )
+                    else:
+                        new_m = await self.repo.create(db, payload_data, commit=False)
+                        existing_map[row_key] = new_m
+                        db_by_key[key] = MaterialsBulkUpsertResultItem(
+                            course_id=cid,
+                            external_uid=ext,
+                            status="created",
+                            material_id=new_m.id,
+                        )
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.exception("bulk_upsert: откат транзакции записи")
+                err_text = str(e)[:4000]
+                batch_errors.append(f"Транзакция bulk-upsert откатена: {err_text}")
+                for key, item in pending:
+                    db_by_key[key] = MaterialsBulkUpsertResultItem(
+                        course_id=item.course_id,
+                        external_uid=item.external_uid,
+                        status="error",
+                        error=err_text,
+                        error_type="runtime",
+                    )
+
+        final_items: List[MaterialsBulkUpsertResultItem] = []
+        created_n = updated_n = unchanged_n = 0
+        for key in order_keys:
+            if key in val_results:
+                final_items.append(val_results[key])
+            elif key in db_by_key:
+                r = db_by_key[key]
+                final_items.append(r)
+                if r.status == "created":
+                    created_n += 1
+                elif r.status == "updated":
+                    updated_n += 1
+                elif r.status == "unchanged":
+                    unchanged_n += 1
+
+        processed = created_n + updated_n + unchanged_n
+        return MaterialsBulkUpsertResponse(
+            processed=processed,
+            created=created_n,
+            updated=updated_n,
+            unchanged=unchanged_n,
+            items=final_items,
+            errors=batch_errors,
+        )

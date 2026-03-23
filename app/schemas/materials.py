@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.material_content import (
     MaterialType,
@@ -153,6 +153,100 @@ class MaterialReorderResponse(BaseModel):
 class MaterialBulkUpdateResponse(BaseModel):
     """Ответ на массовое обновление активности."""
     updated: int = Field(..., ge=0)
+
+
+# ---------- Bulk upsert (Subsystem A / ContentBackbone, идемпотентность по course_id + external_uid) ----------
+
+
+MaterialsBulkUpsertItemStatus = Literal["created", "updated", "unchanged", "error"]
+
+
+class MaterialsBulkUpsertItem(BaseModel):
+    """Один элемент пакетного upsert материалов."""
+
+    course_id: int = Field(..., gt=0, description="ID курса")
+    external_uid: str = Field(..., min_length=1, max_length=255, description="Внешний ключ (идемпотентность в паре с course_id)")
+    title: str = Field(..., max_length=500)
+    type: str = Field(
+        ...,
+        description="Тип: text, video, audio, image, link, pdf, office_document, script, document",
+    )
+    content: Any = Field(..., description="Содержимое (структура по type)")
+    description: Optional[str] = None
+    caption: Optional[str] = None
+    is_active: bool = Field(True, description="Активность материала")
+    order_position: Optional[int] = Field(
+        default=None,
+        description="Позиция в курсе; None — поведение как при CRUD (триггер БД)",
+    )
+
+    @field_validator("external_uid", mode="before")
+    @classmethod
+    def strip_external_uid(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @model_validator(mode="after")
+    def validate_content_by_type(self) -> "MaterialsBulkUpsertItem":
+        if self.content is not None:
+            try:
+                validated = validate_material_content(self.type, self.content)
+                object.__setattr__(self, "content", validated)
+            except Exception as e:
+                raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
+        return self
+
+
+class MaterialsBulkUpsertRequest(BaseModel):
+    """
+    Пакетный upsert материалов по (course_id, external_uid).
+
+    Элементы — JSON-объекты; валидация полей и content по type выполняется **в сервисе**,
+    чтобы одна битая запись не обрывала весь запрос 422 (per-item status=error).
+    """
+
+    items: List[Dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Список материалов; дубликаты ключей в batch — последний выигрывает (детерминированно)",
+    )
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def items_must_be_objects(cls, v: Any) -> Any:
+        if not isinstance(v, list):
+            raise ValueError("items должен быть массивом")
+        for i, row in enumerate(v):
+            if not isinstance(row, dict):
+                raise ValueError(f"items[{i}] должен быть объектом JSON, не {type(row).__name__}")
+        return v
+
+
+class MaterialsBulkUpsertResultItem(BaseModel):
+    """Результат обработки одного элемента batch."""
+
+    course_id: int
+    external_uid: str
+    status: MaterialsBulkUpsertItemStatus
+    material_id: Optional[int] = None
+    error: Optional[str] = None
+    error_type: Optional[Literal["validation", "runtime", "external"]] = None
+
+
+class MaterialsBulkUpsertResponse(BaseModel):
+    """Ответ пакетного upsert."""
+
+    processed: int = Field(..., ge=0, description="Успешно обработано (created+updated+unchanged)")
+    created: int = Field(..., ge=0)
+    updated: int = Field(..., ge=0)
+    unchanged: int = Field(..., ge=0)
+    items: List[MaterialsBulkUpsertResultItem] = Field(default_factory=list)
+    errors: List[str] = Field(
+        default_factory=list,
+        description="Ошибки уровня batch (по умолчанию пусто)",
+    )
 
 
 # ---------- Импорт из Google Sheets ----------

@@ -1,6 +1,6 @@
 # app/repos/courses_repo.py
 
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
 from sqlalchemy import select, text, delete, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -274,3 +274,16 @@ class CoursesRepository(BaseRepository[Courses]):
         )
         await db.execute(stmt)
         await db.commit()
+
+    async def filter_existing_ids(
+        self,
+        db: AsyncSession,
+        course_ids: Iterable[int],
+    ) -> Set[int]:
+        """Возвращает подмножество id курсов, которые реально есть в БД (один запрос IN)."""
+        ids = list({int(x) for x in course_ids})
+        if not ids:
+            return set()
+        stmt = select(Courses.id).where(Courses.id.in_(ids))
+        result = await db.execute(stmt)
+        return {row[0] for row in result.all()}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "QA Report"
+  short_description: "Create a reproducible report-only QA artifact"
+  default_prompt: "Run a report-only QA pass and return repro-ready findings."

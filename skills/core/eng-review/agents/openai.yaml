@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering Review"
+  short_description: "Pressure-test architecture and delivery safety"
+  default_prompt: "Review this plan from an engineering lead perspective before implementation."

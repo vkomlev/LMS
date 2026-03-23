@@ -1,40 +1,81 @@
 ---
 name: change-plan-architect
-description: Build an implementation plan for a requested change after analyzing current code, contracts, dependencies, and missing resources. Use when planning medium-complexity changes, detecting blockers, identifying missing endpoints/contracts, and sequencing safe delivery steps.
+description: "Сформировать план внедрения изменения после анализа текущего кода, контрактов, зависимостей и недостающих ресурсов. Использовать для задач средней сложности: поиск блокеров, выявление пробелов в API/контрактах и безопасная поэтапная поставка."
 ---
 
 # Change Plan Architect
 
-## Workflow
-1. Parse request into target capability and non-goals.
-2. Inspect current implementation and list impacted components.
-3. Detect dependency gaps (API, data model, permissions, external service).
-4. Detect contract ambiguity and convert it into explicit questions/assumptions.
-5. Run UX complexity guard using [references/ux-complexity-guard.md](references/ux-complexity-guard.md).
-6. Build phased plan with checkpoints and owner/tier mapping.
-7. Define preconditions for each phase (what must exist first).
-8. Define delivery risks, mitigations, and fallback path.
-9. Define validation and readiness gate for main/master integration.
+## Назначение
+Скилл готовит короткий, исполнимый план изменений: что делать, в каком порядке, какие зависимости закрыть заранее и где нельзя продолжать без явного решения по контрактам или данным.
 
-## Required Gap Analysis
-Read [references/resource-gap-checklist.md](references/resource-gap-checklist.md) and include every relevant gap category in analysis.
+## Shared Runtime Contract
+Применить общий booster-контракт из [booster-runtime-contract.md](/d:/Work/IDE_booster/Docs/ai-booster/booster-runtime-contract.md).
 
-## Output Contract
-- `Requested Capability`
-- `Current State Summary`
-- `Impact Map`
-- `Gaps and Missing Resources`
-- `Assumptions and Open Questions`
-- `Implementation Phases`
-- `Tier Routing per Phase`
-- `Validation Plan`
-- `Risks and Mitigations`
-- `Go/No-Go Criteria`
-- `UX Complexity Decision` (why intermediate screens/steps are needed or removed)
+## Режим выполнения
+- Позиция по умолчанию: `report-only`.
 
-## Quality Rules
-- Prefer explicit dependency statements over implicit assumptions.
-- Mark every unresolved contract as `Blocking` or `Non-Blocking`.
-- Keep phases short and testable.
-- Do not mix design and implementation in one unchecked phase.
-- Default to minimal user flow; each extra screen/step must have explicit value proof.
+## Порядок работы
+1. Зафиксировать цель, границы задачи и явные не-цели.
+2. Явно сохранять `report-only` posture и делать минимальные безопасные допущения только там, где нет блокирующей неоднозначности.
+3. Кратко описать текущее состояние: какие модули, контуры и контракты затронуты.
+4. Выявить блокеры и пробелы:
+- API/схемы/права/внешние сервисы;
+- отсутствующие данные и артефакты;
+- неоднозначные допущения.
+5. Для migration/CLI/operator-фаз построить `карту предметных зависимостей`:
+- какие данные, классификаторы, состояния и правила нужны командам для реальной ценности;
+- что из этого уже есть в target system, а что пока только в legacy/raw payload.
+6. Для migration/cutover-фаз отдельно классифицировать состояние переноса:
+- `entrypoint migrated`;
+- `execution migrated`;
+- `state/storage migrated`;
+- `legacy runtime still required`.
+7. Для migration/cutover-фаз явно описать:
+- какой код реально исполняется в target system;
+- какой код и side effects всё ещё живут в legacy/external runtime;
+- где находятся working directory, логи, сессии, lock-файлы и иные операционные артефакты.
+8. Проверить риск дублирования между проектами и явно решить:
+- переиспользуем общий слой;
+- или временно оставляем локально с обоснованием и сроком пересмотра.
+9. Применить guard по UX-сложности из [references/ux-complexity-guard.md](references/ux-complexity-guard.md).
+10. Сформировать короткий поэтапный план:
+- шаг;
+- предусловия;
+- ответственный Tier/роль;
+- проверка готовности.
+11. Добавить компактные review-ready секции:
+- `Product Review Snapshot`: пользовательская ценность, acceptance path, scope tradeoffs;
+- `Engineering Review Snapshot`: архитектура, trust boundaries, тестовая стратегия, rollback ожидания.
+12. Зафиксировать риски, rollback и критерии Go/No-Go.
+
+## Обязательный анализ пробелов
+Прочитать [references/resource-gap-checklist.md](references/resource-gap-checklist.md) и включить релевантные категории в план.
+
+## Формат результата
+- `Execution Posture`
+- `Целевая возможность`
+- `Текущее состояние`
+- `Current-State Assessment`
+- `Контур миграции/cutover`
+- `Карта влияния`
+- `Пробелы и недостающие ресурсы`
+- `Допущения и открытые вопросы`
+- `Решение по дублированию`
+- `Матрица active/deferred/read-only/legacy-required`
+- `Product Review Snapshot`
+- `Engineering Review Snapshot`
+- `Этапы внедрения`
+- `Маршрутизация по Tier/ролям`
+- `План проверки`
+- `Риски и меры снижения`
+- `Критерии Go/No-Go`
+- `Решение по UX-сложности`
+
+## Правила качества
+- Основной язык: русский.
+- Каждый блокирующий пробел явно помечать как блокирующий, а не прятать в текст.
+- Не считать перенос команд/экранов достаточным, если не закрыты предметные предпосылки.
+- Держать план коротким: один основной документ по умолчанию, без лишних матриц и служебных заметок.
+- Не смешивать проектирование и реализацию в одном непроверяемом шаге.
+- Для migration/cutover-планов не считать operator/CLI cutover завершённой миграцией, если execution layer или state/storage остаются в legacy/external runtime.
+- Если legacy/external runtime всё ещё нужен, план обязан явно показать это в контуре миграции и в матрице состояния, а не прятать в примечания.
