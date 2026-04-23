@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Set, Dict
 
 from app.schemas.task_content import TaskContent, TaskType
@@ -13,6 +14,9 @@ from app.schemas.checking import (
     CheckFeedback,
 )
 from app.utils.exceptions import DomainError
+
+
+_PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 
 
 class CheckingService:
@@ -526,16 +530,25 @@ class CheckingService:
         """
         Простейшая нормализация строки по списку шагов из ShortAnswerRules.normalization.
 
-        Поддерживаем базовые шаги:
-        - 'trim'            → обрезка пробелов по краям;
-        - 'lower'           → приведение к нижнему регистру;
-        - 'collapse_spaces' → схлопывание подряд идущих пробелов в один.
+        Поддерживаемые шаги (применяются в фиксированном порядке независимо
+        от порядка в steps):
+        - 'trim'              → обрезка пробелов по краям;
+        - 'lower'             → приведение к нижнему регистру;
+        - 'strip_punctuation' → удаление всех символов, кроме букв, цифр, '_'
+                                и пробельных (Unicode-aware);
+        - 'collapse_spaces'   → схлопывание подряд идущих пробелов в один.
+
+        Порядок: trim → lower → strip_punctuation → collapse_spaces.
+        strip_punctuation применяется ДО collapse_spaces, чтобы пробелы,
+        оставшиеся на месте пунктуации, были схлопнуты.
         """
         result = value
         if "trim" in steps:
             result = result.strip()
         if "lower" in steps:
             result = result.lower()
+        if "strip_punctuation" in steps:
+            result = _PUNCT_RE.sub("", result)
         if "collapse_spaces" in steps:
             result = " ".join(result.split())
         return result

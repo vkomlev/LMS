@@ -1,0 +1,4 @@
+{"is_valid":false,"errors":["course_id not found for course_code='SMOKE'"]}
+HTTP_200
+{"is_correct":true,"score":1,"max_score":1,"details":{"correct_options":null,"user_options":null,"matched_short_answer":"да нет да да","rubric_scores":null},"feedback":{"general":"Отлично! Ваш ответ правильный.","by_option":null}}
+HTTP_200

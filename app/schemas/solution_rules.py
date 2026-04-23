@@ -50,10 +50,16 @@ class ShortAnswerRules(BaseModel):
     normalization: List[str] = Field(
         default_factory=lambda: ["trim", "lower"],
         description=(
-            "Список шагов нормализации строки перед сравнением "
-            "(например: trim, lower, collapse_spaces)."
+            "Список шагов нормализации строки перед сравнением. "
+            "Поддерживаемые шаги: trim, lower, strip_punctuation, collapse_spaces. "
+            "Применяются в фиксированном порядке: "
+            "trim → lower → strip_punctuation → collapse_spaces."
         ),
-        examples=[["trim", "lower"], ["trim", "lower", "collapse_spaces"]],
+        examples=[
+            ["trim", "lower"],
+            ["trim", "lower", "collapse_spaces"],
+            ["trim", "lower", "strip_punctuation", "collapse_spaces"],
+        ],
     )
     accepted_answers: List[ShortAnswerAccepted] = Field(
         default_factory=list,

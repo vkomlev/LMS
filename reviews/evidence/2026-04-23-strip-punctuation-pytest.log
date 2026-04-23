@@ -1,0 +1,28 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.7, pytest-9.0.2, pluggy-1.6.0 -- D:\Work\LMS\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Work\LMS
+plugins: anyio-4.9.0
+collecting ... collected 19 items
+
+tests/test_checking_normalization.py::test_trim_only PASSED              [  5%]
+tests/test_checking_normalization.py::test_lower_only PASSED             [ 10%]
+tests/test_checking_normalization.py::test_collapse_spaces_only PASSED   [ 15%]
+tests/test_checking_normalization.py::test_strip_punctuation_only_ascii PASSED [ 21%]
+tests/test_checking_normalization.py::test_strip_punctuation_only_cyrillic PASSED [ 26%]
+tests/test_checking_normalization.py::test_strip_punctuation_keeps_underscores PASSED [ 31%]
+tests/test_checking_normalization.py::test_strip_punctuation_keeps_digits PASSED [ 36%]
+tests/test_checking_normalization.py::test_strip_punctuation_russian_dashes_and_quotes PASSED [ 42%]
+tests/test_checking_normalization.py::test_subsystem_c_happy_path PASSED [ 47%]
+tests/test_checking_normalization.py::test_subsystem_c_matches_reference PASSED [ 52%]
+tests/test_checking_normalization.py::test_legacy_three_tokens_unchanged PASSED [ 57%]
+tests/test_checking_normalization.py::test_legacy_punctuation_not_stripped_without_token PASSED [ 63%]
+tests/test_checking_normalization.py::test_empty_string PASSED           [ 68%]
+tests/test_checking_normalization.py::test_only_punctuation PASSED       [ 73%]
+tests/test_checking_normalization.py::test_nbsp_handling PASSED          [ 78%]
+tests/test_checking_normalization.py::test_unknown_token_ignored PASSED  [ 84%]
+tests/test_checking_normalization.py::test_empty_steps_returns_input_as_is PASSED [ 89%]
+tests/test_checking_normalization.py::test_idempotent PASSED             [ 94%]
+tests/test_checking_normalization.py::test_order_strip_before_collapse PASSED [100%]
+
+============================= 19 passed in 0.40s ==============================

@@ -1,0 +1,19 @@
+{
+  "task_content": {"type": "SA_COM", "stem": "Введите Да/Нет"},
+  "solution_rules": {
+    "max_score": 1,
+    "scoring_mode": "all_or_nothing",
+    "auto_check": true,
+    "manual_review_required": false,
+    "short_answer": {
+      "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"],
+      "accepted_answers": [{"value": "да нет да да", "score": 1}],
+      "use_regex": false
+    },
+    "correct_options": []
+  },
+  "answer": {
+    "type": "SA_COM",
+    "response": {"value": "Да, Нет. Да, да"}
+  }
+}
