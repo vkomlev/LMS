@@ -20,6 +20,24 @@ docs/*
 !docs/import-quick-start.md
 !docs/api-reference.md
 !docs/api-examples.md
+!docs/assignments-and-results-api.md
+!docs/frontend-contract-sa-com.md
+!docs/learning-engine-next-item.md
+!docs/roles-and-api-contract.md
+!docs/API_STUDENTS_QUICK_REFERENCE.md
+!docs/openapi.json
+!docs/ai/
+!docs/ai/**
+!docs/releases/
+!docs/releases/**
+!docs/sessions/
+!docs/sessions/**
+!docs/retro/
+!docs/retro/**
+!docs/qa/
+!docs/qa/**
+!docs/specs/
+!docs/specs/**
 .cursor/*
 !.cursor/rules/
 

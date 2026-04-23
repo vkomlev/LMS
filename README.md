@@ -1,297 +1,148 @@
 # LMS Core API
 
-Система управления обучением (Learning Management System) с RESTful API на базе FastAPI и PostgreSQL.
+Backend для системы управления обучением (LMS): курсы, материалы, задачи, проверка, роли, запросы помощи. REST-API на FastAPI + PostgreSQL.
 
-## 📋 Описание
+## Что внутри
 
-LMS Core API - это backend-система для управления образовательным процессом, включающая:
+- Управление пользователями и множественными ролями (студенты, преподаватели, методисты, админы)
+- Иерархические курсы, зависимости, связки студент↔курс и преподаватель↔курс
+- Учебные материалы (text, video, link, pdf, script, document) + импорт из Google Sheets
+- Задачи-квизы с попытками, подсказками, автопроверкой и статистикой
+- Запросы помощи от учеников (с типизацией и контекстом)
+- Часть бизнес-логики — в БД через триггеры (см. [docs/database-triggers-contract.md](docs/database-triggers-contract.md))
 
-- **Управление пользователями** (студенты, преподаватели, методисты)
-- **Управление курсами** с поддержкой иерархии и зависимостей
-- **Привязка студентов к курсам** с автоматической нумерацией
-- **Привязка преподавателей к курсам** с автоматической синхронизацией дочерних курсов
-- **Система ролей и прав доступа**
-- **Управление заданиями и проверкой**
-- **Система сообщений и уведомлений**
+## Быстрый старт
 
-## 🚀 Быстрый старт
-
-### Требования
-
-- Python 3.10+
-- PostgreSQL 12+
-- pip
-
-### Установка
-
-1. **Клонируйте репозиторий** (если еще не сделано)
-
-2. **Создайте виртуальное окружение:**
+Требования: Python 3.10+, PostgreSQL 12+, pip.
 
 ```bash
 python -m venv .venv
-```
-
-3. **Активируйте виртуальное окружение:**
-
-**Windows:**
-```bash
+# Windows
 .venv\Scripts\activate
-```
-
-**Linux/Mac:**
-```bash
+# Linux/Mac
 source .venv/bin/activate
-```
 
-4. **Установите зависимости:**
-
-```bash
 pip install -r requirements.txt
 ```
 
-5. **Настройте переменные окружения:**
-
-Создайте файл `.env` в корне проекта:
+Создать `.env` в корне:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/lms_db
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/Learn
 VALID_API_KEYS=bot-key-1,admin-key-1
 LOG_LEVEL=INFO
 ```
 
-6. **Примените миграции БД:**
+Применить миграции и запустить:
 
 ```bash
 alembic upgrade head
-```
-
-7. **Запустите сервер:**
-
-```bash
 python run.py
 ```
 
-Сервер будет доступен по адресу: `http://localhost:8000`
+Сервер поднимается на `http://localhost:8000`. Интерактивная спека: `/docs` (Swagger) и `/redoc`.
 
-### Проверка работоспособности
+## Проверка работоспособности
 
 ```bash
-# Проверка здоровья сервера
 curl http://localhost:8000/health
-
-# Проверка API (требуется API ключ)
 curl "http://localhost:8000/api/v1/users/?api_key=bot-key-1"
 ```
 
-## 📚 Документация
-
-### API Документация
-
-#### 👥 Управление пользователями
-
-- **[API для управления преподавателями](docs/API_TEACHERS_MANAGEMENT.md)** - CRUD операции, поиск, фильтрация, привязка к студентам и курсам
-- **[API для управления студентами](docs/API_STUDENTS_MANAGEMENT.md)** - CRUD операции, поиск, фильтрация, привязка к преподавателям и курсам
-- **[API для связей преподаватель-курс](docs/API_TEACHER_COURSES.md)** - Управление связями преподавателей с курсами, автоматическая синхронизация дочерних курсов
-
-#### 📚 Управление курсами
-
-- **[API курсов](docs/courses-api.md)** - CRUD операции с курсами, иерархия курсов, зависимости между курсами, привязка студентов к курсам
-- **[Руководство по импорту курсов](docs/courses-import-manual.md)** - Импорт курсов из Google Sheets, массовое создание и обновление курсов
-- **[API учебных материалов](docs/materials-api.md)** - CRUD материалов курса, порядок и перемещение, импорт из Google Sheets; структура контента по типам (text, video, link, pdf и др.)
-
-#### ✅ Задания и проверка (Quiz система)
-
-- **[Полная документация API Quiz системы](docs/api-reference.md)** - Все эндпойнты для работы с задачами, проверкой, попытками и результатами
-- **[Примеры использования API Quiz системы](docs/api-examples.md)** - Практические примеры работы с задачами, проверкой и статистикой
-- **[API управления заданиями и результатами учеников](docs/assignments-and-results-api.md)** - Подробная документация по эндпойнтам попыток, результатов заданий, ручной проверке и статистике
-
-#### 📥 Импорт задач
-
-- **[Быстрый старт - Импорт задач из Google Sheets](docs/import-quick-start.md)** - Краткая инструкция для быстрого начала работы с импортом
-- **[Документация API импорта задач](docs/import-api-documentation.md)** - Полная документация по импорту задач из Google Sheets, валидация, обработка ошибок
-
-### 📖 Интерактивная документация
-
-После запуска сервера доступна интерактивная документация:
-
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
-
-### 🔧 Техническая документация
-
-- **[Контракт по триггерам БД](docs/database-triggers-contract.md)** - Описание бизнес-логики, реализованной на уровне базы данных
-- **[Руководство для разработчиков](CONTRIBUTING.md)** - Правила разработки, структура кода, работа с БД
-
-## 🏗️ Структура проекта
+## Структура проекта
 
 ```
 LMS/
 ├── app/
-│   ├── api/              # API эндпойнты
-│   │   └── v1/           # Версия 1 API
-│   ├── core/             # Конфигурация и настройки
-│   ├── db/               # Работа с БД, миграции
-│   ├── models/           # SQLAlchemy модели
-│   ├── repos/            # Репозитории (слой доступа к данным)
-│   ├── schemas/          # Pydantic схемы
-│   ├── services/         # Бизнес-логика
-│   └── utils/            # Утилиты
-├── docs/                 # Документация
-├── tests/                # Тесты
-├── logs/                 # Логи приложения
-├── alembic.ini           # Конфигурация миграций
-├── requirements.txt      # Зависимости Python
-├── run.py                # Точка входа приложения
-└── README.md             # Этот файл
+│   ├── api/v1/          # FastAPI роутеры
+│   ├── services/        # Бизнес-логика
+│   ├── repos/           # Доступ к БД
+│   ├── models/          # SQLAlchemy ORM
+│   ├── schemas/         # Pydantic DTO
+│   ├── db/migrations/   # Alembic миграции
+│   ├── core/            # logger.py, конфигурация
+│   ├── auth/            # api_key_scheme.py
+│   └── utils/           # DomainError, pagination, email
+├── docs/                # Документация (API-справочники, архив)
+├── reviews/             # Review-артефакты по задачам
+├── tests/               # Smoke и pytest
+├── alembic.ini
+├── requirements.txt
+├── run.py               # uvicorn entry point
+├── CONTRIBUTING.md      # Правила разработки
+├── AGENTS.md            # Скиллы для AI-агентов
+└── README.md
 ```
 
-## ⚙️ Конфигурация
+## Документация
 
-### Переменные окружения
+### API-справочники
 
-Основные переменные окружения (файл `.env`):
+| Раздел | Файлы |
+|---|---|
+| Пользователи | [API_TEACHERS_MANAGEMENT](docs/API_TEACHERS_MANAGEMENT.md), [API_STUDENTS_MANAGEMENT](docs/API_STUDENTS_MANAGEMENT.md), [API_STUDENTS_QUICK_REFERENCE](docs/API_STUDENTS_QUICK_REFERENCE.md) |
+| Курсы | [courses-api](docs/courses-api.md), [courses-import-manual](docs/courses-import-manual.md), [API_TEACHER_COURSES](docs/API_TEACHER_COURSES.md) |
+| Задания и проверка | [api-reference](docs/api-reference.md), [api-examples](docs/api-examples.md), [assignments-and-results-api](docs/assignments-and-results-api.md) |
+| Импорт задач | [import-quick-start](docs/import-quick-start.md), [import-api-documentation](docs/import-api-documentation.md) |
+| Контракты | [learning-engine-next-item](docs/learning-engine-next-item.md), [frontend-contract-sa-com](docs/frontend-contract-sa-com.md), [roles-and-api-contract](docs/roles-and-api-contract.md) |
+| Технические | [database-triggers-contract](docs/database-triggers-contract.md), [openapi.json](docs/openapi.json), [CONTRIBUTING](CONTRIBUTING.md) |
 
-| Переменная | Описание | Обязательная | Пример |
-|------------|----------|--------------|--------|
-| `DATABASE_URL` | URL подключения к PostgreSQL | Да | `postgresql+asyncpg://user:pass@localhost:5432/db` |
-| `VALID_API_KEYS` | Список валидных API ключей (через запятую) | Да | `bot-key-1,admin-key-1` |
-| `LOG_LEVEL` | Уровень логирования | Нет | `INFO`, `DEBUG`, `WARNING` |
-| `MESSAGES_UPLOAD_DIR` | Директория для загрузки файлов сообщений | Нет | `uploads/messages` |
-| `MAX_ATTACHMENT_SIZE_BYTES` | Максимальный размер вложения | Нет | `10485760` (10 MB) |
+### AI-слой (для Claude Code и других агентов)
 
-### База данных
+Точка входа — [docs/ai/INDEX.md](docs/ai/INDEX.md). Содержит: архитектуру, модель данных, глоссарий, контракт агентов, project overrides, журнал ошибок, workflows (feature / bugfix / db-change).
 
-Система использует PostgreSQL с поддержкой:
-- Асинхронных запросов (asyncpg)
-- Триггеров для бизнес-логики
-- Иерархических структур (рекурсивные CTE)
-- Ограничений целостности данных
+### Архив
+Исторические ТЗ, smoke-результаты, стадии и старые ревью — в [docs/archive/](docs/archive/) и [reviews/archive/](reviews/archive/).
 
-**Важно:** Часть бизнес-логики реализована на уровне БД через триггеры. Подробнее см. [docs/database-triggers-contract.md](docs/database-triggers-contract.md)
+## Конфигурация
 
-## 🔐 Аутентификация
+| Переменная | Обязательная | Назначение |
+|---|---|---|
+| `DATABASE_URL` | Да | `postgresql+asyncpg://user:pass@host:5432/Learn` |
+| `VALID_API_KEYS` | Да | CSV-список API-ключей для доступа |
+| `LOG_LEVEL` | Нет | `DEBUG`/`INFO`/`WARNING`/`ERROR` (default `INFO`) |
+| `MESSAGES_UPLOAD_DIR` | Нет | Директория для вложений сообщений |
+| `MAX_ATTACHMENT_SIZE_BYTES` | Нет | Лимит вложений (байт) |
 
-API использует простую аутентификацию через API ключи. Ключ передается в query-параметре `api_key`:
+Секреты (service-account для Google Sheets) — только в `secrets/` и `.env`, никогда в коде и коммитах.
+
+## Аутентификация
+
+API-ключ передаётся в query-параметре `api_key`:
 
 ```bash
 GET /api/v1/users/?api_key=bot-key-1
 ```
 
-API ключи настраиваются через переменную окружения `VALID_API_KEYS`.
+Валидные ключи — `VALID_API_KEYS`.
 
-## 🧪 Тестирование
-
-### Smoke тесты
-
-В директории `tests/` находятся smoke тесты для проверки основных эндпойнтов:
+## Миграции
 
 ```bash
-# Тесты эндпойнтов пользователей
-python tests/test_users_endpoints_smoke.ps1
+# Создать
+alembic revision --autogenerate -m "описание"
 
-# Тесты эндпойнтов курсов преподавателей
-python tests/test_teacher_courses_api_smoke.ps1
+# Применить все
+alembic upgrade head
+
+# Откатить один шаг
+alembic downgrade -1
 ```
 
-### Запуск тестов
+Правило: любое изменение схемы — через Alembic. Триггерная логика — только в миграциях, не в сервисах.
+
+## Тесты
 
 ```bash
-# Активируйте виртуальное окружение
-.venv\Scripts\activate  # Windows
-# или
-source .venv/bin/activate  # Linux/Mac
-
-# Запустите тесты
 pytest tests/
 ```
 
-## 📝 Миграции БД
+Smoke-сценарии по эндпойнтам — в `tests/` (`.ps1` для PowerShell и `.py` для pytest).
 
-Система использует Alembic для управления миграциями базы данных.
+## Разработка
 
-### Создание новой миграции
+Процесс и правила — в [CONTRIBUTING.md](CONTRIBUTING.md). Для AI-агентов — [docs/ai/AGENTS.md](docs/ai/AGENTS.md) + [.claude/CLAUDE.md](.claude/CLAUDE.md).
 
-```bash
-alembic revision --autogenerate -m "Описание изменений"
-```
-
-### Применение миграций
-
-```bash
-# Применить все миграции
-alembic upgrade head
-
-# Откатить последнюю миграцию
-alembic downgrade -1
-
-# Применить конкретную миграцию
-alembic upgrade <revision_id>
-```
-
-## 🛠️ Разработка
-
-### Правила разработки
-
-1. **Бизнес-логика в БД:** Перед добавлением логики в код проверьте [docs/database-triggers-contract.md](docs/database-triggers-contract.md)
-2. **Миграции:** Все изменения схемы БД через Alembic
-3. **Типизация:** Используйте type hints для всех функций
-4. **Документация:** Обновляйте документацию при изменении API
-
-Подробнее см. [CONTRIBUTING.md](CONTRIBUTING.md)
-
-### Структура кода
-
-- **API слой** (`app/api/`) - эндпойнты FastAPI
-- **Сервисы** (`app/services/`) - бизнес-логика
-- **Репозитории** (`app/repos/`) - доступ к данным
-- **Модели** (`app/models/`) - SQLAlchemy модели
-- **Схемы** (`app/schemas/`) - Pydantic схемы для валидации
-
-## 📖 Основные возможности
-
-### Управление пользователями
-
-- CRUD операции для пользователей
-- Поиск по имени с фильтрацией по роли
-- Сортировка и пагинация
-- Поддержка множественных ролей (преподаватель + студент)
-
-### Управление курсами
-
-- Иерархия курсов (родительские/дочерние)
-- Зависимости между курсами
-- Автоматическая синхронизация при изменении иерархии
-- Импорт курсов из Google Sheets
-- Учебные материалы курса (CRUD, порядок, перемещение, копирование; импорт из Google Sheets)
-
-### Связи пользователей и курсов
-
-- Привязка студентов к курсам с автоматической нумерацией
-- Привязка преподавателей к курсам с автоматической синхронизацией дочерних курсов
-- Поддержка пользователей с несколькими ролями
-
-### Система ролей
-
-- Гибкая система ролей (студент, преподаватель, методист, администратор и др.)
-- Фильтрация пользователей по ролям
-- Поддержка русских и английских названий ролей
-
-## 🔗 Полезные ссылки
-
-- [Документация FastAPI](https://fastapi.tiangolo.com/)
-- [Документация SQLAlchemy](https://docs.sqlalchemy.org/)
-- [Документация Alembic](https://alembic.sqlalchemy.org/)
-- [Документация PostgreSQL](https://www.postgresql.org/docs/)
-
-## 📄 Лицензия
-
-[Указать лицензию, если применимо]
-
-## 👥 Авторы
+## Автор
 
 Виктор Комлев
-
----
-
-**Последнее обновление:** 27 января 2026
