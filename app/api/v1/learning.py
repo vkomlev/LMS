@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.tasks import Tasks
 from app.schemas.learning_api import (
@@ -60,8 +61,11 @@ users_service = UsersService()
 )
 async def get_next_item(
     student_id: int = Query(..., description="ID студента"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> NextItemResponse:
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
@@ -109,8 +113,11 @@ async def get_next_item(
 async def material_complete(
     material_id: int = Path(..., description="ID материала"),
     body: MaterialCompleteRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> MaterialCompleteResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     material = await materials_service.get_by_id(db, material_id)
     if material is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
@@ -139,8 +146,11 @@ async def material_complete(
 async def start_or_get_attempt(
     task_id: int = Path(..., description="ID задания"),
     body: StartOrGetAttemptRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> StartOrGetAttemptResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -215,8 +225,11 @@ async def start_or_get_attempt(
 async def get_task_state(
     task_id: int = Path(..., description="ID задания"),
     student_id: int = Query(..., description="ID студента"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> TaskStateResponse:
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -259,8 +272,11 @@ async def get_task_state(
 async def request_help(
     task_id: int = Path(..., description="ID задания"),
     body: RequestHelpRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> RequestHelpResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -305,8 +321,11 @@ async def request_help(
 async def hint_events(
     task_id: int = Path(..., description="ID задания"),
     body: HintEventRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HintEventResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     """
     Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
     """

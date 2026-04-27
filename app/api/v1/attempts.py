@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.task_results import TaskResults
 
@@ -129,8 +130,11 @@ async def create_attempt(
         ...,
         description="Параметры новой попытки (user_id, course_id, source_system, meta).",
     ),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptRead:
+    if not current_user.is_service and current_user.id != payload.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     """
     Создать новую попытку.
 
@@ -213,7 +217,8 @@ async def submit_attempt_answers(
         ...,
         description="Список ответов ученика по задачам в рамках попытки.",
     ),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptAnswersResponse:
     """
     Принять ответы по задачам в рамках попытки, проверить их и записать в task_results.
@@ -235,6 +240,9 @@ async def submit_attempt_answers(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
         ) from exc
+
+    if not current_user.is_service and current_user.id != attempt.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
     # Валидация попытки: проверка, что попытка не завершена и не отменена
     if attempt.finished_at is not None:
@@ -386,7 +394,8 @@ async def submit_attempt_answers(
 async def cancel_attempt(
     attempt_id: int,
     payload: Optional[AttemptCancelRequest] = Body(None, description="Опционально: причина отмены"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptCancelResponse:
     """
     Аннулировать активную попытку. Идемпотентно: повторный вызов возвращает 200 и already_cancelled=true.
@@ -418,7 +427,8 @@ async def cancel_attempt(
 )
 async def finish_attempt(
     attempt_id: int,
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptFinishResponse:
     """
     Завершить попытку:
@@ -430,6 +440,8 @@ async def finish_attempt(
     attempt = await attempts_service.get_by_id(db, attempt_id)
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if not current_user.is_service and current_user.id != attempt.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if attempt.cancelled_at is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -456,7 +468,8 @@ async def finish_attempt(
 )
 async def get_attempt(
     attempt_id: int,
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptWithResults:
     """
     Вернуть попытку и все результаты по задачам:
@@ -469,6 +482,8 @@ async def get_attempt(
     attempt = await attempts_service.get_by_id(db, attempt_id)
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if not current_user.is_service and current_user.id != attempt.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
     attempt_with_results = await _build_attempt_with_results(db, attempt)
     await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
@@ -482,7 +497,8 @@ async def get_attempt(
 )
 async def get_attempts_by_user(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
     course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
@@ -502,6 +518,8 @@ async def get_attempts_by_user(
     Returns:
         Список попыток пользователя.
     """
+    if not current_user.is_service and current_user.id != user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     attempts, total = await attempts_service.get_by_user(
         db,
         user_id=user_id,

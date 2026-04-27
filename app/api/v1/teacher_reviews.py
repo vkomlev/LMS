@@ -10,7 +10,8 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.schemas.teacher_next_modes import (
     ReviewClaimNextRequest,
     ReviewClaimNextResponse,
@@ -36,8 +37,11 @@ logger = logging.getLogger("api.teacher_reviews")
 )
 async def review_claim_next(
     body: ReviewClaimNextRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> ReviewClaimNextResponse:
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     item, lock_token, lock_expires_at = await claim_next_review(
         db,
         teacher_id=body.teacher_id,
@@ -71,8 +75,11 @@ async def review_claim_next(
 async def review_release(
     result_id: int = Path(..., description="ID результата (task_result)"),
     body: ReviewReleaseRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> ReviewReleaseResponse:
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     released, err = await release_review_claim(
         db, result_id, body.teacher_id, body.lock_token
     )
