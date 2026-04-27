@@ -37,6 +37,28 @@
 - **API key** — аутентификация через query-параметр `api_key`. Список валидных — в `VALID_API_KEYS`.
 - **MCP PostgreSQL** — dev-инструмент для read-only SQL из AI-агентов; алиас `postgresql`.
 
+## SPW + Auth (Phase Y-1)
+
+- **SPW** (Student Practice Web) — веб-клиент для учеников; Next.js 15 + TS + Tailwind + shadcn. Домен `learn.victor-komlev.ru`.
+- **identity_link** — таблица multi-identity: один `user_id` может иметь привязки `kind IN ('email','tg','vk')`. `UNIQUE(kind, value)`.
+- **user_session** — сессия пользователя; `token_hash BYTEA`, TTL 15 мин / 30 дней refresh, `revoked_at`.
+- **magic_link** — одноразовая ссылка для email-авторизации; `token_hash`, `expires_at`, `consumed_at`.
+- **CurrentUser** — dataclass dep: `id`, `role`, `is_service`, `identities: list[IdentityLinkRead]`.
+- **X-API-Key** — header для service-level access от TG_LMS bots / ContentBackbone CLI; bypasses per-user IDOR check.
+- **IDOR** (Insecure Direct Object Reference) — проверка: `student_id == current_user.id` на всех id-параметрах. CI gate: IDOR sweep test.
+- **guest_session / guest_attempt** — анонимный пользователь; атрибуция при регистрации.
+- **audit_event** — append-only лог: login/logout/identity-change; immutable trigger.
+- **product_event** — funnel-аналитика; partitioned by month.
+- **Phase Y-1** — фаза проекта: 5 Alembic-миграций + auth-расширение LMS API. Исполнитель: `/executor-pro`. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md).
+- **FernetService** — шифрование VK access_token (FERNET_MASTER_KEY в .env); `vk_access_token_enc BYTEA` в `identity_link`.
+
+## Типы задач (Task types)
+
+- **SA** (Short Answer) — короткий ответ; автопроверка.
+- **SC** (Single Choice) — один правильный вариант; автопроверка.
+- **MC** (Multiple Choice) — несколько правильных вариантов; автопроверка.
+- **SA_COM** (Short Answer with Code/Comment) — задача с ручной проверкой. `is_correct=NULL` до grade преподавателем. FSM: [docs/ai/design/teacher-queue-states.md](design/teacher-queue-states.md).
+
 ## Гейты (процессные)
 
 - **Spec-Gate** — фиксация scope и acceptance criteria до реализации.

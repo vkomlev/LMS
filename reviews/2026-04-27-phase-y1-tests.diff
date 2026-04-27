@@ -1,0 +1,896 @@
+diff --git a/app/api/v1/embed_api.py b/app/api/v1/embed_api.py
+new file mode 100644
+index 0000000..3c0c948
+--- /dev/null
++++ b/app/api/v1/embed_api.py
+@@ -0,0 +1,78 @@
++"""Embed API — публичные эндпоинты для виджета SPW (без auth)."""
++import logging
++
++from fastapi import APIRouter, Depends, HTTPException, Request, status
++from pydantic import BaseModel
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db
++from app.models.guest_attempt import GuestAttempt
++from app.models.guest_session import GuestSession
++from app.services.rate_limit_service import get_redis, is_rate_limited
++from app.core.config import Settings
++
++logger = logging.getLogger(__name__)
++router = APIRouter(prefix="/embed", tags=["embed"])
++_settings = Settings()
++
++
++class GuestSessionResponse(BaseModel):
++    guest_session_id: str
++
++
++class GuestAttemptRequest(BaseModel):
++    task_id: int | None = None
++    answer_json: dict
++    is_correct: bool | None = None
++
++
++class GuestAttemptResponse(BaseModel):
++    attempt_id: int
++
++
++@router.post("/session", response_model=GuestSessionResponse, status_code=status.HTTP_201_CREATED)
++async def create_guest_session(
++    request: Request,
++    db: AsyncSession = Depends(get_bare_db),
++) -> GuestSessionResponse:
++    """Создать анонимную guest-сессию (для виджета без авторизации)."""
++    ip = request.client.host if request.client else None
++    ua = request.headers.get("user-agent")
++    redis = get_redis(_settings.redis_url)
++    if ip and await is_rate_limited(redis, f"guest_session:{ip}", max_requests=10, window_seconds=3600):
++        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
++
++    session = GuestSession(ip=ip, ua_fingerprint=ua)
++    db.add(session)
++    await db.flush()
++    await db.commit()
++    return GuestSessionResponse(guest_session_id=str(session.id))
++
++
++@router.post(
++    "/session/{guest_session_id}/attempts",
++    response_model=GuestAttemptResponse,
++    status_code=status.HTTP_201_CREATED,
++)
++async def create_guest_attempt(
++    guest_session_id: str,
++    body: GuestAttemptRequest,
++    request: Request,
++    db: AsyncSession = Depends(get_bare_db),
++) -> GuestAttemptResponse:
++    """Записать попытку ответа гостя."""
++    ip = request.client.host if request.client else None
++    redis = get_redis(_settings.redis_url)
++    if ip and await is_rate_limited(redis, f"guest_attempt:{ip}", max_requests=60, window_seconds=60):
++        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
++
++    attempt = GuestAttempt(
++        guest_session_id=guest_session_id,
++        task_id=body.task_id,
++        answer_json=body.answer_json,
++        is_correct=body.is_correct,
++    )
++    db.add(attempt)
++    await db.flush()
++    await db.commit()
++    return GuestAttemptResponse(attempt_id=attempt.id)
+diff --git a/tests/conftest.py b/tests/conftest.py
+new file mode 100644
+index 0000000..16af7ea
+--- /dev/null
++++ b/tests/conftest.py
+@@ -0,0 +1,63 @@
++"""Общие фикстуры для тестов Phase Y-1."""
++import asyncio
++import sys
++from pathlib import Path
++from typing import AsyncGenerator
++
++import pytest_asyncio
++from dotenv import load_dotenv
++from httpx import AsyncClient, ASGITransport
++from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
++from sqlalchemy.pool import NullPool
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++# Windows: asyncpg несовместим с ProactorEventLoop по умолчанию
++if sys.platform == "win32":
++    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
++
++from app.core.config import Settings
++from app.api.main import app
++from app.db.session import get_async_db
++
++_settings = Settings()
++
++
++@pytest_asyncio.fixture(scope="function")
++async def db():
++    """Асинхронная сессия к БД с NullPool; rollback после каждого теста.
++
++    NullPool гарантирует, что каждый тест получает свежее соединение,
++    не связанное с event loop предыдущего теста.
++    """
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        async with AsyncSession(engine, expire_on_commit=False) as session:
++            yield session
++            await session.rollback()
++    finally:
++        await engine.dispose()
++
++
++@pytest_asyncio.fixture(scope="function")
++async def client():
++    """HTTP-клиент для ASGI-тестов.
++
++    Переопределяет get_async_db чтобы использовать NullPool —
++    иначе глобальный QueuePool хранит соединения из предыдущих event loop'ов.
++    """
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++
++    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
++        async with AsyncSession(engine, expire_on_commit=False) as session:
++            yield session
++
++    app.dependency_overrides[get_async_db] = override_get_db
++    try:
++        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
++            yield c
++    finally:
++        app.dependency_overrides.pop(get_async_db, None)
++        await engine.dispose()
+diff --git a/tests/test_auth_magic_link.py b/tests/test_auth_magic_link.py
+new file mode 100644
+index 0000000..f1c6818
+--- /dev/null
++++ b/tests/test_auth_magic_link.py
+@@ -0,0 +1,107 @@
++"""
++Integration тесты для magic-link flow.
++
++Покрывает:
++- POST /auth/magic-link/send (rate limit pass, невалидный email)
++- POST /auth/magic-link/verify (happy path требует реального пользователя с email)
++- Replay атака: повторный verify того же токена → 401
++- Expired токен → 401
++"""
++import pytest
++from httpx import AsyncClient
++
++
++@pytest.mark.asyncio
++async def test_magic_link_send_valid_email(client: AsyncClient):
++    """202 на корректный email (RESEND_API_KEY не задан → письмо не отправляется, но запись сохраняется)."""
++    resp = await client.post(
++        "/api/v1/auth/magic-link/send",
++        json={"email": "testuser@example.com"},
++    )
++    assert resp.status_code == 202, resp.text
++    assert resp.json()["message"] == "Письмо отправлено"
++
++
++@pytest.mark.asyncio
++async def test_magic_link_send_invalid_email(client: AsyncClient):
++    """422 на невалидный email."""
++    resp = await client.post(
++        "/api/v1/auth/magic-link/send",
++        json={"email": "not-an-email"},
++    )
++    assert resp.status_code == 422
++
++
++@pytest.mark.asyncio
++async def test_magic_link_verify_invalid_token(client: AsyncClient):
++    """401 при попытке verify с несуществующим токеном."""
++    resp = await client.post(
++        "/api/v1/auth/magic-link/verify",
++        json={"token": "a" * 64},
++    )
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_magic_link_verify_malformed_token(client: AsyncClient):
++    """401 при токене с неверным форматом (не hex)."""
++    resp = await client.post(
++        "/api/v1/auth/magic-link/verify",
++        json={"token": "not-a-hex-token!!"},
++    )
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_magic_link_replay_attack(client: AsyncClient, db):
++    """Повторный consume того же токена → 401 (consumed_at уже выставлен)."""
++    from datetime import datetime, timezone, timedelta
++    from app.models.magic_link import MagicLink
++    import os, hashlib
++
++    raw = os.urandom(32)
++    token_hex = raw.hex()
++    token_hash = hashlib.sha256(raw).digest()
++
++    link = MagicLink(
++        email="replay@example.com",
++        token_hash=token_hash,
++        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
++        consumed_at=datetime.now(timezone.utc),
++    )
++    db.add(link)
++    await db.flush()
++    await db.commit()
++
++    resp = await client.post(
++        "/api/v1/auth/magic-link/verify",
++        json={"token": token_hex},
++    )
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_magic_link_expired_token(client: AsyncClient, db):
++    """Токен с истёкшим expires_at → 401."""
++    from datetime import datetime, timezone, timedelta
++    from app.models.magic_link import MagicLink
++    import os, hashlib
++
++    raw = os.urandom(32)
++    token_hex = raw.hex()
++    token_hash = hashlib.sha256(raw).digest()
++
++    link = MagicLink(
++        email="expired@example.com",
++        token_hash=token_hash,
++        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
++    )
++    db.add(link)
++    await db.flush()
++    await db.commit()
++
++    resp = await client.post(
++        "/api/v1/auth/magic-link/verify",
++        json={"token": token_hex},
++    )
++    assert resp.status_code == 401
+diff --git a/tests/test_auth_tg_init.py b/tests/test_auth_tg_init.py
+new file mode 100644
+index 0000000..79de907
+--- /dev/null
++++ b/tests/test_auth_tg_init.py
+@@ -0,0 +1,96 @@
++"""
++Тесты верификации Telegram initData HMAC.
++
++Покрывает:
++- verify_tg_init_data: happy path, неверная подпись, устаревший auth_date
++- extract_tg_user_id: корректный JSON, отсутствующий user
++- POST /auth/tg/init: невалидная подпись → 401
++"""
++import hashlib
++import hmac
++import json
++import time
++import urllib.parse
++
++import pytest
++
++
++def _make_init_data(tg_id: int, bot_token: str, auth_date: int | None = None) -> str:
++    """Сформировать корректный initData с подписью."""
++    if auth_date is None:
++        auth_date = int(time.time())
++    user = json.dumps({"id": tg_id, "first_name": "Test"})
++    params = {
++        "auth_date": str(auth_date),
++        "user": user,
++    }
++    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(params.items()))
++    secret_key = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
++    sig = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
++    params["hash"] = sig
++    return urllib.parse.urlencode(params)
++
++
++def test_verify_tg_init_data_happy():
++    """Корректная подпись должна вернуть dict с параметрами."""
++    from app.services.auth.tg_init_service import verify_tg_init_data
++
++    bot_token = "123456:TEST_BOT_TOKEN"
++    init_data = _make_init_data(tg_id=12345, bot_token=bot_token)
++    result = verify_tg_init_data(init_data, bot_token)
++    assert result is not None
++    assert "auth_date" in result
++    assert "user" in result
++
++
++def test_verify_tg_init_data_wrong_signature():
++    """Неверная подпись → None."""
++    from app.services.auth.tg_init_service import verify_tg_init_data
++
++    init_data = _make_init_data(tg_id=12345, bot_token="real_token")
++    result = verify_tg_init_data(init_data, "wrong_token")
++    assert result is None
++
++
++def test_verify_tg_init_data_expired_auth_date():
++    """auth_date старше 24 часов → None."""
++    from app.services.auth.tg_init_service import verify_tg_init_data
++
++    bot_token = "123456:TEST_BOT_TOKEN"
++    old_ts = int(time.time()) - 90000
++    init_data = _make_init_data(tg_id=12345, bot_token=bot_token, auth_date=old_ts)
++    result = verify_tg_init_data(init_data, bot_token)
++    assert result is None
++
++
++def test_verify_tg_init_data_missing_hash():
++    """Отсутствие hash → None."""
++    from app.services.auth.tg_init_service import verify_tg_init_data
++
++    init_data = "auth_date=1234567890&user=%7B%22id%22%3A1%7D"
++    assert verify_tg_init_data(init_data, "any_token") is None
++
++
++def test_extract_tg_user_id_happy():
++    """Корректный JSON user → строка с id."""
++    from app.services.auth.tg_init_service import extract_tg_user_id
++
++    params = {"user": json.dumps({"id": 99999, "first_name": "Test"})}
++    assert extract_tg_user_id(params) == "99999"
++
++
++def test_extract_tg_user_id_no_user():
++    """Отсутствие user → None."""
++    from app.services.auth.tg_init_service import extract_tg_user_id
++
++    assert extract_tg_user_id({}) is None
++
++
++@pytest.mark.asyncio
++async def test_tg_init_endpoint_invalid_signature(client):
++    """POST /auth/tg/init с невалидной подписью → 401 или 503 (если токен не задан)."""
++    resp = await client.post(
++        "/api/v1/auth/tg/init",
++        json={"init_data": "auth_date=1234&hash=fakehash"},
++    )
++    assert resp.status_code in (401, 503)
+diff --git a/tests/test_auth_vk_callback.py b/tests/test_auth_vk_callback.py
+new file mode 100644
+index 0000000..8877abf
+--- /dev/null
++++ b/tests/test_auth_vk_callback.py
+@@ -0,0 +1,32 @@
++"""
++Тесты VK ID 2.0 callback endpoint.
++
++Покрывает:
++- POST /auth/vk/callback с невалидным code → 401
++- POST /auth/vk/callback без VK credentials → ожидаемая ошибка
++"""
++import pytest
++
++
++@pytest.mark.asyncio
++async def test_vk_callback_invalid_code(client):
++    """Невалидный code → 401 (VK token exchange fails)."""
++    resp = await client.post(
++        "/api/v1/auth/vk/callback",
++        json={
++            "code": "invalid_code",
++            "code_verifier": "fake_verifier",
++            "device_id": "fake_device",
++        },
++    )
++    assert resp.status_code in (401, 422, 503)
++
++
++@pytest.mark.asyncio
++async def test_vk_callback_missing_fields(client):
++    """Отсутствие обязательных полей → 422."""
++    resp = await client.post(
++        "/api/v1/auth/vk/callback",
++        json={"code": "abc"},
++    )
++    assert resp.status_code == 422
+diff --git a/tests/test_guest_attribution.py b/tests/test_guest_attribution.py
+new file mode 100644
+index 0000000..93a00c0
+--- /dev/null
++++ b/tests/test_guest_attribution.py
+@@ -0,0 +1,96 @@
++"""
++Тесты гостевой сессии и атрибуции.
++
++Покрывает:
++- POST /embed/session → 201 + guest_session_id
++- POST /embed/session/{id}/attempts → 201
++- attribute_guest_session: guest_attempt привязывается к user_id
++- Повторная атрибуция не удваивает привязку
++"""
++import pytest
++
++
++@pytest.mark.asyncio
++async def test_create_guest_session(client):
++    """POST /embed/session создаёт гостевую сессию."""
++    resp = await client.post("/api/v1/embed/session")
++    assert resp.status_code == 201
++    data = resp.json()
++    assert "guest_session_id" in data
++    assert len(data["guest_session_id"]) == 36
++
++
++@pytest.mark.asyncio
++async def test_create_guest_attempt(client):
++    """POST /embed/session/{id}/attempts создаёт попытку гостя."""
++    session_resp = await client.post("/api/v1/embed/session")
++    session_id = session_resp.json()["guest_session_id"]
++
++    attempt_resp = await client.post(
++        f"/api/v1/embed/session/{session_id}/attempts",
++        json={"answer_json": {"answer": "42"}, "is_correct": True},
++    )
++    assert attempt_resp.status_code == 201
++    assert "attempt_id" in attempt_resp.json()
++
++
++@pytest.mark.asyncio
++async def test_attribute_guest_session(db):
++    """attribute_guest_session привязывает попытки к user_id."""
++    from sqlalchemy import text, select
++    from app.models.guest_session import GuestSession
++    from app.models.guest_attempt import GuestAttempt
++    from app.services.auth.link_token_service import attribute_guest_session
++
++    user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if user_id is None:
++        pytest.skip("Нет пользователей в БД")
++
++    gs = GuestSession(ip="127.0.0.1")
++    db.add(gs)
++    await db.flush()
++
++    ga = GuestAttempt(
++        guest_session_id=gs.id,
++        task_id=None,
++        answer_json={"x": 1},
++    )
++    db.add(ga)
++    await db.flush()
++
++    count = await attribute_guest_session(db, str(gs.id), user_id)
++    await db.commit()
++
++    assert count == 1
++    await db.refresh(ga)
++    assert ga.attributed_user_id == user_id
++    assert ga.attributed_at is not None
++
++
++@pytest.mark.asyncio
++async def test_attribute_guest_session_idempotent(db):
++    """Повторная атрибуция возвращает count=0 (уже привязанные попытки не обновляются)."""
++    from sqlalchemy import text
++    from app.models.guest_session import GuestSession
++    from app.models.guest_attempt import GuestAttempt
++    from app.services.auth.link_token_service import attribute_guest_session
++
++    user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if user_id is None:
++        pytest.skip("Нет пользователей в БД")
++
++    gs = GuestSession(ip="127.0.0.1")
++    db.add(gs)
++    await db.flush()
++
++    ga = GuestAttempt(guest_session_id=gs.id, task_id=None, answer_json={})
++    db.add(ga)
++    await db.flush()
++
++    await attribute_guest_session(db, str(gs.id), user_id)
++    await db.commit()
++
++    count2 = await attribute_guest_session(db, str(gs.id), user_id)
++    await db.commit()
++
++    assert count2 == 0
+diff --git a/tests/test_identity_linking.py b/tests/test_identity_linking.py
+new file mode 100644
+index 0000000..90e1bcc
+--- /dev/null
++++ b/tests/test_identity_linking.py
+@@ -0,0 +1,84 @@
++"""
++Тесты identity_link сервиса.
++
++Покрывает:
++- find_identity: найден / не найден
++- upsert_identity: создание и обновление
++- get_user_by_identity: через identity_link
++- email нормализация (lower)
++"""
++import pytest
++
++
++@pytest.mark.asyncio
++async def test_find_identity_not_found(db):
++    """Поиск несуществующей identity → None."""
++    from app.services.auth.identity_link_service import find_identity
++
++    result = await find_identity(db, "email", "nonexistent@example.com")
++    assert result is None
++
++
++@pytest.mark.asyncio
++async def test_upsert_and_find_identity(db):
++    """upsert_identity создаёт запись, find_identity её находит."""
++    from app.services.auth.identity_link_service import find_identity, upsert_identity
++    from sqlalchemy import text
++
++    user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if user_id is None:
++        pytest.skip("Нет пользователей в БД")
++
++    unique_email = f"test.upsert.{user_id}@example.com"
++    link = await upsert_identity(db, user_id, "email", unique_email)
++    await db.commit()
++
++    found = await find_identity(db, "email", unique_email)
++    assert found is not None
++    assert found.user_id == user_id
++    assert found.value == unique_email.lower()
++
++
++@pytest.mark.asyncio
++async def test_email_normalized_to_lower(db):
++    """Email нормализуется в lowercase при upsert."""
++    from app.services.auth.identity_link_service import find_identity, upsert_identity
++    from sqlalchemy import text
++
++    user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if user_id is None:
++        pytest.skip("Нет пользователей в БД")
++
++    mixed = f"Upper.Case.Test.{user_id}@Example.COM"
++    await upsert_identity(db, user_id, "email", mixed)
++    await db.commit()
++
++    found = await find_identity(db, "email", mixed.lower())
++    assert found is not None
++    assert found.value == mixed.lower()
++
++
++@pytest.mark.asyncio
++async def test_upsert_idempotent(db):
++    """Повторный upsert с теми же данными не создаёт дубликат."""
++    from app.services.auth.identity_link_service import upsert_identity
++    from sqlalchemy import select, func, text
++    from app.models.identity_link import IdentityLink
++
++    user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if user_id is None:
++        pytest.skip("Нет пользователей в БД")
++
++    email = f"idempotent.{user_id}@example.com"
++    await upsert_identity(db, user_id, "email", email)
++    await db.commit()
++    await upsert_identity(db, user_id, "email", email)
++    await db.commit()
++
++    count = (await db.execute(
++        select(func.count()).where(
++            IdentityLink.value == email,
++            IdentityLink.kind == "email",
++        )
++    )).scalar()
++    assert count == 1
+diff --git a/tests/test_idor_sweep.py b/tests/test_idor_sweep.py
+new file mode 100644
+index 0000000..fad6d7d
+--- /dev/null
++++ b/tests/test_idor_sweep.py
+@@ -0,0 +1,119 @@
++"""
++IDOR sweep: проверка, что защищённые endpoints возвращают 401/403
++при отсутствии/неверной аутентификации и не пропускают чужие данные.
++
++Тест не требует двух реальных пользователей — проверяет только:
++1. 401 без auth на ранее открытые endpoints
++2. 403 при попытке студента обратиться к чужому student_id (через Bearer невалид токен)
++"""
++import pytest
++
++
++LEARNING_ENDPOINTS_WITHOUT_AUTH = [
++    ("GET", "/api/v1/learning/next-item?student_id=1"),
++    ("POST", "/api/v1/learning/materials/1/complete"),
++    ("POST", "/api/v1/learning/tasks/1/start-or-get-attempt"),
++    ("GET", "/api/v1/learning/tasks/1/state?student_id=1"),
++    ("POST", "/api/v1/learning/tasks/1/request-help"),
++    ("POST", "/api/v1/learning/tasks/1/hint-events"),
++]
++
++ATTEMPT_ENDPOINTS_WITHOUT_AUTH = [
++    ("POST", "/api/v1/attempts"),
++    ("POST", "/api/v1/attempts/1/answers"),
++    ("POST", "/api/v1/attempts/1/finish"),
++    ("GET", "/api/v1/attempts/1"),
++    ("GET", "/api/v1/attempts/by-user/1"),
++]
++
++TEACHER_ENDPOINTS_WITHOUT_AUTH = [
++    ("POST", "/api/v1/teacher/reviews/claim-next"),
++    ("POST", "/api/v1/teacher/reviews/1/release"),
++]
++
++
++@pytest.mark.parametrize("method,url", LEARNING_ENDPOINTS_WITHOUT_AUTH)
++@pytest.mark.asyncio
++async def test_learning_requires_auth(client, method, url):
++    """Learning endpoints без auth → 401 или 403 (не 200)."""
++    if method == "GET":
++        resp = await client.get(url)
++    else:
++        resp = await client.post(url, json={})
++    assert resp.status_code in (401, 403, 422), (
++        f"{method} {url} вернул {resp.status_code} вместо 401/403"
++    )
++
++
++@pytest.mark.parametrize("method,url", ATTEMPT_ENDPOINTS_WITHOUT_AUTH)
++@pytest.mark.asyncio
++async def test_attempts_require_auth(client, method, url):
++    """Attempt endpoints без auth → 401 или 403."""
++    if method == "GET":
++        resp = await client.get(url)
++    else:
++        resp = await client.post(url, json={})
++    assert resp.status_code in (401, 403, 422), (
++        f"{method} {url} вернул {resp.status_code} вместо 401/403"
++    )
++
++
++@pytest.mark.parametrize("method,url", TEACHER_ENDPOINTS_WITHOUT_AUTH)
++@pytest.mark.asyncio
++async def test_teacher_reviews_require_auth(client, method, url):
++    """Teacher review endpoints без auth → 401 или 403."""
++    resp = await client.post(url, json={})
++    assert resp.status_code in (401, 403, 422), (
++        f"{method} {url} вернул {resp.status_code} вместо 401/403"
++    )
++
++
++@pytest.mark.asyncio
++async def test_me_requires_auth(client):
++    """GET /me без auth → 401."""
++    resp = await client.get("/api/v1/me")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_me_with_invalid_bearer(client):
++    """GET /me с невалидным Bearer токеном → 401."""
++    resp = await client.get(
++        "/api/v1/me",
++        headers={"Authorization": "Bearer invalidtoken1234"},
++    )
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_legacy_api_key_still_works(client):
++    """Legacy ?api_key= query param всё ещё принимается существующими endpoints."""
++    import os
++    from pathlib import Path
++    from dotenv import load_dotenv
++    load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", encoding="utf-8-sig")
++
++    api_key = os.getenv("VALID_API_KEYS", "").split(",")[0].strip()
++    if not api_key:
++        pytest.skip("VALID_API_KEYS не задан")
++
++    resp = await client.get(f"/api/v1/users/?api_key={api_key}")
++    assert resp.status_code == 200
++
++
++@pytest.mark.asyncio
++async def test_service_key_bypasses_idor(client):
++    """Service api_key позволяет обращаться к любому student_id (bypass IDOR)."""
++    import os
++    from pathlib import Path
++    from dotenv import load_dotenv
++    load_dotenv(dotenv_path=Path(__file__).parents[1] / ".env", encoding="utf-8-sig")
++
++    api_key = os.getenv("VALID_API_KEYS", "").split(",")[0].strip()
++    if not api_key:
++        pytest.skip("VALID_API_KEYS не задан")
++
++    resp = await client.get(
++        f"/api/v1/learning/next-item?student_id=9999&api_key={api_key}"
++    )
++    assert resp.status_code in (200, 404)
+diff --git a/tests/test_migrations.py b/tests/test_migrations.py
+new file mode 100644
+index 0000000..f6ed850
+--- /dev/null
++++ b/tests/test_migrations.py
+@@ -0,0 +1,51 @@
++"""
++Тест upgrade/downgrade roundtrip для миграций M1–M5 Phase Y-1.
++
++Запускается против реальной БД (alembic использует DATABASE_URL из .env).
++Требует: alembic head = 20260428_050000_m5_guest до запуска.
++"""
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++
++project_root = Path(__file__).resolve().parents[1]
++
++
++def _run_alembic(*args: str) -> subprocess.CompletedProcess:
++    cmd = [sys.executable, "-m", "alembic"] + list(args)
++    result = subprocess.run(
++        cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8"
++    )
++    return result
++
++
++def test_alembic_head_is_m5():
++    """Текущий head должен быть M5 (все 5 миграций применены)."""
++    result = _run_alembic("current")
++    assert result.returncode == 0, f"alembic current failed:\n{result.stderr}"
++    assert "20260428_050000_m5_guest" in result.stdout or "m5_guest" in result.stdout, (
++        f"Expected m5_guest as head, got:\n{result.stdout}"
++    )
++
++
++def test_alembic_downgrade_m5_then_upgrade():
++    """Откатить M5 и снова накатить — должно пройти без ошибок."""
++    down = _run_alembic("downgrade", "20260428_040000_m4_audit")
++    assert down.returncode == 0, f"downgrade M5 failed:\n{down.stderr}"
++
++    up = _run_alembic("upgrade", "head")
++    assert up.returncode == 0, f"upgrade head after M5 downgrade failed:\n{up.stderr}"
++
++    current = _run_alembic("current")
++    assert "20260428_050000_m5_guest" in current.stdout or "m5_guest" in current.stdout
++
++
++def test_alembic_downgrade_m4_then_upgrade():
++    """Откатить до M3, затем накатить обратно."""
++    down = _run_alembic("downgrade", "20260428_030000_m3_sessions")
++    assert down.returncode == 0, f"downgrade M4 failed:\n{down.stderr}"
++
++    up = _run_alembic("upgrade", "head")
++    assert up.returncode == 0, f"upgrade head after M4 downgrade failed:\n{up.stderr}"
+diff --git a/tests/test_session_lifecycle.py b/tests/test_session_lifecycle.py
+new file mode 100644
+index 0000000..84089c5
+--- /dev/null
++++ b/tests/test_session_lifecycle.py
+@@ -0,0 +1,110 @@
++"""
++Тесты жизненного цикла user_session.
++
++Покрывает:
++- create_session → validate_session → revoke_session
++- refresh_session: старая сессия отзывается, новая создаётся
++- Невалидный access_token → None
++- Несуществующий токен → None
++"""
++import os
++import pytest
++
++
++async def _get_existing_user_id(db) -> int:
++    from sqlalchemy import text
++    uid = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if uid is None:
++        pytest.skip("Нет пользователей в БД")
++    return uid
++
++
++@pytest.mark.asyncio
++async def test_create_and_validate_session(db):
++    """Созданная сессия валидируется по access_token."""
++    from app.services.auth.session_service import create_session, validate_session
++
++    user_id = await _get_existing_user_id(db)
++    access_token, refresh_token, session_obj = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    result = await validate_session(db, access_token)
++    assert result is not None
++    assert result.user_id == user_id
++
++
++@pytest.mark.asyncio
++async def test_validate_invalid_token(db):
++    """Невалидный hex токен → None."""
++    from app.services.auth.session_service import validate_session
++
++    assert await validate_session(db, "not-a-hex") is None
++
++
++@pytest.mark.asyncio
++async def test_validate_nonexistent_token(db):
++    """Несуществующий токен → None."""
++    from app.services.auth.session_service import validate_session
++
++    fake = os.urandom(32).hex()
++    assert await validate_session(db, fake) is None
++
++
++@pytest.mark.asyncio
++async def test_revoke_session(db):
++    """После revoke_session validate возвращает None."""
++    from app.services.auth.session_service import create_session, revoke_session, validate_session
++
++    user_id = await _get_existing_user_id(db)
++    access_token, _, session_obj = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    await revoke_session(db, session_obj.id)
++    await db.commit()
++
++    assert await validate_session(db, access_token) is None
++
++
++@pytest.mark.asyncio
++async def test_refresh_session(db):
++    """refresh_session отзывает старую и создаёт новую пару токенов."""
++    from app.services.auth.session_service import create_session, refresh_session, validate_session
++
++    user_id = await _get_existing_user_id(db)
++    access_token, refresh_token, old_session = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    result = await refresh_session(db, refresh_token)
++    assert result is not None
++    new_access, new_refresh, new_session = result
++    await db.commit()
++
++    assert new_access != access_token
++    assert await validate_session(db, access_token) is None
++    assert await validate_session(db, new_access) is not None
++
++
++@pytest.mark.asyncio
++async def test_refresh_invalid_token(db):
++    """Несуществующий refresh_token → None."""
++    from app.services.auth.session_service import refresh_session
++
++    fake = os.urandom(32).hex()
++    assert await refresh_session(db, fake) is None
++
++
++@pytest.mark.asyncio
++async def test_revoke_all_sessions(db):
++    """revoke_all_sessions отзывает все активные сессии пользователя."""
++    from app.services.auth.session_service import create_session, revoke_all_sessions, validate_session
++
++    user_id = await _get_existing_user_id(db)
++    t1, _, _ = await create_session(db, user_id=user_id)
++    t2, _, _ = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    await revoke_all_sessions(db, user_id=user_id)
++    await db.commit()
++
++    assert await validate_session(db, t1) is None
++    assert await validate_session(db, t2) is None

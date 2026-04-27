@@ -9,6 +9,8 @@ Backend LMS API. Миграции только через Alembic. БД лока
 
 AI-слой документации: [docs/ai/INDEX.md](../docs/ai/INDEX.md). Прежде чем исследовать код — проверить, есть ли ответ там.
 
+**Phase Y-1 (в разработке):** auth-расширение для SPW. 5 миграций + auth-сервисы. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md)
+
 ---
 
 ## MCP PostgreSQL

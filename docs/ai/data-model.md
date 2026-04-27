@@ -72,6 +72,30 @@
 
 Подробности — [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) и `.claude/CLAUDE.md` (секция Date/Time Safety).
 
+## Phase Y-1 (планируемые миграции)
+
+Миграции M1–M5 (`20260428_*`). Down-revision: `teacher_next_modes_stage39`.
+
+### Изменения в `users`
+
+- `password_hash` — снять `NOT NULL` (passwordless users допустимы)
+- `email` — снять `NOT NULL`; UNIQUE constraint заменяется на `partial UNIQUE INDEX WHERE email IS NOT NULL`
+- `CREATE EXTENSION IF NOT EXISTS pgcrypto` (для `gen_random_uuid()`)
+
+### Новые таблицы
+
+| Таблица | Назначение |
+|---|---|
+| `identity_link` | Multi-identity: email / tg / vk. `UNIQUE(kind, value)`. Backfill из `users.tg_id` и `users.email`. VK access_token — Fernet-шифрованный. |
+| `user_session` | UUID PK, `token_hash BYTEA UNIQUE`, TTL 15 мин access / 30 дней refresh, `revoked_at`. Partial index `WHERE revoked_at IS NULL`. |
+| `magic_link` | Email magic-link: `token_hash BYTEA UNIQUE`, `expires_at`, `consumed_at`. TTL 15 мин, одноразовый. |
+| `audit_event` | Append-only (trigger `audit_event_immutable`). `BigSerial PK`, `event_type`, `ip INET`, `details JSONB`. |
+| `product_event` | RANGE partitioned by month (`ts`), 6 партиций вперёд. Funnel-аналитика. |
+| `guest_session` | UUID PK, анонимный пользователь; `attributed_user_id` при регистрации. |
+| `guest_attempt` | Попытки гостя; `attributed_user_id` + `attributed_at` при атрибуции. |
+
+Детали миграций (DDL, indexes, downgrade): [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md §4](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
+
 ## Read-контракты
 
 OpenAPI-спека: [docs/openapi.json](../openapi.json) (снимок). Live-спека — на `/docs` и `/redoc` при запущенном сервере.

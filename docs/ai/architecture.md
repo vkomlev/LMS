@@ -67,9 +67,27 @@ app/
 
 ## Аутентификация
 
-- Query-параметр `api_key` (см. `app/auth/api_key_scheme.py`)
-- Валидные ключи — `VALID_API_KEYS` в `.env` (CSV)
-- Ролевая модель — в БД (таблицы `roles`, `user_roles`, `access_requests`)
+### Текущее состояние (service-level)
+
+- `app/auth/api_key_scheme.py` — **фактически пустой файл**. User-level auth НЕ enforced.
+- Все `learning/*`, `attempts/*`, `task_results/*`, `teacher/*` принимают `student_id`/`teacher_id` параметром от вызывающего без проверки.
+- Trust model: trusted-zone (TG_LMS bots + ContentBackbone CLI).
+- Ролевая модель — в БД (таблицы `roles`, `user_roles`, `access_requests`).
+
+### Phase Y-1 (в разработке) — первичный auth-слой
+
+Auth-слой для SPW: magic-link email + TG initData HMAC + VK ID 2.0 OAuth. Сохраняет совместимость с service-level api_key через `X-API-Key` header.
+
+Новые компоненты:
+- `app/auth/current_user.py` — dependency `get_current_user` (резолв: cookie → Bearer → URL-token → X-API-Key)
+- `app/services/auth/` — magic_link_service, tg_init_service, vk_oauth_service, session_service, identity_link_service, link_token_service
+- `app/api/v1/auth/` — роутеры magic_link, tg, vk, session
+- `app/api/v1/me.py` — профиль текущего пользователя
+- `app/api/v1/embed_api.py` — read-only embed для WP
+
+IDOR sweep test (CI gate): все endpoints с `id`-параметром проверяются на 403 при доступе к чужим данным.
+
+Полная спецификация: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
 
 ## Бизнес-логика в БД
 

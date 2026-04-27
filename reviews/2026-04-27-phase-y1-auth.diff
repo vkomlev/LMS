@@ -1,0 +1,420 @@
+warning: in the working copy of 'app/api/deps.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/api/main.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/core/config.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/.claude/CLAUDE.md b/.claude/CLAUDE.md
+index 0451395..0123858 100644
+--- a/.claude/CLAUDE.md
++++ b/.claude/CLAUDE.md
+@@ -9,6 +9,8 @@ Backend LMS API. Миграции только через Alembic. БД лока
+ 
+ AI-слой документации: [docs/ai/INDEX.md](../docs/ai/INDEX.md). Прежде чем исследовать код — проверить, есть ли ответ там.
+ 
++**Phase Y-1 (в разработке):** auth-расширение для SPW. 5 миграций + auth-сервисы. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md)
++
+ ---
+ 
+ ## MCP PostgreSQL
+diff --git a/app/api/deps.py b/app/api/deps.py
+index 0fac01a..b93264b 100644
+--- a/app/api/deps.py
++++ b/app/api/deps.py
+@@ -1,28 +1,106 @@
+-from fastapi import Depends, Security, HTTPException
+-from fastapi.security.api_key import APIKeyQuery
++from fastapi import Cookie, Depends, Header, HTTPException, Security, status
++from fastapi.security.api_key import APIKeyHeader, APIKeyQuery
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from sqlalchemy import select
++
++from app.auth.current_user import CurrentUser
++from app.auth.service_api_key import is_valid_service_key
+ from app.core.config import Settings
+ from app.db.session import get_async_db
++from app.services.auth import session_service
+ 
+ settings = Settings()
++
+ api_key_query = APIKeyQuery(name="api_key", auto_error=False)
++api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
++
++
++# ---------------------------------------------------------------------------
++# Исходная dependency для legacy CRUD эндпоинтов (TG_LMS ботов).
++# Не трогаем — backward compat.
++# ---------------------------------------------------------------------------
+ 
+ async def get_api_key(
+     key: str | None = Security(api_key_query),
+ ) -> str:
+-    """
+-    Проверка api_key в query-параметрах.
+-    """
++    """Проверка api_key в query-параметрах (legacy)."""
+     if not key or key not in settings.valid_api_keys:
+-        raise HTTPException(403, "Invalid or missing API Key")
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or missing API Key")
+     return key
+ 
++
+ async def get_db(
+     db: AsyncSession = Depends(get_async_db),
+     api_key: str = Depends(get_api_key),
+ ) -> AsyncSession:
++    """Legacy dependency: DB + service API key для TG_LMS ботов."""
++    return db
++
++
++# ---------------------------------------------------------------------------
++# Новые dependency для SPW эндпоинтов
++# ---------------------------------------------------------------------------
++
++async def get_bare_db(db: AsyncSession = Depends(get_async_db)) -> AsyncSession:
++    """DB без проверки auth — только для /auth/* эндпоинтов."""
++    return db
++
++
++async def get_current_user(
++    db: AsyncSession = Depends(get_async_db),
++    # 1. Cookie (SPW браузер)
++    session_token: str | None = Cookie(default=None, alias="session"),
++    # 2. Bearer header (мобильные / fetch с Authorization)
++    authorization: str | None = Header(default=None),
++    # 3. URL query token (email verify redirect)
++    token: str | None = None,
++    # 4. X-API-Key header (service-to-service)
++    x_api_key: str | None = Security(api_key_header),
++    # 5. Legacy api_key query param (TG_LMS)
++    api_key: str | None = Security(api_key_query),
++) -> CurrentUser:
+     """
+-    Пробросим сразу и сессию, и проверенный API-ключ.
++    Разрешает CurrentUser из нескольких источников:
++    cookie → Bearer → URL token → X-API-Key → legacy api_key.
++    Кидает 401 если ни один не прошёл.
+     """
+-    return db
++    candidates: list[str | None] = []
++
++    # Bearer token
++    bearer: str | None = None
++    if authorization and authorization.startswith("Bearer "):
++        bearer = authorization.removeprefix("Bearer ").strip()
++
++    for raw_token in [session_token, bearer, token]:
++        if raw_token:
++            session_obj = await session_service.validate_session(db, raw_token)
++            if session_obj:
++                from app.models.users import Users  # noqa: PLC0415 — избегаем circular import
++                result = await db.execute(
++                    select(Users).where(Users.id == session_obj.user_id)
++                )
++                user = result.scalar_one_or_none()
++                if user:
++                    return CurrentUser(
++                        id=user.id,
++                        is_service=False,
++                        tg_id=str(user.tg_id) if user.tg_id else None,
++                        email=user.email,
++                    )
++
++    # Service key (X-API-Key header или legacy ?api_key=)
++    for svc_key in [x_api_key, api_key]:
++        if is_valid_service_key(svc_key):
++            return CurrentUser(id=0, is_service=True)
++
++    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
++
++
++async def require_authenticated(
++    current_user: CurrentUser = Depends(get_current_user),
++) -> CurrentUser:
++    """Требует реального пользователя (не сервисный токен)."""
++    if current_user.is_service:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Service token not allowed here")
++    return current_user
+diff --git a/app/api/main.py b/app/api/main.py
+index ea035d7..a89adfe 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -93,10 +93,13 @@ API_PREFIX = "/api/v1"
+ 
+ app = FastAPI(title="LMS Core API")
+ 
+-# CORS (уберите или сузьте, если не нужно)
++from app.core.config import Settings as _Settings
++_cors_settings = _Settings()
++
+ app.add_middleware(
+     CORSMiddleware,
+-    allow_origins=["*"],
++    allow_origins=_cors_settings.cors_allowed_origins,
++    allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
+ )
+@@ -313,4 +316,19 @@ app.include_router(learning_router, prefix=API_PREFIX)
+ app.include_router(teacher_learning_router, prefix=API_PREFIX)
+ app.include_router(teacher_workload_router, prefix=API_PREFIX)
+ app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
+-app.include_router(teacher_reviews_router, prefix=API_PREFIX)
+\ No newline at end of file
++app.include_router(teacher_reviews_router, prefix=API_PREFIX)
++
++# SPW auth — Phase Y-1
++from app.api.v1.auth.magic_link import router as magic_link_router
++from app.api.v1.auth.tg import router as tg_router
++from app.api.v1.auth.vk import router as vk_router
++from app.api.v1.auth.session import router as session_router
++from app.api.v1.me import router as me_router
++from app.api.v1.embed_api import router as embed_router
++
++app.include_router(magic_link_router, prefix=API_PREFIX)
++app.include_router(tg_router, prefix=API_PREFIX)
++app.include_router(vk_router, prefix=API_PREFIX)
++app.include_router(session_router, prefix=API_PREFIX)
++app.include_router(me_router, prefix=API_PREFIX)
++app.include_router(embed_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/core/config.py b/app/core/config.py
+index 0f736a3..f0a8620 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -52,4 +52,24 @@ class Settings:
+         self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "Входные данные")
+ 
+         # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
+-        self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
+\ No newline at end of file
++        self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
++
++        # SPW auth — Phase Y-1
++        self.resend_api_key: str = os.getenv("RESEND_API_KEY", "")
++        self.smtp_from: str = os.getenv("SMTP_FROM", "noreply@victor-komlev.ru")
++        self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
++        self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
++        self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")
++        self.tg_bot_token_for_initdata: str = os.getenv("TG_BOT_TOKEN_FOR_INITDATA", "")
++        self.vk_id_client_id: str = os.getenv("VK_ID_CLIENT_ID", "")
++        self.vk_id_client_secret: str = os.getenv("VK_ID_CLIENT_SECRET", "")
++        self.vk_id_redirect_uri: str = os.getenv("VK_ID_REDIRECT_URI", "")
++        self.redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/2")
++        self.cors_allowed_origins: List[str] = [
++            o.strip()
++            for o in os.getenv(
++                "CORS_ALLOWED_ORIGINS",
++                "http://localhost:3000",
++            ).split(",")
++            if o.strip()
++        ]
+\ No newline at end of file
+diff --git a/app/db/base.py b/app/db/base.py
+index 4cee1e2..c76df45 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -24,4 +24,10 @@ import app.models.user_courses
+ import app.models.task_results
+ import app.models.help_requests
+ import app.models.help_request_replies
++import app.models.identity_link
++import app.models.user_session
++import app.models.magic_link
++import app.models.audit_event
++import app.models.guest_session
++import app.models.guest_attempt
+ 
+diff --git a/app/models/users.py b/app/models/users.py
+index 97ed248..2ad11a8 100644
+--- a/app/models/users.py
++++ b/app/models/users.py
+@@ -21,21 +21,25 @@ if TYPE_CHECKING:
+     from app.models.access_requests import AccessRequests
+     from app.models.user_courses import UserCourses
+     from app.models.attempts import Attempts
+-    
++    from app.models.identity_link import IdentityLink
++    from app.models.user_session import UserSession
++
++
+ class Users(Base):
+     """
+-    Пользователи системы (связь с Telegram через tg_id).
++    Пользователи системы. email и password_hash nullable после M1 (passwordless auth).
+     """
+     __tablename__ = "users"
+     __table_args__ = (
+         PrimaryKeyConstraint("id", name="users_pkey"),
+-        UniqueConstraint("email", name="users_email_key"),
++        # UniqueConstraint на email удалён M1; заменён partial unique index WHERE email IS NOT NULL
+         {"comment": "Пользователи системы"},
+     )
+ 
+     id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ID пользователя")
+-    email: Mapped[str] = mapped_column(String, nullable=False, comment="Email пользователя")
+-    password_hash: Mapped[str] = mapped_column(String, nullable=False, comment="Хэш пароля")
++    # nullable после M1 (passwordless users допустимы)
++    email: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Email пользователя")
++    password_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Хэш пароля")
+     full_name: Mapped[Optional[str]] = mapped_column(String, comment="Полное имя")
+     created_at: Mapped[datetime] = mapped_column(
+         DateTime(timezone=True),
+@@ -69,6 +73,8 @@ class Users(Base):
+         back_populates="user",
+     )
+     attempts: Mapped[List["Attempts"]] = relationship("Attempts", back_populates="user")
++    identities: Mapped[List["IdentityLink"]] = relationship("IdentityLink", back_populates="user")
++    sessions: Mapped[List["UserSession"]] = relationship("UserSession", back_populates="user")
+     # Преподаватель → его студенты
+     students: Mapped[List["Users"]] = relationship(
+         "Users",
+diff --git a/docs/ai/INDEX.md b/docs/ai/INDEX.md
+index 6458523..6b96ebb 100644
+--- a/docs/ai/INDEX.md
++++ b/docs/ai/INDEX.md
+@@ -8,12 +8,18 @@
+ - [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) — проектные отклонения и ограничения
+ - [architecture.md](architecture.md) — компоненты, слои, потоки данных
+ - [data-model.md](data-model.md) — ключевые сущности БД, триггеры, миграции
+-- [glossary.md](glossary.md) — доменные термины
++- [glossary.md](glossary.md) — доменные термины (включая SPW + Auth + типы задач)
+ - [ERRORS.md](ERRORS.md) — журнал инцидентов и профилактика
+ - [WORKFLOWS/](WORKFLOWS/) — шаблоны рабочих циклов
+   - [feature.md](WORKFLOWS/feature.md)
+   - [bugfix.md](WORKFLOWS/bugfix.md)
+   - [db-change.md](WORKFLOWS/db-change.md)
++- [adr/0001-auth-passwordless-multi-identity.md](adr/0001-auth-passwordless-multi-identity.md) — ADR: auth-стратегия Phase Y-1
++- [design/teacher-queue-states.md](design/teacher-queue-states.md) — FSM очереди ручной проверки SA_COM
++
++## Specs (исполняемые ТЗ)
++
++- [../specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md) — Tech-spec Y-1: миграции + auth (READY for executor)
+ 
+ ## Когда читать какой файл
+ 
+@@ -23,6 +29,8 @@
+ | Багфикс | [WORKFLOWS/bugfix.md](WORKFLOWS/bugfix.md) + [ERRORS.md](ERRORS.md) |
+ | Изменение схемы БД | [data-model.md](data-model.md) + [WORKFLOWS/db-change.md](WORKFLOWS/db-change.md) |
+ | Новый агент, онбординг | [AGENTS.md](AGENTS.md) + [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) + [glossary.md](glossary.md) |
++| Phase Y-1 (auth-расширение) | [specs/tech-spec-Y1](../specs/2026-04-27-tech-spec-Y1-auth-extension.md) + [adr/0001](adr/0001-auth-passwordless-multi-identity.md) |
++| SA_COM / teacher review queue | [design/teacher-queue-states.md](design/teacher-queue-states.md) |
+ 
+ ## Принципы обновления
+ 
+diff --git a/docs/ai/architecture.md b/docs/ai/architecture.md
+index d2b6921..fbc4579 100644
+--- a/docs/ai/architecture.md
++++ b/docs/ai/architecture.md
+@@ -67,9 +67,27 @@ app/
+ 
+ ## Аутентификация
+ 
+-- Query-параметр `api_key` (см. `app/auth/api_key_scheme.py`)
+-- Валидные ключи — `VALID_API_KEYS` в `.env` (CSV)
+-- Ролевая модель — в БД (таблицы `roles`, `user_roles`, `access_requests`)
++### Текущее состояние (service-level)
++
++- `app/auth/api_key_scheme.py` — **фактически пустой файл**. User-level auth НЕ enforced.
++- Все `learning/*`, `attempts/*`, `task_results/*`, `teacher/*` принимают `student_id`/`teacher_id` параметром от вызывающего без проверки.
++- Trust model: trusted-zone (TG_LMS bots + ContentBackbone CLI).
++- Ролевая модель — в БД (таблицы `roles`, `user_roles`, `access_requests`).
++
++### Phase Y-1 (в разработке) — первичный auth-слой
++
++Auth-слой для SPW: magic-link email + TG initData HMAC + VK ID 2.0 OAuth. Сохраняет совместимость с service-level api_key через `X-API-Key` header.
++
++Новые компоненты:
++- `app/auth/current_user.py` — dependency `get_current_user` (резолв: cookie → Bearer → URL-token → X-API-Key)
++- `app/services/auth/` — magic_link_service, tg_init_service, vk_oauth_service, session_service, identity_link_service, link_token_service
++- `app/api/v1/auth/` — роутеры magic_link, tg, vk, session
++- `app/api/v1/me.py` — профиль текущего пользователя
++- `app/api/v1/embed_api.py` — read-only embed для WP
++
++IDOR sweep test (CI gate): все endpoints с `id`-параметром проверяются на 403 при доступе к чужим данным.
++
++Полная спецификация: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
+ 
+ ## Бизнес-логика в БД
+ 
+diff --git a/docs/ai/data-model.md b/docs/ai/data-model.md
+index f258abe..e2c4a17 100644
+--- a/docs/ai/data-model.md
++++ b/docs/ai/data-model.md
+@@ -72,6 +72,30 @@
+ 
+ Подробности — [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) и `.claude/CLAUDE.md` (секция Date/Time Safety).
+ 
++## Phase Y-1 (планируемые миграции)
++
++Миграции M1–M5 (`20260428_*`). Down-revision: `teacher_next_modes_stage39`.
++
++### Изменения в `users`
++
++- `password_hash` — снять `NOT NULL` (passwordless users допустимы)
++- `email` — снять `NOT NULL`; UNIQUE constraint заменяется на `partial UNIQUE INDEX WHERE email IS NOT NULL`
++- `CREATE EXTENSION IF NOT EXISTS pgcrypto` (для `gen_random_uuid()`)
++
++### Новые таблицы
++
++| Таблица | Назначение |
++|---|---|
++| `identity_link` | Multi-identity: email / tg / vk. `UNIQUE(kind, value)`. Backfill из `users.tg_id` и `users.email`. VK access_token — Fernet-шифрованный. |
++| `user_session` | UUID PK, `token_hash BYTEA UNIQUE`, TTL 15 мин access / 30 дней refresh, `revoked_at`. Partial index `WHERE revoked_at IS NULL`. |
++| `magic_link` | Email magic-link: `token_hash BYTEA UNIQUE`, `expires_at`, `consumed_at`. TTL 15 мин, одноразовый. |
++| `audit_event` | Append-only (trigger `audit_event_immutable`). `BigSerial PK`, `event_type`, `ip INET`, `details JSONB`. |
++| `product_event` | RANGE partitioned by month (`ts`), 6 партиций вперёд. Funnel-аналитика. |
++| `guest_session` | UUID PK, анонимный пользователь; `attributed_user_id` при регистрации. |
++| `guest_attempt` | Попытки гостя; `attributed_user_id` + `attributed_at` при атрибуции. |
++
++Детали миграций (DDL, indexes, downgrade): [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md §4](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
++
+ ## Read-контракты
+ 
+ OpenAPI-спека: [docs/openapi.json](../openapi.json) (снимок). Live-спека — на `/docs` и `/redoc` при запущенном сервере.
+diff --git a/docs/ai/glossary.md b/docs/ai/glossary.md
+index aacb101..2d5696b 100644
+--- a/docs/ai/glossary.md
++++ b/docs/ai/glossary.md
+@@ -37,6 +37,28 @@
+ - **API key** — аутентификация через query-параметр `api_key`. Список валидных — в `VALID_API_KEYS`.
+ - **MCP PostgreSQL** — dev-инструмент для read-only SQL из AI-агентов; алиас `postgresql`.
+ 
++## SPW + Auth (Phase Y-1)
++
++- **SPW** (Student Practice Web) — веб-клиент для учеников; Next.js 15 + TS + Tailwind + shadcn. Домен `learn.victor-komlev.ru`.
++- **identity_link** — таблица multi-identity: один `user_id` может иметь привязки `kind IN ('email','tg','vk')`. `UNIQUE(kind, value)`.
++- **user_session** — сессия пользователя; `token_hash BYTEA`, TTL 15 мин / 30 дней refresh, `revoked_at`.
++- **magic_link** — одноразовая ссылка для email-авторизации; `token_hash`, `expires_at`, `consumed_at`.
++- **CurrentUser** — dataclass dep: `id`, `role`, `is_service`, `identities: list[IdentityLinkRead]`.
++- **X-API-Key** — header для service-level access от TG_LMS bots / ContentBackbone CLI; bypasses per-user IDOR check.
++- **IDOR** (Insecure Direct Object Reference) — проверка: `student_id == current_user.id` на всех id-параметрах. CI gate: IDOR sweep test.
++- **guest_session / guest_attempt** — анонимный пользователь; атрибуция при регистрации.
++- **audit_event** — append-only лог: login/logout/identity-change; immutable trigger.
++- **product_event** — funnel-аналитика; partitioned by month.
++- **Phase Y-1** — фаза проекта: 5 Alembic-миграций + auth-расширение LMS API. Исполнитель: `/executor-pro`. Tech-spec: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md).
++- **FernetService** — шифрование VK access_token (FERNET_MASTER_KEY в .env); `vk_access_token_enc BYTEA` в `identity_link`.
++
++## Типы задач (Task types)
++
++- **SA** (Short Answer) — короткий ответ; автопроверка.
++- **SC** (Single Choice) — один правильный вариант; автопроверка.
++- **MC** (Multiple Choice) — несколько правильных вариантов; автопроверка.
++- **SA_COM** (Short Answer with Code/Comment) — задача с ручной проверкой. `is_correct=NULL` до grade преподавателем. FSM: [docs/ai/design/teacher-queue-states.md](design/teacher-queue-states.md).
++
+ ## Гейты (процессные)
+ 
+ - **Spec-Gate** — фиксация scope и acceptance criteria до реализации.
+diff --git a/requirements.txt b/requirements.txt
+index 62408e7..8e519f4 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -26,4 +26,7 @@ typing_extensions==4.14.1
+ uvicorn==0.35.0
+ google-api-python-client>=2.100.0
+ google-auth-httplib2>=0.1.1
+-google-auth-oauthlib>=1.1.0
+\ No newline at end of file
++google-auth-oauthlib>=1.1.0
++cryptography>=42.0.0
++redis>=5.0.0
++PyJWT>=2.9.0
+\ No newline at end of file
