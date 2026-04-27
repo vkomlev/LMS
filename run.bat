@@ -29,6 +29,6 @@ if exist "requirements.txt" (
 )
 
 echo Запуск приложения...
-python run.py
+python run.py %*
 
 pause

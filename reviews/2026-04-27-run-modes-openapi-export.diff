@@ -1,0 +1,47 @@
+diff --git a/run.bat b/run.bat
+index bcd8d5a..c8b06a7 100644
+--- a/run.bat
++++ b/run.bat
+@@ -29,6 +29,6 @@ if exist "requirements.txt" (
+ )
+ 
+ echo Запуск приложения...
+-python run.py
++python run.py %*
+ 
+ pause
+diff --git a/run.py b/run.py
+index 2d54a48..f161a9b 100644
+--- a/run.py
++++ b/run.py
+@@ -1,18 +1,26 @@
+ # run.py (корень проекта)
+ 
++import argparse
+ import os
+ from dotenv import load_dotenv
+ 
+-# Явно читаем .env
+ load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"), encoding="utf-8-sig")
+ 
+ if __name__ == "__main__":
+     import uvicorn
+ 
++    parser = argparse.ArgumentParser(description="LMS Core API")
++    parser.add_argument(
++        "--dev",
++        action="store_true",
++        help="Режим разработки: hot-reload включён (не использовать в проде)",
++    )
++    args = parser.parse_args()
++
+     uvicorn.run(
+-        "app.api.main:app",    # <-- здесь строка "модуль:приложение"
++        "app.api.main:app",
+         host="0.0.0.0",
+         port=8000,
+-        log_config=None,       
+-        reload=True,           
++        log_config=None,
++        reload=args.dev,
+     )
