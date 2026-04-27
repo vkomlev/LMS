@@ -3,7 +3,20 @@
 import os
 import logging
 from logging.config import dictConfig
+from logging.handlers import RotatingFileHandler
 from app.core.config import Settings
+
+
+class _WinSafeRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler без падения на Windows при занятом файле."""
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except PermissionError:
+            # Другой процесс держит app.log открытым — пропускаем ротацию.
+            pass
+
 
 def setup_logging() -> None:
     """
@@ -34,7 +47,7 @@ def setup_logging() -> None:
                 "level": settings.log_level,
             },
             "file": {
-                "class": "logging.handlers.RotatingFileHandler",
+                "()": _WinSafeRotatingFileHandler,
                 "formatter": "default",
                 "level": settings.log_level,
                 "filename": log_file,
