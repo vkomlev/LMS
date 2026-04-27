@@ -93,10 +93,13 @@ API_PREFIX = "/api/v1"
 
 app = FastAPI(title="LMS Core API")
 
-# CORS (уберите или сузьте, если не нужно)
+from app.core.config import Settings as _Settings
+_cors_settings = _Settings()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_settings.cors_allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -314,3 +317,18 @@ app.include_router(teacher_learning_router, prefix=API_PREFIX)
 app.include_router(teacher_workload_router, prefix=API_PREFIX)
 app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
 app.include_router(teacher_reviews_router, prefix=API_PREFIX)
+
+# SPW auth — Phase Y-1
+from app.api.v1.auth.magic_link import router as magic_link_router
+from app.api.v1.auth.tg import router as tg_router
+from app.api.v1.auth.vk import router as vk_router
+from app.api.v1.auth.session import router as session_router
+from app.api.v1.me import router as me_router
+from app.api.v1.embed_api import router as embed_router
+
+app.include_router(magic_link_router, prefix=API_PREFIX)
+app.include_router(tg_router, prefix=API_PREFIX)
+app.include_router(vk_router, prefix=API_PREFIX)
+app.include_router(session_router, prefix=API_PREFIX)
+app.include_router(me_router, prefix=API_PREFIX)
+app.include_router(embed_router, prefix=API_PREFIX)

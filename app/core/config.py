@@ -53,3 +53,23 @@ class Settings:
 
         # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
         self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
+
+        # SPW auth — Phase Y-1
+        self.resend_api_key: str = os.getenv("RESEND_API_KEY", "")
+        self.smtp_from: str = os.getenv("SMTP_FROM", "noreply@victor-komlev.ru")
+        self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
+        self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
+        self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")
+        self.tg_bot_token_for_initdata: str = os.getenv("TG_BOT_TOKEN_FOR_INITDATA", "")
+        self.vk_id_client_id: str = os.getenv("VK_ID_CLIENT_ID", "")
+        self.vk_id_client_secret: str = os.getenv("VK_ID_CLIENT_SECRET", "")
+        self.vk_id_redirect_uri: str = os.getenv("VK_ID_REDIRECT_URI", "")
+        self.redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/2")
+        self.cors_allowed_origins: List[str] = [
+            o.strip()
+            for o in os.getenv(
+                "CORS_ALLOWED_ORIGINS",
+                "http://localhost:3000",
+            ).split(",")
+            if o.strip()
+        ]
