@@ -24,4 +24,10 @@ import app.models.user_courses
 import app.models.task_results
 import app.models.help_requests
 import app.models.help_request_replies
+import app.models.identity_link
+import app.models.user_session
+import app.models.magic_link
+import app.models.audit_event
+import app.models.guest_session
+import app.models.guest_attempt
 

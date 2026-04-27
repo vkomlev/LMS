@@ -21,21 +21,25 @@ if TYPE_CHECKING:
     from app.models.access_requests import AccessRequests
     from app.models.user_courses import UserCourses
     from app.models.attempts import Attempts
-    
+    from app.models.identity_link import IdentityLink
+    from app.models.user_session import UserSession
+
+
 class Users(Base):
     """
-    Пользователи системы (связь с Telegram через tg_id).
+    Пользователи системы. email и password_hash nullable после M1 (passwordless auth).
     """
     __tablename__ = "users"
     __table_args__ = (
         PrimaryKeyConstraint("id", name="users_pkey"),
-        UniqueConstraint("email", name="users_email_key"),
+        # UniqueConstraint на email удалён M1; заменён partial unique index WHERE email IS NOT NULL
         {"comment": "Пользователи системы"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ID пользователя")
-    email: Mapped[str] = mapped_column(String, nullable=False, comment="Email пользователя")
-    password_hash: Mapped[str] = mapped_column(String, nullable=False, comment="Хэш пароля")
+    # nullable после M1 (passwordless users допустимы)
+    email: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Email пользователя")
+    password_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True, comment="Хэш пароля")
     full_name: Mapped[Optional[str]] = mapped_column(String, comment="Полное имя")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -69,6 +73,8 @@ class Users(Base):
         back_populates="user",
     )
     attempts: Mapped[List["Attempts"]] = relationship("Attempts", back_populates="user")
+    identities: Mapped[List["IdentityLink"]] = relationship("IdentityLink", back_populates="user")
+    sessions: Mapped[List["UserSession"]] = relationship("UserSession", back_populates="user")
     # Преподаватель → его студенты
     students: Mapped[List["Users"]] = relationship(
         "Users",
