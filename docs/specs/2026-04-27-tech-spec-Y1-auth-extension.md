@@ -560,6 +560,18 @@ Response 200:
 Response 401 (constant-time, без enumeration):
 { "detail": "Токен недействителен или истёк" }
   // одинаковый ответ для: token_invalid | token_expired | token_already_used
+
+Response 409 identity_conflict (Y-1.5.1 hotfix, ADR-0021 §2):
+{
+  "detail": {
+    "error": "identity_conflict",
+    "conflict_kind": "email_already_linked_to_orphan_user",
+    "existing_identity_kinds": [],
+    "message": "Email уже привязан к другому аккаунту в нестандартном состоянии. Обратитесь к администратору."
+  }
+}
+  // users.email exists БЕЗ identity_link kind='email' — orphan state
+  // (manual DELETE identity_link или race-corruption).
 ```
 
 **Side effects (Y-1.5, ADR-0021 §1):**
@@ -619,11 +631,15 @@ Response 409 identity_conflict (Y-1.5, ADR-0021 §2 — защита от identi
 {
   "detail": {
     "error": "identity_conflict",
-    "conflict_kind": "email_already_linked",
-    "existing_identity_kinds": ["email"],
-    "message": "Этот email уже привязан к другому аккаунту. Войдите через email и привяжите VK в /me."
+    "conflict_kind": "email_already_linked" | "email_already_linked_to_orphan_user",
+    "existing_identity_kinds": ["email"] | [],
+    "message": "Этот email уже привязан к другому аккаунту. ..."
   }
 }
+  // email_already_linked_to_orphan_user (Y-1.5.1 hotfix per handoff 2026-04-28 §2):
+  // users.email exists без identity_link kind='email' — orphan state. Возможный
+  // identity-takeover через подделанный VK userinfo email на email чужого user
+  // у которого identity_link был удалён manually (или race-corrupted).
 ```
 
 **Side effects (Y-1.5, ADR-0021 §1, §2):**
