@@ -8,11 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
-from app.services.auth import identity_link_service, session_service
+from app.services.auth import session_service
 from app.services.auth.link_token_service import attribute_guest_session
-from app.services.auth.vk_oauth_service import exchange_code, get_vk_user_id
+from app.services.auth.vk_oauth_service import (
+    IdentityConflictError,
+    exchange_code,
+    fetch_vk_userinfo,
+    get_or_create_user_by_vk,
+)
 from app.services.audit_service import log_event
-from app.services.fernet_service import encrypt_token
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
 logger = logging.getLogger(__name__)
@@ -46,27 +50,42 @@ async def vk_callback(
     vk_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
     try:
-        vk_user_id = await get_vk_user_id(access_token)
+        userinfo = await fetch_vk_userinfo(access_token)
     except ValueError as e:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
 
-    user = await identity_link_service.get_user_by_identity(db, "vk", vk_user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "VK-аккаунт не привязан к пользователю")
+    ua = request.headers.get("user-agent")
 
-    enc_access = encrypt_token(access_token, _settings)
-    enc_refresh = encrypt_token(refresh_token_vk, _settings) if refresh_token_vk else None
-    await identity_link_service.upsert_identity(
-        db, user.id, "vk", vk_user_id,
-        vk_access_token_enc=enc_access,
-        vk_refresh_token_enc=enc_refresh,
-        vk_token_expires_at=vk_token_expires_at,
-    )
+    try:
+        user, created = await get_or_create_user_by_vk(
+            db,
+            vk_user_id=userinfo["user_id"],
+            email=userinfo["email"],
+            full_name=userinfo["full_name"],
+            access_token=access_token,
+            refresh_token=refresh_token_vk,
+            expires_at=vk_token_expires_at,
+            settings=_settings,
+            ip=ip,
+            user_agent=ua,
+        )
+    except IdentityConflictError as e:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "error": "identity_conflict",
+                "conflict_kind": e.conflict_kind,
+                "existing_identity_kinds": e.existing_kinds,
+                "message": (
+                    "Этот email уже привязан к другому аккаунту. "
+                    "Войдите через email и привяжите VK в /me."
+                ),
+            },
+        )
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)
 
-    ua = request.headers.get("user-agent")
     access, refresh, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_vk_oauth", user_id=user.id, ip=ip)
     await db.commit()

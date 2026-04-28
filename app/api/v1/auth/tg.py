@@ -7,9 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, TgInitRequest
-from app.services.auth import identity_link_service, session_service
+from app.services.auth import session_service
 from app.services.auth.link_token_service import attribute_guest_session
-from app.services.auth.tg_init_service import extract_tg_user_id, verify_tg_init_data
+from app.services.auth.tg_init_service import (
+    extract_tg_full_name,
+    extract_tg_user_id,
+    get_or_create_user_by_tg,
+    verify_tg_init_data,
+)
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -38,18 +43,25 @@ async def tg_init(
     if params is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверная подпись initData")
 
-    tg_id = extract_tg_user_id(params)
-    if not tg_id:
+    tg_id_str = extract_tg_user_id(params)
+    if not tg_id_str:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "tg_id не найден в initData")
 
-    user = await identity_link_service.get_user_by_identity(db, "tg", tg_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь с таким tg_id не найден")
+    try:
+        tg_id_int = int(tg_id_str)
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tg_id некорректного формата")
+
+    full_name = extract_tg_full_name(params)
+    ua = request.headers.get("user-agent")
+
+    user, created = await get_or_create_user_by_tg(
+        db, tg_id_int, full_name, ip=ip, user_agent=ua,
+    )
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)
 
-    ua = request.headers.get("user-agent")
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_tg_initdata", user_id=user.id, ip=ip)
     await db.commit()

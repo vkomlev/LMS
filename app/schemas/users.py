@@ -5,8 +5,16 @@ from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
 
 class UserCreate(BaseModel):
-    """Схема для создания пользователя."""
-    email: EmailStr = Field(..., description="Email пользователя (уникальный)", examples=["student@example.com"])
+    """Схема для создания пользователя.
+
+    После M1 (Phase Y-1) email nullable; после Y-1.5 auto-create —
+    TG/VK пользователи могут не иметь email.
+    """
+    email: Optional[EmailStr] = Field(
+        None,
+        description="Email пользователя (опционально после M1; уникален среди не-NULL)",
+        examples=["student@example.com", None],
+    )
     password_hash: Optional[str] = Field(
         None,
         description="Хэш пароля. Если не передан, сохраняется пустая строка (например, для пользователей из Telegram без пароля).",
@@ -43,9 +51,13 @@ class UserUpdate(BaseModel):
 
 
 class UserRead(BaseModel):
-    """Схема для чтения информации о пользователе."""
+    """Схема для чтения информации о пользователе.
+
+    После M1 (Phase Y-1) email nullable; auto-create через TG/VK
+    в Y-1.5 создаёт users с email=NULL.
+    """
     id: int = Field(..., description="ID пользователя в системе", examples=[1, 13, 16])
-    email: EmailStr = Field(..., description="Email пользователя", examples=["student@example.com"])
+    email: Optional[EmailStr] = Field(None, description="Email пользователя (nullable)", examples=["student@example.com", None])
     full_name: Optional[str] = Field(None, description="Полное имя пользователя", examples=["Иван Иванов", None])
     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[123456789, None])
     created_at: datetime = Field(..., description="Дата и время регистрации пользователя", examples=["2026-01-26T14:21:50.221Z"])

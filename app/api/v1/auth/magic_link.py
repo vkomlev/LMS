@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, MagicLinkRequest, MagicLinkVerifyRequest, MessageResponse
-from app.services.auth import identity_link_service, magic_link_service, session_service
+from app.services.auth import magic_link_service, session_service
 from app.services.auth.link_token_service import attribute_guest_session
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
@@ -56,14 +56,15 @@ async def verify_magic_link(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
 
     email = link.email
-    user = await identity_link_service.get_user_by_identity(db, "email", email)
-    if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
+    ua = request.headers.get("user-agent")
+
+    user, created = await magic_link_service.get_or_create_user_by_email(
+        db, email, ip=ip, user_agent=ua,
+    )
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)
 
-    ua = request.headers.get("user-agent")
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_magic_link", user_id=user.id, ip=ip)
     await db.commit()
