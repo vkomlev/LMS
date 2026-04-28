@@ -30,3 +30,6 @@ google-auth-oauthlib>=1.1.0
 cryptography>=42.0.0
 redis>=5.0.0
 PyJWT>=2.9.0
+
+# Phase Y-1.5 — security gate (acceptance §10 Bandit clean)
+bandit>=1.9.0

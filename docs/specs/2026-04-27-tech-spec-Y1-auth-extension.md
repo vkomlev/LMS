@@ -1,12 +1,13 @@
 # Tech-Spec Y-1: миграции БД + auth-расширение LMS API
 
-**Дата:** 2026-04-27
+**Дата:** 2026-04-27 (updated 2026-04-28: §6.2-6.4 backsync под Y-1.5 auto-create)
 **Skill:** /tech-spec-composer
-**Статус:** READY for executor (Phase Y-1)
-**Phase:** Y-1 из Stream Y (SPW — Student Practice Web)
+**Статус:** Y-1 MERGED (2026-04-28); Y-1.5 in progress — см. [ADR-0021](../../../ContentBackbone/docs/adr/0021-user-auto-registration-unified-flow.md) и [tech-spec-Y1.5](../../../ContentBackbone/docs/tech-specs/tech-spec-Y1.5-auth-registration-v1.md)
+**Phase:** Y-1 + Y-1.5 (auth-registration unified flow) из Stream Y (SPW — Student Practice Web)
 **Предшествующие артефакты:**
 - `docs/ai/adr/0001-auth-passwordless-multi-identity.md` — arch ADR (LMS-local)
 - ContentBackbone: `docs/adr/0011`, `0013`, `0014`, `0017` (стратегия + session/domain/encryption)
+- ContentBackbone: `docs/adr/0021` (AMENDS 0011 §5.1 — user auto-registration pattern)
 - ContentBackbone: `reviews/2026-04-27-db-check-spw-phase1-readiness.md` (GO статус БД)
 
 **Целевой исполнитель:** `/executor-pro` (контракты, миграции, security-критичные пути)
@@ -558,8 +559,18 @@ Response 200:
 
 Response 401 (constant-time, без enumeration):
 { "detail": "Токен недействителен или истёк" }
-  // одинаковый ответ для: token_invalid | token_expired | token_already_used | email_not_linked
+  // одинаковый ответ для: token_invalid | token_expired | token_already_used
 ```
+
+**Side effects (Y-1.5, ADR-0021 §1):**
+- Атомарно консьюмит magic_link (`UPDATE consumed_at = now() WHERE consumed_at IS NULL`).
+- Если `identity_link kind='email'` для этого email **отсутствует** — auto-create:
+  `INSERT users(email=lower(...), password_hash=NULL)` + `INSERT identity_link kind='email'`
+  внутри SAVEPOINT (`db.begin_nested`) — IntegrityError на partial unique откатывает только
+  savepoint, не magic_link consume. `audit_event user.registered.via_magic_link`.
+- Если `identity_link` существует — переиспользует существующий user.
+- При наличии `guest_session_id` — атрибутирует guest_attempts на user_id.
+- Создаёт `user_session` + ставит cookie + возвращает JSON tokens.
 
 ### 6.3. `POST /api/v1/auth/tg/init`
 
@@ -573,10 +584,22 @@ Response 200:
   Set-Cookie: session=<access_token>; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
   body: { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
 
+Response 400: { "detail": "tg_id не найден в initData" | "tg_id некорректного формата" }
 Response 401: { "detail": "Неверная подпись initData" }
-Response 404: { "detail": "Пользователь с таким tg_id не найден" }
 Response 503: { "detail": "TG auth не настроен" }  // если TG_BOT_TOKEN_FOR_INITDATA пуст
 ```
+
+**Side effects (Y-1.5, ADR-0021 §1, §3):**
+- Verify HMAC-SHA-256 от bot_token; reject если `auth_date > 86400 сек` назад.
+- Извлекает `tg_user_id` + `full_name` из `initData.user.first_name + last_name`.
+- Если `identity_link kind='tg'` отсутствует — auto-create в SAVEPOINT:
+  `INSERT users(tg_id=tg_user_id, full_name=...)` + `INSERT identity_link kind='tg'`.
+  При IntegrityError на UNIQUE(kind,value) — savepoint rollback + reuse existing
+  (orphan users не создаётся). `full_name` fallback: `Гость TG-{last4}`.
+  `audit_event user.registered.via_tg_init`.
+- **Двусторонняя sync** `users.tg_id` ↔ `identity_link.value` через `IS DISTINCT FROM`.
+  Existing identity с устаревшим `users.tg_id` → UPDATE при init.
+- Создаёт `user_session` + cookie + JSON.
 
 ### 6.4. `POST /api/v1/auth/vk/callback`
 
@@ -591,8 +614,31 @@ Response 200:
   body: { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
 
 Response 401: { "detail": "VK token exchange failed" | "VK userinfo failed" }
-Response 404: { "detail": "VK-аккаунт не привязан к пользователю" }
+
+Response 409 identity_conflict (Y-1.5, ADR-0021 §2 — защита от identity-takeover):
+{
+  "detail": {
+    "error": "identity_conflict",
+    "conflict_kind": "email_already_linked",
+    "existing_identity_kinds": ["email"],
+    "message": "Этот email уже привязан к другому аккаунту. Войдите через email и привяжите VK в /me."
+  }
+}
 ```
+
+**Side effects (Y-1.5, ADR-0021 §1, §2):**
+- PKCE token exchange с VK ID 2.0 (code + code_verifier + device_id).
+- Получает userinfo (vk_user_id + опц. email + опц. full_name).
+- Если `identity_link kind='vk'` существует — UPDATE Fernet-encrypted access/refresh
+  tokens (rotation на каждом login).
+- Если не существует и `userinfo.email` overlap c существующим email-only user
+  → **409 identity_conflict** (auto-merge запрещён). Linking через `/me/identity/.../link` (Y-3).
+- Иначе auto-create в SAVEPOINT:
+  `INSERT users(email=...?, full_name=...)` + `INSERT identity_link kind='vk'` (+ kind='email'
+  если userinfo.email присутствует и не overlap). При IntegrityError на UNIQUE(kind='vk',value) —
+  savepoint rollback + reuse existing + UPDATE VK tokens.
+  `audit_event user.registered.via_vk` (с `email_provided: bool`).
+- Создаёт `user_session` + cookie + JSON.
 
 ### 6.5. Дополнительные эндпоинты
 

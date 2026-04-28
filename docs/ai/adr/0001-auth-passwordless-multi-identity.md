@@ -1,8 +1,12 @@
 # ADR LMS-0001 — Расширение auth: с api_key (service) на user-level passwordless
 
-**Статус:** ACCEPTED (план)
-**Дата:** 2026-04-27
-**Связано с:** [ContentBackbone ADR-0011](../../../../ContentBackbone/docs/adr/0011-auth-strategy-passwordless-multi-identity.md), [Cross-project review](../../../../ContentBackbone/reviews/2026-04-27-architect-spw-cross-project-verification.md)
+**Статус:** ACCEPTED — Y-1 implementation merged (2026-04-28); Y-1.5 hotfix запланирован per [ADR-0021](../../../../ContentBackbone/docs/adr/0021-user-auto-registration-unified-flow.md)
+**Дата:** 2026-04-27 (updated 2026-04-28)
+**Связано с:**
+- [ContentBackbone ADR-0011](../../../../ContentBackbone/docs/adr/0011-auth-strategy-passwordless-multi-identity.md) — high-level strategy
+- [ContentBackbone ADR-0021](../../../../ContentBackbone/docs/adr/0021-user-auto-registration-unified-flow.md) — user auto-registration pattern (AMENDS ADR-0011 §5.1; реализуется Y-1.5)
+- [Cross-project review](../../../../ContentBackbone/reviews/2026-04-27-architect-spw-cross-project-verification.md)
+- [tech-spec Y-1.5](../../../../ContentBackbone/docs/tech-specs/tech-spec-Y1.5-auth-registration-v1.md)
 **Триггер:** запуск Student Practice Web (SPW) — публичного веб-клиента для учеников
 
 ## Контекст
