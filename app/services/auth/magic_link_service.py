@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from app.models.magic_link import MagicLink
 from app.models.users import Users
 from app.services.audit_service import log_event
 from app.services.auth import identity_link_service
+from app.services.auth.exceptions import IdentityConflictError
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,20 @@ async def get_or_create_user_by_email(
     user = await identity_link_service.get_user_by_identity(db, "email", email)
     if user is not None:
         return user, False
+
+    # S2 hotfix per handoff 2026-04-28 §2: orphan email
+    # (users.email exists без identity_link kind='email').
+    # Без проверки INSERT users(email=X) упадёт на partial unique
+    # внутри savepoint, dispatcher вернул бы 500.
+    # ADR-0021 §2 → 409 identity_conflict.
+    orphan = (await db.execute(
+        select(Users).where(func.lower(Users.email) == email.lower())
+    )).scalar_one_or_none()
+    if orphan is not None:
+        raise IdentityConflictError(
+            conflict_kind="email_already_linked_to_orphan_user",
+            existing_kinds=[],
+        )
 
     new_user = Users(email=email, password_hash=None, full_name=None, tg_id=None)
     try:

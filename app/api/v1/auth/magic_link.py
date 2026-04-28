@@ -8,6 +8,7 @@ from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, MagicLinkRequest, MagicLinkVerifyRequest, MessageResponse
 from app.services.auth import magic_link_service, session_service
+from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.link_token_service import attribute_guest_session
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
@@ -58,9 +59,23 @@ async def verify_magic_link(
     email = link.email
     ua = request.headers.get("user-agent")
 
-    user, created = await magic_link_service.get_or_create_user_by_email(
-        db, email, ip=ip, user_agent=ua,
-    )
+    try:
+        user, created = await magic_link_service.get_or_create_user_by_email(
+            db, email, ip=ip, user_agent=ua,
+        )
+    except IdentityConflictError as e:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "error": "identity_conflict",
+                "conflict_kind": e.conflict_kind,
+                "existing_identity_kinds": e.existing_kinds,
+                "message": (
+                    "Email уже привязан к другому аккаунту в нестандартном состоянии. "
+                    "Обратитесь к администратору."
+                ),
+            },
+        )
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)

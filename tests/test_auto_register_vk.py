@@ -120,6 +120,32 @@ async def test_vk_access_token_encrypted(db):
 
 
 @pytest.mark.asyncio
+async def test_orphan_email_returns_409(db):
+    """S2 regression (handoff 2026-04-28 §2): users.email exists без identity_link
+    kind='email' value=email → IdentityConflictError(email_already_linked_to_orphan_user),
+    не IntegrityError 500. Защита от identity-takeover (ADR-0021 §2)."""
+    settings = Settings()
+    rand = os.urandom(4).hex()
+    email = f"orphan-{rand}@example.com"
+
+    # Создаём orphan user: users.email есть, identity_link kind='email' нет.
+    orphan_user = Users(email=email, password_hash=None, full_name="Orphan")
+    db.add(orphan_user)
+    await db.flush()
+    await db.commit()
+
+    new_vk_id = _new_vk_id()
+    with pytest.raises(IdentityConflictError) as exc_info:
+        await get_or_create_user_by_vk(
+            db, vk_user_id=new_vk_id, email=email, full_name="VK Attacker",
+            access_token="acc", refresh_token=None, expires_at=None,
+            settings=settings, ip=None, user_agent=None,
+        )
+    assert exc_info.value.conflict_kind == "email_already_linked_to_orphan_user"
+    assert exc_info.value.existing_kinds == []
+
+
+@pytest.mark.asyncio
 async def test_existing_vk_login_rotates_tokens(db):
     """Existing VK identity: повторный login обновляет access/refresh tokens."""
     settings = Settings()

@@ -129,6 +129,35 @@ async def test_concurrent_verify_same_email_creates_one_user(client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_orphan_email_returns_409(client: AsyncClient, db):
+    """S2 regression (handoff 2026-04-28 §2): users.email exists без identity_link
+    kind='email' → magic-link verify возвращает 409 identity_conflict, не 500.
+
+    Сценарий: после manual DELETE FROM identity_link WHERE id=K (или race
+    с orphan email-в-users) — auto-create раньше падал с UniqueViolationError
+    в savepoint, не имея identity_link для recovery.
+    """
+    rand = os.urandom(4).hex()
+    email = f"orphan-{rand}@example.com"
+
+    # Подготовка orphan: users.email присутствует, identity_link отсутствует.
+    orphan_user = Users(email=email, password_hash=None, full_name="Orphan")
+    db.add(orphan_user)
+    await db.flush()
+    await db.commit()
+
+    token = await _issue_magic_link(db, email)
+    resp = await client.post(
+        "/api/v1/auth/magic-link/verify",
+        json={"token": token},
+    )
+    assert resp.status_code == 409, resp.text
+    body = resp.json()
+    assert body["detail"]["error"] == "identity_conflict"
+    assert body["detail"]["conflict_kind"] == "email_already_linked_to_orphan_user"
+
+
+@pytest.mark.asyncio
 async def test_b1_regression_consumed_at_persists_after_savepoint_rollback(client: AsyncClient, db):
     """B1 regression: race на partial unique index не откатывает magic_link.consumed_at.
 

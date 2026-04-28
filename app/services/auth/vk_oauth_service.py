@@ -9,8 +9,8 @@ guest_session) продолжается.
 """
 import logging
 from datetime import datetime
-from typing import Iterable
 
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
@@ -19,6 +19,7 @@ from app.core.config import Settings
 from app.models.users import Users
 from app.services.audit_service import log_event
 from app.services.auth import identity_link_service
+from app.services.auth.exceptions import IdentityConflictError
 from app.services.fernet_service import encrypt_token
 
 logger = logging.getLogger(__name__)
@@ -27,18 +28,13 @@ _VK_TOKEN_URL = "https://id.vk.com/oauth2/auth"
 _VK_USERINFO_URL = "https://id.vk.com/oauth2/user_info"
 
 
-class IdentityConflictError(Exception):
-    """VK userinfo.email уже привязан к другому пользователю.
-
-    Auto-merge запрещён ADR-0021 (защита от identity-takeover через
-    подделанный VK userinfo email). Linking — только через explicit
-    /me/identity/.../link с link_token (Y-3).
-    """
-
-    def __init__(self, conflict_kind: str, existing_kinds: Iterable[str]) -> None:
-        self.conflict_kind = conflict_kind
-        self.existing_kinds = list(existing_kinds)
-        super().__init__(f"identity_conflict: {conflict_kind}")
+__all__ = [
+    "IdentityConflictError",  # re-export для backward compat импортов
+    "exchange_code",
+    "fetch_vk_userinfo",
+    "get_or_create_user_by_vk",
+    "get_vk_user_id",
+]
 
 
 async def exchange_code(
@@ -68,8 +64,10 @@ async def exchange_code(
         raise ValueError("VK token exchange failed")
 
     data = resp.json()
+    logger.info("VK exchange response keys=%s", list(data.keys()))
     if "error" in data:
-        raise ValueError(f"VK error: {data['error']}")
+        logger.error("VK exchange returned 200 OK with error body: %s", data)
+        raise ValueError(f"VK error: {data.get('error')} desc={data.get('error_description')}")
 
     return data
 
@@ -86,17 +84,24 @@ async def fetch_vk_userinfo(access_token: str) -> dict:
     Возвращает dict с ключами user_id (str, обязательно), email (str | None),
     full_name (str | None). Email присутствует только если scope включил email.
     """
+    logger.info("VK userinfo: requesting (token len=%d)", len(access_token) if access_token else 0)
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             _VK_USERINFO_URL,
-            data={"access_token": access_token},
+            data={"access_token": access_token, "client_id": Settings().vk_id_client_id},
         )
+    logger.info("VK userinfo: status=%d body_keys=%s", resp.status_code, list(resp.json().keys()) if resp.status_code == 200 else "<non-200>")
     if resp.status_code != 200:
+        logger.error("VK userinfo error %s: %s", resp.status_code, resp.text)
         raise ValueError("VK userinfo failed")
     data = resp.json()
+    if "error" in data:
+        logger.error("VK userinfo returned 200 OK with error body: %s", data)
+        raise ValueError(f"VK userinfo error: {data.get('error')}")
     user = data.get("user", {})
     uid = user.get("user_id") or user.get("id")
     if not uid:
+        logger.error("VK userinfo no user_id, response: %s", data)
         raise ValueError("VK user_id not found in userinfo response")
 
     email = user.get("email")
@@ -150,6 +155,22 @@ async def get_or_create_user_by_vk(
             raise IdentityConflictError(
                 conflict_kind="email_already_linked",
                 existing_kinds=["email"],
+            )
+        # S2 hotfix per handoff 2026-04-28 §2: orphan email
+        # (users.email exists без identity_link kind='email') —
+        # источник правды UNIQUE — partial index на users.email,
+        # identity_link это secondary mapping. INSERT users(email=X)
+        # упадёт на UniqueViolation внутри savepoint и без
+        # явной проверки приведёт к 500. Возвращаем 409 — защита
+        # от identity-takeover (VK userinfo.email не верифицирован
+        # провайдером, ADR-0021 §2).
+        orphan = (await db.execute(
+            select(Users).where(func.lower(Users.email) == email.lower())
+        )).scalar_one_or_none()
+        if orphan is not None:
+            raise IdentityConflictError(
+                conflict_kind="email_already_linked_to_orphan_user",
+                existing_kinds=[],
             )
 
     new_user = Users(

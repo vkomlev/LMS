@@ -9,9 +9,9 @@ from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
 from app.services.auth import session_service
+from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.link_token_service import attribute_guest_session
 from app.services.auth.vk_oauth_service import (
-    IdentityConflictError,
     exchange_code,
     fetch_vk_userinfo,
     get_or_create_user_by_vk,
