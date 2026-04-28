@@ -82,6 +82,68 @@ Invoke-RestMethod -Uri "http://localhost:8000/api/v1/auth/magic-link/verify" `
 
 ---
 
+## R-004: Magic-link verify → 401 при валидном токене (email_not_linked)
+
+**Симптом в логах:**
+```
+UPDATE magic_link SET consumed_at=...   -- токен погашен (валиден)
+SELECT ... FROM identity_link WHERE kind='email' AND value='<email>'
+ROLLBACK
+"POST /api/v1/auth/magic-link/verify HTTP/1.1" 401
+```
+
+То есть `consume_magic_link` нашёл и погасил токен, но `get_user_by_identity` вернул None.
+Из-за constant-time fix (B1) клиент видит то же 401 что и при битом токене —
+без логов не отличить.
+
+**Корневая причина:** email пользователя не привязан к `identity_link.kind='email'`.
+В Y-1 нет публичного эндпоинта `/me/identity/.../link` (это Y-2), и единственный
+backfill — M2-миграция из `users.email`. Любой *новый* email можно привязать
+только через прямой INSERT.
+
+### Autonomous workaround (Claude делает сам)
+
+```bash
+cd D:/Work/LMS && python -c "
+from dotenv import load_dotenv; load_dotenv('.env', encoding='utf-8-sig')
+import asyncio, hashlib, os
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import text
+from app.db.session import async_session_factory
+
+EMAIL = '<TARGET_EMAIL>'
+USER_ID = <USER_ID>  # подставить или искать через identity_link/users
+
+async def main():
+    async with async_session_factory() as db:
+        ex = (await db.execute(text(\"SELECT user_id FROM identity_link WHERE kind='email' AND value=:v\"), {'v': EMAIL})).scalar()
+        if ex is None:
+            await db.execute(text(\"INSERT INTO identity_link(user_id, kind, value) VALUES (:u, 'email', :v)\"), {'u': USER_ID, 'v': EMAIL})
+        raw = os.urandom(32); h = hashlib.sha256(raw).digest()
+        await db.execute(text('INSERT INTO magic_link(email, token_hash, expires_at) VALUES (:e, :h, :exp)'),
+                         {'e': EMAIL, 'h': h, 'exp': datetime.now(timezone.utc)+timedelta(minutes=15)})
+        await db.commit()
+        print('TOKEN_HEX:', raw.hex())
+
+asyncio.run(main())
+"
+```
+
+### Operator instruction (нужна, только если непонятно к какому user_id привязывать)
+
+Если email от незнакомого человека и неясно создавать ли нового user или привязывать
+к существующему — спросить оператора прежде чем INSERT. Пример вопроса:
+
+> «Email `<EMAIL>` пытается войти, но не привязан ни к одному пользователю.
+> Это (а) тот же ты с другой почтой → привязать к user_id=2,
+> (б) новый ученик → создать users-запись + identity_link?»
+
+### Долгосрочно (Y-2)
+- `POST /me/identity/email/link` через `link_token` — пользователь после первичного
+  входа сможет привязать дополнительный email сам, без вмешательства.
+
+---
+
 ## R-002: VK ID 2.0 OAuth — не настроены credentials
 
 **Симптом:** `POST /auth/vk/callback` → 401 "VK token exchange failed" в логах.
