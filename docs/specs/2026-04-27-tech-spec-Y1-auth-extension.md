@@ -521,32 +521,44 @@ class RateLimiter:
 
 ## 6. API эндпоинты (полная спецификация)
 
-### 6.1. `POST /api/v1/auth/magic-link/request`
+> **Note (2026-04-28):** имена эндпоинтов в реализации отличаются от исходного черновика: `/send`+`/verify` вместо `/request`+`/consume`, `/session/logout` вместо `/logout`. Решение зафиксировано на стороне реализации (более идиоматичные глаголы + единый `/session/*` префикс для управления сессиями). Этот документ — авторитетный контракт; ContentBackbone ADR-0011 / Y-1 spec-копия / Y-2 spec обновлены и ссылаются сюда. См. ERRORS.md (2026-04-28 INTEGRATION).
+
+### 6.1. `POST /api/v1/auth/magic-link/send`
 
 ```http
-POST /api/v1/auth/magic-link/request
+POST /api/v1/auth/magic-link/send
 Content-Type: application/json
 
 { "email": "user@example.ru" }
 
-Response 200 (constant-time):
-{ "ok": true, "message": "Если email зарегистрирован, ссылка отправлена" }
+Response 202:
+{ "message": "Письмо отправлено" }
 
-Response 429 (rate limit):
-{ "error": "rate_limit_exceeded", "retry_after_seconds": 60 }
+Response 422:
+{ "detail": [ { "loc": ["body","email"], "msg": "value is not a valid email address", ... } ] }
+
+Response 429 (rate limit per IP, 5/10 мин):
+{ "detail": "Слишком много запросов" }
 ```
 
-### 6.2. `GET /api/v1/auth/magic-link/consume?token=...`
+Constant-time behavior: запись в `magic_link` создаётся независимо от существования
+пользователя по email. Email-enumeration отсутствует на этом эндпоинте и на `/verify`.
+
+### 6.2. `POST /api/v1/auth/magic-link/verify`
 
 ```http
-GET /api/v1/auth/magic-link/consume?token=<raw_token>
+POST /api/v1/auth/magic-link/verify
+Content-Type: application/json
 
-Response 200: 302 Redirect → /courses
-  Set-Cookie: lms_session=<session_token>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000
-  Set-Cookie: lms_refresh=<refresh_token>; HttpOnly; Secure; SameSite=Lax; Path=/api/v1/auth/session/refresh
+{ "token": "<raw_hex_token>", "guest_session_id": "<uuid|null>" }
 
-Response 400:
-{ "error": "token_invalid" | "token_expired" | "token_already_used" }
+Response 200:
+  Set-Cookie: session=<access_token>; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+  body: { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
+
+Response 401 (constant-time, без enumeration):
+{ "detail": "Токен недействителен или истёк" }
+  // одинаковый ответ для: token_invalid | token_expired | token_already_used | email_not_linked
 ```
 
 ### 6.3. `POST /api/v1/auth/tg/init`
@@ -555,18 +567,15 @@ Response 400:
 POST /api/v1/auth/tg/init
 Content-Type: application/json
 
-{ "init_data": "auth_date=...&hash=...&user=..." }
+{ "init_data": "auth_date=...&hash=...&user=...", "guest_session_id": "<uuid|null>" }
 
 Response 200:
-{
-  "user": { "id": 42, "full_name": "Виктор", "tg_id": 12345, "identities": [...] },
-  "access_token": "<bearer>",
-  "refresh_token": "<bearer>",
-  "expires_in": 900
-}
+  Set-Cookie: session=<access_token>; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+  body: { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
 
-Response 401:
-{ "error": "init_data_invalid" | "init_data_expired" }
+Response 401: { "detail": "Неверная подпись initData" }
+Response 404: { "detail": "Пользователь с таким tg_id не найден" }
+Response 503: { "detail": "TG auth не настроен" }  // если TG_BOT_TOKEN_FOR_INITDATA пуст
 ```
 
 ### 6.4. `POST /api/v1/auth/vk/callback`
@@ -575,17 +584,24 @@ Response 401:
 POST /api/v1/auth/vk/callback
 Content-Type: application/json
 
-{ "code": "...", "state": "..." }
+{ "code": "...", "code_verifier": "...", "device_id": "...", "guest_session_id": "<uuid|null>" }
 
-Response 200: устанавливает cookie + body как magic-link consume
-Response 401: { "error": "csrf_state_mismatch" | "code_invalid" | "id_token_invalid" }
+Response 200:
+  Set-Cookie: session=<access_token>; HttpOnly; Secure; SameSite=Lax; Max-Age=3600
+  body: { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
+
+Response 401: { "detail": "VK token exchange failed" | "VK userinfo failed" }
+Response 404: { "detail": "VK-аккаунт не привязан к пользователю" }
 ```
 
 ### 6.5. Дополнительные эндпоинты
 
-- `POST /api/v1/auth/session/refresh` — продление session (rotate)
-- `POST /api/v1/auth/logout` — invalidate session
+Реализованы в Y-1:
+- `POST /api/v1/auth/session/refresh` — ротация: revoke старой + create новой пары токенов
+- `POST /api/v1/auth/session/logout` — invalidate текущую сессию + delete cookie
 - `GET /api/v1/me` — профиль текущего пользователя
+
+Вынесены в Y-2 (см. spec Y-2 в этом же каталоге):
 - `POST /api/v1/me/identity/{kind}/link` — привязать вторую identity через `link_token`
 - `POST /api/v1/me/attribute-guest` — атрибуция guest_session → текущий user
 - `GET /embed-api/courses/{course_uid}/task/{external_uid}?token=…` — read-only для WP embed

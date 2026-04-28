@@ -154,12 +154,12 @@ CREATE INDEX idx_guest_attempt_unattributed ON guest_attempt(created_at) WHERE a
 
 Новый роутер `app/api/v1/auth/`:
 
-- `POST /api/v1/auth/magic-link/request` — выпуск magic-link на email (rate-limited)
-- `GET /api/v1/auth/magic-link/consume?token=…` — потребление magic-link, выдача session (atomic UPDATE)
-- `POST /api/v1/auth/tg/init` — верификация `Telegram.WebApp.initData` HMAC, выдача Bearer
-- `POST /api/v1/auth/vk/callback` — обработка VK ID 2.0 OAuth callback
-- `POST /api/v1/auth/session/refresh` — продление session
-- `POST /api/v1/auth/logout` — invalidate session
+- `POST /api/v1/auth/magic-link/send` — выпуск magic-link на email (rate-limit 5/10мин на IP)
+- `POST /api/v1/auth/magic-link/verify` — потребление magic-link, выдача session (constant-time 401 без enumeration)
+- `POST /api/v1/auth/tg/init` — верификация `Telegram.WebApp.initData` HMAC, выдача Bearer + cookie
+- `POST /api/v1/auth/vk/callback` — обработка VK ID 2.0 OAuth callback (PKCE)
+- `POST /api/v1/auth/session/refresh` — ротация: revoke старой + create новой пары токенов
+- `POST /api/v1/auth/session/logout` — invalidate текущую сессию + delete cookie
 
 Также:
 - `GET /api/v1/me` — профиль текущего пользователя
