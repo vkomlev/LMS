@@ -1,4 +1,10 @@
-"""Сервис одноразовых email magic-link."""
+"""Сервис одноразовых email magic-link.
+
+Phase Y-1.5: добавлено auto-create user при verify (см. ADR-0021).
+Race-safety: вставка user идёт в SAVEPOINT (db.begin_nested) — IntegrityError
+на partial unique index откатывает только nested-транзакцию, не основную,
+поэтому magic_link.consumed_at сохраняется.
+"""
 import hashlib
 import logging
 import os
@@ -6,10 +12,14 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.magic_link import MagicLink
+from app.models.users import Users
+from app.services.audit_service import log_event
+from app.services.auth import identity_link_service
 
 logger = logging.getLogger(__name__)
 
@@ -109,3 +119,54 @@ async def consume_magic_link(
     link.consumed_at = _now()
     await db.flush()
     return link
+
+
+def _mask_email(email: str) -> str:
+    """Маскировать email для audit_event details: первые 3 + *** + домен."""
+    if "@" not in email:
+        return email[:3] + "***"
+    local, domain = email.split("@", 1)
+    return local[:3] + "***@" + domain
+
+
+async def get_or_create_user_by_email(
+    db: AsyncSession,
+    email: str,
+    ip: str | None,
+    user_agent: str | None,
+) -> tuple[Users, bool]:
+    """Найти пользователя по email-identity или создать нового атомарно.
+
+    Email уже должен быть нормализован (lowercase) до вызова.
+    Race-safe: INSERT users + identity_link выполняется в SAVEPOINT через
+    db.begin_nested(). При IntegrityError (concurrent partial unique violation)
+    откатывается только nested savepoint — magic_link.consumed_at в основной
+    транзакции сохраняется. Возвращает (user, created_flag).
+    """
+    user = await identity_link_service.get_user_by_identity(db, "email", email)
+    if user is not None:
+        return user, False
+
+    new_user = Users(email=email, password_hash=None, full_name=None, tg_id=None)
+    try:
+        async with db.begin_nested():
+            db.add(new_user)
+            await db.flush()
+            await identity_link_service.upsert_identity(db, new_user.id, "email", email)
+    except IntegrityError:
+        existing = await identity_link_service.get_user_by_identity(db, "email", email)
+        if existing is None:
+            raise
+        logger.info("magic_link verify: race resolved, reusing existing user_id=%d", existing.id)
+        return existing, False
+
+    await log_event(
+        db,
+        "user.registered.via_magic_link",
+        user_id=new_user.id,
+        ip=ip,
+        user_agent=user_agent,
+        details={"identity_kind": "email", "value_masked": _mask_email(email)},
+    )
+    logger.info("user.registered.via_magic_link user_id=%d", new_user.id)
+    return new_user, True

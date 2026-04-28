@@ -1,8 +1,12 @@
-"""Сервис управления identity_link (поиск, создание, привязка)."""
+"""Сервис управления identity_link (поиск, создание, привязка).
+
+Поддерживает двустороннюю синхронизацию users.tg_id ↔ identity_link kind='tg'
+(см. ADR-0021 §3, Phase Y-1.5).
+"""
 import logging
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity_link import IdentityLink
@@ -52,7 +56,10 @@ async def upsert_identity(
     vk_refresh_token_enc: bytes | None = None,
     vk_token_expires_at=None,
 ) -> IdentityLink:
-    """Создать или обновить identity_link."""
+    """Создать или обновить identity_link.
+
+    Для kind='tg' дополнительно синхронизирует users.tg_id (см. ADR-0021 §3).
+    """
     normalized = value.lower() if kind == "email" else value
     link = await find_identity(db, kind, normalized)
     if link is None:
@@ -65,4 +72,21 @@ async def upsert_identity(
     if vk_token_expires_at is not None:
         link.vk_token_expires_at = vk_token_expires_at
     await db.flush()
+
+    if kind == "tg":
+        await _sync_users_tg_id(db, user_id, int(value))
+
     return link
+
+
+async def _sync_users_tg_id(db: AsyncSession, user_id: int, tg_id: int) -> None:
+    """Идемпотентно обновить users.tg_id если отличается. См. ADR-0021 §3.
+
+    Использует IS DISTINCT FROM для корректной обработки NULL (стандартное
+    `!=` с NULL возвращает NULL → строка не matched).
+    """
+    await db.execute(
+        update(Users)
+        .where(Users.id == user_id, Users.tg_id.is_distinct_from(tg_id))
+        .values(tg_id=tg_id)
+    )
