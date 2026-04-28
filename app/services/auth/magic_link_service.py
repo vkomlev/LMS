@@ -49,11 +49,18 @@ async def send_magic_link_email(
     settings: Settings,
 ) -> None:
     """Отправить magic-link через Resend API."""
+    link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}"
+
     if not settings.resend_api_key:
-        logger.warning("RESEND_API_KEY не задан, письмо не отправлено")
+        # Dev-fallback: Resend не настроен — логируем готовую ссылку,
+        # оператор видит её в LMS stdout и переходит вручную.
+        # В prod присутствие RESEND_API_KEY обязательно (см. preflight ТЗ Y-1 §15).
+        logger.warning(
+            "RESEND_API_KEY не задан — письмо не отправлено. DEV magic-link для %s: %s",
+            email, link_url,
+        )
         return
 
-    link_url = f"https://learn.victor-komlev.ru/auth/verify?token={token}"
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(
             _RESEND_API_URL,

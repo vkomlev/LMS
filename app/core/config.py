@@ -57,6 +57,9 @@ class Settings:
         # SPW auth — Phase Y-1
         self.resend_api_key: str = os.getenv("RESEND_API_KEY", "")
         self.smtp_from: str = os.getenv("SMTP_FROM", "noreply@victor-komlev.ru")
+        # Базовый URL SPW (для встраивания в magic-link письма).
+        # Dev: http://localhost:3000; prod: https://learn.victor-komlev.ru
+        self.public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:3000")
         self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
         self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
         self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")
