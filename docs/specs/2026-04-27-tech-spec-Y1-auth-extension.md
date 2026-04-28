@@ -607,6 +607,59 @@ Response 404: { "detail": "VK-аккаунт не привязан к польз
 - `GET /embed-api/courses/{course_uid}/task/{external_uid}?token=…` — read-only для WP embed
 - `POST /embed-api/auth/issue` — выпуск URL-token (TTL 5 мин, single-use)
 
+### 6.6. Контракты ответов (фактическая реализация Y-1)
+
+> **Note:** ранние черновики ADR-0011/LMS-0001 описывали `MeResponse` с полями
+> `full_name`, `identities: [...]` и `AuthTokenResponse` с вложенным `user` объектом.
+> Y-1 имплементация сделала **плоские** схемы. SPW Y-2 синхронизирован под фактический
+> контракт (commit `6877e04` в `D:\Work\spw\`). Этот раздел — авторитет.
+
+**`AuthTokenResponse`** (возвращают `/magic-link/verify`, `/tg/init`, `/vk/callback`, `/session/refresh`):
+
+```json
+{
+  "access_token": "<hex>",
+  "refresh_token": "<hex>",
+  "token_type": "bearer"
+}
+```
+
+Никаких вложенных `user` или `expires_in`. Профиль получается отдельным `GET /me`.
+Сессия параллельно ставится в HttpOnly cookie `session=<access_token>` с `Secure`,
+`SameSite=Lax`, `Max-Age=3600`.
+
+**`MeResponse`** (`GET /api/v1/me`):
+
+```json
+{
+  "id": 42,
+  "email": "user@example.ru",
+  "tg_id": "12345",
+  "is_service": false
+}
+```
+
+Плоские поля. `email` и `tg_id` — nullable (пустые если у user нет соответствующей
+identity). Поле `is_service: true` означает что запрос пришёл с сервисным `X-API-Key`
+(не реальный пользователь). **Нет** `full_name`, **нет** `identities[]`. Список
+identities выгружается отдельно (планируется в Y-2 через `GET /me/identities`).
+
+### 6.7. URL в письме magic-link
+
+Сервер LMS вставляет в письмо ссылку вида:
+
+```
+{settings.public_base_url}/auth/magic-link/consume?token=<raw_token>
+```
+
+`PUBLIC_BASE_URL` env: `http://localhost:3000` для dev, `https://learn.victor-komlev.ru`
+для prod (см. §8). Pathname `/auth/magic-link/consume` — это **frontend Next.js route**
+в SPW (UX-имя историческое), не путь LMS API. SPW page по этому URL читает `token`
+из query и делает `POST /api/v1/auth/magic-link/verify` с `body={token, guest_session_id?}`.
+
+**Dev-fallback:** если `RESEND_API_KEY` не задан, `magic_link_service` логирует
+готовую ссылку в stdout (LOG_LEVEL=WARNING) — оператор переходит вручную.
+
 ### 6.6. Список endpoints, получающих `Depends(get_current_user)`
 
 Все ниже **должны** получить authentication dependency. Логика: для каждого с `student_id`/`user_id` параметром — проверка `current_user.id == param OR current_user.is_service`:
@@ -684,6 +737,7 @@ LOG_LEVEL=INFO
 # New for SPW auth
 RESEND_API_KEY=re_xxxxxxxxxxxxx
 SMTP_FROM=noreply@victor-komlev.ru
+PUBLIC_BASE_URL=http://localhost:3000     # dev SPW; prod: https://learn.victor-komlev.ru
 
 MAGIC_LINK_SECRET=<32-byte random base64>
 SESSION_SIGNING_KEY=<32-byte random base64>

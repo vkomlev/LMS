@@ -193,7 +193,7 @@ async def get_current_user(
     ...
 ```
 
-`CurrentUser` — dataclass с `id`, `role`, `is_service`, `identities: list[IdentityLinkRead]`.
+`CurrentUser` — плоский dataclass: `id: int`, `is_service: bool`, `tg_id: str | None`, `email: str | None`. Без `role`, без `identities[]` — IDOR-проверки построены на `current_user.id == student_id OR current_user.is_service` (см. §6.6 LMS Y-1 spec). RBAC по ролям откладывается в Y-3+ (когда появятся teacher-only/student-only разграничения за пределами текущих teacher_reviews/teacher_help_requests, которые уже работают через service-key bypass).
 
 Применение во всех `learning/*`, `attempts/*`, `task_results/*`, `teacher/*` endpoints — заменяет/дополняет существующий приём `student_id` параметром:
 
