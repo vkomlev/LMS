@@ -21685,12 +21685,20 @@
       "UserCreate": {
         "properties": {
           "email": {
-            "type": "string",
-            "format": "email",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Email",
-            "description": "Email пользователя (уникальный)",
+            "description": "Email пользователя (опционально после M1; уникален среди не-NULL)",
             "examples": [
-              "student@example.com"
+              "student@example.com",
+              null
             ]
           },
           "password_hash": {
@@ -21743,11 +21751,8 @@
           }
         },
         "type": "object",
-        "required": [
-          "email"
-        ],
         "title": "UserCreate",
-        "description": "Схема для создания пользователя.",
+        "description": "Схема для создания пользователя.\n\nПосле M1 (Phase Y-1) email nullable; после Y-1.5 auto-create —\nTG/VK пользователи могут не иметь email.",
         "examples": [
           {
             "email": "student@example.com",
@@ -21787,12 +21792,20 @@
             ]
           },
           "email": {
-            "type": "string",
-            "format": "email",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Email",
-            "description": "Email пользователя",
+            "description": "Email пользователя (nullable)",
             "examples": [
-              "student@example.com"
+              "student@example.com",
+              null
             ]
           },
           "full_name": {
@@ -21840,11 +21853,10 @@
         "type": "object",
         "required": [
           "id",
-          "email",
           "created_at"
         ],
         "title": "UserRead",
-        "description": "Схема для чтения информации о пользователе.",
+        "description": "Схема для чтения информации о пользователе.\n\nПосле M1 (Phase Y-1) email nullable; auto-create через TG/VK\nв Y-1.5 создаёт users с email=NULL.",
         "examples": [
           {
             "created_at": "2026-01-26T14:21:50.221Z",
