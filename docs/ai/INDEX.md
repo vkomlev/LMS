@@ -10,6 +10,7 @@
 - [data-model.md](data-model.md) — ключевые сущности БД, триггеры, миграции
 - [glossary.md](glossary.md) — доменные термины (включая SPW + Auth + типы задач)
 - [ERRORS.md](ERRORS.md) — журнал инцидентов и профилактика
+- [operator-runbook.md](operator-runbook.md) — сценарии требующие оператора + autonomous workarounds
 - [WORKFLOWS/](WORKFLOWS/) — шаблоны рабочих циклов
   - [feature.md](WORKFLOWS/feature.md)
   - [bugfix.md](WORKFLOWS/bugfix.md)
