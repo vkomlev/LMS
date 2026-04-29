@@ -1,15 +1,22 @@
 """Эндпоинты email magic-link аутентификации."""
 import logging
+from typing import Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db
 from app.core.config import Settings
-from app.schemas.auth import AuthTokenResponse, MagicLinkRequest, MagicLinkVerifyRequest, MessageResponse
+from app.schemas.auth import (
+    AuthTokenResponse,
+    MagicLinkRequest,
+    MagicLinkVerifyLinkModeResponse,
+    MagicLinkVerifyRequest,
+    MessageResponse,
+)
 from app.services.auth import magic_link_service, session_service
 from app.services.auth.exceptions import IdentityConflictError
-from app.services.auth.link_token_service import attribute_guest_session
+from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -35,29 +42,66 @@ async def send_magic_link(
     token = await magic_link_service.create_magic_link(db, email)
     await db.commit()
 
-    background.add_task(magic_link_service.send_magic_link_email, token, email, _settings)
-    await log_event(db, "magic_link_sent", ip=ip, details={"email": email})
+    background.add_task(
+        magic_link_service.send_magic_link_email,
+        token, email, _settings,
+        link_mode=body.link_mode,
+    )
+    await log_event(
+        db,
+        "magic_link_sent",
+        ip=ip,
+        details={"email": email, "link_mode": body.link_mode},
+    )
     await db.commit()
 
     return MessageResponse(message="Письмо отправлено")
 
 
-@router.post("/verify", response_model=AuthTokenResponse)
+@router.post(
+    "/verify",
+    response_model=Union[AuthTokenResponse, MagicLinkVerifyLinkModeResponse],
+)
 async def verify_magic_link(
     body: MagicLinkVerifyRequest,
     request: Request,
     response: Response,
     db: AsyncSession = Depends(get_bare_db),
-) -> AuthTokenResponse:
-    """Верифицировать magic-link токен и выдать сессию."""
-    ip = request.client.host if request.client else "unknown"
+) -> AuthTokenResponse | MagicLinkVerifyLinkModeResponse:
+    """Верифицировать magic-link токен.
 
+    Дефолтный режим (`link_mode=False`): consume + auto-create + выдать сессию.
+    Phase Y-3 link-режим (`link_mode=True`): только подтвердить владение email,
+    вернуть `magic_link_token` (тот же raw token) для последующего consume в
+    /me/identity/email/link. НЕ создаёт user (если email неизвестен → 401), НЕ
+    создаёт session, НЕ помечает magic_link.consumed_at — consume произойдёт
+    в /me/identity/email/link.
+    """
+    ip = request.client.host if request.client else "unknown"
+    ua = request.headers.get("user-agent")
+
+    if body.link_mode:
+        # Phase Y-3: validate-only без consume и без сессии
+        link = await magic_link_service.peek_magic_link(db, body.token)
+        if link is None:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк"
+            )
+        await log_event(
+            db,
+            "auth.magic_link.verified_link_mode",
+            ip=ip,
+            details={"email": link.email},
+        )
+        await db.commit()
+        return MagicLinkVerifyLinkModeResponse(magic_link_token=body.token)
+
+    # Дефолтный flow Y-1.5: consume + create user + session
     link = await magic_link_service.consume_magic_link(db, body.token)
     if link is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
 
     email = link.email
-    ua = request.headers.get("user-agent")
 
     try:
         user, created = await magic_link_service.get_or_create_user_by_email(

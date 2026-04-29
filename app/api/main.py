@@ -323,6 +323,7 @@ from app.api.v1.auth.magic_link import router as magic_link_router
 from app.api.v1.auth.tg import router as tg_router
 from app.api.v1.auth.vk import router as vk_router
 from app.api.v1.auth.session import router as session_router
+from app.api.v1.auth.link_token import router as link_token_router
 from app.api.v1.me import router as me_router
 from app.api.v1.embed_api import router as embed_router
 
@@ -330,5 +331,6 @@ app.include_router(magic_link_router, prefix=API_PREFIX)
 app.include_router(tg_router, prefix=API_PREFIX)
 app.include_router(vk_router, prefix=API_PREFIX)
 app.include_router(session_router, prefix=API_PREFIX)
+app.include_router(link_token_router, prefix=API_PREFIX)
 app.include_router(me_router, prefix=API_PREFIX)
 app.include_router(embed_router, prefix=API_PREFIX)

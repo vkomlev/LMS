@@ -58,9 +58,16 @@ async def send_magic_link_email(
     token: str,
     email: str,
     settings: Settings,
+    link_mode: bool = False,
 ) -> None:
-    """Отправить magic-link через Resend API."""
-    link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}"
+    """Отправить magic-link через Resend API.
+
+    `link_mode=True` (Phase Y-3): добавляет query-параметр `link_mode=1` в callback URL —
+    SPW использует его, чтобы переключить страницу /auth/magic-link/consume в режим
+    привязки email к существующему аккаунту вместо логина.
+    """
+    suffix = "&link_mode=1" if link_mode else ""
+    link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}{suffix}"
 
     if not settings.resend_api_key:
         # Dev-fallback: Resend не настроен — логируем готовую ссылку,
@@ -120,6 +127,33 @@ async def consume_magic_link(
     link.consumed_at = _now()
     await db.flush()
     return link
+
+
+async def peek_magic_link(
+    db: AsyncSession,
+    token: str,
+) -> "MagicLink | None":
+    """Phase Y-3: проверить magic_link БЕЗ consume.
+
+    Используется в /auth/magic-link/verify {link_mode=True} — подтверждает
+    владение email, но не помечает токен использованным; consume произойдёт
+    в /me/identity/email/link при фактической привязке identity.
+
+    Возвращает MagicLink если валиден (не consumed, не expired), иначе None.
+    """
+    try:
+        raw = bytes.fromhex(token)
+    except ValueError:
+        return None
+    token_hash = _hash_token(raw)
+    result = await db.execute(
+        select(MagicLink).where(
+            MagicLink.token_hash == token_hash,
+            MagicLink.consumed_at.is_(None),
+            MagicLink.expires_at > _now(),
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 def _mask_email(email: str) -> str:

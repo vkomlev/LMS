@@ -8,7 +8,7 @@ from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, TgInitRequest
 from app.services.auth import session_service
-from app.services.auth.link_token_service import attribute_guest_session
+from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.auth.tg_init_service import (
     extract_tg_full_name,
     extract_tg_user_id,

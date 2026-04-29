@@ -10,7 +10,7 @@ from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
 from app.services.auth import session_service
 from app.services.auth.exceptions import IdentityConflictError
-from app.services.auth.link_token_service import attribute_guest_session
+from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.auth.vk_oauth_service import (
     exchange_code,
     fetch_vk_userinfo,

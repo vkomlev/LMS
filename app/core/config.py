@@ -15,6 +15,11 @@ class Settings:
 
         self.log_level: str = os.environ.get("LOG_LEVEL", "INFO")
 
+        # Environment marker для fail-secure поведения security-critical сервисов
+        # (Phase Y-3.1): "production" | "dev" | "test". При production + Redis-outage
+        # link_token_service не делает in-memory fallback (см. ERRORS S2-1).
+        self.env: str = os.environ.get("ENV", "dev").lower()
+
         self.valid_api_keys: List[str] = [
             key.strip() for key in raw_keys.split(",") if key.strip()
         ]
