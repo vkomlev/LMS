@@ -1,0 +1,3045 @@
+warning: in the working copy of 'app/core/config.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_migrations.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/api/main.py b/app/api/main.py
+index a89adfe..1a1f027 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -323,6 +323,7 @@ from app.api.v1.auth.magic_link import router as magic_link_router
+ from app.api.v1.auth.tg import router as tg_router
+ from app.api.v1.auth.vk import router as vk_router
+ from app.api.v1.auth.session import router as session_router
++from app.api.v1.auth.link_token import router as link_token_router
+ from app.api.v1.me import router as me_router
+ from app.api.v1.embed_api import router as embed_router
+ 
+@@ -330,5 +331,6 @@ app.include_router(magic_link_router, prefix=API_PREFIX)
+ app.include_router(tg_router, prefix=API_PREFIX)
+ app.include_router(vk_router, prefix=API_PREFIX)
+ app.include_router(session_router, prefix=API_PREFIX)
++app.include_router(link_token_router, prefix=API_PREFIX)
+ app.include_router(me_router, prefix=API_PREFIX)
+ app.include_router(embed_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/api/v1/auth/link_token.py b/app/api/v1/auth/link_token.py
+new file mode 100644
+index 0000000..4d06de8
+--- /dev/null
++++ b/app/api/v1/auth/link_token.py
+@@ -0,0 +1,69 @@
++"""Эндпоинт выпуска одноразового link_token для привязки identity (Phase Y-3).
++
++Авторизованный пользователь запрашивает короткоживущий (TTL 5 мин) one-time
++токен, который будет передан в /me/identity/{kind}/link при подтверждении владения
++новой identity (TG initData / VK PKCE / magic-link).
++
++См. tech-spec Y-3 (LMS backend) §5.5, §7.7.
++"""
++import logging
++
++from fastapi import APIRouter, Depends, HTTPException, Request, status
++
++from app.api.deps import require_authenticated
++from app.auth.current_user import CurrentUser
++from app.core.config import Settings
++from app.db.session import get_async_db
++from app.schemas.auth import LinkTokenIssueRequest, LinkTokenIssueResponse
++from app.services.audit_service import log_event
++from app.services.auth import link_token_service
++from app.services.rate_limit_service import get_redis, is_rate_limited
++
++logger = logging.getLogger(__name__)
++router = APIRouter(prefix="/auth/link-token", tags=["auth"])
++_settings = Settings()
++
++
++@router.post(
++    "/issue",
++    response_model=LinkTokenIssueResponse,
++    status_code=status.HTTP_200_OK,
++)
++async def issue_link_token(
++    body: LinkTokenIssueRequest,
++    request: Request,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db=Depends(get_async_db),
++) -> LinkTokenIssueResponse:
++    """Выпустить one-time link_token для current_user под заданный kind."""
++    ip = request.client.host if request.client else "unknown"
++    redis = get_redis(_settings.redis_url)
++
++    # Rate-limit 10/мин per user (см. tech-spec §5.5)
++    rl_key = f"link_token_issue:user:{current_user.id}"
++    if await is_rate_limited(redis, rl_key, max_requests=10, window_seconds=60):
++        raise HTTPException(
++            status.HTTP_429_TOO_MANY_REQUESTS,
++            "Слишком много запросов на выпуск link_token",
++        )
++
++    try:
++        raw_token, expires_at = await link_token_service.issue(
++            redis, user_id=current_user.id, kind=body.kind
++        )
++    except link_token_service.LinkTokenServiceUnavailableError:
++        raise HTTPException(
++            status.HTTP_503_SERVICE_UNAVAILABLE,
++            "Сервис привязки временно недоступен. Попробуйте через минуту.",
++        )
++
++    await log_event(
++        db,
++        "auth.link_token.issued",
++        user_id=current_user.id,
++        ip=ip,
++        details={"kind": body.kind},
++    )
++    await db.commit()
++
++    return LinkTokenIssueResponse(link_token=raw_token, expires_at=expires_at)
+diff --git a/app/api/v1/auth/magic_link.py b/app/api/v1/auth/magic_link.py
+index 66dad5f..83c9361 100644
+--- a/app/api/v1/auth/magic_link.py
++++ b/app/api/v1/auth/magic_link.py
+@@ -1,15 +1,22 @@
+ """Эндпоинты email magic-link аутентификации."""
+ import logging
++from typing import Union
+ 
+ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_bare_db
+ from app.core.config import Settings
+-from app.schemas.auth import AuthTokenResponse, MagicLinkRequest, MagicLinkVerifyRequest, MessageResponse
++from app.schemas.auth import (
++    AuthTokenResponse,
++    MagicLinkRequest,
++    MagicLinkVerifyLinkModeResponse,
++    MagicLinkVerifyRequest,
++    MessageResponse,
++)
+ from app.services.auth import magic_link_service, session_service
+ from app.services.auth.exceptions import IdentityConflictError
+-from app.services.auth.link_token_service import attribute_guest_session
++from app.services.auth.guest_attribution_service import attribute_guest_session
+ from app.services.audit_service import log_event
+ from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+@@ -35,29 +42,66 @@ async def send_magic_link(
+     token = await magic_link_service.create_magic_link(db, email)
+     await db.commit()
+ 
+-    background.add_task(magic_link_service.send_magic_link_email, token, email, _settings)
+-    await log_event(db, "magic_link_sent", ip=ip, details={"email": email})
++    background.add_task(
++        magic_link_service.send_magic_link_email,
++        token, email, _settings,
++        link_mode=body.link_mode,
++    )
++    await log_event(
++        db,
++        "magic_link_sent",
++        ip=ip,
++        details={"email": email, "link_mode": body.link_mode},
++    )
+     await db.commit()
+ 
+     return MessageResponse(message="Письмо отправлено")
+ 
+ 
+-@router.post("/verify", response_model=AuthTokenResponse)
++@router.post(
++    "/verify",
++    response_model=Union[AuthTokenResponse, MagicLinkVerifyLinkModeResponse],
++)
+ async def verify_magic_link(
+     body: MagicLinkVerifyRequest,
+     request: Request,
+     response: Response,
+     db: AsyncSession = Depends(get_bare_db),
+-) -> AuthTokenResponse:
+-    """Верифицировать magic-link токен и выдать сессию."""
++) -> AuthTokenResponse | MagicLinkVerifyLinkModeResponse:
++    """Верифицировать magic-link токен.
++
++    Дефолтный режим (`link_mode=False`): consume + auto-create + выдать сессию.
++    Phase Y-3 link-режим (`link_mode=True`): только подтвердить владение email,
++    вернуть `magic_link_token` (тот же raw token) для последующего consume в
++    /me/identity/email/link. НЕ создаёт user (если email неизвестен → 401), НЕ
++    создаёт session, НЕ помечает magic_link.consumed_at — consume произойдёт
++    в /me/identity/email/link.
++    """
+     ip = request.client.host if request.client else "unknown"
++    ua = request.headers.get("user-agent")
+ 
++    if body.link_mode:
++        # Phase Y-3: validate-only без consume и без сессии
++        link = await magic_link_service.peek_magic_link(db, body.token)
++        if link is None:
++            raise HTTPException(
++                status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк"
++            )
++        await log_event(
++            db,
++            "auth.magic_link.verified_link_mode",
++            ip=ip,
++            details={"email": link.email},
++        )
++        await db.commit()
++        return MagicLinkVerifyLinkModeResponse(magic_link_token=body.token)
++
++    # Дефолтный flow Y-1.5: consume + create user + session
+     link = await magic_link_service.consume_magic_link(db, body.token)
+     if link is None:
+         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Токен недействителен или истёк")
+ 
+     email = link.email
+-    ua = request.headers.get("user-agent")
+ 
+     try:
+         user, created = await magic_link_service.get_or_create_user_by_email(
+diff --git a/app/api/v1/auth/tg.py b/app/api/v1/auth/tg.py
+index e299d17..3a4e88a 100644
+--- a/app/api/v1/auth/tg.py
++++ b/app/api/v1/auth/tg.py
+@@ -8,7 +8,7 @@ from app.api.deps import get_bare_db
+ from app.core.config import Settings
+ from app.schemas.auth import AuthTokenResponse, TgInitRequest
+ from app.services.auth import session_service
+-from app.services.auth.link_token_service import attribute_guest_session
++from app.services.auth.guest_attribution_service import attribute_guest_session
+ from app.services.auth.tg_init_service import (
+     extract_tg_full_name,
+     extract_tg_user_id,
+diff --git a/app/api/v1/auth/vk.py b/app/api/v1/auth/vk.py
+index d116b2b..d5c7171 100644
+--- a/app/api/v1/auth/vk.py
++++ b/app/api/v1/auth/vk.py
+@@ -10,7 +10,7 @@ from app.core.config import Settings
+ from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
+ from app.services.auth import session_service
+ from app.services.auth.exceptions import IdentityConflictError
+-from app.services.auth.link_token_service import attribute_guest_session
++from app.services.auth.guest_attribution_service import attribute_guest_session
+ from app.services.auth.vk_oauth_service import (
+     exchange_code,
+     fetch_vk_userinfo,
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 777f544..24fbf23 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -1,12 +1,58 @@
+-"""Эндпоинт /me — профиль текущего пользователя."""
+-from fastapi import APIRouter, Depends
++"""Эндпоинты /me — профиль, identities, прогресс, last-position, streak (Phase Y-1 + Y-3).
+ 
+-from app.api.deps import require_authenticated
++Phase Y-3 добавляет:
++- GET  /me/identities         — список identity_link с masked values
++- GET  /me/courses            — активные курсы + progress (single roundtrip CTE)
++- GET  /me/last-position      — последняя активность + резолв next-item
++- GET  /me/streak             — streak дней подряд в Europe/Moscow
++- POST /me/identity/{kind}/link — привязка новой identity к current user
++
++См. tech-spec Y-3 (LMS backend) §5.1-5.4, §5.6, §7.6, §7.7.
++"""
++import logging
++from datetime import datetime, timedelta, timezone
++from typing import Literal
++
++from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_async_db, require_authenticated
+ from app.auth.current_user import CurrentUser
+-from app.schemas.me import MeResponse
++from app.core.config import Settings
++from app.schemas.auth import (
++    IdentityLinkEmailRequest,
++    IdentityLinkResponse,
++    IdentityLinkTgRequest,
++    IdentityLinkVkRequest,
++    IdentityLinkedItem,
++)
++from app.schemas.me import (
++    CourseProgress,
++    CourseWithProgressRead,
++    IdentityRead,
++    LastPositionRead,
++    MeResponse,
++    StreakRead,
++)
++from app.services import me_service
++from app.services.audit_service import log_event
++from app.services.auth import (
++    identity_link_service,
++    link_token_service,
++    magic_link_service,
++    tg_init_service,
++    vk_oauth_service,
++)
++from app.services.auth.exceptions import IdentityConflictError
++from app.services.fernet_service import encrypt_token
++from app.services.rate_limit_service import get_redis
+ 
++logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/me", tags=["me"])
++_settings = Settings()
++
+ 
++# ── GET /me ─────────────────────────────────────────────────────────────────
+ 
+ @router.get("", response_model=MeResponse)
+ async def get_me(
+@@ -19,3 +65,334 @@ async def get_me(
+         tg_id=current_user.tg_id,
+         is_service=current_user.is_service,
+     )
++
++
++# ── GET /me/identities ──────────────────────────────────────────────────────
++
++@router.get("/identities", response_model=list[IdentityRead])
++async def list_identities(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> list[IdentityRead]:
++    """Список identity_link текущего пользователя с masked values (см. §5.1)."""
++    items = await me_service.get_identities(db, current_user.id)
++    return [IdentityRead(**item) for item in items]
++
++
++# ── GET /me/courses ─────────────────────────────────────────────────────────
++
++@router.get("/courses", response_model=list[CourseWithProgressRead])
++async def list_courses(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> list[CourseWithProgressRead]:
++    """Активные курсы пользователя + progress (см. §5.2). Single SQL roundtrip."""
++    items = await me_service.get_courses_with_progress(db, current_user.id)
++    return [
++        CourseWithProgressRead(
++            course_id=it["course_id"],
++            course_uid=it["course_uid"],
++            title=it["title"],
++            order_number=it["order_number"],
++            progress=CourseProgress(**it["progress"]),
++            last_active_at=it["last_active_at"],
++            is_completed=it["is_completed"],
++        )
++        for it in items
++    ]
++
++
++# ── GET /me/last-position ───────────────────────────────────────────────────
++
++@router.get("/last-position", response_model=LastPositionRead | None)
++async def get_last_position(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> LastPositionRead | None:
++    """Последняя активность пользователя + next-item resolve (см. §5.3)."""
++    pos = await me_service.get_last_position(db, current_user.id)
++    if pos is None:
++        return None
++    return LastPositionRead(**pos)
++
++
++# ── GET /me/streak ──────────────────────────────────────────────────────────
++
++@router.get("/streak", response_model=StreakRead)
++async def get_streak(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> StreakRead:
++    """Streak дней подряд в Europe/Moscow (см. §5.4)."""
++    s = await me_service.get_streak(db, current_user.id)
++    return StreakRead(**s)
++
++
++# ── POST /me/identity/{kind}/link ───────────────────────────────────────────
++
++def _conflict_to_http(e: IdentityConflictError) -> HTTPException:
++    """Маппинг IdentityConflictError → HTTP 409 c унифицированным body."""
++    return HTTPException(
++        status.HTTP_409_CONFLICT,
++        detail={
++            "error": "identity_conflict",
++            "conflict_kind": e.conflict_kind,
++            "existing_identity_kinds": e.existing_kinds,
++            "message": (
++                "Эта identity уже привязана к другому аккаунту. "
++                "Войдите через ту identity, чтобы управлять привязкой."
++            ),
++        },
++    )
++
++
++def _link_token_invalid_http() -> HTTPException:
++    return HTTPException(
++        status.HTTP_401_UNAUTHORIZED,
++        "link_token недействителен, истёк или уже использован",
++    )
++
++
++async def _consume_link_token_for_user(
++    db: AsyncSession,
++    raw_token: str,
++    expected_kind: Literal["email", "tg", "vk"],
++    current_user_id: int,
++    ip: str,
++) -> None:
++    """Atomic consume + валидация owner_user/kind.
++
++    Raise HTTPException 401 на любую ошибку (invalid/expired/consumed или mismatch).
++    Raise HTTPException 503 если link_token storage недоступен в production.
++
++    На mismatch (wrong user_id / wrong kind) пишет audit_event
++    `auth.link_token.consume_mismatch` для forensics (Y-3.1 / techlead S3-7).
++    """
++    redis = get_redis(_settings.redis_url)
++    try:
++        payload = await link_token_service.consume(redis, raw_token)
++    except link_token_service.LinkTokenError:
++        raise _link_token_invalid_http()
++    except link_token_service.LinkTokenServiceUnavailableError:
++        raise HTTPException(
++            status.HTTP_503_SERVICE_UNAVAILABLE,
++            "Сервис привязки временно недоступен. Попробуйте через минуту.",
++        )
++    if payload.user_id != current_user_id or payload.kind != expected_kind:
++        # Mismatch — токен принадлежит другому user или предназначен для другого kind.
++        # Логируем как forensics event и не различаем причину для клиента.
++        mismatch_reason = (
++            "user_id" if payload.user_id != current_user_id else "kind"
++        )
++        await log_event(
++            db,
++            "auth.link_token.consume_mismatch",
++            user_id=current_user_id,
++            ip=ip,
++            details={
++                "expected_kind": expected_kind,
++                "payload_kind": payload.kind,
++                "expected_user_id": current_user_id,
++                "payload_user_id": payload.user_id,
++                "mismatch_reason": mismatch_reason,
++            },
++        )
++        await db.commit()
++        raise _link_token_invalid_http()
++
++
++@router.post(
++    "/identity/email/link",
++    response_model=IdentityLinkResponse,
++    status_code=status.HTTP_200_OK,
++)
++async def link_identity_email(
++    body: IdentityLinkEmailRequest,
++    request: Request,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> IdentityLinkResponse:
++    """Привязать email-identity к current user. Email подтверждается magic-link consume.
++
++    Body содержит:
++    - link_token: одноразовый токен из /auth/link-token/issue {kind:'email'}
++    - magic_link_token: raw token, который вернул /auth/magic-link/verify {link_mode:true}
++    """
++    ip = request.client.host if request.client else "unknown"
++    await _consume_link_token_for_user(db, body.link_token, "email", current_user.id, ip)
++
++    # Consume magic_link атомарно (помечает consumed_at)
++    link = await magic_link_service.consume_magic_link(db, body.magic_link_token)
++    if link is None:
++        raise HTTPException(
++            status.HTTP_401_UNAUTHORIZED,
++            "magic_link_token недействителен, истёк или уже использован",
++        )
++    email = link.email.lower()
++
++    try:
++        new_link = await identity_link_service.link_existing_user(
++            db, current_user.id, "email", email
++        )
++    except IdentityConflictError as e:
++        await log_event(
++            db,
++            "auth.identity.linked.conflict",
++            user_id=current_user.id,
++            ip=ip,
++            details={"kind": "email", "conflict_kind": e.conflict_kind},
++        )
++        await db.commit()
++        raise _conflict_to_http(e)
++
++    masked = me_service.mask_value("email", email)
++    await log_event(
++        db,
++        "auth.identity.linked",
++        user_id=current_user.id,
++        ip=ip,
++        details={"kind": "email", "value_masked": masked, "source": "magic_link"},
++    )
++    await db.commit()
++    return IdentityLinkResponse(
++        identity=IdentityLinkedItem(
++            kind="email", value_masked=masked, created_at=new_link.created_at
++        )
++    )
++
++
++@router.post(
++    "/identity/tg/link",
++    response_model=IdentityLinkResponse,
++    status_code=status.HTTP_200_OK,
++)
++async def link_identity_tg(
++    body: IdentityLinkTgRequest,
++    request: Request,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> IdentityLinkResponse:
++    """Привязать Telegram-identity к current user. Подтверждение — initData HMAC."""
++    ip = request.client.host if request.client else "unknown"
++    await _consume_link_token_for_user(db, body.link_token, "tg", current_user.id, ip)
++
++    if not _settings.tg_bot_token_for_initdata:
++        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "TG auth не настроен")
++
++    params = tg_init_service.verify_tg_init_data(
++        body.init_data, _settings.tg_bot_token_for_initdata
++    )
++    if params is None:
++        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверная подпись initData")
++
++    tg_id_str = tg_init_service.extract_tg_user_id(params)
++    if not tg_id_str:
++        raise HTTPException(status.HTTP_400_BAD_REQUEST, "tg_id не найден в initData")
++
++    try:
++        new_link = await identity_link_service.link_existing_user(
++            db, current_user.id, "tg", tg_id_str
++        )
++    except IdentityConflictError as e:
++        await log_event(
++            db,
++            "auth.identity.linked.conflict",
++            user_id=current_user.id,
++            ip=ip,
++            details={"kind": "tg", "conflict_kind": e.conflict_kind},
++        )
++        await db.commit()
++        raise _conflict_to_http(e)
++
++    masked = me_service.mask_value("tg", tg_id_str)
++    await log_event(
++        db,
++        "auth.identity.linked",
++        user_id=current_user.id,
++        ip=ip,
++        details={"kind": "tg", "value_masked": masked, "source": "init_data"},
++    )
++    await db.commit()
++    return IdentityLinkResponse(
++        identity=IdentityLinkedItem(
++            kind="tg", value_masked=masked, created_at=new_link.created_at
++        )
++    )
++
++
++@router.post(
++    "/identity/vk/link",
++    response_model=IdentityLinkResponse,
++    status_code=status.HTTP_200_OK,
++)
++async def link_identity_vk(
++    body: IdentityLinkVkRequest,
++    request: Request,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> IdentityLinkResponse:
++    """Привязать VK-identity к current user.
++
++    PKCE flow для existing user: SPW отправил state="link:<token>",
++    vk-relay перенаправил браузер на /me/identity/vk/link, body содержит
++    уже очищенный link_token (без префикса 'link:').
++    """
++    ip = request.client.host if request.client else "unknown"
++    await _consume_link_token_for_user(db, body.link_token, "vk", current_user.id, ip)
++
++    try:
++        token_data = await vk_oauth_service.exchange_code(
++            body.code, body.code_verifier, body.device_id, _settings
++        )
++    except ValueError as e:
++        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"VK exchange failed: {e}")
++
++    access_token: str = token_data["access_token"]
++    refresh_token_vk: str | None = token_data.get("refresh_token")
++    expires_in: int = token_data.get("expires_in", 3600)
++    vk_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
++
++    try:
++        userinfo = await vk_oauth_service.fetch_vk_userinfo(access_token)
++    except ValueError as e:
++        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"VK userinfo failed: {e}")
++
++    vk_user_id: str = userinfo["user_id"]
++    enc_access = encrypt_token(access_token, _settings)
++    enc_refresh = encrypt_token(refresh_token_vk, _settings) if refresh_token_vk else None
++
++    try:
++        new_link = await identity_link_service.link_existing_user(
++            db,
++            current_user.id,
++            "vk",
++            vk_user_id,
++            vk_access_token_enc=enc_access,
++            vk_refresh_token_enc=enc_refresh,
++            vk_token_expires_at=vk_token_expires_at,
++        )
++    except IdentityConflictError as e:
++        await log_event(
++            db,
++            "auth.identity.linked.conflict",
++            user_id=current_user.id,
++            ip=ip,
++            details={"kind": "vk", "conflict_kind": e.conflict_kind},
++        )
++        await db.commit()
++        raise _conflict_to_http(e)
++
++    masked = me_service.mask_value("vk", vk_user_id)
++    await log_event(
++        db,
++        "auth.identity.linked",
++        user_id=current_user.id,
++        ip=ip,
++        details={"kind": "vk", "value_masked": masked, "source": "vk_pkce"},
++    )
++    await db.commit()
++    return IdentityLinkResponse(
++        identity=IdentityLinkedItem(
++            kind="vk", value_masked=masked, created_at=new_link.created_at
++        )
++    )
+diff --git a/app/core/config.py b/app/core/config.py
+index 843d98e..d154a37 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -15,6 +15,11 @@ class Settings:
+ 
+         self.log_level: str = os.environ.get("LOG_LEVEL", "INFO")
+ 
++        # Environment marker для fail-secure поведения security-critical сервисов
++        # (Phase Y-3.1): "production" | "dev" | "test". При production + Redis-outage
++        # link_token_service не делает in-memory fallback (см. ERRORS S2-1).
++        self.env: str = os.environ.get("ENV", "dev").lower()
++
+         self.valid_api_keys: List[str] = [
+             key.strip() for key in raw_keys.split(",") if key.strip()
+         ]
+diff --git a/app/db/migrations/versions/20260429_010000_M7_task_results_user_received_idx.py b/app/db/migrations/versions/20260429_010000_M7_task_results_user_received_idx.py
+new file mode 100644
+index 0000000..25998df
+--- /dev/null
++++ b/app/db/migrations/versions/20260429_010000_M7_task_results_user_received_idx.py
+@@ -0,0 +1,30 @@
++"""M7: индекс task_results(user_id, received_at DESC) для streak query (Phase Y-3).
++
++Поддерживает GET /api/v1/me/streak (CTE с фильтрацией по user_id и сортировкой
++по received_at DESC) — без индекса каждый запрос делает Seq Scan по партиции
++user_id. См. tech-spec Y-3 (LMS-side) §6 и CB authority spec §7.2.7.
++
++Revision ID: 20260429_010000_m7_streak_idx
++Revises: 20260428_060000_m6_tg_sync
++Create Date: 2026-04-29
++"""
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = "20260429_010000_m7_streak_idx"
++down_revision = "20260428_060000_m6_tg_sync"
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.create_index(
++        "idx_task_results_user_received",
++        "task_results",
++        ["user_id", sa.text("received_at DESC")],
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("idx_task_results_user_received", table_name="task_results")
+diff --git a/app/schemas/auth.py b/app/schemas/auth.py
+index fe58c28..3cf50a8 100644
+--- a/app/schemas/auth.py
++++ b/app/schemas/auth.py
+@@ -1,4 +1,7 @@
+ """Pydantic схемы для auth эндпоинтов."""
++from datetime import datetime
++from typing import Literal
++
+ from pydantic import BaseModel, EmailStr, Field
+ 
+ 
+@@ -6,11 +9,25 @@ from pydantic import BaseModel, EmailStr, Field
+ 
+ class MagicLinkRequest(BaseModel):
+     email: EmailStr
++    link_mode: bool = False  # Phase Y-3: при True email-linking flow (см. tech-spec §5.6, §7.5)
+ 
+ 
+ class MagicLinkVerifyRequest(BaseModel):
+     token: str = Field(..., min_length=1)
+     guest_session_id: str | None = None
++    link_mode: bool = False  # Phase Y-3: при True не создаём user/session, возвращаем magic_link_token
++
++
++class MagicLinkVerifyLinkModeResponse(BaseModel):
++    """Ответ /auth/magic-link/verify в режиме link_mode=True.
++
++    Не выдаёт сессию (session/refresh tokens) — вместо этого возвращает
++    magic_link_token (текущий raw token) для последующего consume в
++    /me/identity/email/link.
++    """
++
++    magic_link_token: str
++    email_verified: bool = True
+ 
+ 
+ # ── Telegram initData ────────────────────────────────────────────────────────
+@@ -45,3 +62,59 @@ class AuthTokenResponse(BaseModel):
+ 
+ class MessageResponse(BaseModel):
+     message: str
++
++
++# ── Phase Y-3: Identity linking ──────────────────────────────────────────────
++
++class LinkTokenIssueRequest(BaseModel):
++    """POST /auth/link-token/issue — какой kind identity готовится к привязке."""
++
++    kind: Literal["email", "tg", "vk"]
++
++
++class LinkTokenIssueResponse(BaseModel):
++    link_token: str
++    expires_at: datetime
++
++
++class IdentityLinkEmailRequest(BaseModel):
++    """POST /me/identity/email/link body."""
++
++    link_token: str = Field(..., min_length=1)
++    magic_link_token: str = Field(..., min_length=1)
++
++
++class IdentityLinkTgRequest(BaseModel):
++    """POST /me/identity/tg/link body."""
++
++    link_token: str = Field(..., min_length=1)
++    init_data: str = Field(..., min_length=1)
++
++
++class IdentityLinkVkRequest(BaseModel):
++    """POST /me/identity/vk/link body.
++
++    `link_token` — уже очищенный от префикса `link:` (префикс срезает SPW
++    при чтении `state` из адресной строки; backend prefix не ожидает).
++    См. CB tech-spec Y-3 §22.1.
++    """
++
++    link_token: str = Field(..., min_length=1)
++    code: str = Field(..., min_length=1)
++    code_verifier: str = Field(..., min_length=1)
++    device_id: str = Field(..., min_length=1)
++
++
++class IdentityLinkedItem(BaseModel):
++    """Идентифицирующая часть identity_link для response (без чувствительных полей)."""
++
++    kind: Literal["email", "tg", "vk"]
++    value_masked: str
++    created_at: datetime
++
++
++class IdentityLinkResponse(BaseModel):
++    """Успешный ответ /me/identity/{kind}/link."""
++
++    ok: bool = True
++    identity: IdentityLinkedItem
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 9ec30a5..3ba449e 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -1,4 +1,7 @@
+-"""Pydantic схемы для /me эндпоинта."""
++"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3)."""
++from datetime import date, datetime
++from typing import Literal
++
+ from pydantic import BaseModel
+ 
+ 
+@@ -9,3 +12,55 @@ class MeResponse(BaseModel):
+     is_service: bool
+ 
+     model_config = {"from_attributes": True}
++
++
++# ── Phase Y-3: /me/identities ────────────────────────────────────────────────
++
++class IdentityRead(BaseModel):
++    """Identity link для public read (с masked value)."""
++
++    kind: Literal["email", "tg", "vk"]
++    value_masked: str
++    created_at: datetime
++    last_used_at: datetime | None
++
++
++# ── Phase Y-3: /me/courses ───────────────────────────────────────────────────
++
++class CourseProgress(BaseModel):
++    tasks_total: int
++    tasks_done: int
++    materials_total: int
++    materials_done: int
++    percent: int
++
++
++class CourseWithProgressRead(BaseModel):
++    course_id: int
++    course_uid: str | None
++    title: str
++    order_number: int | None
++    progress: CourseProgress
++    last_active_at: datetime | None
++    is_completed: bool
++
++
++# ── Phase Y-3: /me/last-position ─────────────────────────────────────────────
++
++class LastPositionRead(BaseModel):
++    course_id: int
++    course_uid: str | None
++    course_title: str
++    type: Literal["task", "material", "course_completed", "none"]
++    task_id: int | None = None
++    external_uid: str | None = None
++    material_id: int | None = None
++    last_active_at: datetime
++
++
++# ── Phase Y-3: /me/streak ────────────────────────────────────────────────────
++
++class StreakRead(BaseModel):
++    streak_days: int
++    last_active_date: date | None
++    today_active: bool
+diff --git a/app/services/auth/guest_attribution_service.py b/app/services/auth/guest_attribution_service.py
+new file mode 100644
+index 0000000..586cc2f
+--- /dev/null
++++ b/app/services/auth/guest_attribution_service.py
+@@ -0,0 +1,52 @@
++"""Сервис атрибуции guest_attempt → user после авторизации (Phase Y-1).
++
++Имя файла приведено в соответствие назначению в Phase Y-3 (cleanup).
++Старое имя `link_token_service.py` сейчас занято под one-time link_token
++для identity linking (см. tech-spec Y-3 backend §7.1, §7.3).
++"""
++import logging
++from datetime import datetime, timezone
++
++from sqlalchemy import update
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.models.guest_attempt import GuestAttempt
++from app.models.guest_session import GuestSession
++
++logger = logging.getLogger(__name__)
++
++
++async def attribute_guest_session(
++    db: AsyncSession,
++    guest_session_id: str,
++    user_id: int,
++) -> int:
++    """
++    Привязать guest_session и все её попытки к пользователю.
++    Возвращает количество обновлённых попыток.
++    """
++    now = datetime.now(timezone.utc)
++
++    await db.execute(
++        update(GuestSession)
++        .where(GuestSession.id == guest_session_id)
++        .values(attributed_user_id=user_id)
++    )
++
++    result = await db.execute(
++        update(GuestAttempt)
++        .where(
++            GuestAttempt.guest_session_id == guest_session_id,
++            GuestAttempt.attributed_user_id.is_(None),
++        )
++        .values(attributed_user_id=user_id, attributed_at=now)
++    )
++    await db.flush()
++    count: int = result.rowcount
++    logger.info(
++        "attribute_guest_session: session=%s user_id=%d attempts=%d",
++        guest_session_id,
++        user_id,
++        count,
++    )
++    return count
+diff --git a/app/services/auth/identity_link_service.py b/app/services/auth/identity_link_service.py
+index 0de2615..0b710ac 100644
+--- a/app/services/auth/identity_link_service.py
++++ b/app/services/auth/identity_link_service.py
+@@ -2,15 +2,21 @@
+ 
+ Поддерживает двустороннюю синхронизацию users.tg_id ↔ identity_link kind='tg'
+ (см. ADR-0021 §3, Phase Y-1.5).
++
++Phase Y-3 добавляет `link_existing_user` для привязки новой identity к
++уже залогиненному пользователю (см. tech-spec Y-3 backend §5.6, §7.4).
+ """
+ import logging
++from datetime import datetime, timezone
+ from typing import Literal
+ 
+-from sqlalchemy import select, update
++from sqlalchemy import func, select, update
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.identity_link import IdentityLink
+ from app.models.users import Users
++from app.services.auth.exceptions import IdentityConflictError
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -90,3 +96,96 @@ async def _sync_users_tg_id(db: AsyncSession, user_id: int, tg_id: int) -> None:
+         .where(Users.id == user_id, Users.tg_id.is_distinct_from(tg_id))
+         .values(tg_id=tg_id)
+     )
++
++
++async def _kinds_of_user(db: AsyncSession, user_id: int) -> list[str]:
++    """Список kind значений identity_link записей пользователя (для 409 details)."""
++    result = await db.execute(
++        select(IdentityLink.kind).where(IdentityLink.user_id == user_id)
++    )
++    return sorted({row[0] for row in result.all()})
++
++
++async def link_existing_user(
++    db: AsyncSession,
++    user_id: int,
++    kind: IdentityKind,
++    value: str,
++    *,
++    vk_access_token_enc: bytes | None = None,
++    vk_refresh_token_enc: bytes | None = None,
++    vk_token_expires_at: datetime | None = None,
++) -> IdentityLink:
++    """Привязать новую identity к уже залогиненному пользователю (Phase Y-3).
++
++    Семантика:
++    - Если (kind, value) уже привязан к этому же `user_id` → idempotent success
++      (обновляется `last_used_at`).
++    - Если привязан к ДРУГОМУ user → `IdentityConflictError(conflict_kind="<kind>_already_linked",
++      existing_kinds=<kinds владельца>)` → router маппит в HTTP 409.
++    - Для kind='email' дополнительно orphan-check (Y-1.5.1 lesson): если в `users.email`
++      есть запись без identity_link → `IdentityConflictError(conflict_kind=
++      "email_already_linked_to_orphan_user", existing_kinds=[])`.
++    - INSERT identity_link выполняется в SAVEPOINT через `db.begin_nested()` —
++      IntegrityError на concurrent partial unique violation откатывает только nested
++      транзакцию (Y-1.5 lesson #3 — НЕ `db.rollback()`).
++    - Для kind='tg' двусторонняя sync с `users.tg_id` (через `_sync_users_tg_id`).
++
++    Caller обязан выполнить `db.commit()` после успешного return — этот метод только flush().
++    """
++    normalized = value.lower() if kind == "email" else value
++
++    # 1. Существующий identity_link с этим (kind, value)?
++    existing = await find_identity(db, kind, normalized)
++    if existing is not None:
++        if existing.user_id == user_id:
++            existing.last_used_at = datetime.now(timezone.utc)
++            await db.flush()
++            return existing
++        # Принадлежит другому user — 409 (защита от identity-takeover, ADR-0021 §2)
++        owner_kinds = await _kinds_of_user(db, existing.user_id)
++        raise IdentityConflictError(
++            conflict_kind=f"{kind}_already_linked",
++            existing_kinds=owner_kinds,
++        )
++
++    # 2. Для email — orphan-check (Y-1.5.1)
++    if kind == "email":
++        orphan = (
++            await db.execute(
++                select(Users).where(func.lower(Users.email) == normalized)
++            )
++        ).scalar_one_or_none()
++        if orphan is not None and orphan.id != user_id:
++            raise IdentityConflictError(
++                conflict_kind="email_already_linked_to_orphan_user",
++                existing_kinds=[],
++            )
++
++    # 3. INSERT через savepoint (Y-1.5 lesson #3)
++    try:
++        async with db.begin_nested():
++            link = await upsert_identity(
++                db,
++                user_id,
++                kind,
++                normalized,
++                vk_access_token_enc=vk_access_token_enc,
++                vk_refresh_token_enc=vk_refresh_token_enc,
++                vk_token_expires_at=vk_token_expires_at,
++            )
++    except IntegrityError:
++        # Concurrent INSERT победил — race resolved, пробуем найти результат
++        race_winner = await find_identity(db, kind, normalized)
++        if race_winner is None:
++            raise
++        if race_winner.user_id == user_id:
++            return race_winner
++        owner_kinds = await _kinds_of_user(db, race_winner.user_id)
++        raise IdentityConflictError(
++            conflict_kind=f"{kind}_already_linked",
++            existing_kinds=owner_kinds,
++        )
++
++    logger.info("identity.linked user_id=%d kind=%s", user_id, kind)
++    return link
+diff --git a/app/services/auth/link_token_service.py b/app/services/auth/link_token_service.py
+index 08df81f..70f48e1 100644
+--- a/app/services/auth/link_token_service.py
++++ b/app/services/auth/link_token_service.py
+@@ -1,47 +1,217 @@
+-"""Сервис атрибуции guest_attempt → user после авторизации."""
+-import logging
+-from datetime import datetime, timezone
++"""Сервис one-time link_token для привязки identity к существующему user (Phase Y-3).
++
++Используется в `POST /auth/link-token/issue` → `POST /me/identity/{kind}/link`
++flow: текущий user выпускает короткоживущий токен, передаёт его внешнему провайдеру
++(VK через `state="link:<token>"`, TG initData, magic-link), а затем consume на привязке.
++
++Хранение:
++- Production: Redis обязателен. Key — `link_token:{sha256(raw_token)}`. Value — JSON
++  payload. TTL 5 мин (SETEX). Consume — атомарный Lua-скрипт GET+DEL (single-use).
++  При недоступности Redis в production → `LinkTokenServiceUnavailableError`
++  (fail-secure, see Y-3.1 closure of techlead-review S2-1).
++- Dev fallback: in-memory dict (single-process only). Активируется только при
++  `Settings.env != "production"` AND Redis недоступен.
+ 
+-from sqlalchemy import update
+-from sqlalchemy.ext.asyncio import AsyncSession
++Безопасность:
++- Хранится только sha256-хеш raw token; raw уходит клиенту единожды.
++- Three failure modes (invalid / expired / consumed) маппятся в один 401 для клиента —
++  не сигналим атакующему о существовании токена.
++- В payload есть `issued_at` для forensics в audit_event.
+ 
+-from app.models.guest_attempt import GuestAttempt
+-from app.models.guest_session import GuestSession
++См. tech-spec Y-3 (LMS backend) §5.5, §5.6, §7.3 и ADR-0021 §«Confirmed registration policy».
++"""
++import json
++import logging
++import os
++import secrets
++import time
++from dataclasses import dataclass
++from datetime import datetime, timedelta, timezone
++from hashlib import sha256
++from typing import Literal
++
++import redis.asyncio as aioredis
+ 
+ logger = logging.getLogger(__name__)
+ 
++LinkTokenKind = Literal["email", "tg", "vk"]
++TTL = timedelta(minutes=5)
++TTL_SECONDS = int(TTL.total_seconds())
+ 
+-async def attribute_guest_session(
+-    db: AsyncSession,
+-    guest_session_id: str,
+-    user_id: int,
+-) -> int:
++
++def _is_production() -> bool:
++    """Production-режим определяется по env var `ENV=production`.
++
++    Settings прочитаны через os.getenv напрямую, чтобы не зависеть от construction
++    Settings() в этом low-level сервисе (избегаем circular imports + heavy init
++    при тестах in-memory mode).
+     """
+-    Привязать guest_session и все её попытки к пользователю.
+-    Возвращает количество обновлённых попыток.
++    return os.environ.get("ENV", "dev").lower() == "production"
++
++# Atomic GET+DEL: Redis выполняет скрипты атомарно per-key.
++_LUA_GET_DEL = """
++local v = redis.call('GET', KEYS[1])
++if v then
++    redis.call('DEL', KEYS[1])
++end
++return v
++"""
++
++# In-memory fallback (DEV ONLY — single-process). Tuple = (payload_json, expires_epoch).
++_memory_store: dict[str, tuple[str, float]] = {}
++
++
++class LinkTokenError(Exception):
++    """Базовая ошибка consume link_token: invalid / expired / consumed.
++
++    Все три случая для клиента — единый 401, чтобы не давать сигнал атакующему
++    о существовании токена.
++    """
++
++    def __init__(self, reason: Literal["invalid", "expired", "consumed"]) -> None:
++        self.reason = reason
++        super().__init__(f"link_token_{reason}")
++
++
++class LinkTokenServiceUnavailableError(Exception):
++    """Storage backend (Redis) недоступен в production.
++
++    Возникает когда `ENV=production` AND Redis выдал ошибку при issue/consume —
++    fail-secure вместо in-memory fallback (Y-3.1 закрытие S2-1). Endpoint должен
++    маппить в HTTP 503.
+     """
+-    now = datetime.now(timezone.utc)
+ 
+-    await db.execute(
+-        update(GuestSession)
+-        .where(GuestSession.id == guest_session_id)
+-        .values(attributed_user_id=user_id)
++
++@dataclass(frozen=True)
++class LinkTokenPayload:
++    """Расшифрованный payload link_token."""
++
++    user_id: int
++    kind: LinkTokenKind
++    issued_at: datetime
++
++
++def _hash_token(raw: str) -> str:
++    return sha256(raw.encode("utf-8")).hexdigest()
++
++
++def _key(token_hash: str) -> str:
++    return f"link_token:{token_hash}"
++
++
++async def issue(
++    redis: aioredis.Redis | None,
++    user_id: int,
++    kind: LinkTokenKind,
++) -> tuple[str, datetime]:
++    """Выпустить one-time link_token. Возвращает (raw_token, expires_at).
++
++    raw_token — base64url, 32 байта энтропии (`secrets.token_urlsafe(32)` → ~43 символа).
++    Возвращается клиенту единожды; хранится только sha256-хеш.
++    """
++    raw = secrets.token_urlsafe(32)
++    token_hash = _hash_token(raw)
++    issued_at = datetime.now(timezone.utc)
++    expires_at = issued_at + TTL
++    payload_json = json.dumps(
++        {
++            "user_id": user_id,
++            "kind": kind,
++            "issued_at": issued_at.isoformat(),
++        }
+     )
++    await _store(redis, _key(token_hash), payload_json)
++    return raw, expires_at
+ 
+-    result = await db.execute(
+-        update(GuestAttempt)
+-        .where(
+-            GuestAttempt.guest_session_id == guest_session_id,
+-            GuestAttempt.attributed_user_id.is_(None),
++
++async def consume(
++    redis: aioredis.Redis | None,
++    raw_token: str,
++) -> LinkTokenPayload:
++    """Atomic GET+DEL. Возвращает payload или raise LinkTokenError.
++
++    Single-use семантика: повторный consume того же raw_token → LinkTokenError("invalid").
++    """
++    if not raw_token:
++        raise LinkTokenError("invalid")
++    token_hash = _hash_token(raw_token)
++    payload_json = await _pop(redis, _key(token_hash))
++    if payload_json is None:
++        raise LinkTokenError("invalid")
++    try:
++        data = json.loads(payload_json)
++        return LinkTokenPayload(
++            user_id=int(data["user_id"]),
++            kind=data["kind"],
++            issued_at=datetime.fromisoformat(data["issued_at"]),
+         )
+-        .values(attributed_user_id=user_id, attributed_at=now)
+-    )
+-    await db.flush()
+-    count: int = result.rowcount
+-    logger.info(
+-        "attribute_guest_session: session=%s user_id=%d attempts=%d",
+-        guest_session_id,
+-        user_id,
+-        count,
+-    )
+-    return count
++    except (json.JSONDecodeError, KeyError, ValueError, TypeError):
++        logger.exception("link_token payload corrupted hash=%s...", token_hash[:8])
++        raise LinkTokenError("invalid")
++
++
++async def _store(redis: aioredis.Redis | None, key: str, payload_json: str) -> None:
++    """Сохранить payload с TTL. Redis (SETEX) → fallback in-memory (только dev).
++
++    В production при недоступности Redis raises LinkTokenServiceUnavailableError —
++    fail-secure вместо незаметной деградации (Y-3.1 / techlead S2-1).
++    """
++    if redis is not None:
++        try:
++            await redis.set(key, payload_json, ex=TTL_SECONDS)
++            return
++        except Exception:
++            if _is_production():
++                logger.error(
++                    "link_token: Redis недоступен на issue в PRODUCTION — fail-secure"
++                )
++                raise LinkTokenServiceUnavailableError(
++                    "link_token storage недоступен"
++                )
++            logger.warning(
++                "link_token: Redis недоступен на issue, fallback in-memory (DEV ONLY)"
++            )
++    _purge_expired_memory()
++    _memory_store[key] = (payload_json, time.time() + TTL_SECONDS)
++
++
++async def _pop(redis: aioredis.Redis | None, key: str) -> str | None:
++    """Atomic GET+DEL. Redis (Lua) → fallback in-memory (только dev).
++
++    В production при недоступности Redis raises LinkTokenServiceUnavailableError.
++    """
++    if redis is not None:
++        try:
++            value = await redis.eval(_LUA_GET_DEL, 1, key)
++            return value
++        except Exception:
++            if _is_production():
++                logger.error(
++                    "link_token: Redis недоступен на consume в PRODUCTION — fail-secure"
++                )
++                raise LinkTokenServiceUnavailableError(
++                    "link_token storage недоступен"
++                )
++            logger.warning(
++                "link_token: Redis недоступен на consume, fallback in-memory (DEV ONLY)"
++            )
++    rec = _memory_store.pop(key, None)
++    if rec is None:
++        return None
++    payload_json, expires = rec
++    if time.time() >= expires:
++        return None
++    return payload_json
++
++
++def _purge_expired_memory() -> None:
++    """Удалить устаревшие записи in-memory (вызывается при каждом issue)."""
++    now = time.time()
++    expired = [k for k, (_, exp) in _memory_store.items() if exp < now]
++    for k in expired:
++        del _memory_store[k]
++
++
++def _reset_memory_store_for_tests() -> None:
++    """Очистить in-memory store. Только для unit-тестов."""
++    _memory_store.clear()
+diff --git a/app/services/auth/magic_link_service.py b/app/services/auth/magic_link_service.py
+index a3ceb49..5e89a37 100644
+--- a/app/services/auth/magic_link_service.py
++++ b/app/services/auth/magic_link_service.py
+@@ -58,9 +58,16 @@ async def send_magic_link_email(
+     token: str,
+     email: str,
+     settings: Settings,
++    link_mode: bool = False,
+ ) -> None:
+-    """Отправить magic-link через Resend API."""
+-    link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}"
++    """Отправить magic-link через Resend API.
++
++    `link_mode=True` (Phase Y-3): добавляет query-параметр `link_mode=1` в callback URL —
++    SPW использует его, чтобы переключить страницу /auth/magic-link/consume в режим
++    привязки email к существующему аккаунту вместо логина.
++    """
++    suffix = "&link_mode=1" if link_mode else ""
++    link_url = f"{settings.public_base_url}/auth/magic-link/consume?token={token}{suffix}"
+ 
+     if not settings.resend_api_key:
+         # Dev-fallback: Resend не настроен — логируем готовую ссылку,
+@@ -122,6 +129,33 @@ async def consume_magic_link(
+     return link
+ 
+ 
++async def peek_magic_link(
++    db: AsyncSession,
++    token: str,
++) -> "MagicLink | None":
++    """Phase Y-3: проверить magic_link БЕЗ consume.
++
++    Используется в /auth/magic-link/verify {link_mode=True} — подтверждает
++    владение email, но не помечает токен использованным; consume произойдёт
++    в /me/identity/email/link при фактической привязке identity.
++
++    Возвращает MagicLink если валиден (не consumed, не expired), иначе None.
++    """
++    try:
++        raw = bytes.fromhex(token)
++    except ValueError:
++        return None
++    token_hash = _hash_token(raw)
++    result = await db.execute(
++        select(MagicLink).where(
++            MagicLink.token_hash == token_hash,
++            MagicLink.consumed_at.is_(None),
++            MagicLink.expires_at > _now(),
++        )
++    )
++    return result.scalar_one_or_none()
++
++
+ def _mask_email(email: str) -> str:
+     """Маскировать email для audit_event details: первые 3 + *** + домен."""
+     if "@" not in email:
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+new file mode 100644
+index 0000000..04b573c
+--- /dev/null
++++ b/app/services/me_service.py
+@@ -0,0 +1,434 @@
++"""Сервис /me — identities, прогресс по курсам, last-position, streak (Phase Y-3).
++
++См. tech-spec Y-3 (LMS backend) §5.1-5.4, §7.6.
++TZ-handling: streak compute ВСЕГДА в Europe/Moscow на стороне сервера; SPW
++отображает значения как есть, без TZ-конверсии (см. tech-spec §4 и §5.4).
++"""
++import logging
++from datetime import date, datetime
++from typing import Literal
++
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.models.identity_link import IdentityLink
++
++logger = logging.getLogger(__name__)
++
++IdentityKind = Literal["email", "tg", "vk"]
++PASS_THRESHOLD_RATIO = 0.5  # совпадает с learning_engine_service
++
++
++def mask_value(kind: IdentityKind, value: str) -> str:
++    """Маскирование identity value для публичного response.
++
++    Правила (см. tech-spec §5.1):
++    - email → первые 3 + '***' + '@<домен>'; если local короче 3 → '***@<домен>'
++    - tg → '***' + последние 4 символа
++    - vk → первые 8 символов + '...' (если value длиннее 8; иначе как есть)
++    """
++    if kind == "email":
++        if "@" not in value:
++            return (value[:3] + "***") if len(value) >= 3 else "***"
++        local, domain = value.split("@", 1)
++        if len(local) >= 3:
++            return f"{local[:3]}***@{domain}"
++        return f"***@{domain}"
++    if kind == "tg":
++        return f"***{value[-4:]}" if len(value) >= 4 else f"***{value}"
++    if kind == "vk":
++        return f"{value[:8]}..." if len(value) > 8 else value
++    return value
++
++
++# ── /me/identities ──────────────────────────────────────────────────────────
++
++async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
++    """Список identities пользователя с masked values, sorted by created_at ASC."""
++    result = await db.execute(
++        select(IdentityLink)
++        .where(IdentityLink.user_id == user_id)
++        .order_by(IdentityLink.created_at.asc())
++    )
++    items: list[dict] = []
++    for link in result.scalars():
++        items.append(
++            {
++                "kind": link.kind,
++                "value_masked": mask_value(link.kind, link.value),
++                "created_at": link.created_at,
++                "last_used_at": link.last_used_at,
++            }
++        )
++    return items
++
++
++# ── /me/courses ─────────────────────────────────────────────────────────────
++
++# Single-roundtrip CTE — батч-запрос по всем активным курсам пользователя,
++# избегаем N+1 (см. tech-spec §5.2). Дерево курса собирается рекурсивно через
++# course_parents; tasks_done считает заданий с PASS по последней завершённой
++# попытке (та же логика, что в learning_engine_service.compute_course_state).
++_COURSES_PROGRESS_SQL = """
++WITH RECURSIVE active_uc AS (
++    SELECT user_id, course_id, order_number
++    FROM user_courses
++    WHERE user_id = :user_id AND is_active = true
++),
++course_trees AS (
++    SELECT root.course_id AS root_course_id,
++           root.course_id AS member_course_id,
++           0 AS depth
++    FROM active_uc root
++    UNION ALL
++    SELECT ct.root_course_id, cp.course_id, ct.depth + 1
++    FROM course_trees ct
++    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
++),
++tasks_per_root AS (
++    SELECT ct.root_course_id, t.id AS task_id
++    FROM course_trees ct
++    JOIN tasks t ON t.course_id = ct.member_course_id
++),
++materials_per_root AS (
++    SELECT ct.root_course_id, m.id AS material_id
++    FROM course_trees ct
++    JOIN materials m ON m.course_id = ct.member_course_id
++    WHERE m.is_active = true
++),
++last_attempt_per_task AS (
++    SELECT DISTINCT ON (tr.task_id)
++        tr.task_id, tr.score, tr.max_score, tr.received_at
++    FROM task_results tr
++    INNER JOIN attempts a
++        ON a.id = tr.attempt_id
++       AND a.user_id = :user_id
++       AND a.finished_at IS NOT NULL
++       AND a.cancelled_at IS NULL
++    WHERE tr.user_id = :user_id
++    ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
++),
++tasks_total_per_root AS (
++    SELECT root_course_id, COUNT(*) AS tasks_total
++    FROM tasks_per_root
++    GROUP BY root_course_id
++),
++tasks_done_per_root AS (
++    SELECT tpr.root_course_id,
++           COUNT(*) FILTER (
++               WHERE lap.max_score > 0
++                 AND (lap.score::float / lap.max_score) >= :pass_ratio
++           ) AS tasks_done
++    FROM tasks_per_root tpr
++    LEFT JOIN last_attempt_per_task lap USING (task_id)
++    GROUP BY tpr.root_course_id
++),
++materials_total_per_root AS (
++    SELECT root_course_id, COUNT(*) AS materials_total
++    FROM materials_per_root
++    GROUP BY root_course_id
++),
++materials_done_per_root AS (
++    SELECT mpr.root_course_id, COUNT(*) AS materials_done
++    FROM materials_per_root mpr
++    JOIN student_material_progress smp
++        ON smp.material_id = mpr.material_id
++       AND smp.student_id = :user_id
++       AND smp.status = 'completed'
++    GROUP BY mpr.root_course_id
++),
++last_active_per_root AS (
++    SELECT root_course_id,
++           GREATEST(MAX(tr_max), MAX(smp_max)) AS last_active_at
++    FROM (
++        SELECT tpr.root_course_id,
++               MAX(tr.received_at) AS tr_max,
++               NULL::timestamptz AS smp_max
++        FROM tasks_per_root tpr
++        LEFT JOIN task_results tr ON tr.task_id = tpr.task_id AND tr.user_id = :user_id
++        GROUP BY tpr.root_course_id
++        UNION ALL
++        SELECT mpr.root_course_id,
++               NULL::timestamptz AS tr_max,
++               MAX(smp.completed_at) AS smp_max
++        FROM materials_per_root mpr
++        LEFT JOIN student_material_progress smp
++            ON smp.material_id = mpr.material_id
++           AND smp.student_id = :user_id
++           AND smp.status = 'completed'
++        GROUP BY mpr.root_course_id
++    ) U
++    GROUP BY root_course_id
++)
++SELECT
++    uc.course_id,
++    c.course_uid,
++    c.title,
++    uc.order_number,
++    COALESCE(tt.tasks_total, 0)      AS tasks_total,
++    COALESCE(td.tasks_done, 0)       AS tasks_done,
++    COALESCE(mt.materials_total, 0)  AS materials_total,
++    COALESCE(md.materials_done, 0)   AS materials_done,
++    la.last_active_at,
++    scs.state                        AS course_state
++FROM active_uc uc
++JOIN courses c ON c.id = uc.course_id
++LEFT JOIN tasks_total_per_root     tt ON tt.root_course_id = uc.course_id
++LEFT JOIN tasks_done_per_root      td ON td.root_course_id = uc.course_id
++LEFT JOIN materials_total_per_root mt ON mt.root_course_id = uc.course_id
++LEFT JOIN materials_done_per_root  md ON md.root_course_id = uc.course_id
++LEFT JOIN last_active_per_root     la ON la.root_course_id = uc.course_id
++LEFT JOIN student_course_state    scs ON scs.course_id = uc.course_id AND scs.student_id = :user_id
++ORDER BY la.last_active_at DESC NULLS LAST, uc.order_number ASC NULLS LAST
++"""
++
++
++async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict]:
++    """Список активных курсов пользователя с агрегированным progress (single roundtrip).
++
++    Логика progress:
++    - tasks_total/done — count из дерева курса (root + потомки через course_parents)
++    - tasks_done — count distinct task_id с PASS по последней завершённой попытке
++      (score/max_score >= 0.5; та же логика, что в LearningEngineService.compute_course_state)
++    - materials_total/done — count из student_material_progress (status='completed')
++    - last_active_at — MAX(received_at task_results) ∪ MAX(completed_at student_material_progress)
++    - is_completed — student_course_state.state == 'COMPLETED'
++    - percent — округлённое (tasks_done + materials_done) / (tasks_total + materials_total) * 100
++
++    Sort: last_active_at DESC NULLS LAST, order_number ASC NULLS LAST.
++    """
++    result = await db.execute(
++        text(_COURSES_PROGRESS_SQL),
++        {"user_id": user_id, "pass_ratio": PASS_THRESHOLD_RATIO},
++    )
++    rows = result.mappings().all()
++    items: list[dict] = []
++    for row in rows:
++        tasks_total = row["tasks_total"]
++        materials_total = row["materials_total"]
++        tasks_done = row["tasks_done"]
++        materials_done = row["materials_done"]
++        denominator = tasks_total + materials_total
++        if denominator > 0:
++            percent = round(((tasks_done + materials_done) / denominator) * 100)
++        else:
++            percent = 0
++        items.append(
++            {
++                "course_id": row["course_id"],
++                "course_uid": row["course_uid"],
++                "title": row["title"],
++                "order_number": row["order_number"],
++                "progress": {
++                    "tasks_total": tasks_total,
++                    "tasks_done": tasks_done,
++                    "materials_total": materials_total,
++                    "materials_done": materials_done,
++                    "percent": percent,
++                },
++                "last_active_at": row["last_active_at"],
++                "is_completed": row["course_state"] == "COMPLETED",
++            }
++        )
++    return items
++
++
++# ── /me/last-position ───────────────────────────────────────────────────────
++
++_LAST_ACTIVITY_SQL = """
++WITH last_task AS (
++    SELECT tr.received_at AS ts, t.course_id, 'task'::text AS kind, t.id AS task_id, t.external_uid, NULL::int AS material_id
++    FROM task_results tr
++    JOIN tasks t ON t.id = tr.task_id
++    WHERE tr.user_id = :user_id
++    ORDER BY tr.received_at DESC NULLS LAST
++    LIMIT 1
++),
++last_material AS (
++    SELECT smp.completed_at AS ts, m.course_id, 'material'::text AS kind, NULL::int AS task_id, NULL::text AS external_uid, m.id AS material_id
++    FROM student_material_progress smp
++    JOIN materials m ON m.id = smp.material_id
++    WHERE smp.student_id = :user_id AND smp.status = 'completed'
++    ORDER BY smp.completed_at DESC NULLS LAST
++    LIMIT 1
++)
++SELECT * FROM (
++    SELECT * FROM last_task
++    UNION ALL
++    SELECT * FROM last_material
++) U
++ORDER BY ts DESC NULLS LAST
++LIMIT 1
++"""
++
++
++async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
++    """Последняя активность пользователя + резолв next-item (CB §5.3, LMS spec §5.3).
++
++    Возвращает dict (см. LastPositionRead) или None если ничего не открывал.
++
++    Логика (per spec §5.3):
++    1. Найти MAX(received_at task_results) ∪ MAX(completed_at student_material_progress) → course_id, last_active_at
++    2. Если ученик ничего не открывал → None
++    3. Если course_state == 'COMPLETED' → type='course_completed'
++    4. Иначе вызвать `LearningEngineService.resolve_next_item(user_id)` → следующий material/task
++       (через дерево курса; engine упорядочивает по user_courses.order_number)
++    5. blocked_dependency / blocked_limit / none → возвращаем type='course_completed' если
++       text/material progress есть, иначе None — frontend Continue widget может deep-link
++       на курс с подсказкой о блокировке
++    """
++    # Step 1: найти последнюю активность
++    result = await db.execute(text(_LAST_ACTIVITY_SQL), {"user_id": user_id})
++    row = result.mappings().first()
++    if row is None:
++        return None
++
++    last_active_course_id = row["course_id"]
++    last_ts = row["ts"]
++
++    # Получим course_uid + title + course_state для last-active курса
++    course_row = (
++        await db.execute(
++            text(
++                """
++                SELECT c.id, c.course_uid, c.title, scs.state
++                FROM courses c
++                LEFT JOIN student_course_state scs
++                    ON scs.course_id = c.id AND scs.student_id = :user_id
++                WHERE c.id = :course_id
++                """
++            ),
++            {"user_id": user_id, "course_id": last_active_course_id},
++        )
++    ).mappings().first()
++    if course_row is None:
++        return None
++
++    if course_row["state"] == "COMPLETED":
++        return {
++            "course_id": last_active_course_id,
++            "course_uid": course_row["course_uid"],
++            "course_title": course_row["title"],
++            "type": "course_completed",
++            "last_active_at": last_ts,
++        }
++
++    # Step 4: вызов learning engine для NEXT item
++    # Импорт inline во избежание circular import (engine → repos → ...)
++    from app.services.learning_engine_service import LearningEngineService
++
++    engine = LearningEngineService()
++    next_item = await engine.resolve_next_item(db, student_id=user_id)
++    next_course_id = next_item.course_id or last_active_course_id
++
++    # Если NEXT в другом курсе — обновим course_uid/title под него
++    if next_course_id != last_active_course_id:
++        next_course_row = (
++            await db.execute(
++                text("SELECT id, course_uid, title FROM courses WHERE id = :course_id"),
++                {"course_id": next_course_id},
++            )
++        ).mappings().first()
++        if next_course_row is not None:
++            course_row = next_course_row
++
++    if next_item.type == "material":
++        return {
++            "course_id": next_course_id,
++            "course_uid": course_row["course_uid"],
++            "course_title": course_row["title"],
++            "type": "material",
++            "material_id": next_item.material_id,
++            "last_active_at": last_ts,
++        }
++
++    if next_item.type == "task":
++        # Получим external_uid для deeplink в SPW
++        ext_row = (
++            await db.execute(
++                text("SELECT external_uid FROM tasks WHERE id = :task_id"),
++                {"task_id": next_item.task_id},
++            )
++        ).mappings().first()
++        return {
++            "course_id": next_course_id,
++            "course_uid": course_row["course_uid"],
++            "course_title": course_row["title"],
++            "type": "task",
++            "task_id": next_item.task_id,
++            "external_uid": ext_row["external_uid"] if ext_row else None,
++            "last_active_at": last_ts,
++        }
++
++    # next_item.type ∈ {'none', 'blocked_dependency', 'blocked_limit'}:
++    # все active курсы пройдены или заблокированы. Трактуем как course_completed
++    # (last-active course — курс к которому виджет «Продолжить» отправит без действия).
++    return {
++        "course_id": last_active_course_id,
++        "course_uid": course_row["course_uid"],
++        "course_title": course_row["title"],
++        "type": "course_completed",
++        "last_active_at": last_ts,
++    }
++
++
++# ── /me/streak ──────────────────────────────────────────────────────────────
++
++# CTE расчёта streak в TZ Europe/Moscow (см. tech-spec §5.4):
++# 1) active_days — distinct дни активности (по received_at::date в Europe/Moscow)
++# 2) numbered — gap-detection через ROW_NUMBER:
++#    для DESC-упорядоченных последовательных дней `d + rn*1d` константа
++#    (newest=T,rn=1 → T+1; T-1,rn=2 → T+1; T-2,rn=3 → T+1)
++#    Y-3.1 fix: исходный spec использовал DESC + минус (математически ломалось — см. test_streak_logic).
++# 3) current_run — записи с MAX(grp) → самый свежий run; внешний Python-код обнуляет
++#    streak если last < today-1.
++_STREAK_SQL = """
++WITH active_days AS (
++    SELECT DISTINCT (received_at AT TIME ZONE 'Europe/Moscow')::date AS d
++    FROM task_results
++    WHERE user_id = :user_id
++),
++numbered AS (
++    SELECT d,
++           d + (ROW_NUMBER() OVER (ORDER BY d DESC))::int * INTERVAL '1 day' AS grp
++    FROM active_days
++),
++current_run AS (
++    SELECT COUNT(*) AS streak_days, MAX(d) AS last_active_date
++    FROM numbered
++    WHERE grp = (SELECT MAX(grp) FROM numbered)
++)
++SELECT streak_days, last_active_date FROM current_run
++"""
++
++
++async def get_streak(db: AsyncSession, user_id: int) -> dict:
++    """Streak дней подряд в Europe/Moscow (см. tech-spec §5.4).
++
++    Streak обнуляется если last_active_date < (today_moscow - 1 day).
++    today_active — true если сегодня (Europe/Moscow) есть task_result.
++    """
++    row = (await db.execute(text(_STREAK_SQL), {"user_id": user_id})).mappings().first()
++    streak_days = int(row["streak_days"]) if row and row["streak_days"] else 0
++    last_active_date: date | None = row["last_active_date"] if row else None
++
++    # Today в Europe/Moscow
++    today_row = (
++        await db.execute(text("SELECT (now() AT TIME ZONE 'Europe/Moscow')::date AS today"))
++    ).mappings().first()
++    today_msk: date = today_row["today"]
++
++    # Обнуление streak если last < yesterday
++    if last_active_date is not None:
++        gap_days = (today_msk - last_active_date).days
++        if gap_days > 1:
++            streak_days = 0
++            last_active_date = None
++
++    today_active = last_active_date == today_msk
++
++    return {
++        "streak_days": streak_days,
++        "last_active_date": last_active_date,
++        "today_active": today_active,
++    }
+diff --git a/docs/specs/2026-04-29-tech-spec-Y3-learning-loop-backend.md b/docs/specs/2026-04-29-tech-spec-Y3-learning-loop-backend.md
+new file mode 100644
+index 0000000..6218a17
+--- /dev/null
++++ b/docs/specs/2026-04-29-tech-spec-Y3-learning-loop-backend.md
+@@ -0,0 +1,571 @@
++# Tech-Spec Y-3 (LMS backend): /me/* endpoints + identity linking + M7 индекс
++
++**Дата:** 2026-04-29
++**Skill:** /executor-pro (executor) + /tech-spec-composer (формат)
++**Статус:** READY for executor (Phase Y-3, backend-only LMS scope)
++**Phase:** Y-3 (CB authority spec — `D:\Work\ContentBackbone\docs\tech-specs\tech-spec-Y3-learning-loop-v1.md`)
++
++**Authority spec (cross-project):** `D:\Work\ContentBackbone\docs\tech-specs\tech-spec-Y3-learning-loop-v1.md` v1
++**LMS local ADR:** `docs/ai/adr/0001-auth-passwordless-multi-identity.md`
++**ContentBackbone ADRs:** ADR-0011 (amended), ADR-0017, ADR-0020, ADR-0021 §«Confirmed registration policy»
++
++**Зависимости:**
++- ✅ Phase Y-1 + Y-1.5 + Y-1.5.1 в production (Alembic head: `20260428_060000_m6_tg_sync`)
++- ✅ Cross-project memory hub синхронизирован (CHANGELOG 2026-04-28)
++- ✅ Redis 7 доступен (для `link_token_service` + `rate_limit_service`); fallback in-memory dict для dev
++
++## 1. Скоуп LMS backend
++
++Этот документ — backend-only LMS-side зеркало CB authority spec §7.2 + §8.1 + §8.2 + §10. Frontend (SPW pages, hooks, восхищения, material viewer, hint UI, identity linking UI) — вне scope этого LMS-spec; см. CB authority §6, §8.3-8.8.
++
++### 1.1. В scope
++
++**БД (1 миграция):**
++- M7 `idx_task_results_user_received(user_id, received_at DESC)` — для streak query
++
++**Endpoints (6 новых):**
++- `GET  /api/v1/me/identities`
++- `GET  /api/v1/me/courses`
++- `GET  /api/v1/me/last-position`
++- `GET  /api/v1/me/streak`
++- `POST /api/v1/auth/link-token/issue`
++- `POST /api/v1/me/identity/{kind}/link`
++
++**Расширения существующего:**
++- `app/services/auth/identity_link_service.py` — метод `link_existing_user(db, user_id, kind, value, ...)` с savepoint pattern + raise `IdentityConflictError` при overlap
++- `app/api/v1/auth/magic_link.py` — `POST /auth/magic-link/send` принимает `link_mode: bool = False` body-параметр (для email linking flow per CB §16 risks); `POST /auth/magic-link/verify` отдаёт `magic_link_token` для дальнейшего consume в `/me/identity/email/link` (без создания сессии в link_mode)
++- `app/services/audit_service.py` — расширение enum событий: `auth.link_token.issued`, `auth.identity.linked`, `auth.identity.linked.conflict`
++
++**Новые сервисы:**
++- `app/services/auth/link_token_service.py` — issue/consume one-time link_token с TTL 5 мин (Redis или in-memory fallback)
++
++**Технический долг (cleanup):**
++- Файл `app/services/auth/link_token_service.py` сейчас содержит функцию `attribute_guest_session` (Y-1 misnaming). Шаг 0: переименовать `link_token_service.py` → `guest_attribution_service.py`, обновить 3 импорта (vk.py / magic_link.py / tg.py), затем создать новый `link_token_service.py` с правильным содержимым.
++
++### 1.2. Вне scope (этого LMS-spec)
++
++- SPW frontend (CB §6, §8.3-8.8)
++- TG_LMS изменения (Y-3 их не трогает)
++- ContentBackbone изменения (Stream X — Y-5)
++- SA_COM (Y-4)
++- Guest mode (Y-5)
++- WP embed (Y-5)
++- TG WebApp MainButton (frontend, Y-3 SPW)
++
++### 1.3. Что не трогать
++
++- `users` schema (Y-1.5 финализирована)
++- Существующие endpoints `learning/*`, `attempts/*`, `tasks/*`, `materials/*` — Y-3 только потребляет
++- `task_results.review_claim_*` поля (для Y-4 SA_COM teacher queue)
++- `materials` schema — Y-3 только читает
++- Auth model (Y-1 + Y-1.5 финализированы); `current_user` dependency сохраняет паттерн
++- TG_LMS api_client (`get_user_by_tg` → `users.tg_id`; sync уже сделана в Y-1.5)
++
++## 2. Архитектура изменений
++
++```
++app/
++├── api/v1/
++│   ├── me.py                              # MOD: +4 endpoint (identities/courses/last-position/streak) +1 endpoint (POST /me/identity/{kind}/link)
++│   ├── auth/
++│   │   ├── magic_link.py                  # MOD: link_mode=True ветвь (без создания сессии)
++│   │   └── link_token.py                  # NEW: POST /auth/link-token/issue
++├── services/
++│   ├── me_service.py                      # NEW: get_identities/get_courses_with_progress/get_last_position/get_streak
++│   ├── learning_engine_service.py         # MOD: +compute_user_courses_with_progress(user_id) batched
++│   ├── audit_service.py                   # MOD: enum extension
++│   └── auth/
++│       ├── guest_attribution_service.py   # NEW (rename из link_token_service.py)
++│       ├── link_token_service.py          # NEW (replace, реальный link_token)
++│       └── identity_link_service.py       # MOD: +link_existing_user
++├── schemas/
++│   ├── me.py                              # MOD: +IdentityRead, CourseWithProgressRead, LastPositionRead, StreakRead
++│   └── auth.py                            # MOD: +LinkTokenIssueRequest/Response, IdentityLinkRequest (kind union), IdentityLinkResponse
++└── db/migrations/versions/
++    └── 20260429_010000_M7_task_results_user_received_idx.py   # NEW
++tests/
++├── test_me_endpoints.py                       # NEW
++├── test_streak_logic.py                       # NEW
++├── test_link_token_service.py                 # NEW
++├── test_identity_link_existing_user.py        # NEW
++├── test_me_courses_progress.py                # NEW
++├── test_last_position.py                      # NEW
++├── test_identity_link_full_flow.py            # NEW
++└── test_migrations.py                         # MOD: +M7 upgrade/downgrade roundtrip
++```
++
++## 3. Стек и стандарты
++
++| Параметр | Значение |
++|---|---|
++| Python | 3.10+ |
++| FastAPI / SQLAlchemy 2.x async / Alembic | без bump |
++| PG | 13+ (текущий) |
++| Redis | 7, для `link_token_service`; fallback in-memory dict для dev (документировать) |
++| Type hints | обязательны |
++| Docstrings | RU |
++| `logging` | вместо print |
++| Encoding | UTF-8 без BOM |
++
++## 4. Обязательные правила
++
++- **Backsync контракта в same commit:** контракт mirror `D:\Work\ContentBackbone\docs\cross-project\contracts\lms-api.md` обновляется в том же PR с merge endpoint (Y-1 ERRORS #1, #2 урок).
++- **Atomic identity linking:** INSERT identity_link с validation link_token в одной транзакции через `db.begin_nested()` savepoint pattern (Y-1.5 урок #3 — НЕ `db.rollback()`).
++- **TZ explicit на boundary:** `/me/streak` compute ВСЕГДА в `Europe/Moscow` на стороне сервера через `AT TIME ZONE 'Europe/Moscow'`.
++- **link_token single-use:** Redis `DEL` после consume — atomic; second consume → 401 invalid.
++- **Rate-limit:** `link_token/issue` 10/мин на user (через `rate_limit_service`).
++- **Email linking strict:** в режиме `link_mode=True` `magic_link/send` НЕ создаёт пользователя; `magic_link/verify` НЕ создаёт сессию (только подтверждает владение email и возвращает `magic_link_token` для consume через `/me/identity/email/link`).
++- **Защита от identity-takeover:** при привязке identity, уже привязанной к другому user — STRICT 409 (без auto-merge), per ADR-0021 §2; orphan email (Y-1.5.1 lesson) → 409 `email_already_linked_to_orphan_user`.
++- **Audit events:** для каждой успешной привязки + 409 conflict — событие через `audit_service.log_event`.
++
++## 5. API Endpoints (LMS-side контракты)
++
++> Frontend routes — см. CB authority spec §6 (НЕ путать с API endpoints, ERRORS #2 урок).
++
++### 5.1. `GET /api/v1/me/identities`
++
++- **Auth:** `Depends(require_authenticated)` (current_user)
++- **Response 200:** `[{kind: "email"|"tg"|"vk", value_masked: str, created_at: datetime, last_used_at: datetime | null}]`
++- **Value masking:**
++  - email → first 3 char + `***` + `@<домен>` (e.g. `vic***@gmail.com`); если local-part короче 3 — `***@<домен>`
++  - tg → `***` + последние 4 символа (e.g. `***1234`)
++  - vk → первые 8 символов + `...` (e.g. `12345678...`)
++- **Response 401:** `auth required`
++- **Owner:** `/executor-pro` · **Review:** `/pr-review`
++
++### 5.2. `GET /api/v1/me/courses`
++
++- **Auth:** current_user
++- **Response 200:**
++  ```json
++  [{
++    "course_id": int, "course_uid": str, "title": str, "order_number": int,
++    "progress": {"tasks_total": int, "tasks_done": int, "materials_total": int, "materials_done": int, "percent": int},
++    "last_active_at": datetime | null, "is_completed": bool
++  }]
++  ```
++- **Источник данных:** `user_courses WHERE user_id=current.id AND is_active=true`. Для каждого курса:
++  - `tasks_total` — count из courses tree (через `course_parents`)
++  - `tasks_done` — count `task_results WHERE user_id AND course_id IN tree AND is_correct=true`
++  - `materials_total` / `materials_done` — count из `student_material_progress`
++  - `last_active_at` — `MAX(received_at)` от task_results + `MAX(updated_at)` от student_material_progress
++  - `is_completed` — `student_course_state.state = 'COMPLETED'`
++- **Implementation:** новый метод `LearningEngineService.compute_user_courses_with_progress(user_id)` — batched query, без N+1
++- **Sort:** `last_active_at DESC NULLS LAST, order_number ASC`
++- **Owner:** `/executor-pro` · **Review:** `/pr-review`
++
++### 5.3. `GET /api/v1/me/last-position`
++
++- **Auth:** current_user
++- **Response 200:** `{course_id, course_uid, course_title, type: "task"|"material"|"course_completed"|"none", task_id?: int, external_uid?: str, material_id?: int, last_active_at: datetime} | null`
++- **Логика:**
++  1. Найти `MAX(received_at)` среди `task_results WHERE user_id` и `MAX(updated_at)` среди `student_material_progress WHERE student_id` → определить last activity record
++  2. Из record извлечь `course_id` → resolve `course_uid` + `title`
++  3. Если course completed → `type='course_completed'`
++  4. Иначе вызвать `learning_engine_service.resolve_next_item(user_id)` → next material/task в этом курсе → вернуть его
++  5. Если ученик ничего не открывал → response = `null`
++- **Owner:** `/executor-pro` · **Review:** `/pr-review`
++
++### 5.4. `GET /api/v1/me/streak`
++
++- **Auth:** current_user
++- **Response 200:** `{streak_days: int, last_active_date: date | null, today_active: bool}`
++- **Логика (CTE):**
++  ```sql
++  WITH active_days AS (
++    SELECT DISTINCT (received_at AT TIME ZONE 'Europe/Moscow')::date AS d
++    FROM task_results
++    WHERE user_id = :user_id
++  ),
++  numbered AS (
++    SELECT d, d - (ROW_NUMBER() OVER (ORDER BY d DESC))::int * INTERVAL '1 day' AS grp
++    FROM active_days
++  )
++  SELECT COUNT(*) AS streak_days, MAX(d) AS last_active_date
++  FROM numbered
++  WHERE grp = (SELECT MAX(grp) FROM numbered)
++    AND last_active_date >= (CURRENT_DATE AT TIME ZONE 'Europe/Moscow')::date - INTERVAL '1 day';
++  ```
++- **Streak обнуляется** если `last_active_date < today - 1 day` (вчерашний — последний разрешённый gap; today optional).
++- **`today_active`:** true если есть task_result с `(received_at AT TIME ZONE 'Europe/Moscow')::date = today`.
++- **TZ-handling:** все compute server-side в `Europe/Moscow`; SPW отображает значения как есть, без TZ конверсии.
++- **Performance:** требует **M7 индекс**.
++- **Owner:** `/executor-pro` · **Review:** `/techlead-code-reviewer` (TZ-критично + race на сегодняшний день)
++
++### 5.5. `POST /api/v1/auth/link-token/issue`
++
++- **Auth:** current_user
++- **Body:** `{kind: "email" | "tg" | "vk"}`
++- **Response 200:** `{link_token: str, expires_at: datetime}`
++  - `link_token` = 32 байта secure random base64url; one-time
++- **Storage:** Redis с TTL 5 мин (key `link_token:{sha256(token)}` value `{user_id, kind, issued_at}`); fallback in-memory dict для dev.
++- **Side effect:** `audit_event` `auth.link_token.issued` (details: `{kind}`).
++- **Rate-limit:** 10/мин на user (Redis-backed).
++- **Owner:** `/executor-pro` · **Review:** `/techlead-code-reviewer` (one-time semantic + TTL)
++
++### 5.6. `POST /api/v1/me/identity/{kind}/link`
++
++- **Auth:** current_user
++- **Path param:** `kind` ∈ {"email", "tg", "vk"}
++- **Body (kind-specific union):**
++  - `email`: `{link_token: str, magic_link_token: str}` — `magic_link_token` получен через `/auth/magic-link/send` + `/auth/magic-link/verify` в режиме `link_mode=true`
++  - `tg`: `{link_token: str, init_data: str}` — initData verified server-side через существующий `tg_init_service`
++  - `vk`: `{link_token: str, code: str, code_verifier: str, device_id: str}` — VK PKCE flow для existing user (см. CB §22.1: `state="link:<token>"` обрабатывается на vk-relay; backend получает уже очищенный `link_token`)
++- **Side effect:**
++  1. `link_token_service.consume(raw_token)` → atomic Redis DEL → `{user_id, kind} | None` (если invalid/expired/consumed → 401 `invalid_link_token`)
++  2. Validate kind-specific payload (HMAC initData / VK exchange / magic_link consume)
++  3. Если `(kind, value)` уже существует:
++     - Привязан к **current_user** → idempotent success (UPDATE `last_used_at`)
++     - Привязан к **другому user** → 409 `identity_conflict`
++     - Existing email-only user без identity_link (orphan, Y-1.5.1) → 409 `email_already_linked_to_orphan_user`
++  4. Иначе `identity_link_service.link_existing_user(db, user_id=current.id, kind, value, ...)` через savepoint pattern; для `kind='vk'` — Fernet-encrypted token; для `kind='tg'` — двусторонняя sync `users.tg_id` (через существующий `_sync_users_tg_id`)
++  5. `audit_event` `auth.identity.linked` с details `{kind, value_masked, source_payload_kind}`
++- **Response 200:** `{ok: true, identity: {kind, value_masked, created_at}}`
++- **Response 401:** invalid/expired/consumed `link_token`, или kind-specific validation failure
++- **Response 409:** identity_conflict (с body аналогичным `/auth/vk/callback`):
++  ```json
++  {"detail": {"error": "identity_conflict", "conflict_kind": "email_already_linked"|"tg_already_linked"|"vk_already_linked"|"email_already_linked_to_orphan_user", "existing_kinds": ["email","tg",...]}}
++  ```
++- **Owner:** `/executor-pro` · **Review:** `/techlead-code-reviewer` (security — link_token verify + identity overlap + atomic INSERT)
++
++## 6. M7 Миграция
++
++`app/db/migrations/versions/20260429_010000_M7_task_results_user_received_idx.py`:
++
++```python
++"""M7: индекс task_results(user_id, received_at DESC) для streak query.
++
++Revision ID: 20260429_010000_m7_user_received_idx
++Revises: 20260428_060000_m6_tg_sync
++Create Date: 2026-04-29
++"""
++from alembic import op
++import sqlalchemy as sa
++
++revision = '20260429_010000_m7_user_received_idx'
++down_revision = '20260428_060000_m6_tg_sync'
++branch_labels = None
++depends_on = None
++
++
++def upgrade() -> None:
++    op.create_index(
++        'idx_task_results_user_received',
++        'task_results',
++        ['user_id', sa.text('received_at DESC')],
++    )
++
++
++def downgrade() -> None:
++    op.drop_index('idx_task_results_user_received', table_name='task_results')
++```
++
++**Не concurrent** в development. Для production (если объём вырастет с текущих ~39 records) — `CREATE INDEX CONCURRENTLY` отдельным non-transactional шагом.
++
++**Owner:** `/executor-pro` · **Review:** `/db-check` pre+post (perf на streak query) → `/pr-review` → `/review-gate`
++
++## 7. Шаги реализации
++
++### 7.1. Cleanup misnaming `link_token_service.py`
++
++1. Rename `app/services/auth/link_token_service.py` → `guest_attribution_service.py` (содержимое не меняется)
++2. Update 3 импорта:
++   - `app/api/v1/auth/vk.py`
++   - `app/api/v1/auth/magic_link.py`
++   - `app/api/v1/auth/tg.py`
++3. Update `tests/test_guest_attribution.py` импорт (если есть)
++4. Smoke: `pytest tests/test_guest_attribution.py -v` зелёный
++
++### 7.2. M7 миграция
++
++`/db-check` pre: проверить отсутствие индекса `idx_task_results_user_received`; explain analyze streak query (без индекса — full scan).
++
++Создать миграцию (см. §6); `alembic upgrade head` → `alembic downgrade -1` → `alembic upgrade head`.
++
++`/db-check` post: проверить наличие индекса; explain analyze streak query (должен использовать index scan).
++
++### 7.3. `link_token_service.py` (новый, замещающий)
++
++Файл `app/services/auth/link_token_service.py`:
++
++```python
++"""Сервис one-time link_token для привязки identity к существующему user (Y-3).
++
++См. ADR-0021 §«Confirmed registration policy» и tech-spec Y-3 §5.5.
++"""
++import logging
++import secrets
++from dataclasses import dataclass
++from datetime import datetime, timedelta, timezone
++from hashlib import sha256
++from typing import Literal
++
++logger = logging.getLogger(__name__)
++
++LinkTokenKind = Literal["email", "tg", "vk"]
++TTL = timedelta(minutes=5)
++
++
++class LinkTokenError(Exception):
++    """Базовая ошибка консьюмации link_token."""
++    def __init__(self, reason: Literal["invalid", "expired", "consumed"]) -> None:
++        self.reason = reason
++        super().__init__(f"link_token_{reason}")
++
++
++@dataclass(frozen=True)
++class LinkTokenPayload:
++    user_id: int
++    kind: LinkTokenKind
++    issued_at: datetime
++
++
++async def issue(user_id: int, kind: LinkTokenKind) -> tuple[str, datetime]:
++    """Выпустить one-time link_token. Возвращает (raw_token, expires_at)."""
++    raw = secrets.token_urlsafe(32)
++    key = sha256(raw.encode()).hexdigest()
++    expires_at = datetime.now(timezone.utc) + TTL
++    payload = LinkTokenPayload(user_id=user_id, kind=kind, issued_at=datetime.now(timezone.utc))
++    await _store(key, payload, ttl_seconds=int(TTL.total_seconds()))
++    return raw, expires_at
++
++
++async def consume(raw_token: str) -> LinkTokenPayload:
++    """Atomic GET+DEL. Возвращает payload или raise LinkTokenError."""
++    if not raw_token:
++        raise LinkTokenError("invalid")
++    key = sha256(raw_token.encode()).hexdigest()
++    payload = await _pop(key)
++    if payload is None:
++        raise LinkTokenError("invalid")  # либо expired, либо consumed; client не различает
++    return payload
++
++
++# _store / _pop — Redis-backed реализация с in-memory fallback (см. rate_limit_service паттерн)
++```
++
++Storage backend: переиспользовать паттерн `rate_limit_service` (Redis с fallback). Detail: `_store` использует `SETEX`; `_pop` — Lua-скрипт `local v = redis.call('GET', KEYS[1]); redis.call('DEL', KEYS[1]); return v` для атомарности.
++
++### 7.4. `identity_link_service.link_existing_user`
++
++Новый метод в `app/services/auth/identity_link_service.py`:
++
++```python
++async def link_existing_user(
++    db: AsyncSession,
++    user_id: int,
++    kind: IdentityKind,
++    value: str,
++    *,
++    vk_access_token_enc: bytes | None = None,
++    vk_refresh_token_enc: bytes | None = None,
++    vk_token_expires_at=None,
++) -> IdentityLink:
++    """Привязать identity к existing user через savepoint.
++
++    Raise IdentityConflictError если (kind, value) уже занят другим user
++    или если orphan email (Y-1.5.1 защита).
++    """
++    normalized = value.lower() if kind == "email" else value
++
++    # 1. Проверить existing identity_link
++    existing = await find_identity(db, kind, normalized)
++    if existing is not None:
++        if existing.user_id == user_id:
++            existing.last_used_at = datetime.now(timezone.utc)
++            await db.flush()
++            return existing
++        # 409: identity занят другим user
++        existing_kinds = await _kinds_of_user(db, existing.user_id)
++        raise IdentityConflictError(
++            conflict_kind=f"{kind}_already_linked",
++            existing_kinds=existing_kinds,
++        )
++
++    # 2. Для email: orphan check (Y-1.5.1)
++    if kind == "email":
++        orphan_user = await _find_orphan_user_by_email(db, normalized)
++        if orphan_user is not None and orphan_user.id != user_id:
++            raise IdentityConflictError(
++                conflict_kind="email_already_linked_to_orphan_user",
++                existing_kinds=[],
++            )
++
++    # 3. INSERT через savepoint (Y-1.5 lesson #3)
++    async with db.begin_nested():
++        link = await upsert_identity(
++            db, user_id, kind, normalized,
++            vk_access_token_enc=vk_access_token_enc,
++            vk_refresh_token_enc=vk_refresh_token_enc,
++            vk_token_expires_at=vk_token_expires_at,
++        )
++    return link
++```
++
++### 7.5. `magic_link_service` extension под `link_mode`
++
++В `app/api/v1/auth/magic_link.py`:
++- `POST /auth/magic-link/send` принимает body `{email, link_mode: bool = False}`. При `link_mode=True` НЕ выполняется `get_or_create_user_by_email`; письмо отправляется с QSP `link_mode=1` (для UX страницы consume).
++- `POST /auth/magic-link/verify` принимает body `{token, link_mode: bool = False, guest_session_id?}`. При `link_mode=True`:
++  - НЕ создаёт user (если ещё не существует — 401 `email_unknown_in_link_mode`)
++  - НЕ создаёт session
++  - Возвращает `{magic_link_token: <token>, email_verified: true}` (тот же `token`, помеченный как valid для последующего consume в `/me/identity/email/link`)
++  - НЕ помечает `magic_link.consumed_at` (consume произойдёт в `/me/identity/email/link`)
++
++Все изменения backwards-compatible: `link_mode=False` по умолчанию → существующее поведение Y-1.5 не меняется.
++
++### 7.6. 4 `/me/*` endpoints
++
++- Реализация в `app/api/v1/me.py` через расширение существующего `router = APIRouter(prefix="/me", tags=["me"])`
++- Сервисный слой: `app/services/me_service.py` — методы `get_identities`, `get_courses_with_progress`, `get_last_position`, `get_streak`
++- Pydantic схемы: `app/schemas/me.py` — `IdentityRead`, `CourseWithProgressRead`, `LastPositionRead`, `StreakRead`
++- `compute_user_courses_with_progress` — новый метод в `learning_engine_service.py`, batched query через CTE (избегаем N+1)
++
++### 7.7. `POST /api/v1/auth/link-token/issue` + `POST /api/v1/me/identity/{kind}/link`
++
++- `app/api/v1/auth/link_token.py` (новый файл): `POST /auth/link-token/issue` (см. §5.5)
++- `app/api/v1/me.py`: `POST /me/identity/{kind}/link` (см. §5.6) — 3 ветви по kind
++
++### 7.8. Аудит-события
++
++В `app/services/audit_service.py` — добавить enum константы (если они там определены) или просто использовать новые event_type строки:
++- `auth.link_token.issued`
++- `auth.identity.linked`
++- `auth.identity.linked.conflict`
++
++### 7.9. Backsync OpenAPI + cross-project memory
++
++После merge endpoint:
++1. `python -m app.cli.gen_openapi` (или эквивалент) → обновить `docs/openapi.json`
++2. Обновить `D:\Work\ContentBackbone\docs\cross-project\contracts\lms-api.md` — добавить 6 новых endpoints
++3. Обновить `D:\Work\ContentBackbone\docs\cross-project\contracts\lms-db-schema.md` — Alembic head → `m7_user_received_idx`
++4. Append в `D:\Work\ContentBackbone\docs\cross-project\CHANGELOG.md`
++5. Update `D:\Work\ContentBackbone\docs\cross-project\STATE.md` — Y-3 backend phase status
++6. `git add docs/cross-project && git commit -m "cross-project: LMS Y-3 backend"` в **ContentBackbone**
++
++## 8. Tests
++
++**Unit:**
++- `tests/test_me_endpoints.py` — happy + edge для `/identities`, `/courses`, `/last-position`, `/streak`
++- `tests/test_streak_logic.py` — TZ Europe/Moscow, gap=1 OK, gap=2 reset, today_active flag, edge: пустой задач, single day
++- `tests/test_link_token_service.py` — issue/consume/expired/already_consumed/invalid + Redis vs in-memory parity
++- `tests/test_identity_link_existing_user.py` — happy (email/tg/vk) + 409 conflict (each kind) + orphan email + idempotent (current_user) + Fernet for VK
++
++**Integration:**
++- `tests/test_me_courses_progress.py` — multi-course tree, progress correct, no N+1 (verify через query log/profiler)
++- `tests/test_last_position.py` — task vs material, current course vs other, course_completed
++- `tests/test_identity_link_full_flow.py` — issue token → consume → identity_link created → audit_event written
++- `tests/test_migrations.py` extension — M7 upgrade + downgrade roundtrip
++
++**Owner:** `/qa-fix` · **Review:** `/review-gate`
++
++## 9. Acceptance criteria
++
++- [ ] M7 миграция apply + downgrade roundtrip зелёные
++- [ ] Все 4 `/me/*` endpoint и 2 linking endpoint имеют тесты + manual smoke
++- [ ] `/me/streak` корректно считает streak в Europe/Moscow с edge cases (gap=1, gap=2, today)
++- [ ] `/me/courses` возвращает progress без N+1 (verified через query log)
++- [ ] `/me/last-position` корректно для всех 3 случаев (никогда не открывал / открыт task / course_completed)
++- [ ] Identity linking 409 conflict path работает (existing user → 409, orphan email → 409, current_user → 200 idempotent)
++- [ ] `/auth/link-token/issue` rate-limit 10/мин enforced
++- [ ] link_token single-use: повторный consume → 401
++- [ ] magic-link `link_mode=True` НЕ создаёт user/session
++- [ ] Audit events записаны для каждой успешной привязки + 409 conflict + token issue
++- [ ] `pytest tests/ -m "not slow" -v` зелёный
++- [ ] `bandit -r app/ -ll` без HIGH severity
++- [ ] OpenAPI `docs/openapi.json` regenerated
++- [ ] Cross-project memory backsync: `contracts/lms-api.md` + `lms-db-schema.md` + `CHANGELOG.md` + `STATE.md` updated в одном PR
++
++## 10. Команды проверки
++
++```bash
++cd D:\Work\LMS
++
++# Миграция
++alembic upgrade head
++alembic downgrade -1
++alembic upgrade head
++
++# Тесты (focused Y-3)
++pytest tests/test_me_endpoints.py tests/test_streak_logic.py tests/test_link_token_service.py tests/test_identity_link_existing_user.py tests/test_me_courses_progress.py tests/test_last_position.py tests/test_identity_link_full_flow.py -v
++
++# Полный прогон (не slow)
++pytest tests/ -m "not slow" -v
++
++# SAST
++bandit -r app/ -ll
++
++# DB проверка через MCP postgresql (read-only)
++# - SELECT indexname FROM pg_indexes WHERE indexname='idx_task_results_user_received'
++# - EXPLAIN ANALYZE <streak query> для тестового user_id
++
++# Manual smoke (live)
++# 1. uvicorn app.main:app --reload
++# 2. login через magic-link → token → curl с Bearer
++# 3. GET /api/v1/me/identities → проверить masking
++# 4. GET /api/v1/me/streak → проверить today_active
++# 5. POST /api/v1/auth/link-token/issue {kind:"vk"} → получить token
++# 6. POST /api/v1/me/identity/vk/link {link_token, code, code_verifier, device_id} → mock VK answer или real
++```
++
++## 11. Артефакты review-gate
++
++- `D:\Work\LMS\reviews\2026-MM-DD-y3-backend.md` (markdown с заголовком, контекстом, начало diff)
++- `D:\Work\LMS\reviews\2026-MM-DD-y3-backend.diff` (`git diff main...HEAD`)
++- `D:\Work\LMS\reviews\evidence\2026-MM-DD-y3-pytest.log`
++- `D:\Work\LMS\reviews\evidence\2026-MM-DD-y3-bandit.log`
++- `D:\Work\LMS\reviews\evidence\2026-MM-DD-y3-db-check-pre.md` (explain analyze без индекса)
++- `D:\Work\LMS\reviews\evidence\2026-MM-DD-y3-db-check-post.md` (explain analyze с индексом)
++
++## 12. Риски и откат
++
++| Риск | Митигация |
++|---|---|
++| `/me/streak` query slow на >100k task_results | M7 индекс + кэш на TanStack Query staleTime=300сек на стороне SPW |
++| Race на link_token consume (две вкладки) | atomic Redis Lua-скрипт GET+DEL; second consume → 401 |
++| Identity linking через magic-link для linking | LMS magic_link различает «register» vs «link» через `link_mode: bool` параметр; backsync mirror |
++| Misnamed `link_token_service.py` rename ломает Y-1 auth flow | сначала переименовать с обновлением 3 импортов + smoke `test_guest_attribution.py`, и только потом создавать новый файл |
++| Redis недоступен в dev | `link_token_service` имеет in-memory dict fallback (см. `rate_limit_service` паттерн) |
++| `compute_user_courses_with_progress` падает на пустом `course_parents` | unit test с курсом без parents → пустое tree → вернуть progress 0/0 |
++
++**Rollback:**
++- `alembic downgrade -1` (M7 → M6) — индекс снимается
++- revert LMS Y-3 commits — 6 новых endpoint исчезают; SPW Y-3 frontend начнёт показывать 404 на новых маршрутах (приемлемо т.к. SPW Y-3 frontend ещё не в production)
++
++## 13. Skill-routing summary (LMS-side)
++
++| Под-задача | Главный | Ревью |
++|---|---|---|
++| 7.1 cleanup rename link_token_service.py | `/executor-lite` | `/pr-review` |
++| 7.2 M7 миграция | `/executor-pro` | `/db-check` pre+post → `/pr-review` → `/review-gate` |
++| 7.3 link_token_service.py (новый) | `/executor-pro` | `/techlead-code-reviewer` (one-time + TTL) |
++| 7.4 identity_link_service.link_existing_user | `/executor-pro` | `/techlead-code-reviewer` (savepoint + 409) |
++| 7.5 magic_link link_mode | `/executor-pro` | `/pr-review` |
++| 7.6 4 `/me/*` endpoints | `/executor-pro` | `/pr-review` (3 шт) + `/techlead-code-reviewer` (для `/streak`) |
++| 7.7 link-token/issue + identity/{kind}/link | `/executor-pro` | `/techlead-code-reviewer` (security) |
++| 7.8 audit_service enum | `/executor-lite` | `/pr-review` |
++| 7.9 OpenAPI + cross-project memory | `/executor-pro` | `/context-auditor` |
++| Tests (unit + integration) | `/qa-fix` | `/review-gate` |
++| Финальный merge | — | `/review-gate` (12 измерений) + `/context-auditor` |
++
++Cross-cutting:
++- `/encoding-guard` — после правок RU-текстов в audit/spec
++- `/db-check` — pre+post M7 миграции (perf на streak query)
++- `/context-auditor` — перед финальным merge
++
++## 14. Связанные документы
++
++- [CB tech-spec Y-3 (authority)](../../../ContentBackbone/docs/tech-specs/tech-spec-Y3-learning-loop-v1.md)
++- [LMS tech-spec Y-1](2026-04-27-tech-spec-Y1-auth-extension.md)
++- [LMS ADR-0001](../ai/adr/0001-auth-passwordless-multi-identity.md)
++- [CB ADR-0021](../../../ContentBackbone/docs/adr/0021-user-auto-registration-unified-flow.md)
++- [LMS learning-engine-next-item.md](../learning-engine-next-item.md)
++- [LMS frontend-contract-sa-com.md](../frontend-contract-sa-com.md)
++- [Cross-project contracts/lms-api.md](../../../ContentBackbone/docs/cross-project/contracts/lms-api.md)
++- [Cross-project contracts/lms-db-schema.md](../../../ContentBackbone/docs/cross-project/contracts/lms-db-schema.md)
++
++---
++
++**Размер:** L (5-8 рабочих дней backend-only). Если оператор видит риск перерасхода — разбить на Y-3-be-a (cleanup §7.1 + M7 §7.2 + 4 `/me/*` §7.6 + tests) + Y-3-be-b (linking flow §7.3-7.5, §7.7-7.8 + tests + cross-project memory). По умолчанию **рекомендуется** одно слияние для целостности (4 `/me/*` без linking всё равно работают, но linking без 4 `/me/*` бесполезен — UI его не покажет).
++
++**Готовность к executor:** ТЗ полный; пометки исполнителей расставлены; чек-лист предзапуска готов; учтены все 4 урока из LMS ERRORS (#1 синхронизация контракта, #2 разделение фронт/API, #3 savepoint вместо rollback, #4 защита от orphan email).
+diff --git a/tests/test_guest_attribution.py b/tests/test_guest_attribution.py
+index 93a00c0..17a33bb 100644
+--- a/tests/test_guest_attribution.py
++++ b/tests/test_guest_attribution.py
+@@ -40,7 +40,7 @@ async def test_attribute_guest_session(db):
+     from sqlalchemy import text, select
+     from app.models.guest_session import GuestSession
+     from app.models.guest_attempt import GuestAttempt
+-    from app.services.auth.link_token_service import attribute_guest_session
++    from app.services.auth.guest_attribution_service import attribute_guest_session
+ 
+     user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
+     if user_id is None:
+@@ -73,7 +73,7 @@ async def test_attribute_guest_session_idempotent(db):
+     from sqlalchemy import text
+     from app.models.guest_session import GuestSession
+     from app.models.guest_attemwarning: in the working copy of 'tests/test_identity_link_existing_user.py', LF will be replaced by CRLF the next time Git touches it
+pt import GuestAttempt
+-    from app.services.auth.link_token_service import attribute_guest_session
++    from app.services.auth.guest_attribution_service import attribute_guest_session
+ 
+     user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
+     if user_id is None:
+diff --git a/tests/test_identity_link_existing_user.py b/tests/test_identity_link_existing_user.py
+new file mode 100644
+index 0000000..6dd9944
+--- /dev/null
++++ b/tests/test_identity_link_existing_user.py
+@@ -0,0 +1,188 @@
++"""Integration-тесты identity_link_service.link_existing_user (Phase Y-3).
++
++Покрывает:
++- happy: email/tg/vk привязка к existing user — INSERT identity_link
++- idempotent: повторная попытка с тем же (kind, value) для того же user → UPDATE last_used_at
++- 409 conflict: identity занята другим user → IdentityConflictError
++- 409 orphan: email уже в users.email без identity_link → IdentityConflictError
++- VK Fernet: encrypted token поля сохраняются в identity_link
++- TG sync: link_existing_user(kind='tg') обновляет users.tg_id
++"""
++import random
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.exceptions import IdentityConflictError
++
++
++def _rand_email() -> str:
++    return f"y3test_{random.randint(10**8, 10**10)}@example.com"
++
++
++def _rand_tg() -> str:
++    return str(random.randint(10**12, 10**14))
++
++
++def _rand_vk() -> str:
++    return str(random.randint(10**8, 10**10))
++
++
++async def _insert_user(db, *, email: str | None = None, tg_id: int | None = None) -> int:
++    """Создать user без auto-create логики (минимально для теста)."""
++    user = Users(email=email, password_hash=None, full_name="Y3-test", tg_id=tg_id)
++    db.add(user)
++    await db.flush()
++    return user.id
++
++
++async def _cleanup(db, user_id: int) -> None:
++    """Cleanup без DELETE FROM users (см. test_me_endpoints_y3._cleanup)."""
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.commit()
++
++
++# ── happy path ──────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_link_email_happy(db):
++    user_id = await _insert_user(db)
++    email = _rand_email()
++    try:
++        link = await identity_link_service.link_existing_user(db, user_id, "email", email)
++        await db.commit()
++        assert link.user_id == user_id
++        assert link.kind == "email"
++        assert link.value == email.lower()
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_tg_happy_syncs_users_tg_id(db):
++    user_id = await _insert_user(db)
++    tg = _rand_tg()
++    try:
++        link = await identity_link_service.link_existing_user(db, user_id, "tg", tg)
++        await db.commit()
++        assert link.user_id == user_id
++        # Sync users.tg_id
++        synced = (
++            await db.execute(text("SELECT tg_id FROM users WHERE id=:u"), {"u": user_id})
++        ).scalar()
++        assert synced == int(tg)
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_vk_with_fernet_tokens(db):
++    user_id = await _insert_user(db)
++    vk = _rand_vk()
++    enc_access = b"\x00\x01encrypted-access\x02"
++    enc_refresh = b"\x00\x01encrypted-refresh\x02"
++    expires = datetime.now(timezone.utc)
++    try:
++        link = await identity_link_service.link_existing_user(
++            db, user_id, "vk", vk,
++            vk_access_token_enc=enc_access,
++            vk_refresh_token_enc=enc_refresh,
++            vk_token_expires_at=expires,
++        )
++        await db.commit()
++        assert link.vk_access_token_enc == enc_access
++        assert link.vk_refresh_token_enc =warning: in the working copy of 'tests/test_link_token_service.py', LF will be replaced by CRLF the next time Git touches it
+= enc_refresh
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── idempotent ──────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_link_idempotent_for_same_user(db):
++    user_id = await _insert_user(db)
++    email = _rand_email()
++    try:
++        link1 = await identity_link_service.link_existing_user(db, user_id, "email", email)
++        await db.commit()
++        link2 = await identity_link_service.link_existing_user(db, user_id, "email", email)
++        await db.commit()
++        # Тот же ID, last_used_at обновлён
++        assert link1.id == link2.id
++        assert link2.last_used_at is not None
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── 409 conflict ────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_link_email_conflict_other_user(db):
++    user_a = await _insert_user(db)
++    user_b = await _insert_user(db)
++    email = _rand_email()
++    try:
++        # User A привязал email
++        await identity_link_service.link_existing_user(db, user_a, "email", email)
++        await db.commit()
++        # User B пытается привязать тот же email
++        with pytest.raises(IdentityConflictError) as exc:
++            await identity_link_service.link_existing_user(db, user_b, "email", email)
++        assert exc.value.conflict_kind == "email_already_linked"
++        assert "email" in exc.value.existing_kinds
++    finally:
++        await _cleanup(db, user_a)
++        await _cleanup(db, user_b)
++
++
++@pytest.mark.asyncio
++async def test_link_tg_conflict_other_user(db):
++    user_a = await _insert_user(db)
++    user_b = await _insert_user(db)
++    tg = _rand_tg()
++    try:
++        await identity_link_service.link_existing_user(db, user_a, "tg", tg)
++        await db.commit()
++        with pytest.raises(IdentityConflictError) as exc:
++            await identity_link_service.link_existing_user(db, user_b, "tg", tg)
++        assert exc.value.conflict_kind == "tg_already_linked"
++    finally:
++        await _cleanup(db, user_a)
++        await _cleanup(db, user_b)
++
++
++@pytest.mark.asyncio
++async def test_link_vk_conflict_other_user(db):
++    user_a = await _insert_user(db)
++    user_b = await _insert_user(db)
++    vk = _rand_vk()
++    try:
++        await identity_link_service.link_existing_user(db, user_a, "vk", vk)
++        await db.commit()
++        with pytest.raises(IdentityConflictError) as exc:
++            await identity_link_service.link_existing_user(db, user_b, "vk", vk)
++        assert exc.value.conflict_kind == "vk_already_linked"
++    finally:
++        await _cleanup(db, user_a)
++        await _cleanup(db, user_b)
++
++
++@pytest.mark.asyncio
++async def test_link_email_orphan_user(db):
++    """Y-1.5.1 защита: users.email exists без identity_link → 409."""
++    email = _rand_email()
++    # Orphan: user с email но без identity_link
++    orphan_id = await _insert_user(db, email=email)
++    other_id = await _insert_user(db)
++    try:
++        await db.commit()
++        with pytest.raises(IdentityConflictError) as exc:
++            await identity_link_service.link_existing_user(db, other_id, "email", email)
++        assert exc.value.conflict_kind == "email_already_linked_to_orphan_user"
++        assert exc.value.existing_kinds == []
++    finally:
++        await _cleanup(db, orphan_id)
++        await _cleanup(db, other_id)
+diff --git a/tests/test_link_token_service.py b/tests/test_link_token_service.py
+new file mode 100644
+index 0000000..891451f
+--- /dev/null
++++ b/tests/test_link_token_service.py
+@@ -0,0 +1,85 @@
++"""Unit-тесты link_token_service (in-memory mode, без Redis).
++
++Покрывает:
++- issue → consume happy path (payload корректный)
++- second consume того же тwarning: in the working copy of 'tests/test_me_endpoints_y3.py', LF will be replaced by CRLF the next time Git touches it
+окена → LinkTokenError("invalid") (single-use)
++- consume пустого токена → invalid
++- consume garbage → invalid
++- consume чужого raw_token (другой hash) → invalid
++- TTL: payload содержит issued_at в UTC; expires_at = +5 мин
++"""
++from datetime import datetime, timedelta, timezone
++
++import pytest
++
++from app.services.auth.link_token_service import (
++    LinkTokenError,
++    TTL,
++    _reset_memory_store_for_tests,
++    consume,
++    issue,
++)
++
++
++@pytest.fixture(autouse=True)
++def _reset():
++    _reset_memory_store_for_tests()
++    yield
++    _reset_memory_store_for_tests()
++
++
++@pytest.mark.asyncio
++async def test_issue_returns_token_and_expires_at():
++    raw, expires_at = await issue(None, user_id=42, kind="vk")
++    assert isinstance(raw, str) and len(raw) >= 40
++    delta = expires_at - datetime.now(timezone.utc)
++    # TTL = 5 мин ± погрешность создания
++    assert timedelta(minutes=4) < delta <= TTL
++
++
++@pytest.mark.asyncio
++async def test_consume_returns_payload_for_each_kind():
++    for kind in ("email", "tg", "vk"):
++        raw, _ = await issue(None, user_id=7, kind=kind)
++        payload = await consume(None, raw)
++        assert payload.user_id == 7
++        assert payload.kind == kind
++        assert payload.issued_at.tzinfo is not None  # timezone-aware
++
++
++@pytest.mark.asyncio
++async def test_consume_is_single_use():
++    raw, _ = await issue(None, user_id=1, kind="email")
++    await consume(None, raw)
++    with pytest.raises(LinkTokenError) as exc:
++        await consume(None, raw)
++    assert exc.value.reason == "invalid"
++
++
++@pytest.mark.asyncio
++async def test_consume_empty_token_is_invalid():
++    with pytest.raises(LinkTokenError) as exc:
++        await consume(None, "")
++    assert exc.value.reason == "invalid"
++
++
++@pytest.mark.asyncio
++async def test_consume_garbage_is_invalid():
++    with pytest.raises(LinkTokenError) as exc:
++        await consume(None, "totally-not-a-valid-token-xyz")
++    assert exc.value.reason == "invalid"
++
++
++@pytest.mark.asyncio
++async def test_two_tokens_independent():
++    raw1, _ = await issue(None, user_id=1, kind="email")
++    raw2, _ = await issue(None, user_id=2, kind="vk")
++    p1 = await consume(None, raw1)
++    p2 = await consume(None, raw2)
++    assert p1.user_id == 1 and p1.kind == "email"
++    assert p2.user_id == 2 and p2.kind == "vk"
++    # После consume оба недоступны
++    with pytest.raises(LinkTokenError):
++        await consume(None, raw1)
++    with pytest.raises(LinkTokenError):
++        await consume(None, raw2)
+diff --git a/tests/test_me_endpoints_y3.py b/tests/test_me_endpoints_y3.py
+new file mode 100644
+index 0000000..92cafc2
+--- /dev/null
++++ b/tests/test_me_endpoints_y3.py
+@@ -0,0 +1,233 @@
++"""Integration HTTP-тесты Y-3 /me/* endpoints.
++
++Покрывает:
++- GET /me/identities — auth required (401 без), возвращает masked values
++- GET /me/courses — auth required, возвращает list с progress (smoke)
++- GET /me/last-position — auth required, корректно для пустого state
++- GET /me/streak — auth required, today_active flag
++- POST /auth/link-token/issue — auth required (401 без), возвращает токен
++- POST /me/identity/{kind}/link — 401 на invalid link_token
++"""
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service, link_token_service
++from app.services.auth.session_service import create_session
++
++
++async def _setup_user_with_session(db, *, with_email: bool = True):
++    """Создать user + email-identity + session, вернуть (user_id, access_token)."""
++    email = f"y3http_{random.randint(10**8, 10**10)}@example.com" if with_email else None
++    user = Users(email=email, password_hash=None, full_name="Y3-http", tg_id=None)
++    db.add(user)
++    await db.flush()
++    if with_email:
++        await identity_link_service.upsert_identity(db, user.id, "email", email)
++    access_token, _, _ = await create_session(db, user_id=user.id)
++    await db.commit()
++    return user.id, access_token, email
++
++
++async def _cleanup(db, user_id: int) -> None:
++    """Cleanup без DELETE FROM users — иначе FK SET NULL на audit_event.user_id
++    триггерит audit_event_no_modify (UPDATE = запрещён). Тест-юзеры остаются в БД,
++    как и в Y-1 тестах — это приемлемо для dev.
++    """
++    await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.commit()
++
++
++# ── auth required ──────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_me_identities_requires_auth(client):
++    resp = await client.get("/api/v1/me/identities")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_me_courses_requires_auth(client):
++    resp = await client.get("/api/v1/me/courses")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_me_streak_requires_auth(client):
++    resp = await client.get("/api/v1/me/streak")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_me_last_position_requires_auth(client):
++    resp = await client.get("/api/v1/me/last-position")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_link_token_issue_requires_auth(client):
++    resp = await client.post("/api/v1/auth/link-token/issue", json={"kind": "vk"})
++    assert resp.status_code == 401
++
++
++# ── smoke happy ────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_me_identities_returns_masked_email(db, client):
++    user_id, token, email = await _setup_user_with_session(db)
++    try:
++        resp = await client.get(
++            "/api/v1/me/identities",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        items = resp.json()
++        assert len(items) >= 1
++        email_item = next((i for i in items if i["kind"] == "email"), None)
++        assert email_item is not None
++        # Маскирование: первые 3 символа local + ***
++        assert "***" in email_item["value_masked"]
++        assert email.split("@")[1] in email_item["value_masked"]
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_me_courses_returns_empty_for_no_enrollment(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.get(
++            "/api/v1/me/courses",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        assert resp.json() == []
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_me_last_position_null_for_inactive_user(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.get(
++            "/api/v1/me/last-position",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        assert resp.json() is None
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_me_streak_zero_for_inactive_user(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.get(
++            "/api/v1/me/streak",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        body = resp.json()
++        assert body["streak_days"] == 0
++        assert body["last_active_date"] is None
++        assert body["today_active"] is Fwarning: in the working copy of 'tests/test_me_service_mask.py', LF will be replaced by CRLF the next time Git touches it
+alse
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_token_issue_returns_token(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.post(
++            "/api/v1/auth/link-token/issue",
++            json={"kind": "vk"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        body = resp.json()
++        assert "link_token" in body
++        assert "expires_at" in body
++        assert len(body["link_token"]) >= 40
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── /me/identity/{kind}/link негативные сценарии ───────────────────────────
++
++@pytest.mark.asyncio
++async def test_link_identity_email_invalid_link_token(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.post(
++            "/api/v1/me/identity/email/link",
++            json={"link_token": "garbage", "magic_link_token": "00" * 32},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 401
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_identity_tg_invalid_link_token(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.post(
++            "/api/v1/me/identity/tg/link",
++            json={"link_token": "garbage", "init_data": "user=%7B%22id%22%3A1%7D"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 401
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_identity_vk_invalid_link_token(db, client):
++    user_id, token, _ = await _setup_user_with_session(db)
++    try:
++        resp = await client.post(
++            "/api/v1/me/identity/vk/link",
++            json={
++                "link_token": "garbage",
++                "code": "x", "code_verifier": "y", "device_id": "z",
++            },
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 401
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_link_token_with_wrong_user_rejected(db, client):
++    """link_token, выпущенный для user A, не принимается user B."""
++    from app.services.rate_limit_service import get_redis
++    from app.core.config import Settings
++
++    user_a = await _setup_user_with_session(db)
++    user_b = await _setup_user_with_session(db)
++    try:
++        # Прямо выпускаем токен на user A через сервис
++        redis = get_redis(Settings().redis_url)
++        raw, _ = await link_token_service.issue(redis, user_id=user_a[0], kind="vk")
++
++        # user B пытается использовать
++        resp = await client.post(
++            "/api/v1/me/identity/vk/link",
++            json={
++                "link_token": raw,
++                "code": "x", "code_verifier": "y", "device_id": "z",
++            },
++            headers={"Authorization": f"Bearer {user_b[1]}"},
++        )
++        assert resp.status_code == 401
++    finally:
++        await _cleanup(db, user_a[0])
++        await _cleanup(db, user_b[0])
+diff --git a/tests/test_me_service_mask.py b/tests/test_me_service_mask.py
+new file mode 100644
+index 0000000..48079ed
+--- /dev/null
++++ b/tests/test_me_service_mask.py
+@@ -0,0 +1,47 @@
++"""Unit-тесты me_service.mask_value — маскирование identity values."""
++import pytest
++
++from app.services.me_service import mask_value
++
++
++@pytest.mark.parametrize(
++    "value,expected",
++    [
++        ("victor@gmail.com", "vic***@gmail.com"),
++        ("ab@b.com", "***@b.com"),  # local короче 3
++        ("a@b", "***@b"),
++        ("VICTOR@gmail.com", "VIC***@gmail.com"),  # masking сохраняет регистр (нормализация на уровне БД)
++    ],
++)
++def test_mask_email(value: str, expected: str) -> None:
++    assert mask_value("email", value) == expected
++
++
++def test_mask_email_no_at_fallback() -> None:
++    # Edge case: value без @ (corrupted data) — best-effort
++    assert mask_value("email", "broken") == "bro***"
++    assert mask_value("email", "ab") == "***"
++
++
++@pytest.mark.parametrize(
++    "value,expected",
++    [
++        ("123456789", "***6789"),
++        ("12345", "***2345"),
++        ("123", "***123"),
++    ],
++)
++def test_mask_tg(value: str, expected: str) -> None:
++    assert mask_value("tg", value) == expected
++
++
++@pytest.mark.parametrize(
++    "value,expected",
++    [
++        ("123456789012", "12345678..."),
++        ("12345678", "12345678"),  # ровно 8 — без ...
++        ("1234", "1234"),  # короче 8 — как есть
++    ],
++)
++def test_mask_vk(value: str, expected: str) -> None:
++    assert mask_value("vk", value) == expected
+diff --git a/tests/test_migrations.py b/tests/test_migrations.py
+index 0a2ad07..1afe043 100644
+--- a/tests/test_migrations.py
++++ b/tests/test_migrations.py
+@@ -1,8 +1,8 @@
+ """
+-Тест upgrade/downgrade roundtrip для миграций M1–M6 Phase Y-1 / Y-1.5.
++Тест upgrade/downgrade roundtrip для миграций M1–M7 Phase Y-1 / Y-1.5 / Y-3.
+ 
+ Запускается против реальной БД (alembic использует DATABASE_URL из .env).
+-Требует: alembic head = 20260428_060000_m6_tg_sync до запуска.
++Требует: alembic head = 20260429_010000_m7_streak_idx до запуска.
+ """
+ import subprocess
+ import sys
+@@ -11,7 +11,8 @@ from pathlib import Path
+ import pytest
+ 
+ project_root = Path(__file__).resolve().parents[1]
+-HEAD_REV = "20260428_060000_m6_tg_sync"
++HEAD_REV = "20260429_010000_m7_streak_idx"
++M6_REV = "20260428_060000_m6_tg_sync"
+ 
+ 
+ def _run_alembic(*args: str) -> subprocess.CompletedProcess:
+@@ -22,15 +23,27 @@ def _run_alembic(*args: str) -> subprocess.CompletedProcess:
+     return result
+ 
+ 
+-def test_alembic_head_is_m6():
+-    """Текущий head должен быть M6 (Phase Y-1.5 backfill миграция применена)."""
++def test_alembic_head_is_m7():
++    """Текущий head должен быть M7 (Phase Y-3 streak idx миграция применена)."""
+     result = _run_alembic("current")
+     assert result.returncode == 0, f"alembic current failed:\n{result.stderr}"
+-    assert HEAD_REV in result.stdout or "m6_tg_sync" in result.stdout, (
++    assert HEAD_REV in result.stdout or "m7_streak_idx" in result.stdout, (
+         f"Expected {HEAD_REV} as head, got:\n{result.stdout}"
+     )
+ 
+ 
++def test_alembic_downgrade_m7_then_upgrade():
++    """M7 (Phase Y-3) roundtrip: откатить и снова накатить (индекс drop+create)."""
++    down = _run_alembic("downgrade", M6_REV)
++    assert down.returncode == 0, f"downgrade M7 failed:\n{down.stderr}"
++
++    up = _run_alembic("upgrade", "head")
++    assert up.returncode == 0, f"upgrade head after M7 downgrade failed:\n{up.stderr}"
++
++    current = _run_alembic("current")
++    assert HEAD_REV in current.stdout
++
++
+ def test_alembic_downgrade_m6_then_upgrade():
+     """Откатить M6 и снова накатить."""
+     down = _run_alembic("downgrade", "20260428_050000_m5_guest")
+@@ -40,7 +53,7 @@ def test_alembic_downgrade_m6_then_upgrade():
+     assert up.returncode == 0, f"upgrade head after M6 downgrade failed:\n{up.stderr}"
+ 
+     current = _run_alembic("current")
+-    assert HEAD_REV in current.stdout or "m6_tg_sync" in current.stdout
++    assert HEAD_REV in current.stdout or "m7_streak_idx" in current.stdout
+ 
+ 
+ def test_alembic_downgrade_m5_then_upgrade():
+@@ -52,7 +65,7 @@ def test_alembic_downgrade_m5_then_upgrade():
+     assert up.returncode == 0, f"upgrade head after M5 downgrade failed:\n{up.stderr}"
+ 
+     current = _run_alembic("current")
+-    assert HEAD_REV in current.stdout or "m6_tg_sync" in current.stdout
++    assert HEAD_REV in current.stdout or "m7_streak_idx" in current.stdout
+ 
+ 
+ def test_alembic_downgrade_m4_then_upgrade():
+@@ -109,7 +122,7 @@ def test_M6_backfill_fills_users_tg_id_from_identity_link():
+                 await db.commit()
+         finally:
+             await engine.dispose()
+-            _run_alembic("upgrade", "head")
++            _run_alembic("upgrade", "head")  # restore HEAD to current M7
+ 
+     asyncio.run(_scenario())
+ 
