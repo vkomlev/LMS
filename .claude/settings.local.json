@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__learn_public_db__query",
+      "mcp__content_backbone_db__query"
+    ]
+  }
+}

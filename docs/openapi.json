@@ -12414,7 +12414,7 @@
           "auth"
         ],
         "summary": "Verify Magic Link",
-        "description": "Верифицировать magic-link токен и выдать сессию.",
+        "description": "Верифицировать magic-link токен.\n\nДефолтный режим (`link_mode=False`): consume + auto-create + выдать сессию.\nPhase Y-3 link-режим (`link_mode=True`): только подтвердить владение email,\nвернуть `magic_link_token` (тот же raw token) для последующего consume в\n/me/identity/email/link. НЕ создаёт user (если email неизвестен → 401), НЕ\nсоздаёт session, НЕ помечает magic_link.consumed_at — consume произойдёт\nв /me/identity/email/link.",
         "operationId": "verify_magic_link_api_v1_auth_magic_link_verify_post",
         "requestBody": {
           "content": {
@@ -12432,7 +12432,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthTokenResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthTokenResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MagicLinkVerifyLinkModeResponse"
+                    }
+                  ],
+                  "title": "Response Verify Magic Link Api V1 Auth Magic Link Verify Post"
                 }
               }
             }
@@ -12666,6 +12674,106 @@
         }
       }
     },
+    "/api/v1/auth/link-token/issue": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Issue Link Token",
+        "description": "Выпустить one-time link_token для current_user под заданный kind.",
+        "operationId": "issue_link_token_api_v1_auth_link_token_issue_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkTokenIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkTokenIssueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": [
@@ -12739,6 +12847,682 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identities": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "List Identities",
+        "description": "Список identity_link текущего пользователя с masked values (см. §5.1).",
+        "operationId": "list_identities_api_v1_me_identities_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/IdentityRead"
+                  },
+                  "title": "Response List Identities Api V1 Me Identities Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/courses": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "List Courses",
+        "description": "Активные курсы пользователя + progress (см. §5.2). Single SQL roundtrip.",
+        "operationId": "list_courses_api_v1_me_courses_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CourseWithProgressRead"
+                  },
+                  "title": "Response List Courses Api V1 Me Courses Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/last-position": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get Last Position",
+        "description": "Последняя активность пользователя + next-item resolve (см. §5.3).",
+        "operationId": "get_last_position_api_v1_me_last_position_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/LastPositionRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Last Position Api V1 Me Last Position Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/streak": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get Streak",
+        "description": "Streak дней подряд в Europe/Moscow (см. §5.4).",
+        "operationId": "get_streak_api_v1_me_streak_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StreakRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identity/email/link": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Link Identity Email",
+        "description": "Привязать email-identity к current user. Email подтверждается magic-link consume.\n\nBody содержит:\n- link_token: одноразовый токен из /auth/link-token/issue {kind:'email'}\n- magic_link_token: raw token, который вернул /auth/magic-link/verify {link_mode:true}",
+        "operationId": "link_identity_email_api_v1_me_identity_email_link_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityLinkEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityLinkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identity/tg/link": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Link Identity Tg",
+        "description": "Привязать Telegram-identity к current user. Подтверждение — initData HMAC.",
+        "operationId": "link_identity_tg_api_v1_me_identity_tg_link_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityLinkTgRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityLinkResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/identity/vk/link": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Link Identity Vk",
+        "description": "Привязать VK-identity к current user.\n\nPKCE flow для existing user: SPW отправил state=\"link:<token>\",\nvk-relay перенаправил браузер на /me/identity/vk/link, body содержит\nуже очищенный link_token (без префикса 'link:').",
+        "operationId": "link_identity_vk_api_v1_me_identity_vk_link_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityLinkVkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityLinkResponse"
                 }
               }
             }
@@ -14521,6 +15305,39 @@
           }
         ]
       },
+      "CourseProgress": {
+        "properties": {
+          "tasks_total": {
+            "type": "integer",
+            "title": "Tasks Total"
+          },
+          "tasks_done": {
+            "type": "integer",
+            "title": "Tasks Done"
+          },
+          "materials_total": {
+            "type": "integer",
+            "title": "Materials Total"
+          },
+          "materials_done": {
+            "type": "integer",
+            "title": "Materials Done"
+          },
+          "percent": {
+            "type": "integer",
+            "title": "Percent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks_total",
+          "tasks_done",
+          "materials_total",
+          "materials_done",
+          "percent"
+        ],
+        "title": "CourseProgress"
+      },
       "CourseRead": {
         "properties": {
           "id": {
@@ -15020,6 +15837,70 @@
         ],
         "title": "CourseWithOrderNumber",
         "description": "Схема курса с порядковым номером внутри родительского курса.\n\nИспользуется в эндпойнте GET /courses/{course_id}/children для возврата\nдочерних курсов с их порядковыми номерами внутри родительского курса.\n\nПорядковые номера автоматически управляются триггерами БД.\nСм. docs/database-triggers-contract.md"
+      },
+      "CourseWithProgressRead": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/CourseProgress"
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "course_uid",
+          "title",
+          "order_number",
+          "progress",
+          "last_active_at",
+          "is_completed"
+        ],
+        "title": "CourseWithProgressRead"
       },
       "DifficultyLevelCreate": {
         "properties": {
@@ -16148,6 +17029,172 @@
         ],
         "title": "HintEventResponse"
       },
+      "IdentityLinkEmailRequest": {
+        "properties": {
+          "link_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Link Token"
+          },
+          "magic_link_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Magic Link Token"
+          }
+        },
+        "type": "object",
+        "required": [
+          "link_token",
+          "magic_link_token"
+        ],
+        "title": "IdentityLinkEmailRequest",
+        "description": "POST /me/identity/email/link body."
+      },
+      "IdentityLinkResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityLinkedItem"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identity"
+        ],
+        "title": "IdentityLinkResponse",
+        "description": "Успешный ответ /me/identity/{kind}/link."
+      },
+      "IdentityLinkTgRequest": {
+        "properties": {
+          "link_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Link Token"
+          },
+          "init_data": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Init Data"
+          }
+        },
+        "type": "object",
+        "required": [
+          "link_token",
+          "init_data"
+        ],
+        "title": "IdentityLinkTgRequest",
+        "description": "POST /me/identity/tg/link body."
+      },
+      "IdentityLinkVkRequest": {
+        "properties": {
+          "link_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Link Token"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Code"
+          },
+          "code_verifier": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Code Verifier"
+          },
+          "device_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Device Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "link_token",
+          "code",
+          "code_verifier",
+          "device_id"
+        ],
+        "title": "IdentityLinkVkRequest",
+        "description": "POST /me/identity/vk/link body.\n\n`link_token` — уже очищенный от префикса `link:` (префикс срезает SPW\nпри чтении `state` из адресной строки; backend prefix не ожидает).\nСм. CB tech-spec Y-3 §22.1."
+      },
+      "IdentityLinkedItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "tg",
+              "vk"
+            ],
+            "title": "Kind"
+          },
+          "value_masked": {
+            "type": "string",
+            "title": "Value Masked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "value_masked",
+          "created_at"
+        ],
+        "title": "IdentityLinkedItem",
+        "description": "Идентифицирующая часть identity_link для response (без чувствительных полей)."
+      },
+      "IdentityRead": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "tg",
+              "vk"
+            ],
+            "title": "Kind"
+          },
+          "value_masked": {
+            "type": "string",
+            "title": "Value Masked"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "value_masked",
+          "created_at",
+          "last_used_at"
+        ],
+        "title": "IdentityRead",
+        "description": "Identity link для public read (с masked value)."
+      },
       "InboxItem": {
         "properties": {
           "peer_id": {
@@ -16201,12 +17248,135 @@
         ],
         "title": "InboxResponse"
       },
+      "LastPositionRead": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "course_title": {
+            "type": "string",
+            "title": "Course Title"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material",
+              "course_completed",
+              "none"
+            ],
+            "title": "Type"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          },
+          "last_active_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Active At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "course_uid",
+          "course_title",
+          "type",
+          "last_active_at"
+        ],
+        "title": "LastPositionRead"
+      },
+      "LinkTokenIssueRequest": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "email",
+              "tg",
+              "vk"
+            ],
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "title": "LinkTokenIssueRequest",
+        "description": "POST /auth/link-token/issue — какой kind identity готовится к привязке."
+      },
+      "LinkTokenIssueResponse": {
+        "properties": {
+          "link_token": {
+            "type": "string",
+            "title": "Link Token"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "link_token",
+          "expires_at"
+        ],
+        "title": "LinkTokenIssueResponse"
+      },
       "MagicLinkRequest": {
         "properties": {
           "email": {
             "type": "string",
             "format": "email",
             "title": "Email"
+          },
+          "link_mode": {
+            "type": "boolean",
+            "title": "Link Mode",
+            "default": false
           }
         },
         "type": "object",
@@ -16214,6 +17384,25 @@
           "email"
         ],
         "title": "MagicLinkRequest"
+      },
+      "MagicLinkVerifyLinkModeResponse": {
+        "properties": {
+          "magic_link_token": {
+            "type": "string",
+            "title": "Magic Link Token"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "title": "Email Verified",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "magic_link_token"
+        ],
+        "title": "MagicLinkVerifyLinkModeResponse",
+        "description": "Ответ /auth/magic-link/verify в режиме link_mode=True.\n\nНе выдаёт сессию (session/refresh tokens) — вместо этого возвращает\nmagic_link_token (текущий raw token) для последующего consume в\n/me/identity/email/link."
       },
       "MagicLinkVerifyRequest": {
         "properties": {
@@ -16232,6 +17421,11 @@
               }
             ],
             "title": "Guest Session Id"
+          },
+          "link_mode": {
+            "type": "boolean",
+            "title": "Link Mode",
+            "default": false
           }
         },
         "type": "object",
@@ -19196,6 +20390,37 @@
           "source_system"
         ],
         "title": "StartOrGetAttemptResponse"
+      },
+      "StreakRead": {
+        "properties": {
+          "streak_days": {
+            "type": "integer",
+            "title": "Streak Days"
+          },
+          "last_active_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active Date"
+          },
+          "today_active": {
+            "type": "boolean",
+            "title": "Today Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "streak_days",
+          "last_active_date",
+          "today_active"
+        ],
+        "title": "StreakRead"
       },
       "StudentAnswer": {
         "properties": {
