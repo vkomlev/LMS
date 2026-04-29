@@ -40,7 +40,7 @@ async def test_attribute_guest_session(db):
     from sqlalchemy import text, select
     from app.models.guest_session import GuestSession
     from app.models.guest_attempt import GuestAttempt
-    from app.services.auth.link_token_service import attribute_guest_session
+    from app.services.auth.guest_attribution_service import attribute_guest_session
 
     user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
     if user_id is None:
@@ -73,7 +73,7 @@ async def test_attribute_guest_session_idempotent(db):
     from sqlalchemy import text
     from app.models.guest_session import GuestSession
     from app.models.guest_attempt import GuestAttempt
-    from app.services.auth.link_token_service import attribute_guest_session
+    from app.services.auth.guest_attribution_service import attribute_guest_session
 
     user_id = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
     if user_id is None:
