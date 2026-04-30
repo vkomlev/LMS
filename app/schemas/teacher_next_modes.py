@@ -113,3 +113,37 @@ class TeacherWorkloadResponse(BaseModel):
     open_manual_help_total: int = Field(0, description="Открытых заявок типа manual_help")
     pending_manual_reviews_total: int = Field(0, description="Результатов в ожидании ручной проверки")
     overdue_total: int = Field(0, description="Просроченных (due_at < now) открытых заявок")
+
+
+# ----- Review Grade (Phase Y-4) -----
+
+class ReviewGradeRequest(BaseModel):
+    """Тело запроса grade для SA_COM-проверки."""
+    teacher_id: int = Field(..., description="ID преподавателя, выставляющего оценку")
+    lock_token: str = Field(..., min_length=1, description="Токен блокировки из claim-next")
+    score: int = Field(..., ge=0, description="Балл (0..max_score), max_score проверяется в сервисе")
+    is_correct: bool = Field(..., description="True = принято, False = отклонено")
+    comment: Optional[str] = Field(
+        None, max_length=4096, description="Комментарий преподавателя (опционально)"
+    )
+
+
+class ReviewGradeResponse(BaseModel):
+    """Ответ grade endpoint."""
+    result_id: int
+    task_id: int
+    score: int
+    max_score: int
+    is_correct: bool
+    comment: Optional[str] = None
+    notification_id: int = Field(..., description="ID созданной inbox-записи ученика")
+
+
+# ----- Pending Count (Phase Y-4, для TG_LMS поллера) -----
+
+class PendingCountResponse(BaseModel):
+    """Количество pending-заявок на проверку для преподавателя (без захвата)."""
+    count: int = Field(..., description="Количество pending-заявок (без захвата)")
+    oldest_received_at: Optional[datetime] = Field(
+        None, description="MIN(submitted_at) среди pending-заявок; null при count=0"
+    )

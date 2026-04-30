@@ -58,7 +58,17 @@ class Users(Base):
     messages_: Mapped[List["Messages"]] = relationship(
         "Messages", foreign_keys="[Messages.sender_id]", back_populates="sender"
     )
-    notifications: Mapped[List["Notifications"]] = relationship("Notifications", back_populates="users")
+    notifications: Mapped[List["Notifications"]] = relationship(
+        "Notifications",
+        foreign_keys="[Notifications.modified_by]",
+        back_populates="users",
+    )
+    # Y-4: inbox-уведомления, адресованные этому user
+    inbox_messages: Mapped[List["Notifications"]] = relationship(
+        "Notifications",
+        foreign_keys="[Notifications.user_id]",
+        back_populates="recipient",
+    )
     social_posts: Mapped[List["SocialPosts"]] = relationship("SocialPosts", back_populates="user")
 
     access_requests: Mapped[List["AccessRequests"]] = relationship(

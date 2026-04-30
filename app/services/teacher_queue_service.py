@@ -383,6 +383,220 @@ async def release_review_claim(
     return (True, None)
 
 
+class GradeError(Exception):
+    """Базовая ошибка grade_review (Phase Y-4)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class GradeNotFoundError(GradeError):
+    """task_results не существует."""
+
+    def __init__(self) -> None:
+        super().__init__("not_found", "task_result не найден")
+
+
+class GradeConflictError(GradeError):
+    """409: lock_token mismatch / expired / already graded."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("conflict", reason)
+
+
+class GradeValidationError(GradeError):
+    """422: business validation failure (score > max_score)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("validation", reason)
+
+
+async def grade_review(
+    db: AsyncSession,
+    *,
+    result_id: int,
+    teacher_id: int,
+    lock_token: str,
+    score: int,
+    is_correct: bool,
+    comment: Optional[str],
+) -> dict:
+    """Атомарно оценить task_result (Phase Y-4).
+
+    Шаги в одной транзакции (caller commit'ит):
+    1. SELECT FROM task_results WHERE id=:rid FOR UPDATE
+    2. Validate: not_found → 404; lock mismatch / expired → 409;
+       is_correct IS NOT NULL → 409 «уже оценено»;
+       score > max_score → 422.
+    3. UPDATE task_results: is_correct, score, checked_at, checked_by,
+       metrics.comment, обнулить review_claim_*.
+
+    Возвращает dict с полями для caller'а: result_id, task_id, user_id,
+    user_email, score, max_score, is_correct, comment, task_title.
+    Caller отвечает за inbox INSERT, audit, email scheduling, commit.
+    """
+    now = datetime.now(timezone.utc)
+
+    # SELECT FOR UPDATE — сериализует двух teacher'ов
+    r = await db.execute(
+        text(
+            "SELECT tr.id, tr.task_id, tr.user_id, tr.score, tr.max_score, "
+            "       tr.is_correct, tr.review_claimed_by, tr.review_claim_token, "
+            "       tr.review_claim_expires_at, tr.attempt_id, tr.metrics "
+            "FROM task_results tr WHERE tr.id = :rid FOR UPDATE"
+        ),
+        {"rid": result_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        raise GradeNotFoundError()
+
+    (
+        _id, task_id, user_id, _score, max_score,
+        existing_is_correct, claimed_by, claim_token, claim_expires_at,
+        attempt_id, metrics_existing,
+    ) = row
+
+    # Уже оценено — повторный grade с тем же lock_token → 409 «уже оценено»
+    if existing_is_correct is not None:
+        raise GradeConflictError("Заявка уже оценена")
+
+    # lock_token mismatch / not claimed
+    if claimed_by is None or claim_token is None or claim_expires_at is None:
+        raise GradeConflictError(
+            "Заявка не захвачена; вызовите claim-next перед grade"
+        )
+    if claim_expires_at < now:
+        raise GradeConflictError(
+            "lock_token истёк; вызовите claim-next повторно"
+        )
+    # Constant-time compare для lock_token (defence-in-depth, см. tech-lead m7)
+    if not secrets.compare_digest(claim_token, lock_token) or claimed_by != teacher_id:
+        raise GradeConflictError(
+            "lock_token не совпадает или заявка захвачена другим преподавателем"
+        )
+
+    # Business validation. max_score обязателен — fallback скрыл бы data-quality
+    # bug (см. tech-lead m3 review): если задача создана без max_score, оценка
+    # не имеет смысла.
+    effective_max = int(max_score) if max_score is not None else 0
+    if effective_max <= 0:
+        raise GradeValidationError(
+            "max_score не задан для задачи; оценка невозможна без эталона"
+        )
+    if score > effective_max:
+        raise GradeValidationError(
+            f"score={score} превышает max_score={effective_max}"
+        )
+
+    # Обновляем metrics.comment поверх существующих metrics (jsonb_set безопасен
+    # для NULL через coalesce). comment может быть NULL — храним как JSON null.
+    metrics_dict = dict(metrics_existing) if metrics_existing else {}
+    if comment is not None:
+        metrics_dict["comment"] = comment
+    elif "comment" in metrics_dict:
+        # Явно стираем старый comment если новый — None
+        metrics_dict.pop("comment", None)
+
+    await db.execute(
+        text(
+            "UPDATE task_results SET "
+            "  is_correct = :is_correct, "
+            "  score = :score, "
+            "  checked_at = :now_ts, "
+            "  checked_by = :teacher_id, "
+            "  metrics = CAST(:metrics AS jsonb), "
+            "  review_claimed_by = NULL, "
+            "  review_claim_token = NULL, "
+            "  review_claim_expires_at = NULL "
+            "WHERE id = :rid"
+        ),
+        {
+            "is_correct": is_correct,
+            "score": score,
+            "now_ts": now,
+            "teacher_id": teacher_id,
+            "metrics": _json_dumps(metrics_dict),
+            "rid": result_id,
+        },
+    )
+
+    # Догрузить task_title и user_email для caller'а (для inbox + email).
+    # tasks не имеет колонки title — заголовок хранится в task_content->>'title'
+    # с fallback на external_uid.
+    r2 = await db.execute(
+        text(
+            "SELECT COALESCE(task_content->>'title', external_uid) AS title, "
+            "course_id FROM tasks WHERE id = :tid"
+        ),
+        {"tid": task_id},
+    )
+    trow = r2.fetchone()
+    task_title = trow[0] if trow else None
+    course_id = trow[1] if trow and len(trow) > 1 else None
+
+    r3 = await db.execute(
+        text("SELECT email FROM users WHERE id = :uid"),
+        {"uid": user_id},
+    )
+    urow = r3.fetchone()
+    user_email = urow[0] if urow else None
+
+    return {
+        "result_id": result_id,
+        "task_id": task_id,
+        "user_id": user_id,
+        "user_email": user_email,
+        "score": score,
+        "max_score": effective_max,
+        "is_correct": is_correct,
+        "comment": comment,
+        "task_title": task_title,
+        "course_id": course_id,
+        "attempt_id": attempt_id,
+    }
+
+
+def _json_dumps(payload: dict) -> str:
+    """Сериализовать dict в JSON-строку для bind в text() с CAST AS jsonb."""
+    import json
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def get_pending_count(
+    db: AsyncSession,
+    teacher_id: int,
+) -> tuple[int, Optional[datetime]]:
+    """Количество pending-заявок преподавателя (без захвата) + oldest submitted_at.
+
+    Используется TG_LMS поллером (Phase Y-4 §4.2.6).
+    Применяет тот же REVIEW_ACL_SQL, что и claim_next_review.
+    Включает только заявки, которые сейчас НЕ захвачены (или захват просрочен).
+    """
+    now = datetime.now(timezone.utc)
+    r = await db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS cnt, MIN(tr.submitted_at) AS oldest
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE tr.checked_at IS NULL
+              AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
+              AND {REVIEW_ACL_SQL}
+            """
+        ),
+        {"teacher_id": teacher_id, "now_ts": now},
+    )
+    row = r.fetchone()
+    if row is None:
+        return (0, None)
+    cnt = int(row[0] or 0)
+    oldest = row[1]
+    return (cnt, oldest)
+
+
 async def get_teacher_workload(
     db: AsyncSession,
     teacher_id: int,

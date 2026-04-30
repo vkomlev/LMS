@@ -64,3 +64,25 @@ class StreakRead(BaseModel):
     streak_days: int
     last_active_date: date | None
     today_active: bool
+
+
+# ── Phase Y-4: /me/history ───────────────────────────────────────────────────
+
+class HistoryItem(BaseModel):
+    """Запись истории попыток ученика."""
+
+    task_result_id: int
+    task_id: int
+    task_external_uid: str | None
+    course_id: int | None
+    course_uid: str | None
+    course_title: str | None
+    task_title: str | None
+    type: str | None
+    status: Literal["pending_review", "passed", "failed"]
+    score: int | None
+    max_score: int | None
+    comment: str | None
+    received_at: datetime
+    submitted_at: datetime
+    checked_at: datetime | None

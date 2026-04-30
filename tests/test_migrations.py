@@ -1,8 +1,8 @@
 """
-Тест upgrade/downgrade roundtrip для миграций M1–M7 Phase Y-1 / Y-1.5 / Y-3.
+Тест upgrade/downgrade roundtrip для миграций M1–M8 Phase Y-1 / Y-1.5 / Y-3 / Y-4.
 
 Запускается против реальной БД (alembic использует DATABASE_URL из .env).
-Требует: alembic head = 20260429_010000_m7_streak_idx до запуска.
+Требует: alembic head = 20260430_010000_m8_inbox до запуска (Y-4 backend merge).
 """
 import subprocess
 import sys
@@ -11,7 +11,8 @@ from pathlib import Path
 import pytest
 
 project_root = Path(__file__).resolve().parents[1]
-HEAD_REV = "20260429_010000_m7_streak_idx"
+HEAD_REV = "20260430_010000_m8_inbox"
+M7_REV = "20260429_010000_m7_streak_idx"
 M6_REV = "20260428_060000_m6_tg_sync"
 
 
@@ -23,13 +24,25 @@ def _run_alembic(*args: str) -> subprocess.CompletedProcess:
     return result
 
 
-def test_alembic_head_is_m7():
-    """Текущий head должен быть M7 (Phase Y-3 streak idx миграция применена)."""
+def test_alembic_head_is_m8():
+    """Текущий head должен быть M8 (Phase Y-4 notifications inbox миграция применена)."""
     result = _run_alembic("current")
     assert result.returncode == 0, f"alembic current failed:\n{result.stderr}"
-    assert HEAD_REV in result.stdout or "m7_streak_idx" in result.stdout, (
+    assert HEAD_REV in result.stdout or "m8_inbox" in result.stdout, (
         f"Expected {HEAD_REV} as head, got:\n{result.stdout}"
     )
+
+
+def test_alembic_downgrade_m8_then_upgrade():
+    """M8 (Phase Y-4) roundtrip: откатить notifications inbox и снова накатить."""
+    down = _run_alembic("downgrade", M7_REV)
+    assert down.returncode == 0, f"downgrade M8 failed:\n{down.stderr}"
+
+    up = _run_alembic("upgrade", "head")
+    assert up.returncode == 0, f"upgrade head after M8 downgrade failed:\n{up.stderr}"
+
+    current = _run_alembic("current")
+    assert HEAD_REV in current.stdout
 
 
 def test_alembic_downgrade_m7_then_upgrade():
@@ -53,7 +66,7 @@ def test_alembic_downgrade_m6_then_upgrade():
     assert up.returncode == 0, f"upgrade head after M6 downgrade failed:\n{up.stderr}"
 
     current = _run_alembic("current")
-    assert HEAD_REV in current.stdout or "m7_streak_idx" in current.stdout
+    assert HEAD_REV in current.stdout or "m8_inbox" in current.stdout
 
 
 def test_alembic_downgrade_m5_then_upgrade():
@@ -65,7 +78,7 @@ def test_alembic_downgrade_m5_then_upgrade():
     assert up.returncode == 0, f"upgrade head after M5 downgrade failed:\n{up.stderr}"
 
     current = _run_alembic("current")
-    assert HEAD_REV in current.stdout or "m7_streak_idx" in current.stdout
+    assert HEAD_REV in current.stdout or "m8_inbox" in current.stdout
 
 
 def test_alembic_downgrade_m4_then_upgrade():
@@ -122,7 +135,7 @@ def test_M6_backfill_fills_users_tg_id_from_identity_link():
                 await db.commit()
         finally:
             await engine.dispose()
-            _run_alembic("upgrade", "head")  # restore HEAD to current M7
+            _run_alembic("upgrade", "head")  # restore HEAD to current M8
 
     asyncio.run(_scenario())
 

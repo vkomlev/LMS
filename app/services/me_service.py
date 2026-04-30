@@ -433,3 +433,70 @@ async def get_streak(db: AsyncSession, user_id: int) -> dict:
         "last_active_date": last_active_date,
         "today_active": today_active,
     }
+
+
+# ── Phase Y-4: /me/history ──────────────────────────────────────────────────
+
+HistoryFilter = Literal["all", "pending_review", "passed", "failed"]
+
+
+_HISTORY_SQL = """
+SELECT
+    tr.id AS task_result_id,
+    tr.task_id,
+    t.external_uid AS task_external_uid,
+    t.course_id,
+    c.course_uid,
+    c.title AS course_title,
+    COALESCE(t.task_content->>'title', t.external_uid) AS task_title,
+    t.task_content->>'type' AS type,
+    CASE
+        WHEN tr.is_correct IS NULL THEN 'pending_review'
+        WHEN tr.is_correct = TRUE  THEN 'passed'
+        WHEN tr.is_correct = FALSE THEN 'failed'
+        ELSE 'pending_review'
+    END AS status,
+    tr.score,
+    tr.max_score,
+    tr.metrics->>'comment' AS comment,
+    tr.received_at,
+    tr.submitted_at,
+    tr.checked_at
+FROM task_results tr
+JOIN tasks t ON t.id = tr.task_id
+LEFT JOIN courses c ON c.id = t.course_id
+WHERE tr.user_id = :user_id
+  AND (
+       :filter = 'all'
+    OR (:filter = 'pending_review' AND tr.is_correct IS NULL)
+    OR (:filter = 'passed'         AND tr.is_correct = TRUE)
+    OR (:filter = 'failed'         AND tr.is_correct = FALSE)
+  )
+ORDER BY tr.received_at DESC
+LIMIT :limit OFFSET :offset
+"""
+
+
+async def get_history(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    filter_: HistoryFilter = "all",
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
+    """История попыток ученика с фильтрами (Phase Y-4 §4.2.5).
+
+    Использует существующий M7 индекс idx_task_results_user_received
+    для эффективной выборки по user_id + ORDER BY received_at DESC.
+    """
+    result = await db.execute(
+        text(_HISTORY_SQL),
+        {
+            "user_id": user_id,
+            "filter": filter_,
+            "limit": limit,
+            "offset": offset,
+        },
+    )
+    return [dict(row) for row in result.mappings().all()]

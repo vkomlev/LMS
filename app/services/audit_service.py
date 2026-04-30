@@ -8,6 +8,12 @@ from app.models.audit_event import AuditEvent
 
 logger = logging.getLogger(__name__)
 
+# Y-4 event types (используются grep-friendly константами вместо сырых строк)
+TEACHER_REVIEW_GRADED = "teacher.review.graded"
+STUDENT_NOTIFICATION_CREATED = "student.notification.created"
+STUDENT_NOTIFICATION_READ = "student.notification.read"
+EMAIL_FAILED = "email.failed"
+
 
 async def log_event(
     db: AsyncSession,

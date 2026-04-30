@@ -1,4 +1,5 @@
-"""Эндпоинты /me — профиль, identities, прогресс, last-position, streak (Phase Y-1 + Y-3).
+"""Эндпоинты /me — профиль, identities, прогресс, last-position, streak,
+история (Phase Y-1 + Y-3 + Y-4).
 
 Phase Y-3 добавляет:
 - GET  /me/identities         — список identity_link с masked values
@@ -7,13 +8,17 @@ Phase Y-3 добавляет:
 - GET  /me/streak             — streak дней подряд в Europe/Moscow
 - POST /me/identity/{kind}/link — привязка новой identity к current user
 
-См. tech-spec Y-3 (LMS backend) §5.1-5.4, §5.6, §7.6, §7.7.
+Phase Y-4 добавляет:
+- GET  /me/history            — список последних попыток + фильтры
+
+См. tech-spec Y-3 §5.1-5.4, §5.6, §7.6, §7.7;
+    tech-spec Y-4 (LMS-side backend) §4.2.5.
 """
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_authenticated
@@ -29,6 +34,7 @@ from app.schemas.auth import (
 from app.schemas.me import (
     CourseProgress,
     CourseWithProgressRead,
+    HistoryItem,
     IdentityRead,
     LastPositionRead,
     MeResponse,
@@ -126,6 +132,25 @@ async def get_streak(
     """Streak дней подряд в Europe/Moscow (см. §5.4)."""
     s = await me_service.get_streak(db, current_user.id)
     return StreakRead(**s)
+
+
+# ── GET /me/history (Phase Y-4) ─────────────────────────────────────────────
+
+@router.get("/history", response_model=list[HistoryItem])
+async def get_history(
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+    limit: int = Query(50, ge=1, le=200, description="Лимит (max 200)"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    filter_: Literal["all", "pending_review", "passed", "failed"] = Query(
+        "all", alias="filter", description="Фильтр статусу"
+    ),
+) -> list[HistoryItem]:
+    """История попыток ученика с фильтрами (Phase Y-4 backend §4.2.5)."""
+    rows = await me_service.get_history(
+        db, current_user.id, filter_=filter_, limit=limit, offset=offset
+    )
+    return [HistoryItem(**row) for row in rows]
 
 
 # ── POST /me/identity/{kind}/link ───────────────────────────────────────────

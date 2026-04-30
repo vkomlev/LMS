@@ -4390,7 +4390,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnreadCountResponse"
+                  "$ref": "#/components/schemas/app__api__v1__messages_extra__UnreadCountResponse"
                 }
               }
             }
@@ -4482,7 +4482,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarkReadResponse"
+                  "$ref": "#/components/schemas/app__schemas__messages__MarkReadResponse"
                 }
               }
             }
@@ -4528,7 +4528,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MarkReadResponse"
+                  "$ref": "#/components/schemas/app__schemas__messages__MarkReadResponse"
                 }
               }
             }
@@ -5003,7 +5003,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationRead"
+                  "$ref": "#/components/schemas/app__schemas__notifications__NotificationRead"
                 }
               }
             }
@@ -5107,7 +5107,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationRead"
+                  "$ref": "#/components/schemas/app__schemas__notifications__NotificationRead"
                 }
               }
             }
@@ -5163,7 +5163,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationRead"
+                  "$ref": "#/components/schemas/app__schemas__notifications__NotificationRead"
                 }
               }
             }
@@ -5257,7 +5257,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/NotificationRead"
+                  "$ref": "#/components/schemas/app__schemas__notifications__NotificationRead"
                 }
               }
             }
@@ -12366,6 +12366,223 @@
         }
       }
     },
+    "/api/v1/teacher/reviews/{result_id}/grade": {
+      "post": {
+        "tags": [
+          "teacher_reviews"
+        ],
+        "summary": "Выставить оценку SA_COM-проверке (Phase Y-4)",
+        "description": "Выставить оценку SA_COM-проверке.\n\nАтомарная транзакция: UPDATE task_results + INSERT notifications + 2x audit_event.\nEmail отправляется в фоне после commit (best-effort, не валит ответ).",
+        "operationId": "review_grade_api_v1_teacher_reviews__result_id__grade_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID результата (task_result)",
+              "title": "Result Id"
+            },
+            "description": "ID результата (task_result)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewGradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Оценка выставлена; inbox создан; email best-effort",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewGradeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Не teacher или чужой teacher_id"
+          },
+          "404": {
+            "description": "task_result не существует"
+          },
+          "409": {
+            "description": "lock_token mismatch / истёк / уже оценено"
+          },
+          "422": {
+            "description": "score > max_score"
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/reviews/pending-count": {
+      "get": {
+        "tags": [
+          "teacher_reviews"
+        ],
+        "summary": "Количество pending-заявок преподавателя без захвата (Phase Y-4)",
+        "description": "Используется TG_LMS поллером — не захватывает заявки, не обновляет БД.",
+        "operationId": "get_pending_count_endpoint_api_v1_teacher_reviews_pending_count_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingCountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/magic-link/send": {
       "post": {
         "tags": [
@@ -13240,6 +13457,145 @@
         }
       }
     },
+    "/api/v1/me/history": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get History",
+        "description": "История попыток ученика с фильтрами (Phase Y-4 backend §4.2.5).",
+        "operationId": "get_history_api_v1_me_history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Лимит (max 200)",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Лимит (max 200)"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "pending_review",
+                "passed",
+                "failed"
+              ],
+              "type": "string",
+              "description": "Фильтр статусу",
+              "default": "all",
+              "title": "Filter"
+            },
+            "description": "Фильтр статусу"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HistoryItem"
+                  },
+                  "title": "Response Get History Api V1 Me History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/identity/email/link": {
       "post": {
         "tags": [
@@ -13526,6 +13882,332 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/notifications/unread-count": {
+      "get": {
+        "tags": [
+          "me_notifications"
+        ],
+        "summary": "Количество непрочитанных уведомлений (Phase Y-4)",
+        "operationId": "get_unread_count_api_v1_me_notifications_unread_count_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__schemas__me_notifications__UnreadCountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/notifications": {
+      "get": {
+        "tags": [
+          "me_notifications"
+        ],
+        "summary": "Список inbox-уведомлений с пагинацией (Phase Y-4)",
+        "operationId": "list_notifications_api_v1_me_notifications_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Лимит (max 100)",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Лимит (max 100)"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение"
+          },
+          {
+            "name": "unread_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Только непрочитанные",
+              "default": false,
+              "title": "Unread Only"
+            },
+            "description": "Только непрочитанные"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/app__schemas__me_notifications__NotificationRead"
+                  },
+                  "title": "Response List Notifications Api V1 Me Notifications Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/notifications/{notification_id}/read": {
+      "post": {
+        "tags": [
+          "me_notifications"
+        ],
+        "summary": "Пометить уведомление прочитанным (idempotent, Phase Y-4)",
+        "operationId": "mark_notification_read_api_v1_me_notifications__notification_id__read_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "notification_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Notification Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Помечено или уже прочитано (idempotent)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/app__schemas__me_notifications__MarkReadResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Запись принадлежит другому пользователю"
+          },
+          "404": {
+            "description": "Запись не найдена"
           },
           "422": {
             "description": "Validation Error",
@@ -17029,6 +17711,168 @@
         ],
         "title": "HintEventResponse"
       },
+      "HistoryItem": {
+        "properties": {
+          "task_result_id": {
+            "type": "integer",
+            "title": "Task Result Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "task_external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task External Uid"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "task_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Title"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending_review",
+              "passed",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Received At"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submitted At"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_result_id",
+          "task_id",
+          "task_external_uid",
+          "course_id",
+          "course_uid",
+          "course_title",
+          "task_title",
+          "type",
+          "status",
+          "score",
+          "max_score",
+          "comment",
+          "received_at",
+          "submitted_at",
+          "checked_at"
+        ],
+        "title": "HistoryItem",
+        "description": "Запись истории попыток ученика."
+      },
       "IdentityLinkEmailRequest": {
         "properties": {
           "link_token": {
@@ -17474,19 +18318,6 @@
           "message_ids"
         ],
         "title": "MarkReadRequest"
-      },
-      "MarkReadResponse": {
-        "properties": {
-          "updated_count": {
-            "type": "integer",
-            "title": "Updated Count"
-          }
-        },
-        "type": "object",
-        "required": [
-          "updated_count"
-        ],
-        "title": "MarkReadResponse"
       },
       "MaterialBulkUpdateRequest": {
         "properties": {
@@ -19034,42 +19865,6 @@
         ],
         "title": "NotificationCreate"
       },
-      "NotificationRead": {
-        "properties": {
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "content": {
-            "type": "string",
-            "title": "Content"
-          },
-          "modified_by": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modified By"
-          },
-          "modified_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Modified At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "content",
-          "modified_by",
-          "modified_at"
-        ],
-        "title": "NotificationRead"
-      },
       "NotificationUpdate": {
         "properties": {
           "content": {
@@ -19259,7 +20054,7 @@
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/NotificationRead"
+              "$ref": "#/components/schemas/app__schemas__notifications__NotificationRead"
             },
             "type": "array",
             "title": "Items"
@@ -19516,6 +20311,34 @@
         "type": "object",
         "title": "PenaltiesRules",
         "description": "Правила штрафов за различные типы ошибок."
+      },
+      "PendingCountResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Количество pending-заявок (без захвата)"
+          },
+          "oldest_received_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Received At",
+            "description": "MIN(submitted_at) среди pending-заявок; null при count=0"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count"
+        ],
+        "title": "PendingCountResponse",
+        "description": "Количество pending-заявок на проверку для преподавателя (без захвата)."
       },
       "RefreshRequest": {
         "properties": {
@@ -19801,6 +20624,105 @@
         ],
         "title": "ReviewClaimNextResponse",
         "description": "Ответ claim-next для manual review."
+      },
+      "ReviewGradeRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя, выставляющего оценку"
+          },
+          "lock_token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Lock Token",
+            "description": "Токен блокировки из claim-next"
+          },
+          "score": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Score",
+            "description": "Балл (0..max_score), max_score проверяется в сервисе"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct",
+            "description": "True = принято, False = отклонено"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Комментарий преподавателя (опционально)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "lock_token",
+          "score",
+          "is_correct"
+        ],
+        "title": "ReviewGradeRequest",
+        "description": "Тело запроса grade для SA_COM-проверки."
+      },
+      "ReviewGradeResponse": {
+        "properties": {
+          "result_id": {
+            "type": "integer",
+            "title": "Result Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "notification_id": {
+            "type": "integer",
+            "title": "Notification Id",
+            "description": "ID созданной inbox-записи ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result_id",
+          "task_id",
+          "score",
+          "max_score",
+          "is_correct",
+          "notification_id"
+        ],
+        "title": "ReviewGradeResponse",
+        "description": "Ответ grade endpoint."
       },
       "ReviewReleaseRequest": {
         "properties": {
@@ -22491,24 +23413,6 @@
         ],
         "title": "UnreadBySenderItem"
       },
-      "UnreadCountResponse": {
-        "properties": {
-          "user_id": {
-            "type": "integer",
-            "title": "User Id"
-          },
-          "unread_count": {
-            "type": "integer",
-            "title": "Unread Count"
-          }
-        },
-        "type": "object",
-        "required": [
-          "user_id",
-          "unread_count"
-        ],
-        "title": "UnreadCountResponse"
-      },
       "UserAchievementCreate": {
         "properties": {
           "user_id": {
@@ -23229,6 +24133,24 @@
         ],
         "title": "VkCallbackRequest"
       },
+      "app__api__v1__messages_extra__UnreadCountResponse": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "unread_count": {
+            "type": "integer",
+            "title": "Unread Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "unread_count"
+        ],
+        "title": "UnreadCountResponse"
+      },
       "app__schemas__courses__GoogleSheetsImportError": {
         "properties": {
           "row_index": {
@@ -23425,6 +24347,179 @@
             "updated": 2
           }
         ]
+      },
+      "app__schemas__me_notifications__MarkReadResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "read_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "read_at"
+        ],
+        "title": "MarkReadResponse",
+        "description": "Ответ POST /me/notifications/{id}/read."
+      },
+      "app__schemas__me_notifications__NotificationRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "modified_at; время создания записи"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "is_unread": {
+            "type": "boolean",
+            "title": "Is Unread"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "content",
+          "payload",
+          "created_at",
+          "read_at",
+          "is_unread"
+        ],
+        "title": "NotificationRead",
+        "description": "Inbox-запись пользователя для read-API."
+      },
+      "app__schemas__me_notifications__UnreadCountResponse": {
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Count",
+            "description": "Количество непрочитанных"
+          },
+          "last_check_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Last Check At",
+            "description": "Серверное now() — для дебага клиента"
+          }
+        },
+        "type": "object",
+        "required": [
+          "count",
+          "last_check_at"
+        ],
+        "title": "UnreadCountResponse",
+        "description": "Ответ /me/notifications/unread-count."
+      },
+      "app__schemas__messages__MarkReadResponse": {
+        "properties": {
+          "updated_count": {
+            "type": "integer",
+            "title": "Updated Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated_count"
+        ],
+        "title": "MarkReadResponse"
+      },
+      "app__schemas__notifications__NotificationRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "modified_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified By"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Modified At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "content",
+          "modified_by",
+          "modified_at"
+        ],
+        "title": "NotificationRead"
       },
       "app__schemas__tasks__GoogleSheetsImportError": {
         "properties": {
