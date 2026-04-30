@@ -306,7 +306,11 @@ async def claim_next_review(
     if user_id is not None:
         params["user_id"] = user_id
 
-    # Выбираем один task_result: checked_at IS NULL, не захвачен или просрочен, по ACL, FIFO
+    # Выбираем один task_result для ручной проверки. Y-4.2 (R-3 fix):
+    # дополнительно требуем `is_correct IS NULL` (не автопроверено) и тип задачи
+    # из whitelist `('SA_COM', 'TA')`. Без этих условий MC/SC/SA с автопроверкой
+    # (`is_correct IS NOT NULL, checked_at IS NULL` — design choice, см. ТЗ §2)
+    # попадали в очередь и преподаватель мог переопределить score через grade.
     r = await db.execute(
         text(f"""
             WITH cand AS (
@@ -314,6 +318,8 @@ async def claim_next_review(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
+                  AND tr.is_correct IS NULL
+                  AND t.task_content->>'type' IN ('SA_COM', 'TA')
                   AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
                   AND {REVIEW_ACL_SQL}
                   {course_cond}
@@ -327,7 +333,7 @@ async def claim_next_review(
             FROM cand
             WHERE tr.id = cand.id
             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json
-        """),
+        """),  # nosec B608 — REVIEW_ACL_SQL/course_cond/user_cond из закрытого набора литералов
         params,
     )
     row = r.fetchone()
@@ -617,6 +623,8 @@ async def get_pending_count(
     Включает только заявки, которые сейчас НЕ захвачены (или захват просрочен).
     """
     now = datetime.now(timezone.utc)
+    # Y-4.2 (R-3 fix): добавлены `is_correct IS NULL` + whitelist типа, чтобы
+    # не учитывать автопроверенные SA/SC/MC (см. claim_next_review комментарий).
     r = await db.execute(
         text(
             f"""
@@ -624,9 +632,11 @@ async def get_pending_count(
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
+              AND tr.is_correct IS NULL
+              AND t.task_content->>'type' IN ('SA_COM', 'TA')
               AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
               AND {REVIEW_ACL_SQL}
-            """
+            """  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов
         ),
         {"teacher_id": teacher_id, "now_ts": now},
     )
@@ -665,13 +675,18 @@ async def get_teacher_workload(
     overdue_total = int(row[2] or 0)
     open_help_requests_total = open_manual_help + open_blocked_limit
 
+    # Y-4.2 (R-3 fix): pending_manual_reviews_total отражает только SA_COM/TA
+    # с pending-статусом, не автопроверенные.
     r2 = await db.execute(
         text(f"""
             SELECT COUNT(*)
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
-            WHERE tr.checked_at IS NULL AND {REVIEW_ACL_SQL}
-        """),
+            WHERE tr.checked_at IS NULL
+              AND tr.is_correct IS NULL
+              AND t.task_content->>'type' IN ('SA_COM', 'TA')
+              AND {REVIEW_ACL_SQL}
+        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов
         params,
     )
     pending_manual_reviews_total = int(r2.scalar() or 0)

@@ -487,14 +487,19 @@ async def get_pending_review_results(
         РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё
     """
     from datetime import timezone
-    from sqlalchemy import select, and_, or_
+    from sqlalchemy import select, and_, or_, text as sa_text
     from app.models.task_results import TaskResults
     from app.models.tasks import Tasks
 
     now = datetime.now(timezone.utc)
-    # Р‘Р°Р·РѕРІРѕРµ СѓСЃР»РѕРІРёРµ: СЂРµР·СѓР»СЊС‚Р°С‚С‹ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹; СЌС‚Р°Рї 3.9: РЅРµ РїРѕРєР°Р·С‹РІР°С‚СЊ Р·Р°С…РІР°С‡РµРЅРЅС‹Рµ РїРѕ TTL
+    # Условия очереди ручной проверки. Y-4.2 (R-3 fix): добавлены `is_correct
+    # IS NULL` + whitelist типа задачи через JSONB. Это исключает автопроверенные
+    # MC/SC/SA, которые попадали в очередь и могли быть переоценены через
+    # /grade endpoint (data corruption risk).
     conditions = [
         TaskResults.checked_at.is_(None),
+        TaskResults.is_correct.is_(None),
+        sa_text("tasks.task_content->>'type' IN ('SA_COM', 'TA')"),
         or_(
             TaskResults.review_claim_expires_at.is_(None),
             TaskResults.review_claim_expires_at < now,
