@@ -506,8 +506,41 @@ Cross-cutting: `/encoding-guard` (RU-тексты), `/db-check` (pre+post M8).
 
 Решения 2026-04-30 (фиксированы):
 - §23.1 = **C** (28 legacy pending — оставляем как есть; нагрузочный smoke)
-- §23.4 = **A.1** (`INSERT INTO teacher_courses VALUES (2, 10) ON CONFLICT DO NOTHING` перед S5)
+- §23.4 = **A.1 ОТКЛОНЁН → NO-OP** (см. §16.1; seed невыполним, methodist-bypass уже работает)
 - §23.3 = **A** (агент выполняет автомат-часть; оператор проверяет письмо вручную)
+
+### 16.1. Errata §23.4 — seed teacher_courses избыточен (2026-04-30)
+
+При попытке выполнить вариант A.1 обнаружены 4 факта, делающие seed невозможным **и** ненужным:
+
+1. **`course_id=10` не root-курс.** Цепочка иерархии в БД: `10 → parent 7 → parent 1 (PY)`. DB-триггер `teacher_courses` запрещает линковку non-root курсов: `Course 10 has parents. Teachers and students can only be linked to courses without parents.` → `INSERT INTO teacher_courses VALUES (2, 10)` упадёт.
+
+2. **Все pending SA_COM на non-root курсах.** Запрос задач SA_COM с `course_id NOT IN (SELECT course_id FROM course_parents)` вернул пустое множество. Ни одна из 380 SA_COM-задач не лежит на корневом курсе. Все 11 pending — на course_id=10.
+
+3. **`REVIEW_ACL_SQL` не рекурсивен по `course_parents`.** В `app/services/teacher_queue_service.py:60-64` точное равенство `tc.course_id = t.course_id`. Даже если бы привязка Виктора к root существовала — фильтр не нашёл бы заявки в потомках 7/10.
+
+4. **Виктор уже имеет роль `methodist`** (verified MCP 2026-04-30) → `REVIEW_ACL_SQL` содержит `OR EXISTS user_roles ... role.name='methodist'` → bypass активен → 11 pending видны без seed'а.
+
+**Решение для S5 smoke:** seed не выполняем. Виктор как methodist видит весь pending pool.
+
+**Production-задача (вне scope Y-4):** расширить `REVIEW_ACL_SQL` рекурсивно через `course_parents` (WITH RECURSIVE), чтобы teacher на root-курсе автоматически получал доступ к потомкам. Это позволит ограничивать teacher'ов отдельными ветками без выдачи methodist-роли (которая широка). Открыть отдельный change-plan: **«Y-4.1 follow-up: REVIEW_ACL_SQL hierarchical scope»**.
+
+### 16.2. Acceptance gate для S5 (обновлён)
+
+```sql
+-- methodist-bypass: должен возвращать ≥ 11 (исторический backlog).
+SELECT COUNT(*)
+FROM task_results tr
+JOIN tasks t ON t.id = tr.task_id
+WHERE tr.is_correct IS NULL
+  AND tr.checked_by IS NULL
+  AND t.task_content->>'type' = 'SA_COM'
+  AND EXISTS (
+    SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+    WHERE ur.user_id = 2 AND r.name = 'methodist'
+  );
+-- Ожидаемое: >= 11
+```
 
 ## 17. Phase ordering inside S1
 
