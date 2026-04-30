@@ -28,6 +28,10 @@ from app.services.learning_events_service import (
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services.teacher_courses_service import TeacherCoursesService
+from app.services.teacher_queue_service import (
+    HELP_REQUESTS_ACL_SQL,
+    teacher_course_acl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -250,11 +254,11 @@ async def can_access_help_request(
     if r.fetchone() is not None:
         return True
     if course_id is not None:
+        # Y-4.1: hierarchical ACL — teacher на root-курсе видит потомков.
+        # `teacher_course_acl(':course_id')` строит EXISTS с WITH RECURSIVE,
+        # параметры course_id и teacher_id идут через bind.
         r = await db.execute(
-            text("""
-                SELECT 1 FROM teacher_courses
-                WHERE teacher_id = :teacher_id AND course_id = :course_id LIMIT 1
-            """),
+            text(f"SELECT 1 WHERE {teacher_course_acl(':course_id')}"),
             {"teacher_id": teacher_id, "course_id": course_id},
         )
         if r.fetchone() is not None:
@@ -308,12 +312,9 @@ async def list_help_requests(
         type_cond = "AND hr.request_type = 'blocked_limit'"
     order_sql = _order_by_sort(sort)
 
-    acl_sql = """
-        (hr.assigned_teacher_id = :teacher_id
-         OR EXISTS (SELECT 1 FROM student_teacher_links stl WHERE stl.student_id = hr.student_id AND stl.teacher_id = :teacher_id)
-         OR (hr.course_id IS NOT NULL AND EXISTS (SELECT 1 FROM teacher_courses tc WHERE tc.course_id = hr.course_id AND tc.teacher_id = :teacher_id))
-         OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
-    """
+    # Y-4.1: переиспользуем общий HELP_REQUESTS_ACL_SQL из teacher_queue_service —
+    # hierarchical через teacher_course_acl(); methodist-bypass сохранён.
+    acl_sql = HELP_REQUESTS_ACL_SQL
     params: dict[str, Any] = {"teacher_id": teacher_id}
     now = datetime.now(timezone.utc)
 

@@ -49,19 +49,60 @@ def get_idempotency_cache_stats() -> dict[str, int]:
         "idempotency_cache_misses": _idempotency_cache_misses,
     }
 
-# ACL для заявок (совпадает с help_requests_service)
-HELP_REQUESTS_ACL_SQL = """
-    (hr.assigned_teacher_id = :teacher_id
-     OR EXISTS (SELECT 1 FROM student_teacher_links stl WHERE stl.student_id = hr.student_id AND stl.teacher_id = :teacher_id)
-     OR (hr.course_id IS NOT NULL AND EXISTS (SELECT 1 FROM teacher_courses tc WHERE tc.course_id = hr.course_id AND tc.teacher_id = :teacher_id))
-     OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
+# ─── Y-4.1: иерархический ACL teacher_courses через course_parents ──────────
+# Teacher, привязанный к корневому курсу (DB-триггер требует root), автоматически
+# видит сущности (review, help-requests) для всех потомков в `course_parents`.
+# Глубина дерева = 2 (verified MCP 2026-04-30); WITH RECURSIVE безопасен без
+# cycle protection — `course_parents` спроектирована как DAG (см. M2 + триггер
+# 20260127). Backward-compat: для root-курса ancestor_chain={root} → поведение
+# идентично прежнему точному равенству.
+
+TEACHER_COURSE_HIERARCHY_ACL_TEMPLATE = """
+    EXISTS (
+        WITH RECURSIVE ancestor_chain AS (
+            SELECT ({target_course_col})::integer AS course_id
+            UNION ALL
+            SELECT cp.parent_course_id
+            FROM course_parents cp
+            JOIN ancestor_chain a ON a.course_id = cp.course_id
+        )
+        SELECT 1 FROM teacher_courses tc
+        WHERE tc.teacher_id = :teacher_id
+          AND tc.course_id IN (SELECT course_id FROM ancestor_chain)
+    )
 """
 
-# ACL для pending review: только курсы, где преподаватель в teacher_courses (или methodist)
-REVIEW_ACL_SQL = """
-    (EXISTS (SELECT 1 FROM teacher_courses tc WHERE tc.course_id = t.course_id AND tc.teacher_id = :teacher_id)
+
+def teacher_course_acl(target_course_col: str) -> str:
+    """Вернуть SQL-фрагмент `EXISTS(...)` для проверки доступа :teacher_id к
+    target_course_col через дерево course_parents.
+
+    target_course_col — column reference из закрытого набора call-sites (например
+    't.course_id', 'hr.course_id'). User-input не попадает в format() — все
+    динамические значения идут через bind (:teacher_id).
+    """
+    return TEACHER_COURSE_HIERARCHY_ACL_TEMPLATE.format(
+        target_course_col=target_course_col
+    )  # nosec B608 — target_course_col из закрытого набора литералов модуля
+
+
+# ACL для заявок (совпадает с help_requests_service). Y-4.1: hierarchical через
+# teacher_course_acl(); methodist-bypass сохранён как escape hatch.
+# nosec B608 — единственная f-string подстановка идёт от teacher_course_acl(),
+# который сам подставляет литералы из закрытого набора (см. helper выше).
+HELP_REQUESTS_ACL_SQL = f"""
+    (hr.assigned_teacher_id = :teacher_id
+     OR EXISTS (SELECT 1 FROM student_teacher_links stl WHERE stl.student_id = hr.student_id AND stl.teacher_id = :teacher_id)
+     OR (hr.course_id IS NOT NULL AND {teacher_course_acl('hr.course_id')})
      OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
-"""
+"""  # nosec B608
+
+# ACL для pending review (Y-4.1: hierarchical через teacher_course_acl()).
+# nosec B608 — то же обоснование, что и выше.
+REVIEW_ACL_SQL = f"""
+    ({teacher_course_acl('t.course_id')}
+     OR EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id WHERE ur.user_id = :teacher_id AND r.name = 'methodist'))
+"""  # nosec B608
 
 
 def _token() -> str:

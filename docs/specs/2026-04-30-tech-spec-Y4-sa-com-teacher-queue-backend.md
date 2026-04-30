@@ -525,6 +525,8 @@ Cross-cutting: `/encoding-guard` (RU-тексты), `/db-check` (pre+post M8).
 
 **Production-задача (вне scope Y-4):** расширить `REVIEW_ACL_SQL` рекурсивно через `course_parents` (WITH RECURSIVE), чтобы teacher на root-курсе автоматически получал доступ к потомкам. Это позволит ограничивать teacher'ов отдельными ветками без выдачи methodist-роли (которая широка). Открыть отдельный change-plan: **«Y-4.1 follow-up: REVIEW_ACL_SQL hierarchical scope»**.
 
+**Resolution:** Y-4.1 follow-up MERGED 2026-04-30. См. [Y-4.1 spec](2026-04-30-tech-spec-Y4.1-review-acl-hierarchical.md). Helper `teacher_course_acl()` + `TEACHER_COURSE_HIERARCHY_ACL_TEMPLATE` в `teacher_queue_service.py` устраняют gap; `REVIEW_ACL_SQL` + `HELP_REQUESTS_ACL_SQL` теперь используют WITH RECURSIVE через `course_parents`. Live verify: 11 pending видны Виктору без methodist-bypass.
+
 ### 16.2. Acceptance gate для S5 (обновлён)
 
 ```sql
