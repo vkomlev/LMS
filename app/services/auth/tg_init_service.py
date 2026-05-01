@@ -122,6 +122,11 @@ async def get_or_create_user_by_tg(
             db.add(new_user)
             await db.flush()
             await identity_link_service.upsert_identity(db, new_user.id, "tg", str(tg_user_id))
+            # Y-4 pre-S5: auto-assign student role в той же savepoint-транзакции.
+            from app.services.auth.role_assign_service import ensure_student_role
+            await ensure_student_role(
+                db, new_user.id, channel="tg_init", origin="auto_registration"
+            )
     except IntegrityError:
         existing = await identity_link_service.get_user_by_identity(db, "tg", str(tg_user_id))
         if existing is None:

@@ -327,6 +327,7 @@ from app.api.v1.auth.link_token import router as link_token_router
 from app.api.v1.me import router as me_router
 from app.api.v1.me_notifications import router as me_notifications_router
 from app.api.v1.embed_api import router as embed_router
+from app.api.v1.auth.test_session import router as auth_test_session_router
 
 app.include_router(magic_link_router, prefix=API_PREFIX)
 app.include_router(tg_router, prefix=API_PREFIX)
@@ -336,3 +337,4 @@ app.include_router(link_token_router, prefix=API_PREFIX)
 app.include_router(me_router, prefix=API_PREFIX)
 app.include_router(me_notifications_router, prefix=API_PREFIX)
 app.include_router(embed_router, prefix=API_PREFIX)
+app.include_router(auth_test_session_router, prefix=API_PREFIX)

@@ -81,3 +81,17 @@ class Settings:
             ).split(",")
             if o.strip()
         ]
+
+        # Y-4 pre-S5: тестовые auth-эндпоинты (e.g. /auth/test/issue-session).
+        # Двойной gating: env in {"dev","test"} AND test_endpoints_enabled=True
+        # → endpoint работает; иначе FastAPI вернёт 404 (path-as-disabled).
+        # KEEP FALSE in prod даже если ENV случайно стал dev/test.
+        self.test_endpoints_enabled: bool = os.getenv(
+            "TEST_ENDPOINTS_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
+
+        # Cookie secure flag — True только в prod, False в dev (HTTP localhost).
+        # Используется в Set-Cookie для test-issue-session.
+        self.cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in (
+            "true", "1", "yes"
+        )

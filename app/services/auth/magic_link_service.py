@@ -202,6 +202,13 @@ async def get_or_create_user_by_email(
             db.add(new_user)
             await db.flush()
             await identity_link_service.upsert_identity(db, new_user.id, "email", email)
+            # Y-4 pre-S5: auto-assign student role в той же savepoint-транзакции
+            # с user INSERT. На IntegrityError откатимся целиком (включая user)
+            # — никакого partial-state.
+            from app.services.auth.role_assign_service import ensure_student_role
+            await ensure_student_role(
+                db, new_user.id, channel="magic_link", origin="auto_registration"
+            )
     except IntegrityError:
         existing = await identity_link_service.get_user_by_identity(db, "email", email)
         if existing is None:

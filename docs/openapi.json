@@ -14296,6 +14296,75 @@
           }
         }
       }
+    },
+    "/api/v1/auth/test/issue-session": {
+      "post": {
+        "tags": [
+          "auth-test"
+        ],
+        "summary": "Выдать cookie-сессию для тестового пользователя (только dev/test)",
+        "description": "Выдать cookie-сессию для тестового пользователя.\n\nДвойной gating защищает от случайного включения в prod даже при\n`TEST_ENDPOINTS_ENABLED=true`: если `ENV=production`, endpoint\nвозвращает 404 ДО обработки body (`raise HTTPException(404)` без detail).",
+        "operationId": "issue_test_session_api_v1_auth_test_issue_session_post",
+        "parameters": [
+          {
+            "name": "X-API-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestIssueSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Cookie выдан, сессия создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestIssueSessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid X-API-Key"
+          },
+          "403": {
+            "description": "Target user is service"
+          },
+          "404": {
+            "description": "Endpoint disabled OR user not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -23284,6 +23353,48 @@
         "type": "object",
         "title": "TeacherWorkloadResponse",
         "description": "Сводка нагрузки преподавателя для главного экрана."
+      },
+      "TestIssueSessionRequest": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "User Id",
+            "description": "ID реального пользователя из users.id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id"
+        ],
+        "title": "TestIssueSessionRequest",
+        "description": "Body для POST /auth/test/issue-session."
+      },
+      "TestIssueSessionResponse": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          },
+          "message": {
+            "type": "string",
+            "const": "Test session issued",
+            "title": "Message",
+            "default": "Test session issued"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "expires_at"
+        ],
+        "title": "TestIssueSessionResponse",
+        "description": "Ответ с подтверждением выдачи сессии (cookie в Set-Cookie header)."
       },
       "TextAnswerRules": {
         "properties": {

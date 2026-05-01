@@ -38,6 +38,8 @@ docs/*
 !docs/qa/**
 !docs/specs/
 !docs/specs/**
+!docs/operations/
+!docs/operations/**
 .cursor/*
 !.cursor/rules/
 

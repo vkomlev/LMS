@@ -80,6 +80,10 @@ async def get_current_user(
                 )
                 user = result.scalar_one_or_none()
                 if user:
+                    # Y-4 pre-S5: defensive self-heal — если у legacy-юзера нет
+                    # ни одной роли, тихо назначаем 'student' + audit. Soft-fail:
+                    # любой сбой helper'а или commit'а не должен валить auth.
+                    await _self_heal_student_role(db, user.id)
                     return CurrentUser(
                         id=user.id,
                         is_service=False,
@@ -102,3 +106,39 @@ async def require_authenticated(
     if current_user.is_service:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Service token not allowed here")
     return current_user
+
+
+async def _self_heal_student_role(db: AsyncSession, user_id: int) -> None:
+    """Y-4 pre-S5 defensive self-heal: legacy-user без роли получает 'student'.
+
+    Никогда не raises — на любую ошибку (DB conflict, audit-сбой,
+    transaction state) логируем warning и продолжаем. Цель —
+    не блокировать auth-pipeline на legacy-пробелах.
+
+    Soft-fail rationale: outer transaction зависит от структуры handler'а;
+    отдельный commit может конфликтовать. Если падает — assign отложится
+    до следующего auth-вызова или вручную через M10 rerun.
+    """
+    import logging  # noqa: PLC0415 — избегаем top-level импорт для деда
+    log = logging.getLogger(__name__)
+    try:
+        from app.services.auth.role_assign_service import ensure_student_role  # noqa: PLC0415
+        assigned = await ensure_student_role(
+            db, user_id,
+            channel="get_current_user_defensive",
+            origin="defensive_self_heal",
+        )
+        if assigned:
+            # Отдельный commit, чтобы зафиксировать assign + audit_event.
+            # Если outer transaction уже активен и conflict'ит — except поглотит.
+            await db.commit()
+    except Exception:
+        log.warning(
+            "Y-4 pre-S5 self-heal failed для user_id=%s — soft-fail, auth продолжается",
+            user_id,
+            exc_info=True,
+        )
+        try:
+            await db.rollback()
+        except Exception:
+            pass

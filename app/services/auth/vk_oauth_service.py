@@ -188,6 +188,11 @@ async def get_or_create_user_by_vk(
             )
             if email:
                 await identity_link_service.upsert_identity(db, new_user.id, "email", email)
+            # Y-4 pre-S5: auto-assign student role в той же savepoint-транзакции.
+            from app.services.auth.role_assign_service import ensure_student_role
+            await ensure_student_role(
+                db, new_user.id, channel="vk_callback", origin="auto_registration"
+            )
     except IntegrityError:
         existing = await identity_link_service.get_user_by_identity(db, "vk", vk_user_id)
         if existing is None:

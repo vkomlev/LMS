@@ -14,6 +14,11 @@ STUDENT_NOTIFICATION_CREATED = "student.notification.created"
 STUDENT_NOTIFICATION_READ = "student.notification.read"
 EMAIL_FAILED = "email.failed"
 
+# Y-4 pre-S5 event types (auth role auto-assign + test session endpoint)
+STUDENT_ROLE_AUTO_ASSIGNED = "student.role.auto_assigned"
+AUTH_ROLE_MISSING_SELF_HEALED = "auth.role.missing_self_healed"
+AUTH_TEST_SESSION_ISSUED = "auth.test.session_issued"
+
 
 async def log_event(
     db: AsyncSession,
