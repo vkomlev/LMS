@@ -7,7 +7,9 @@ from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel
 import logging
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_async_db, get_current_user
+from app.auth.current_user import CurrentUser
+from app.services.tasks_acl_service import assert_task_access
 from app.schemas.tasks import (
     TaskRead, 
     TaskBulkUpsertRequest, 
@@ -84,16 +86,60 @@ tasks_service = TasksService()
 )
 async def get_task_by_external_uid(
     external_uid: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> TaskRead:
     """
     Вернуть задачу по внешнему устойчивому идентификатору.
 
+    Y-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)
+    + ACL по дереву `user_courses` + `course_parents`. Service-key и
+    teacher / methodist / admin — bypass; student — только если задача в его
+    курсе или потомке.
+
     Статусы:
-    - 200 — если задача найдена;
-    - 404 — если задача не найдена (генерируется DomainError в сервисе).
+    - 200 — если задача найдена и доступ разрешён;
+    - 401 — auth required;
+    - 403 — student не зачислен в курс задачи (или ancestor);
+    - 404 — задача не найдена.
     """
     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
+    await assert_task_access(
+        db, current_user=current_user, task_course_id=task.course_id,
+    )
+    return task
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=TaskRead,
+    summary="Получить задачу по id (Y-4 post-S5: cookie auth + ACL)",
+    responses={
+        200: {"description": "Задача найдена и доступна"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Student не зачислен в курс задачи"},
+        404: {"description": "Задача не существует"},
+    },
+)
+async def get_task_by_id(
+    task_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> TaskRead:
+    """Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.
+
+    Этот endpoint регистрируется в `tasks_extra_router`, который подключен
+    в `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.
+    FastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+    result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
+    await assert_task_access(
+        db, current_user=current_user, task_course_id=task.course_id,
+    )
     return task
 
 @router.post(

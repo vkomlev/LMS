@@ -5582,9 +5582,12 @@
           "tasks"
         ],
         "summary": "Получить задачу по внешнему идентификатору",
-        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nСтатусы:\n- 200 — если задача найдена;\n- 404 — если задача не найдена (генерируется DomainError в сервисе).",
+        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nY-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)\n+ ACL по дереву `user_courses` + `course_parents`. Service-key и\nteacher / methodist / admin — bypass; student — только если задача в его\nкурсе или потомке.\n\nСтатусы:\n- 200 — если задача найдена и доступ разрешён;\n- 401 — auth required;\n- 403 — student не зачислен в курс задачи (или ancestor);\n- 404 — задача не найдена.",
         "operationId": "get_task_by_external_uid_api_v1_tasks_by_external__external_uid__get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -5597,6 +5600,54 @@
             "schema": {
               "type": "string",
               "title": "External Uid"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -5658,6 +5709,114 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Получить задачу по id (Y-4 post-S5: cookie auth + ACL)",
+        "description": "Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nЭтот endpoint регистрируется в `tasks_extra_router`, который подключен\nв `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.\nFastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.",
+        "operationId": "get_task_by_id_api_v1_tasks__task_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Задача найдена и доступна",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Student не зачислен в курс задачи"
+          },
+          "404": {
+            "description": "Задача не существует"
           },
           "422": {
             "description": "Validation Error",
