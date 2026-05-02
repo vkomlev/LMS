@@ -13,7 +13,10 @@ from app.models.user_session import UserSession
 logger = logging.getLogger(__name__)
 
 _TOKEN_BYTES = 32
-_ACCESS_TTL_HOURS = 1
+# Y-5.2: продлеваем session TTL с 1ч до 24ч — иначе ученик за 1 урок (~30-60 мин)
+# теряет сессию и должен снова логиниться. UX-блокер. 24 часа — удобный баланс
+# (студент возвращается на следующий день; refresh — 30 дней).
+_ACCESS_TTL_HOURS = 24
 _REFRESH_TTL_DAYS = 30
 
 

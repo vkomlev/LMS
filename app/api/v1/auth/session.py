@@ -25,9 +25,10 @@ async def refresh(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token недействителен или истёк")
     access_token, refresh_token, _ = result
     await db.commit()
+    # Y-5.2: max_age 24ч (см. session_service _ACCESS_TTL_HOURS=24).
     response.set_cookie(
         "session", access_token,
-        httponly=True, secure=True, samesite="lax", max_age=3600,
+        httponly=True, secure=True, samesite="lax", max_age=86400,
     )
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
 

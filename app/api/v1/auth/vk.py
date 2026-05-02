@@ -90,8 +90,9 @@ async def vk_callback(
     await log_event(db, "login_vk_oauth", user_id=user.id, ip=ip)
     await db.commit()
 
+    # Y-5.2: max_age 24ч (см. session_service _ACCESS_TTL_HOURS=24).
     response.set_cookie(
         "session", access,
-        httponly=True, secure=True, samesite="lax", max_age=3600,
+        httponly=True, secure=True, samesite="lax", max_age=86400,
     )
     return AuthTokenResponse(access_token=access, refresh_token=refresh)
