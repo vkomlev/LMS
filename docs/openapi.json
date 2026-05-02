@@ -2724,9 +2724,12 @@
           "materials"
         ],
         "summary": "Список материалов курса",
-        "description": "Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).\ntotal — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски).",
+        "description": "Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).\ntotal — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски).\n\nY-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён.",
         "operationId": "list_course_materials_api_v1_courses__course_id__materials_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -2828,6 +2831,54 @@
               "minimum": 1,
               "default": 100,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -6187,9 +6238,12 @@
           "tasks"
         ],
         "summary": "Получить задачи курса",
-        "description": "Получить список задач курса с пагинацией.\n\nПоддерживается опциональная фильтрация по уровню сложности.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
+        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
         "operationId": "get_tasks_by_course_api_v1_tasks_by_course__course_id__get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -6248,6 +6302,54 @@
               "title": "Offset"
             },
             "description": "Смещение"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
@@ -8185,9 +8287,11 @@
           "task_results"
         ],
         "summary": "РЎС‚Р°С‚РёСЃС‚РёРєР° РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ",
-        "description": "РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ.\n\nР’РѕР·РІСЂР°С‰Р°РµС‚:\n- total_attempts: РћР±С‰РµРµ РєРѕР»РёС‡РµСЃС‚РІРѕ РїРѕРїС‹С‚РѕРє\n- average_score: РЎСЂРµРґРЅРёР№ Р±Р°Р»Р»\n- correct_percentage: РџСЂРѕС†РµРЅС‚ РїСЂР°РІРёР»СЊРЅС‹С… РѕС‚РІРµС‚РѕРІ\n- total_score: РЎСѓРјРјР° РІСЃРµС… Р±Р°Р»Р»РѕРІ\n- total_max_score: РЎСѓРјРјР° РјР°РєСЃРёРјР°Р»СЊРЅС‹С… Р±Р°Р»Р»РѕРІ\n- completion_percentage: РџСЂРѕС†РµРЅС‚ РІС‹РїРѕР»РЅРµРЅРёСЏ (total_score / total_max_score * 100)",
         "operationId": "get_user_stats_api_v1_task_results_stats_by_user__user_id__get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -8200,6 +8304,54 @@
             "schema": {
               "type": "integer",
               "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],

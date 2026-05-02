@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends, Query, Body, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_async_db, get_current_user
+from app.auth.current_user import CurrentUser
+from fastapi import HTTPException, status as http_status
 from app.schemas.task_results import TaskResultRead, TaskResultUpdate, TaskResultManualCheckRequest
 from app.services.task_results_service import TaskResultsService
 
@@ -438,8 +440,26 @@ async def get_course_stats(
 )
 async def get_user_stats(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    # Y-5.2: cookie + ACL. Студент может видеть только СВОЮ статистику;
+    # service-key и extended-role (admin/methodist/teacher) — bypass.
+    if not current_user.is_service and current_user.id != user_id:
+        # Простая проверка role: admin/methodist/teacher могут смотреть чужой
+        from sqlalchemy import text as _text
+        role_check = await db.execute(
+            _text(
+                "SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+                "WHERE ur.user_id=:uid AND r.name IN ('admin','methodist','teacher') LIMIT 1"
+            ),
+            {"uid": current_user.id},
+        )
+        if role_check.fetchone() is None:
+            raise HTTPException(
+                http_status.HTTP_403_FORBIDDEN,
+                "Доступ к чужой статистике запрещён",
+            )
     """
     РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ.
     

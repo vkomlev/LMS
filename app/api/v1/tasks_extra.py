@@ -10,6 +10,7 @@ import logging
 from app.api.deps import get_db, get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.services.tasks_acl_service import assert_task_access
+from app.services.courses_acl_service import assert_course_access
 from app.schemas.tasks import (
     TaskRead, 
     TaskBulkUpsertRequest, 
@@ -389,7 +390,8 @@ async def find_tasks_by_external_uid_endpoint(
 )
 async def get_tasks_by_course(
     course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
     difficulty_id: Optional[int] = Query(None, description="Фильтр по уровню сложности"),
     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
@@ -397,7 +399,9 @@ async def get_tasks_by_course(
     """
     Получить список задач курса с пагинацией.
 
-    Поддерживается опциональная фильтрация по уровню сложности.
+    Y-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL
+    через `assert_course_access`. Service-key bypass сохранён через
+    `current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.
 
     Args:
         course_id: ID курса.
@@ -408,6 +412,7 @@ async def get_tasks_by_course(
     Returns:
         Список задач курса.
     """
+    await assert_course_access(db, current_user=current_user, course_id=course_id)
     tasks, total = await tasks_service.get_by_course(
         db,
         course_id=course_id,

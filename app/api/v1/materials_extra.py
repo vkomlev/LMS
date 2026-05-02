@@ -24,6 +24,7 @@ from app.core.config import Settings
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
 from app.services.materials_acl_service import assert_material_access
+from app.services.courses_acl_service import assert_course_access
 from app.schemas.materials import (
     MaterialRead,
     MaterialReorderRequest,
@@ -126,10 +127,14 @@ async def list_course_materials(
     order_by: str = Query("order_position", description="Сортировка: order_position, title, created_at"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> MaterialsListResponse:
     """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).
-    total — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски)."""
+    total — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски).
+
+    Y-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён."""
+    await assert_course_access(db, current_user=current_user, course_id=course_id)
     items, total = await materials_service.list_by_course(
         db,
         course_id,
