@@ -14055,6 +14055,106 @@
         }
       }
     },
+    "/api/v1/me/attribute-guest": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Attribute Guest",
+        "description": "Атрибуция guest_session к авторизованному user после login.\n\nPhase Y-5 §6.2.4. Используется когда юзер вошёл existing identity\n(не registration), а frontend сохранил guest_session_id cookie.\nIdempotent; кросс-юзер conflict даёт 409.",
+        "operationId": "attribute_guest_api_v1_me_attribute_guest_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttributeGuestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttributeGuestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/notifications/unread-count": {
       "get": {
         "tags": [
@@ -14381,21 +14481,41 @@
         }
       }
     },
-    "/api/v1/embed/session": {
+    "/embed-api/auth/issue": {
       "post": {
         "tags": [
-          "embed"
+          "embed-api"
         ],
-        "summary": "Create Guest Session",
-        "description": "Создать анонимную guest-сессию (для виджета без авторизации).",
-        "operationId": "create_guest_session_api_v1_embed_session_post",
+        "summary": "Issue Embed Token",
+        "description": "Выдать одноразовый JWT для embed-iframe.\n\nRequires `course_uid` ∈ public-demo + `external_uid` существует в этом курсе.",
+        "operationId": "issue_embed_token_embed_api_auth_issue_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedAuthIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "201": {
+          "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GuestSessionResponse"
+                  "$ref": "#/components/schemas/EmbedAuthIssueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -14403,22 +14523,224 @@
         }
       }
     },
-    "/api/v1/embed/session/{guest_session_id}/attempts": {
-      "post": {
+    "/embed-api/courses/{course_uid}/task/{external_uid}": {
+      "get": {
         "tags": [
-          "embed"
+          "embed-api"
         ],
-        "summary": "Create Guest Attempt",
-        "description": "Записать попытку ответа гостя.",
-        "operationId": "create_guest_attempt_api_v1_embed_session__guest_session_id__attempts_post",
+        "summary": "Read Embed Task",
+        "description": "Прочитать display-only payload задачи для встраивания в iframe.\n\nSingle-use enforce: повторный read с тем же token → 401 token_consumed.\nPayload не содержит correct_answer / solution_rules.",
+        "operationId": "read_embed_task_embed_api_courses__course_uid__task__external_uid__get",
         "parameters": [
           {
-            "name": "guest_session_id",
+            "name": "course_uid",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Guest Session Id"
+              "description": "course_uid публичного demo-курса",
+              "title": "Course Uid"
+            },
+            "description": "course_uid публичного demo-курса"
+          },
+          {
+            "name": "external_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "external_uid задачи",
+              "title": "External Uid"
+            },
+            "description": "external_uid задачи"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Одноразовый JWT, выданный /embed-api/auth/issue",
+              "title": "Token"
+            },
+            "description": "Одноразовый JWT, выданный /embed-api/auth/issue"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/session": {
+      "post": {
+        "tags": [
+          "learning-guest"
+        ],
+        "summary": "Create Guest Session",
+        "description": "Создать анонимную guest-сессию и установить cookie.",
+        "operationId": "create_guest_session_api_v1_learning_guest_session_post",
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestSessionCreateResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/courses/{course_uid}": {
+      "get": {
+        "tags": [
+          "learning-guest"
+        ],
+        "summary": "Get Guest Course Info",
+        "description": "Вернуть info о demo-курсе (для SPW UX).",
+        "operationId": "get_guest_course_info_api_v1_learning_guest_courses__course_uid__get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid публичного demo-курса",
+              "title": "Course Uid"
+            },
+            "description": "course_uid публичного demo-курса"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestCourseInfoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/task/{task_id}": {
+      "get": {
+        "tags": [
+          "learning-guest"
+        ],
+        "summary": "Get Guest Task",
+        "description": "Загрузить stem + варианты задачи. Только для public-demo курсов.\n\ncorrect_answer / solution_rules в payload отсутствуют (защита от слива).\nSA_COM/TA задачи отдают 404 (нет teacher review без user).",
+        "operationId": "get_guest_task_api_v1_learning_guest_task__task_id__get",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID задачи",
+              "title": "Task Id"
+            },
+            "description": "ID задачи"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuestTaskResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/attempts": {
+      "post": {
+        "tags": [
+          "learning-guest"
+        ],
+        "summary": "Create Guest Attempt",
+        "description": "Принять ответ гостя на demo-задачу.\n\nCookie `guest_session` обязательна; иначе 400.\nRate-limit: 5/час/IP И 3/сутки/(guest_session) — оба должны пройти.",
+        "operationId": "create_guest_attempt_api_v1_learning_guest_attempts_post",
+        "parameters": [
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
             }
           }
         ],
@@ -14427,7 +14749,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GuestAttemptRequest"
+                "$ref": "#/components/schemas/GuestAttemptCreateRequest"
               }
             }
           }
@@ -14438,7 +14760,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GuestAttemptResponse"
+                  "$ref": "#/components/schemas/GuestAttemptCreateResponse"
                 }
               }
             }
@@ -15503,6 +15825,48 @@
         "title": "AttemptWithResults",
         "description": "Детальное представление попытки:\n- сама попытка,\n- список результатов по задачам,\n- суммарные баллы.\nLearning Engine V1 (этап 4): опционально attempts_used, attempts_limit_effective, last_based_status."
       },
+      "AttributeGuestRequest": {
+        "properties": {
+          "guest_session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Guest Session Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "guest_session_id"
+        ],
+        "title": "AttributeGuestRequest",
+        "description": "Тело POST /me/attribute-guest."
+      },
+      "AttributeGuestResponse": {
+        "properties": {
+          "guest_session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Guest Session Id"
+          },
+          "attributed_count": {
+            "type": "integer",
+            "title": "Attributed Count",
+            "description": "Сколько guest_attempt получили attributed_user_id (0 если уже атрибутирован)"
+          },
+          "already_attributed": {
+            "type": "boolean",
+            "title": "Already Attributed",
+            "description": "True если guest_session уже принадлежал текущему user"
+          }
+        },
+        "type": "object",
+        "required": [
+          "guest_session_id",
+          "attributed_count",
+          "already_attributed"
+        ],
+        "title": "AttributeGuestResponse",
+        "description": "Ответ на POST /me/attribute-guest."
+      },
       "AuthTokenResponse": {
         "properties": {
           "access_token": {
@@ -16314,6 +16678,16 @@
               "COURSE-PY-01",
               null
             ]
+          },
+          "is_public_demo": {
+            "type": "boolean",
+            "title": "Is Public Demo",
+            "description": "Доступен ли курс гостям без регистрации (Phase Y-5).",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
           }
         },
         "type": "object",
@@ -16392,6 +16766,16 @@
             "examples": [
               "COURSE-PY-01",
               null
+            ]
+          },
+          "is_public_demo": {
+            "type": "boolean",
+            "title": "Is Public Demo",
+            "description": "Доступен ли курс гостям без регистрации (Phase Y-5).",
+            "default": false,
+            "examples": [
+              false,
+              true
             ]
           },
           "children": {
@@ -16717,6 +17101,16 @@
               null
             ]
           },
+          "is_public_demo": {
+            "type": "boolean",
+            "title": "Is Public Demo",
+            "description": "Доступен ли курс гостям без регистрации (Phase Y-5).",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
+          },
           "order_number": {
             "anyOf": [
               {
@@ -16934,9 +17328,307 @@
         "title": "DifficultyLevelUpdate",
         "description": "Схема частичного обновления уровня сложности.\nВсе поля опциональны."
       },
-      "GuestAttemptRequest": {
+      "EmbedAuthIssueRequest": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid",
+            "description": "course_uid публичного demo-курса"
+          },
+          "external_uid": {
+            "type": "string",
+            "title": "External Uid",
+            "description": "external_uid задачи"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "external_uid"
+        ],
+        "title": "EmbedAuthIssueRequest",
+        "description": "Тело POST /embed-api/auth/issue."
+      },
+      "EmbedAuthIssueResponse": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "title": "Token",
+            "description": "Одноразовый JWT (HS256), TTL по конфигу"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "title": "EmbedAuthIssueResponse",
+        "description": "Ответ POST /embed-api/auth/issue."
+      },
+      "EmbedTaskOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Текст варианта (alias `text` → label)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "EmbedTaskOption",
+        "description": "Вариант ответа в embed-payload (display-only)."
+      },
+      "EmbedTaskResponse": {
         "properties": {
           "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "type": "string",
+            "title": "External Uid"
+          },
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SA",
+              "SC",
+              "MC"
+            ],
+            "title": "Type"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EmbedTaskOption"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "deeplink_url": {
+            "type": "string",
+            "title": "Deeplink Url",
+            "description": "Канонический URL для CTA «Решить в SPW» (target=_top)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "external_uid",
+          "course_uid",
+          "type",
+          "stem",
+          "deeplink_url"
+        ],
+        "title": "EmbedTaskResponse",
+        "description": "Ответ GET /embed-api/courses/{course_uid}/task/{external_uid}.\n\nWhitelisted поля. SA_COM/TA не отдаются (404). correct_answer\n/ solution_rules / max_attempts отсутствуют."
+      },
+      "GuestAttemptCreateRequest": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задачи"
+          },
+          "answer": {
+            "$ref": "#/components/schemas/StudentAnswer",
+            "description": "Ответ гостя; разрешены только SA/SC/MC"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "answer"
+        ],
+        "title": "GuestAttemptCreateRequest",
+        "description": "Тело POST /learning/guest/attempts."
+      },
+      "GuestAttemptCreateResponse": {
+        "properties": {
+          "attempt_id": {
+            "type": "integer",
+            "title": "Attempt Id"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attempt_id",
+          "is_correct",
+          "score",
+          "max_score"
+        ],
+        "title": "GuestAttemptCreateResponse",
+        "description": "Ответ на POST /learning/guest/attempts."
+      },
+      "GuestCourseInfoResponse": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "is_public_demo": {
+            "type": "boolean",
+            "title": "Is Public Demo",
+            "description": "Гарантированно True (404 если курс не demo)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title",
+          "is_public_demo"
+        ],
+        "title": "GuestCourseInfoResponse",
+        "description": "Ответ на GET /learning/guest/courses/{course_uid}."
+      },
+      "GuestSessionCreateResponse": {
+        "properties": {
+          "guest_session_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Guest Session Id",
+            "description": "UUID гостевой сессии"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Expires At",
+            "description": "Информационное время истечения cookie (now+30 дней). Физически TTL не enforced до cleanup post-MVP."
+          }
+        },
+        "type": "object",
+        "required": [
+          "guest_session_id",
+          "expires_at"
+        ],
+        "title": "GuestSessionCreateResponse",
+        "description": "Ответ на POST /learning/guest/session."
+      },
+      "GuestTaskOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Устойчивый ID варианта (A/B/C/...)"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Текст варианта"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "GuestTaskOption",
+        "description": "Вариант ответа в guest-payload — без флагов is_correct/explanation."
+      },
+      "GuestTaskResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SA",
+              "SC",
+              "MC"
+            ],
+            "title": "Type",
+            "description": "Тип задачи; SA_COM/TA не отдаются гостям"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/GuestTaskOption"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options",
+            "description": "Варианты для SC/MC; для SA не возвращается"
+          },
+          "max_score": {
             "anyOf": [
               {
                 "type": "integer"
@@ -16945,56 +17637,29 @@
                 "type": "null"
               }
             ],
-            "title": "Task Id"
+            "title": "Max Score"
           },
-          "answer_json": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Answer Json"
-          },
-          "is_correct": {
+          "max_attempts": {
             "anyOf": [
               {
-                "type": "boolean"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Is Correct"
+            "title": "Max Attempts"
           }
         },
         "type": "object",
         "required": [
-          "answer_json"
+          "task_id",
+          "course_id",
+          "type",
+          "stem"
         ],
-        "title": "GuestAttemptRequest"
-      },
-      "GuestAttemptResponse": {
-        "properties": {
-          "attempt_id": {
-            "type": "integer",
-            "title": "Attempt Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "attempt_id"
-        ],
-        "title": "GuestAttemptResponse"
-      },
-      "GuestSessionResponse": {
-        "properties": {
-          "guest_session_id": {
-            "type": "string",
-            "title": "Guest Session Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "guest_session_id"
-        ],
-        "title": "GuestSessionResponse"
+        "title": "GuestTaskResponse",
+        "description": "Ответ на GET /learning/guest/task/{task_id}.\n\nSA_COM в guest-mode исключены (404 — teacher review невозможна без user).\n`correct_answer` / `solution_rules` НЕ возвращаются."
       },
       "HTTPValidationError": {
         "properties": {

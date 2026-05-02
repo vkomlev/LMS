@@ -1,0 +1,16 @@
+Y-5 S7 — bandit security scan (clean)
+======================================
+Дата: 2026-05-02
+Файлы: app/api/v1/learning_guest.py, app/api/v1/embed_api.py,
+       app/services/learning_guest_service.py,
+       app/services/auth/guest_attribution_service.py,
+       app/services/auth/embed_token_service.py,
+       app/schemas/learning_guest.py, app/schemas/embed_api.py
+
+Run: python -m bandit -r <files>
+
+Результат:
+  No issues identified.
+  Total lines of code: 849
+  Severity: 0 high / 0 medium / 0 low / 0 undefined.
+  Confidence: 0 high / 0 medium / 0 low / 0 undefined.

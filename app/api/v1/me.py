@@ -31,6 +31,10 @@ from app.schemas.auth import (
     IdentityLinkVkRequest,
     IdentityLinkedItem,
 )
+from app.schemas.learning_guest import (
+    AttributeGuestRequest,
+    AttributeGuestResponse,
+)
 from app.schemas.me import (
     CourseProgress,
     CourseWithProgressRead,
@@ -43,6 +47,7 @@ from app.schemas.me import (
 from app.services import me_service
 from app.services.audit_service import log_event
 from app.services.auth import (
+    guest_attribution_service,
     identity_link_service,
     link_token_service,
     magic_link_service,
@@ -50,6 +55,9 @@ from app.services.auth import (
     vk_oauth_service,
 )
 from app.services.auth.exceptions import IdentityConflictError
+from app.services.auth.guest_attribution_service import (
+    GuestAttributionConflictError,
+)
 from app.services.fernet_service import encrypt_token
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -440,4 +448,83 @@ async def link_identity_vk(
         identity=IdentityLinkedItem(
             kind="vk", value_masked=masked, created_at=new_link.created_at
         )
+    )
+
+
+# ── POST /me/attribute-guest (Phase Y-5) ───────────────────────────────────
+
+@router.post(
+    "/attribute-guest",
+    response_model=AttributeGuestResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def attribute_guest(
+    body: AttributeGuestRequest,
+    request: Request,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> AttributeGuestResponse:
+    """Атрибуция guest_session к авторизованному user после login.
+
+    Phase Y-5 §6.2.4. Используется когда юзер вошёл existing identity
+    (не registration), а frontend сохранил guest_session_id cookie.
+    Idempotent; кросс-юзер conflict даёт 409.
+    """
+    ip = request.client.host if request.client else "unknown"
+
+    # Rate-limit 30/мин/user
+    redis = get_redis(_settings.redis_url)
+    if await is_rate_limited(
+        redis,
+        f"attribute_guest:{current_user.id}",
+        max_requests=30,
+        window_seconds=60,
+    ):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
+
+    try:
+        result = await guest_attribution_service.attribute_guest_post_login(
+            db=db,
+            user_id=current_user.id,
+            guest_session_id=body.guest_session_id,
+        )
+    except GuestAttributionConflictError as exc:
+        await db.rollback()
+        await log_event(
+            db,
+            "guest.attribute.conflict",
+            user_id=current_user.id,
+            ip=ip,
+            details={"guest_session_id": str(body.guest_session_id)},
+        )
+        await db.commit()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "guest_session уже атрибутирован на другого пользователя",
+        ) from exc
+
+    if not result.found:
+        # Frontend cookie мог истечь / guest_session был очищен
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "guest_session не найден",
+        )
+
+    if not result.already_attributed and result.attributed_count > 0:
+        await log_event(
+            db,
+            "guest.attributed",
+            user_id=current_user.id,
+            ip=ip,
+            details={
+                "guest_session_id": str(body.guest_session_id),
+                "attempts_count": result.attributed_count,
+            },
+        )
+    await db.commit()
+
+    return AttributeGuestResponse(
+        guest_session_id=body.guest_session_id,
+        attributed_count=result.attributed_count,
+        already_attributed=result.already_attributed,
     )

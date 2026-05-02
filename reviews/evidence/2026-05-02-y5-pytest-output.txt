@@ -1,0 +1,30 @@
+tests/test_y5_guest_endpoints.py::test_post_guest_attempt_400_without_cookie PASSED [ 28%]
+tests/test_y5_guest_endpoints.py::test_post_guest_attempt_correct_answer PASSED [ 33%]
+tests/test_y5_guest_endpoints.py::test_post_guest_attempt_incorrect_answer PASSED [ 38%]
+tests/test_y5_guest_endpoints.py::test_post_guest_attempt_400_for_non_demo_task PASSED [ 42%]
+tests/test_y5_guest_endpoints.py::test_attribute_guest_post_login_first_call_attributes_attempts PASSED [ 47%]
+tests/test_y5_guest_endpoints.py::test_attribute_guest_post_login_idempotent PASSED [ 52%]
+tests/test_y5_guest_endpoints.py::test_attribute_guest_post_login_409_other_user PASSED [ 57%]
+tests/test_y5_guest_endpoints.py::test_attribute_guest_post_login_404_unknown_session PASSED [ 61%]
+tests/test_y5_guest_endpoints.py::test_embed_issue_404_not_in_demo PASSED [ 66%]
+tests/test_y5_guest_endpoints.py::test_embed_issue_and_consume_payload_no_correct_answer PASSED [ 71%]
+tests/test_y5_guest_endpoints.py::test_embed_token_single_use_second_read_returns_401 PASSED [ 76%]
+tests/test_y5_guest_endpoints.py::test_embed_consume_invalid_token_returns_401 PASSED [ 80%]
+tests/test_y5_guest_endpoints.py::test_embed_consume_token_for_different_task_returns_401 PASSED [ 85%]
+tests/test_y5_guest_endpoints.py::test_embed_issue_503_when_secret_missing PASSED [ 90%]
+tests/test_guest_attribution.py::test_attribute_guest_session PASSED     [ 95%]
+tests/test_guest_attribution.py::test_attribute_guest_session_idempotent PASSED [100%]
+
+============================== warnings summary ===============================
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+.venv\Lib\site-packages\pydantic\_internal\_config.py:323
+  D:\Work\LMS\.venv\Lib\site-packages\pydantic\_internal\_config.py:323: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 21 passed, 7 warnings in 61.99s (0:01:01) ==================

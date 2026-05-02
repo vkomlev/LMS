@@ -54,6 +54,12 @@ class Courses(Base):
         nullable=True,  # можно сделать NOT NULL позже, когда все курсы получат коды
         comment="Код курса для импорта (course_uid, например 'COURSE-PY-01')",
     )
+    is_public_demo: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("false"),
+        nullable=False,
+        comment="Доступен ли курс гостям без регистрации (Phase Y-5)",
+    )
 
     # Родители курса (многие-ко-многим через course_parents)
     parent_courses: Mapped[List["Courses"]] = relationship(

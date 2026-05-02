@@ -1,0 +1,675 @@
+﻿diff --git a/app/api/main.py b/app/api/main.py
+index 6b68fbe..1d7c3d2 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -327,6 +327,7 @@ from app.api.v1.auth.link_token import router as link_token_router
+ from app.api.v1.me import router as me_router
+ from app.api.v1.me_notifications import router as me_notifications_router
+ from app.api.v1.embed_api import router as embed_router
++from app.api.v1.learning_guest import router as learning_guest_router
+ from app.api.v1.auth.test_session import router as auth_test_session_router
+ 
+ app.include_router(magic_link_router, prefix=API_PREFIX)
+@@ -336,5 +337,7 @@ app.include_router(session_router, prefix=API_PREFIX)
+ app.include_router(link_token_router, prefix=API_PREFIX)
+ app.include_router(me_router, prefix=API_PREFIX)
+ app.include_router(me_notifications_router, prefix=API_PREFIX)
+-app.include_router(embed_router, prefix=API_PREFIX)
++# Phase Y-5: embed-api ╨▒╨╡╨╖ /api/v1 ╨┐╤А╨╡╤Д╨╕╨║╤Б╨░ (display-only iframe surface)
++app.include_router(embed_router)
++app.include_router(learning_guest_router, prefix=API_PREFIX)
+ app.include_router(auth_test_session_router, prefix=API_PREFIX)
+\ No newline at end of file
+diff --git a/app/api/v1/embed_api.py b/app/api/v1/embed_api.py
+index 3c0c948..690643b 100644
+--- a/app/api/v1/embed_api.py
++++ b/app/api/v1/embed_api.py
+@@ -1,78 +1,230 @@
+-"""Embed API тАФ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Л╨╡ ╤Н╨╜╨┤╨┐╨╛╨╕╨╜╤В╤Л ╨┤╨╗╤П ╨▓╨╕╨┤╨╢╨╡╤В╨░ SPW (╨▒╨╡╨╖ auth)."""
++"""Embed-API `/embed-api/*` (Phase Y-5).
++
++Display-only iframe ╨┤╨╗╤П ╨▓╤Б╤В╤А╨░╨╕╨▓╨░╨╜╨╕╤П ╨╜╨░ ╨▓╨╜╨╡╤И╨╜╨╕╨╡ ╤Б╨░╨╣╤В╤Л (╨╜╨░╨┐╤А╨╕╨╝╨╡╤А WP).
++JWT URL-token (HS256, TTL 5 ╨╝╨╕╨╜, single-use ╤З╨╡╤А╨╡╨╖ Redis) ╨▓╤Л╨┤╨░╤С╤В╤Б╤П
++`POST /embed-api/auth/issue`; iframe ╤З╨╕╤В╨░╨╡╤В ╨╖╨░╨┤╨░╤З╤Г ╤З╨╡╤А╨╡╨╖
++`GET /embed-api/courses/{course_uid}/task/{external_uid}?token=...`.
++
++╨г╨┤╨░╨╗╨╡╨╜╤Л legacy Y-1 stubs `POST /embed/session` + `POST /embed/session/{id}/attempts`
++(╤Б╨╝. cross-project drift; cf. tech-spec Y-5 ┬з6.3).
++"""
+ import logging
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Request, status
+-from pydantic import BaseModel
++from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
++from sqlalchemy import select
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_bare_db
+-from app.models.guest_attempt import GuestAttempt
+-from app.models.guest_session import GuestSession
+-from app.services.rate_limit_service import get_redis, is_rate_limited
+ from app.core.config import Settings
++from app.models.courses import Courses
++from app.models.tasks import Tasks
++from app.schemas.embed_api import (
++    EmbedAuthIssueRequest,
++    EmbedAuthIssueResponse,
++    EmbedTaskOption,
++    EmbedTaskResponse,
++)
++from app.schemas.task_content import TaskContent
++from app.services.auth.embed_token_service import (
++    EmbedSecretMissing,
++    EmbedTokenConsumed,
++    EmbedTokenInvalid,
++    consume_token,
++    issue_token,
++)
++from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+ logger = logging.getLogger(__name__)
+-router = APIRouter(prefix="/embed", tags=["embed"])
++router = APIRouter(prefix="/embed-api", tags=["embed-api"])
+ _settings = Settings()
+ 
++_GUEST_ALLOWED_TYPES: tuple[str, ...] = ("SA", "SC", "MC")
+ 
+-class GuestSessionResponse(BaseModel):
+-    guest_session_id: str
+ 
++def _client_ip(request: Request) -> str | None:
++    return request.client.host if request.client else None
+ 
+-class GuestAttemptRequest(BaseModel):
+-    task_id: int | None = None
+-    answer_json: dict
+-    is_correct: bool | None = None
+ 
++def _build_deeplink(course_uid: str, external_uid: str) -> str:
++    """╨Я╨╛╤Б╤В╤А╨╛╨╕╤В╤М deeplink_url ╨┤╨╗╤П CTA ┬л╨а╨╡╤И╨╕╤В╤М ╨▓ SPW┬╗."""
++    base = _settings.public_base_url.rstrip("/")
++    return (
++        f"{base}/courses/{course_uid}/task/{external_uid}"
++        f"?utm_source=wp-embed&utm_medium=cta&utm_campaign=task_solve"
++    )
+ 
+-class GuestAttemptResponse(BaseModel):
+-    attempt_id: int
+ 
++# тФАтФА POST /embed-api/auth/issue тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
+ 
+-@router.post("/session", response_model=GuestSessionResponse, status_code=status.HTTP_201_CREATED)
+-async def create_guest_session(
++@router.post(
++    "/auth/issue",
++    response_model=EmbedAuthIssueResponse,
++)
++async def issue_embed_token(
++    body: EmbedAuthIssueRequest,
+     request: Request,
+     db: AsyncSession = Depends(get_bare_db),
+-) -> GuestSessionResponse:
+-    """╨б╨╛╨╖╨┤╨░╤В╤М ╨░╨╜╨╛╨╜╨╕╨╝╨╜╤Г╤О guest-╤Б╨╡╤Б╤Б╨╕╤О (╨┤╨╗╤П ╨▓╨╕╨┤╨╢╨╡╤В╨░ ╨▒╨╡╨╖ ╨░╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╨╕)."""
+-    ip = request.client.host if request.client else None
+-    ua = request.headers.get("user-agent")
++) -> EmbedAuthIssueResponse:
++    """╨Т╤Л╨┤╨░╤В╤М ╨╛╨┤╨╜╨╛╤А╨░╨╖╨╛╨▓╤Л╨╣ JWT ╨┤╨╗╤П embed-iframe.
++
++    Requires `course_uid` тИИ public-demo + `external_uid` ╤Б╤Г╤Й╨╡╤Б╤В╨▓╤Г╨╡╤В ╨▓ ╤Н╤В╨╛╨╝ ╨║╤Г╤А╤Б╨╡.
++    """
++    if not _settings.embed_jwt_secret:
++        # Fail-secure: ╨╜╨╡ ╨▓╤Л╨┤╨░╤С╨╝ ╤В╨╛╨║╨╡╨╜╤Л ╨▒╨╡╨╖ ╤Б╨╡╨║╤А╨╡╤В╨░
++        raise HTTPException(
++            status.HTTP_503_SERVICE_UNAVAILABLE,
++            "Embed-token ╤Б╨╡╤А╨▓╨╕╤Б ╨╜╨╡ ╨╜╨░╤Б╤В╤А╨╛╨╡╨╜ (CB_EMBED_JWT_SECRET).",
++        )
++
++    ip = _client_ip(request)
+     redis = get_redis(_settings.redis_url)
+-    if ip and await is_rate_limited(redis, f"guest_session:{ip}", max_requests=10, window_seconds=3600):
++    if ip and await is_rate_limited(
++        redis, f"embed_issue:{ip}", max_requests=60, window_seconds=60
++    ):
+         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "╨б╨╗╨╕╤И╨║╨╛╨╝ ╨╝╨╜╨╛╨│╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓")
+ 
+-    session = GuestSession(ip=ip, ua_fingerprint=ua)
+-    db.add(session)
+-    await db.flush()
+-    await db.commit()
+-    return GuestSessionResponse(guest_session_id=str(session.id))
++    # ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝ ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╨╡ course (public-demo) ╨╕ task (╨┐╨╛ course_id+external_uid)
++    course_row = await db.execute(
++        select(Courses).where(
++            Courses.course_uid == body.course_uid,
++            Courses.is_public_demo.is_(True),
++        )
++    )
++    course = course_row.scalar_one_or_none()
++    if course is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨Ъ╤Г╤А╤Б ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜ ╤Б╤А╨╡╨┤╨╕ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Л╤Е ╨┤╨╡╨╝╨╛.",
++        )
++    task_row = await db.execute(
++        select(Tasks).where(
++            Tasks.course_id == course.id,
++            Tasks.external_uid == body.external_uid,
++        )
++    )
++    task = task_row.scalar_one_or_none()
++    if task is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨Ч╨░╨┤╨░╤З╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░ ╨▓ ╤Г╨║╨░╨╖╨░╨╜╨╜╨╛╨╝ ╨┤╨╡╨╝╨╛-╨║╤Г╤А╤Б╨╡.",
++        )
+ 
++    issued = await issue_token(
++        redis=redis,
++        secret=_settings.embed_jwt_secret,
++        course_uid=body.course_uid,
++        external_uid=body.external_uid,
++        ttl_sec=_settings.embed_jwt_ttl_sec,
++    )
++    return EmbedAuthIssueResponse(token=issued.token, expires_at=issued.expires_at)
+ 
+-@router.post(
+-    "/session/{guest_session_id}/attempts",
+-    response_model=GuestAttemptResponse,
+-    status_code=status.HTTP_201_CREATED,
++
++# тФАтФА GET /embed-api/courses/{course_uid}/task/{external_uid}?token=... тФАтФАтФАтФАтФАтФА
++
++@router.get(
++    "/courses/{course_uid}/task/{external_uid}",
++    response_model=EmbedTaskResponse,
+ )
+-async def create_guest_attempt(
+-    guest_session_id: str,
+-    body: GuestAttemptRequest,
++async def read_embed_task(
+     request: Request,
++    course_uid: str = Path(..., description="course_uid ╨┐╤Г╨▒╨╗╨╕╤З╨╜╨╛╨│╨╛ demo-╨║╤Г╤А╤Б╨░"),
++    external_uid: str = Path(..., description="external_uid ╨╖╨░╨┤╨░╤З╨╕"),
++    token: str = Query(..., description="╨Ю╨┤╨╜╨╛╤А╨░╨╖╨╛╨▓╤Л╨╣ JWT, ╨▓╤Л╨┤╨░╨╜╨╜╤Л╨╣ /embed-api/auth/issue"),
+     db: AsyncSession = Depends(get_bare_db),
+-) -> GuestAttemptResponse:
+-    """╨Ч╨░╨┐╨╕╤Б╨░╤В╤М ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨╛╤В╨▓╨╡╤В╨░ ╨│╨╛╤Б╤В╤П."""
+-    ip = request.client.host if request.client else None
++) -> EmbedTaskResponse:
++    """╨Я╤А╨╛╤З╨╕╤В╨░╤В╤М display-only payload ╨╖╨░╨┤╨░╤З╨╕ ╨┤╨╗╤П ╨▓╤Б╤В╤А╨░╨╕╨▓╨░╨╜╨╕╤П ╨▓ iframe.
++
++    Single-use enforce: ╨┐╨╛╨▓╤В╨╛╤А╨╜╤Л╨╣ read ╤Б ╤В╨╡╨╝ ╨╢╨╡ token тЖТ 401 token_consumed.
++    Payload ╨╜╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В correct_answer / solution_rules.
++    """
++    ip = _client_ip(request)
+     redis = get_redis(_settings.redis_url)
+-    if ip and await is_rate_limited(redis, f"guest_attempt:{ip}", max_requests=60, window_seconds=60):
++    if ip and await is_rate_limited(
++        redis, f"embed_read:{ip}", max_requests=600, window_seconds=60
++    ):
+         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "╨б╨╗╨╕╤И╨║╨╛╨╝ ╨╝╨╜╨╛╨│╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓")
+ 
+-    attempt = GuestAttempt(
+-        guest_session_id=guest_session_id,
+-        task_id=body.task_id,
+-        answer_json=body.answer_json,
+-        is_correct=body.is_correct,
++    try:
++        await consume_token(
++            redis=redis,
++            secret=_settings.embed_jwt_secret,
++            token=token,
++            expected_course_uid=course_uid,
++            expected_external_uid=external_uid,
++        )
++    except EmbedSecretMissing as exc:
++        raise HTTPException(
++            status.HTTP_503_SERVICE_UNAVAILABLE,
++            "Embed-token ╤Б╨╡╤А╨▓╨╕╤Б ╨╜╨╡ ╨╜╨░╤Б╤В╤А╨╛╨╡╨╜.",
++        ) from exc
++    except EmbedTokenConsumed as exc:
++        raise HTTPException(
++            status.HTTP_401_UNAUTHORIZED,
++            "╨в╨╛╨║╨╡╨╜ ╤Г╨╢╨╡ ╨╕╤Б╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╨╜",
++        ) from exc
++    except EmbedTokenInvalid as exc:
++        raise HTTPException(
++            status.HTTP_401_UNAUTHORIZED,
++            "╨в╨╛╨║╨╡╨╜ ╨╜╨╡╨┤╨╡╨╣╤Б╤В╨▓╨╕╤В╨╡╨╗╨╡╨╜ ╨╕╨╗╨╕ ╨╕╤Б╤В╤С╨║",
++        ) from exc
++
++    # ╨Ч╨░╨│╤А╤Г╨╖╨║╨░ ╨╖╨░╨┤╨░╤З╨╕ ╤З╨╡╤А╨╡╨╖ ╤В╨╛╤В ╨╢╨╡ ACL ╤З╤В╨╛ ╨▓ /learning/guest/task
++    course_row = await db.execute(
++        select(Courses).where(
++            Courses.course_uid == course_uid,
++            Courses.is_public_demo.is_(True),
++        )
++    )
++    course = course_row.scalar_one_or_none()
++    if course is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨Ъ╤Г╤А╤Б ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜ ╤Б╤А╨╡╨┤╨╕ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Л╤Е ╨┤╨╡╨╝╨╛.",
++        )
++    task_row = await db.execute(
++        select(Tasks).where(
++            Tasks.course_id == course.id,
++            Tasks.external_uid == external_uid,
++        )
++    )
++    task = task_row.scalar_one_or_none()
++    if task is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨Ч╨░╨┤╨░╤З╨░ ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜╨░.",
++        )
++
++    try:
++        content = TaskContent.model_validate(task.task_content)
++    except Exception as exc:
++        logger.warning(
++            "embed_api: ╨╜╨╡╨║╨╛╤А╤А╨╡╨║╤В╨╜╤Л╨╣ task_content task_id=%s: %s", task.id, exc
++        )
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨Ч╨░╨┤╨░╤З╨░ ╨╜╨╡╨┤╨╛╤Б╤В╤Г╨┐╨╜╨░.",
++        ) from exc
++
++    if content.type not in _GUEST_ALLOWED_TYPES:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "╨в╨╕╨┐ ╨╖╨░╨┤╨░╤З╨╕ ╨╜╨╡ ╨┐╨╛╨┤╨┤╨╡╤А╨╢╨╕╨▓╨░╨╡╤В╤Б╤П ╨▓╨╛ ╨▓╤Б╤В╤А╨░╨╕╨▓╨░╨╡╨╝╨╛╨╝ ╨┐╤А╨╛╤Б╨╝╨╛╤В╤А╨╡.",
++        )
++
++    options: list[EmbedTaskOption] | None = None
++    if content.type in ("SC", "MC") and content.options:
++        options = [
++            EmbedTaskOption(id=opt.id, label=opt.text)
++            for opt in content.options
++            if opt.is_active
++        ]
++
++    return EmbedTaskResponse(
++        task_id=task.id,
++        external_uid=external_uid,
++        course_uid=course_uid,
++        type=content.type,  # type: ignore[arg-type]
++        stem=content.stem,
++        options=options,
++        deeplink_url=_build_deeplink(course_uid, external_uid),
+     )
+-    db.add(attempt)
+-    await db.flush()
+-    await db.commit()
+-    return GuestAttemptResponse(attempt_id=attempt.id)
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 88d4394..9aa0f56 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -31,6 +31,10 @@ from app.schemas.auth import (
+     IdentityLinkVkRequest,
+     IdentityLinkedItem,
+ )
++from app.schemas.learning_guest import (
++    AttributeGuestRequest,
++    AttributeGuestResponse,
++)
+ from app.schemas.me import (
+     CourseProgress,
+     CourseWithProgressRead,
+@@ -43,6 +47,7 @@ from app.schemas.me import (
+ from app.services import me_service
+ from app.services.audit_service import log_event
+ from app.services.auth import (
++    guest_attribution_service,
+     identity_link_service,
+     link_token_service,
+     magic_link_service,
+@@ -50,6 +55,9 @@ from app.services.auth import (
+     vk_oauth_service,
+ )
+ from app.services.auth.exceptions import IdentityConflictError
++from app.services.auth.guest_attribution_service import (
++    GuestAttributionConflictError,
++)
+ from app.services.fernet_service import encrypt_token
+ from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+@@ -441,3 +449,82 @@ async def link_identity_vk(
+             kind="vk", value_masked=masked, created_at=new_link.created_at
+         )
+     )
++
++
++# тФАтФА POST /me/attribute-guest (Phase Y-5) тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++@router.post(
++    "/attribute-guest",
++    response_model=AttributeGuestResponse,
++    status_code=status.HTTP_200_OK,
++)
++async def attribute_guest(
++    body: AttributeGuestRequest,
++    request: Request,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> AttributeGuestResponse:
++    """╨Р╤В╤А╨╕╨▒╤Г╤Ж╨╕╤П guest_session ╨║ ╨░╨▓╤В╨╛╤А╨╕╨╖╨╛╨▓╨░╨╜╨╜╨╛╨╝╤Г user ╨┐╨╛╤Б╨╗╨╡ login.
++
++    Phase Y-5 ┬з6.2.4. ╨Ш╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨║╨╛╨│╨┤╨░ ╤О╨╖╨╡╤А ╨▓╨╛╤И╤С╨╗ existing identity
++    (╨╜╨╡ registration), ╨░ frontend ╤Б╨╛╤Е╤А╨░╨╜╨╕╨╗ guest_session_id cookie.
++    Idempotent; ╨║╤А╨╛╤Б╤Б-╤О╨╖╨╡╤А conflict ╨┤╨░╤С╤В 409.
++    """
++    ip = request.client.host if request.client else "unknown"
++
++    # Rate-limit 30/╨╝╨╕╨╜/user
++    redis = get_redis(_settings.redis_url)
++    if await is_rate_limited(
++        redis,
++        f"attribute_guest:{current_user.id}",
++        max_requests=30,
++        window_seconds=60,
++    ):
++        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "╨б╨╗╨╕╤И╨║╨╛╨╝ ╨╝╨╜╨╛╨│╨╛ ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓")
++
++    try:
++        result = await guest_attribution_service.attribute_guest_post_login(
++            db=db,
++            user_id=current_user.id,
++            guest_session_id=body.guest_session_id,
++        )
++    except GuestAttributionConflictError as exc:
++        await db.rollback()
++        await log_event(
++            db,
++            "guest.attribute.conflict",
++            user_id=current_user.id,
++            ip=ip,
++            details={"guest_session_id": str(body.guest_session_id)},
++        )
++        await db.commit()
++        raise HTTPException(
++            status.HTTP_409_CONFLICT,
++            "guest_session ╤Г╨╢╨╡ ╨░╤В╤А╨╕╨▒╤Г╤В╨╕╤А╨╛╨▓╨░╨╜ ╨╜╨░ ╨┤╤А╤Г╨│╨╛╨│╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П",
++        ) from exc
++
++    if not result.found:
++        # Frontend cookie ╨╝╨╛╨│ ╨╕╤Б╤В╨╡╤З╤М / guest_session ╨▒╤Л╨╗ ╨╛╤З╨╕╤Й╨╡╨╜
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "guest_session ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜",
++        )
++
++    if not result.already_attributed and result.attributed_count > 0:
++        await log_event(
++            db,
++            "guest.attributed",
++            user_id=current_user.id,
++            ip=ip,
++            details={
++                "guest_session_id": str(body.guest_session_id),
++                "attempts_count": result.attributed_count,
++            },
++        )
++    await db.commit()
++
++    return AttributeGuestResponse(
++        guest_session_id=body.guest_session_id,
++        attributed_count=result.attributed_count,
++        already_attributed=result.already_attributed,
++    )
+diff --git a/app/core/config.py b/app/core/config.py
+index 6c4cc30..ced4869 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -94,4 +94,10 @@ class Settings:
+         # ╨Ш╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨▓ Set-Cookie ╨┤╨╗╤П test-issue-session.
+         self.cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in (
+             "true", "1", "yes"
+-        )
+\ No newline at end of file
++        )
++
++        # Phase Y-5: JWT-╤Б╨╡╨║╤А╨╡╤В ╨┤╨╗╤П ╨┐╨╛╨┤╨┐╨╕╤Б╨╕ embed URL-token (HS256).
++        # Single-use enforce ╤З╨╡╤А╨╡╨╖ Redis jti marker (TTL = embed_jwt_ttl_sec).
++        # Backup ╨▓ password-manager (╨║╨░╨║ FERNET_MASTER_KEY).
++        self.embed_jwt_secret: str = os.getenv("CB_EMBED_JWT_SECRET", "")
++        self.embed_jwt_ttl_sec: int = int(os.getenv("CB_EMBED_JWT_TTL_SEC", "300"))
+\ No newline at end of file
+diff --git a/app/models/courses.py b/app/models/courses.py
+index f591cf9..f8ccc0c 100644
+--- a/app/models/courses.py
++++ b/app/models/courses.py
+@@ -54,6 +54,12 @@ class Courses(Base):
+         nullable=True,  # ╨╝╨╛╨╢╨╜╨╛ ╤Б╨┤╨╡╨╗╨░╤В╤М NOT NULL ╨┐╨╛╨╖╨╢╨╡, ╨║╨╛╨│╨┤╨░ ╨▓╤Б╨╡ ╨║╤Г╤А╤Б╤Л ╨┐╨╛╨╗╤Г╤З╨░╤В ╨║╨╛╨┤╤Л
+         comment="╨Ъ╨╛╨┤ ╨║╤Г╤А╤Б╨░ ╨┤╨╗╤П ╨╕╨╝╨┐╨╛╤А╤В╨░ (course_uid, ╨╜╨░╨┐╤А╨╕╨╝╨╡╤А 'COURSE-PY-01')",
+     )
++    is_public_demo: Mapped[bool] = mapped_column(
++        Boolean,
++        server_default=text("false"),
++        nullable=False,
++        comment="╨Ф╨╛╤Б╤В╤Г╨┐╨╡╨╜ ╨╗╨╕ ╨║╤Г╤А╤Б ╨│╨╛╤Б╤В╤П╨╝ ╨▒╨╡╨╖ ╤А╨╡╨│╨╕╤Б╤В╤А╨░╤Ж╨╕╨╕ (Phase Y-5)",
++    )
+ 
+     # ╨а╨╛╨┤╨╕╤В╨╡╨╗╨╕ ╨║╤Г╤А╤Б╨░ (╨╝╨╜╨╛╨│╨╕╨╡-╨║╨╛-╨╝╨╜╨╛╨│╨╕╨╝ ╤З╨╡╤А╨╡╨╖ course_parents)
+     parent_courses: Mapped[List["Courses"]] = relationship(
+diff --git a/app/schemas/courses.py b/app/schemas/courses.py
+index 431985e..32ab2da 100644
+--- a/app/schemas/courses.py
++++ b/app/schemas/courses.py
+@@ -156,6 +156,11 @@ class CourseRead(BaseModel):
+         description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╨║╨╛╨┤ ╨║╤Г╤А╤Б╨░ (╨┤╨╗╤П ╨╕╨╝╨┐╨╛╤А╤В╨░/╨╕╨╜╤В╨╡╨│╤А╨░╤Ж╨╕╨╣), ╨╜╨░╨┐╤А╨╕╨╝╨╡╤А 'COURSE-PY-01'. ╨Ь╨╛╨╢╨╡╤В ╨▒╤Л╤В╤М null ╨┤╨╗╤П ╤Б╤В╨░╤А╤Л╤Е ╨║╤Г╤А╤Б╨╛╨▓.",
+         examples=["COURSE-PY-01", None],
+     )
++    is_public_demo: bool = Field(
++        default=False,
++        description="╨Ф╨╛╤Б╤В╤Г╨┐╨╡╨╜ ╨╗╨╕ ╨║╤Г╤А╤Б ╨│╨╛╤Б╤В╤П╨╝ ╨▒╨╡╨╖ ╤А╨╡╨│╨╕╤Б╤В╤А╨░╤Ж╨╕╨╕ (Phase Y-5).",
++        examples=[False, True],
++    )
+ 
+     model_config = ConfigDict(from_attributes=True)
+ 
+diff --git a/app/services/auth/guest_attribution_service.py b/app/services/auth/guest_attribution_service.py
+index 586cc2f..80650fd 100644
+--- a/app/services/auth/guest_attribution_service.py
++++ b/app/services/auth/guest_attribution_service.py
+@@ -1,13 +1,22 @@
+-"""╨б╨╡╤А╨▓╨╕╤Б ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╨╕ guest_attempt тЖТ user ╨┐╨╛╤Б╨╗╨╡ ╨░╨▓╤В╨╛╤А╨╕╨╖╨░╤Ж╨╕╨╕ (Phase Y-1).
++"""╨б╨╡╤А╨▓╨╕╤Б ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╨╕ guest_attempt тЖТ user (Phase Y-1 + Y-5).
+ 
+-╨Ш╨╝╤П ╤Д╨░╨╣╨╗╨░ ╨┐╤А╨╕╨▓╨╡╨┤╨╡╨╜╨╛ ╨▓ ╤Б╨╛╨╛╤В╨▓╨╡╤В╤Б╤В╨▓╨╕╨╡ ╨╜╨░╨╖╨╜╨░╤З╨╡╨╜╨╕╤О ╨▓ Phase Y-3 (cleanup).
+-╨б╤В╨░╤А╨╛╨╡ ╨╕╨╝╤П `link_token_service.py` ╤Б╨╡╨╣╤З╨░╤Б ╨╖╨░╨╜╤П╤В╨╛ ╨┐╨╛╨┤ one-time link_token
+-╨┤╨╗╤П identity linking (╤Б╨╝. tech-spec Y-3 backend ┬з7.1, ┬з7.3).
++Phase Y-1: `attribute_guest_session` ╨▓╤Л╨╖╤Л╨▓╨░╨╡╤В╤Б╤П ╨▓-rege transaction
++╨╕╨╖ `magic_link_service`/`tg_init_service`/`vk_oauth_service` ╨┐╤А╨╕
++auto-registration тАФ ╨░╤В╤А╨╕╨▒╤Г╤В╨╕╤А╤Г╨╡╤В guest_attempt ╨▓ ╤В╨╛╨╣ ╨╢╨╡ tx.
++
++Phase Y-5: `attribute_guest_post_login` тАФ ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╣ entry-point ╨┤╨╗╤П
++╤Б╨╗╤Г╤З╨░╨╡╨▓, ╨║╨╛╨│╨┤╨░ ╤О╨╖╨╡╤А ╨▓╨╛╤И╤С╨╗ existing identity (╨╜╨╡ registration), ╨░
++frontend ╤Б╨╛╤Е╤А╨░╨╜╨╕╨╗ `guest_session_id` cookie. ╨Ш╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В SAVEPOINT
++(`db.begin_nested`) ╨┤╨╗╤П ╨▒╨╡╨╖╨╛╨┐╨░╤Б╨╜╨╛╨╣ ╨╛╨▒╤А╨░╨▒╨╛╤В╨║╨╕ ╨║╤А╨╛╤Б╤Б-╤О╨╖╨╡╤А conflict.
++
++╨б╨╝. tech-spec Y-5 ┬з6.2.4 + ┬з13 G10.
+ """
+ import logging
++from dataclasses import dataclass
+ from datetime import datetime, timezone
++from uuid import UUID
+ 
+-from sqlalchemy import update
++from sqlalchemy import select, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.guest_attempt import GuestAttempt
+@@ -16,14 +25,36 @@ from app.models.guest_session import GuestSession
+ logger = logging.getLogger(__name__)
+ 
+ 
++class GuestAttributionConflictError(Exception):
++    """Guest_session ╤Г╨╢╨╡ ╨░╤В╤А╨╕╨▒╤Г╤В╨╕╤А╨╛╨▓╨░╨╜ ╨╜╨░ ╨┤╤А╤Г╨│╨╛╨│╨╛ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П.
++
++    Y-5 ┬з6.2.4: ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В╤Б╤П 409 ╨╜╨░ API-╤Г╤А╨╛╨▓╨╜╨╡; ╨╖╨░╤Й╨╕╤В╨░ ╨╛╤В ╨┐╨╡╤А╨╡╤Е╨▓╨░╤В╨░
++    cookie ╤Б UUID ╨│╨╛╤Б╤В╨╡╨▓╨╛╨╣ ╤Б╨╡╤Б╤Б╨╕╨╕ ╨┤╤А╤Г╨│╨╕╨╝ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╨╡╨╝.
++    """
++
++
++@dataclass(slots=True)
++class AttributionResult:
++    """╨Ш╤В╨╛╨│ attribute_guest_post_login."""
++
++    found: bool
++    already_attributed: bool
++    attributed_count: int
++
++
+ async def attribute_guest_session(
+     db: AsyncSession,
+     guest_session_id: str,
+     user_id: int,
+ ) -> int:
+     """
+-    ╨Я╤А╨╕╨▓╤П╨╖╨░╤В╤М guest_session ╨╕ ╨▓╤Б╨╡ ╨╡╤С ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╨║ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О.
++    Phase Y-1: ╨┐╤А╨╕╨▓╤П╨╖╨░╤В╤М guest_session ╨╕ ╨▓╤Б╨╡ ╨╡╤С ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╨║ ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О.
++
+     ╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В ╨║╨╛╨╗╨╕╤З╨╡╤Б╤В╨▓╨╛ ╨╛╨▒╨╜╨╛╨▓╨╗╤С╨╜╨╜╤Л╤Е ╨┐╨╛╨┐╤Л╤В╨╛╨║.
++
++    ╨Т╤Л╨╖╤Л╨▓╨░╨╡╤В╤Б╤П ╨Ш╨Ч ╨▓╨╜╤Г╤В╤А╨╕ transaction registration handler'╨░ (magic-link
++    verify / tg init / vk callback). ╨Т Y-5 ╨Э╨Х ╨┐╤А╨╕╨╝╨╡╨╜╤П╨╡╤В╤Б╤П ╤Б╨░╨▓╨╡╨┐╨╛╨╕╨╜╤В-
++    pattern тАФ outer tx ╤Г╨╢╨╡ ╨┤╨░╤С╤В atomicity registration+attribution.
+     """
+     now = datetime.now(timezone.utc)
+ 
+@@ -50,3 +81,63 @@ async def attribute_guest_session(
+         count,
+     )
+     return count
++
++
++async def attribute_guest_post_login(
++    db: AsyncSession,
++    user_id: int,
++    guest_session_id: UUID,
++) -> AttributionResult:
++    """
++    Phase Y-5: ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╤П guest_session ╨║ user ╨┐╨╛╤Б╨╗╨╡ login (╨╜╨╡ registration).
++
++    Idempotent: ╨┐╨╛╨▓╤В╨╛╤А╨╜╤Л╨╣ ╨▓╤Л╨╖╨╛╨▓ ╤Б ╤В╨╡╨╝╨╕ ╨╢╨╡ (user_id, guest_session_id) тЖТ
++    `already_attributed=True, attributed_count=0`.
++
++    Concurrency: SAVEPOINT (`db.begin_nested`) ╨╕╨╖╨╛╨╗╨╕╤А╤Г╨╡╤В SELECT FOR UPDATE +
++    UPDATE тАФ race ╨┤╨▓╤Г╤Е ╨╛╨┤╨╜╨╛╨▓╤А╨╡╨╝╨╡╨╜╨╜╤Л╤Е ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓ ╤Б╨╡╤А╨╕╨░╨╗╨╕╨╖╤Г╨╡╤В╤Б╤П; ╨║╤А╨╛╤Б╤Б-╤О╨╖╨╡╤А
++    conflict ╨┤╨░╤Б╤В GuestAttributionConflictError, ╨┐╤А╨╕ ╤Н╤В╨╛╨╝ outer tx (╨╡╤Б╨╗╨╕
++    ╨╡╤Б╤В╤М) ╨Э╨Х ╨╛╤В╨║╨░╤В╤Л╨▓╨░╨╡╤В╤Б╤П (LMS ERRORS #3 тАФ ╨╗╨╛╨▓╤Г╤И╨║╨░ ╤Б db.rollback()).
++
++    Raises:
++        GuestAttributionConflictError: ╨╡╤Б╨╗╨╕ guest_session ╤Г╨╢╨╡ ╨┐╤А╨╕╨╜╨░╨┤╨╗╨╡╨╢╨╕╤В
++            ╨┤╤А╤Г╨│╨╛╨╝╤Г ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤О.
++    """
++    async with db.begin_nested():
++        gs_row = await db.execute(
++            select(GuestSession)
++            .where(GuestSession.id == guest_session_id)
++            .with_for_update()
++        )
++        gs = gs_row.scalar_one_or_none()
++        if gs is None:
++            return AttributionResult(found=False, already_attributed=False, attributed_count=0)
++
++        if gs.attributed_user_id is not None:
++            if gs.attributed_user_id != user_id:
++                raise GuestAttributionConflictError(
++                    f"guest_session={guest_session_id} ╤Г╨╢╨╡ ╨░╤В╤А╨╕╨▒╤Г╤В╨╕╤А╨╛╨▓╨░╨╜ ╨╜╨░ user_id={gs.attributed_user_id}"
++                )
++            # ╨Ш╨┤╨╡╨╝╨┐╨╛╤В╨╡╨╜╤В: ╤Г╨╢╨╡ ╨┐╤А╨╕╨╜╨░╨┤╨╗╨╡╨╢╨╕╤В ╤Н╤В╨╛╨╝╤Г ╤О╨╖╨╡╤А╤Г
++            return AttributionResult(found=True, already_attributed=True, attributed_count=0)
++
++        now = datetime.now(timezone.utc)
++        gs.attributed_user_id = user_id
++        result = await db.execute(
++            update(GuestAttempt)
++            .where(
++                GuestAttempt.guest_session_id == guest_session_id,
++                GuestAttempt.attributed_user_id.is_(None),
++            )
++            .values(attributed_user_id=user_id, attributed_at=now)
++        )
++        await db.flush()
++
++    count = int(result.rowcount or 0)
++    logger.info(
++        "attribute_guest_post_login: session=%s user_id=%d attempts=%d",
++        guest_session_id,
++        user_id,
++        count,
++    )
++    return AttributionResult(found=True, already_attributed=False, attributed_count=count)
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index 5726a11..71ce307 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -21,9 +21,9 @@
+ | 2026-03-03 | LMS | teacher help request detail | 500: `TypeError '<' not supported between 'str' and 'datetime.datetime'` | raw SQL/text date value compared with `now` without normalization/type-guard | DATA | S1 | runtime manual test + logs | normalize date via helper before compare; add service type-guards | update Cursor fastapi agents (normalization + negative tests + type-guards), add FastAPI-specific techlead review checks (raw SQL->types->now, runtime smoke detail/list, reproducer test) | done |
+ | 2026-04-28 | LMS / SPW | Y-1 auth API contract drift cross-repo | SPW Y-2 spec ╤Б╤Б╤Л╨╗╨░╨╗╤Б╤П ╨╜╨░ `/auth/magic-link/request`, `GET /consume`, `/auth/logout`. ╨а╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П Y-1: `POST /send`, `POST /verify`, `POST /auth/session/logout`. SPW ╨║╨╗╨╕╨╡╨╜╤В ╨╖╨▓╨░╨╗ ╨▒╤Л 404 ╨╜╨░ ╨▓╤Б╨╡╤Е auth-╨┐╤Г╤В╤П╤Е | executor Y-1 ╨┐╨╡╤А╨╡╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╗ ╤А╨╛╤Г╤В╤Л ╨╜╨░ ╨╕╨┤╨╕╨╛╨╝╨░╤В╨╕╤З╨╜╤Л╨╡ ╨│╨╗╨░╨│╨╛╨╗╤Л (`/send`,`/verify`) ╨╕ ╤Г╨╜╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╗ `/session/*` ╨┐╤А╨╡╤Д╨╕╨║╤Б, ╨╜╨╡ ╨╛╨▒╨╜╨╛╨▓╨╕╨╗ Y-1 spec / LMS-0001 ADR / CB-0011 ADR. Y-2 spec ╨┐╨╕╤Б╨░╨╗╤Б╤П ╨╛╤В ╤Г╤Б╤В╨░╤А╨╡╨▓╤И╨╕╤Е ╨░╤А╤В╨╡╤Д╨░╨║╤В╨╛╨▓. Review-gate ╨▓ ╨┐╨╡╤А╨▓╨╛╨╝ ╨┐╤А╨╛╤Е╨╛╨┤╨╡ ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╗ drift ╨║╨░╨║ non-blocking, ╤Б╤З╨╕╤В╨░╤П ╤З╤В╨╛ ╨╜╨╡╤В downstream-╨┐╨╛╤В╤А╨╡╨▒╨╕╤В╨╡╨╗╨╡╨╣ (╨╜╨╛ Y-2 spec ╤Г╨╢╨╡ ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╗ ╨▓ CB) | INTEGRATION | S2 | RCA ╨┐╨╛╤Б╨╗╨╡ ╨░╨╜╨░╨╗╨╕╨╖╨░ Y-2 spec | ╨┐╤Г╤В╤М A: LMS spec ┬з6.1-6.5 + ADR-0001 ┬з┬лPhase 1┬╗ ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╤Л ╨┐╨╛╨┤ ╨║╨╛╨┤; CB ADR-0011 / Y-1 spec-╨║╨╛╨┐╨╕╤П / Y-2 spec / brief ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╤Л | review-gate ╨С╨Ы╨Ю╨Ъ╨Ш╨а╨г╨Х╨в ╨╗╤О╨▒╤Л╨╡ URL/method-╤А╨░╤Б╤Е╨╛╨╢╨┤╨╡╨╜╨╕╤П ╨▓ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╤Л╤Е API ╤Д╨░╨╣╨╗╨░╤Е (`app/api/v1/auth/*`, `me.py`, `embed_api.py`) тАФ non-blocking ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╨║╨░╤Ж╨╕╤П ╨┤╨╗╤П ╨╜╨╕╤Е ╨╖╨░╨┐╤А╨╡╤Й╨╡╨╜╨░; spec ╨╛╨▒╨╜╨╛╨▓╨╗╤П╤В╤М ╨▓ ╤В╨╛╨╝ ╨╢╨╡ ╨║╨╛╨╝╨╝╨╕╤В╨╡ ╤З╤В╨╛ ╨╕ ╤А╨╛╤Г╤В╨╡╤А; cross-repo grep ╨╜╨░ ╤Б╤Б╤Л╨╗╨║╨╕ ╤Б╤В╨░╤А╤Л╤Е ╨┐╤Г╤В╨╡╨╣ ╨┐╨╡╤А╨╡╨┤ merge; OpenAPI export diff vs spec markdown | done |
+ | 2026-04-28 #4 | LMS | Y-1.5.1 hotfix тАФ orphan email тЖТ 500 ╨▓╨╝╨╡╤Б╤В╨╛ 409 | `get_or_create_user_by_vk` ╨╕ `get_or_create_user_by_email` ╨┐╤А╨╛╨▓╨╡╤А╤П╨╗╨╕ email overlap **╤В╨╛╨╗╤М╨║╨╛** ╤З╨╡╤А╨╡╨╖ `identity_link`. ╨Ш╤Б╤В╨╛╤З╨╜╨╕╨║ ╨┐╤А╨░╨▓╨┤╤Л UNIQUE тАФ partial index ╨╜╨░ `users.email`; identity_link тАФ secondary mapping. ╨Х╤Б╨╗╨╕ `users.email=X` exists, ╨╜╨╛ `identity_link kind='email' value=X` ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╨╡╤В (manual DELETE ╨╕╨╗╨╕ race-corruption ╨┐╨╛╤Б╨╗╨╡ ╤Г╤Б╨┐╨╡╤И╨╜╨╛╨│╨╛ INSERT users + failed INSERT identity_link) тАФ auto-create ╨╜╨╡ ╨▓╨╕╨┤╨╕╤В overlap тЖТ INSERT users ╨┐╨░╨┤╨░╨╡╤В ╤Б UniqueViolationError ╨▓╨╜╤Г╤В╤А╨╕ savepoint тЖТ re-raise тЖТ **500** ╨▓ FastAPI. ╨Т╨╛╤Б╨┐╤А╨╛╨╕╨╖╨▓╨╡╨┤╨╡╨╜╨╛ ╨▓ ╨┐╤А╨╛╨┤╨░╨║╤И╨╡╨╜╨╡ ╨╜╨░ `victor.v.komlev@gmail.com` ╤З╨╡╤А╨╡╨╖ VK callback ╨┐╨╛╤Б╨╗╨╡ magic-link first-time create | identity_link ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨║╨░╨║ primary check ╨┤╨╗╤П overlap, ╨╜╨╛ ╨╛╨╜ secondary тАФ partial UNIQUE index ╨╜╨░ users.email ╨╕╤Б╤В╨╛╤З╨╜╨╕╨║ ╨┐╤А╨░╨▓╨┤╤Л. Race-paths ╨╕╨╖ B2 (orphan users) ╤Б╨░╨╝╨╕ ╨╝╨╛╨│╤Г╤В ╤Б╨╛╨╖╨┤╨░╨▓╨░╤В╤М orphan email-state. ADR-0021 ┬з2 ╨┐╤А╨╡╨┤╨┐╨╕╤Б╤Л╨▓╨░╨╡╤В 409 ╨┤╨╗╤П overlap, ╨╜╨╛ ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П ╨╜╨╡ ╨┐╨╛╨║╤А╤Л╨▓╨░╨╗╨░ ╤Б╨╗╤Г╤З╨░╨╣ orphan email-╨▓-users ╨▒╨╡╨╖ identity_link | INTEGRATION | S2 | live smoke MG-VK ╨╜╨░ ╤Б╤В╨╛╤А╨╛╨╜╨╡ SPW (commit d022d77) | option A ╨╕╨╖ handoff: ╨┤╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╤Л╨╣ SELECT `users WHERE lower(email)=lower(input)` ╨┐╨╡╤А╨╡╨┤ savepoint INSERT ╨▓ ╨╛╨▒╨╛╨╕╤Е ╤Б╨╡╤А╨▓╨╕╤Б╨░╤Е; raise `IdentityConflictError("email_already_linked_to_orphan_user", existing_kinds=[])` тЖТ router ╨╝╨░╨┐╨┐╨╕╤В ╨╜╨░ 409. `IdentityConflictError` ╨▓╤Л╨╜╨╡╤Б╨╡╨╜ ╨▓ `app/services/auth/exceptions.py` ╨┤╨╗╤П shared use. 2 regression ╤В╨╡╤Б╤В╨░. spec ┬з6.2/┬з6.4 ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╤Л | (a) ╨┤╨╗╤П ╨║╨░╨╢╨┤╨╛╨╣ ╤Б╨▓╤П╨╖╨╕ ┬лmain table UNIQUE constraint тЖФ secondary mapping┬╗ ╨┐╤А╨╕ auto-create тАФ ╨┐╤А╨╛╨▓╨╡╤А╤П╤В╤М ╨╛╨▒╨╡ ╤Б╤В╨╛╤А╨╛╨╜╤Л, ╨╜╨╡ ╨┐╨╛╨╗╨░╨│╨░╤В╤М╤Б╤П ╤В╨╛╨╗╤М╨║╨╛ ╨╜╨░ secondary; (b) test matrix ╨┤╨╗╤П auto-create ╨▓╨║╨╗╤О╤З╨░╤В╤М orphan-state ╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╣ (UNIQUE ╨╜╨░ users.email exists, identity_link ╤Г╨┤╨░╨╗╤С╨╜); (c) ╨┐╤А╨╕ ╨┐╨╛╤П╨▓╨╗╨╡╨╜╨╕╨╕ ╨╜╨╛╨▓╤Л╤Е identity_link kinds тАФ ╨┐╤А╨╛╨▓╨╡╤А╤П╤В╤М ╤Б╨╕╨╝╨╝╨╡╤В╤А╨╕╤О orphan-defense | FIXED |
+-| 2026-04-29 #1 | LMS | Y-3 backend execution (inline /executor-pro path) | Spec ┬з8 ┬лTests┬╗ listed `test_streak_logic.py` ╤Б edge cases (gap=1, gap=2, today_active, single day) ╨║╨░╨║ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╣ тАФ executor ╨╜╨░╨┐╨╕╤Б╨░╨╗ 4 ╨┤╤А╤Г╨│╨╕╤Е test files ╨╜╨╛ ╨Э╨Х test_streak_logic. Acceptance criterion ┬з11 ┬л/me/streak ╨║╨╛╤А╤А╨╡╨║╤В╨╜╨╛ ╤Б╤З╨╕╤В╨░╨╡╤В streak ╤Б edge cases┬╗ ╨┐╤А╨╛╤И╤С╨╗ ╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О (╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╡ failing-╤В╨╡╤Б╤В╨╛╨▓ ╤В╤А╨░╨║╤В╨╛╨▓╨░╨╜╨╛ ╨║╨░╨║ PASS). ╨Т Y-3.1 ╤А╨░╤Г╨╜╨┤╨╡ edge tests ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜╤Л тАФ ╨┐╨╛╨╣╨╝╨░╨╗╨╕ ╨║╤А╨╕╤В╨╕╤З╨╡╤Б╨║╨╕╨╣ bug ╨▓ SQL ╤Д╨╛╤А╨╝╤Г╨╗╨╡ `d - rn*1d` ╨┤╨╗╤П `ORDER BY d DESC` (math incorrect тАФ ╨║╨░╨╢╨┤╤Л╨╣ ╨┤╨╡╨╜╤М ╨▓ ╤Б╨▓╨╛╨╡╨╣ grp тЖТ streak ╨▓╤Б╨╡╨│╨┤╨░ =1) | executor-pro inline path ╨╜╨╡ ╨┐╤А╨╛╨▓╨╡╤А╨╕╨╗ line-by-line spec ┬з┬лTests┬╗ ╤Б╨┐╨╕╤Б╨╛╨║ ╨┐╨╡╤А╨╡╨┤ closure; SKILL.md ╨╜╨╡ ╨╕╨╝╨╡╨╡╤В ╤П╨▓╨╜╨╛╨│╨╛ ╤И╨░╨│╨░ ┬л╨│╤А╨╡╨┐╨╜╤Г╤В╤М spec ╨╜╨░ ╤Г╨┐╨╛╨╝╤П╨╜╤Г╤В╤Л╨╡ test_*.py ╨╕ ╨┐╨╛╨┤╤В╨▓╨╡╤А╨┤╨╕╤В╤М ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╨╡┬╗. **REPEAT** ╤В╨╛╨│╨╛ ╨╢╨╡ ╨║╨╗╨░╤Б╤Б╨░ ╨║╨░╨║ 2026-04-28 #3 (`tests/test_y15_live_smoke.py` ╨╜╨╡ ╤Б╨╛╨╖╨┤╨░╨╜ ╨▓╨╛╨┐╤А╨╡╨║╨╕ tech-spec ┬з16) тАФ 2-╨╣ ╤Б╨╗╤Г╤З╨░╨╣ ╨┐╨╛╨┤╤А╤П╨┤ ╨┤╨╗╤П inline-executor path | test-gap + scope-violation | S2 (╨┐╨╛╨╣╨╝╨░╨╗ ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ bug тАФ streak SQL ╨┤╨░╨▓╨░╨╗ streak=1 ╨▓╨╝╨╡╤Б╤В╨╛ N ╨┤╨╗╤П ╨▓╤Б╨╡╤Е multi-day users) | Y-3.1 ╤А╨░╤Г╨╜╨┤ /fastapi-api-developer ╨┤╨╛╨▒╨░╨▓╨╕╨╗ test_streak_logic.py ╤Б 8 edge cases + ╨╕╤Б╨┐╤А╨░╨▓╨╕╨╗ SQL formula `d - rn*1d` тЖТ `d + rn*1d` ╨┤╨╗╤П DESC | (a) `~/.claude/skills/executor-pro/SKILL.md` ┬з Output Contract тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ┬лSpec Test Coverage Audit: ╨┤╨╗╤П ╨║╨░╨╢╨┤╨╛╨│╨╛ test_*.py ╤Г╨┐╨╛╨╝╤П╨╜╤Г╤В╨╛╨│╨╛ ╨▓ spec ┬зTests/┬зTests/Unit/┬зTests/Integration тАФ ╨┐╨╛╨┤╤В╨▓╨╡╤А╨┤╨╕╤В╤М ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╨╡ ╨▓ ╤А╨╡╨┐╨╛ + ╤Б╤В╨░╤В╤Г╤Б pass/fail┬╗; (b) **ESCALATION** ╨▓ `/claude-booster` ╨а╨╡╨╢╨╕╨╝ A тАФ ╨┐╨╛╨▓╤В╨╛╤А ╨┐╨░╤В╤В╨╡╤А╨╜╨░ 2 ╤А╨░╨╖╨░ ╨┐╨╛╨┤╤А╤П╨┤ ╤В╤А╨╡╨▒╤Г╨╡╤В ╨░╤Г╨┤╨╕╤В╨░ /executor-pro ╨╕ /fastapi-api-developer ╨╜╨░ ┬лspec test list adherence┬╗; (c) `~/.claude/skills/fastapi-api-developer/SKILL.md` ╨и╨░╨│ 4 тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М bullet ┬лgrep spec ╨╜╨░ ╨║╨╛╨╜╨║╤А╨╡╤В╨╜╤Л╨╡ ╨╕╨╝╨╡╨╜╨░ test_*.py тАФ ╨▓╤Б╨╡ ╨╗╨╕ ╤Б╨╛╨╖╨┤╨░╨╜╤Л ╨╕ ╨╖╨╡╨╗╤С╨╜╤Л╨╡┬╗ | OPEN |
+-| 2026-04-29 #2 | LMS | LMS-side spec ╨╜╨░╨┐╨╕╤Б╨░╨╜╨╕╨╡ (Y-3 backend) | LMS-side spec ┬з5.4 ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В SQL ╤И╨░╨▒╨╗╨╛╨╜ ╨┤╨╗╤П streak gap-detection ╤Б ╨▒╤Г╨│╨│╨╛╨▓╨░╨╜╨╜╨╛╨╣ ╤Д╨╛╤А╨╝╤Г╨╗╨╛╨╣ `d - rn*1d` ╨┤╨╗╤П `ORDER BY d DESC` (╨╝╨░╤В╨╡╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ ╨╜╨╡╨▓╨╡╤А╨╜╨╛ тАФ ╨║╨░╨╢╨┤╤Л╨╣ ╨┤╨╡╨╜╤М ╨▓ ╤Б╨▓╨╛╨╡╨╣ grp). ╨д╨╛╤А╨╝╤Г╨╗╨░ ╤Б╨║╨╛╨┐╨╕╤А╨╛╨▓╨░╨╜╨░ verbatim ╨╕╨╖ CB authority spec ┬з7.2.4 ╨▒╨╡╨╖ semantic validation | tech-spec-composer/spec-writer paths ╨╜╨╡ ╨╕╨╝╨╡╤О╤В ╤И╨░╨│╨░ ┬лmentally trace SQL formula on 3-day input┬╗. ╨Я╤А╨╕╨╜╤П╤В upstream-╤Д╨╛╤А╨╝╤Г╨╗╤Г ╨║╨░╨║ ╨╡╤Б╤В╤М. CB authority spec ╤В╨╛╨╢╨╡ buggy тАФ root cause ╨▓ spec authoring, ╨╜╨╡ ╨▓ impl | api-drift (╤В╨╛╤З╨╜╨╡╨╡: ┬лspecification-reuse-without-verification┬╗) | S2 (bug ╤Г╤И╤С╨╗ ╨▒╤Л ╨╜╨░ ╨┐╤А╨╛╨┤ ╨▒╨╡╨╖ edge-╤В╨╡╤Б╤В╨╛╨▓) | Y-3.1 fix ╨▓ ╨║╨╛╨┤╨╡; spec backsync тАФ Y-3.2 follow-up (S2-A1 ╨▓ techlead-final review) | (a) `~/.claude/skills/tech-spec-composer/SKILL.md` ╨╕╨╗╨╕ `~/.claude/skills/spec-writer/SKILL.md` ╨и╨░╨│ ┬л╨Р╨╜╨░╨╗╨╕╨╖┬╗ тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ┬л╨╡╤Б╨╗╨╕ spec ╨▓╨║╨╗╤О╤З╨░╨╡╤В raw SQL ╤Б window-╤Д╤Г╨╜╨║╤Ж╨╕╤П╨╝╨╕ (ROW_NUMBER, gap-detection, ╤А╨╡╨║╤Г╤А╤Б╨╕╨▓╨╜╤Л╨╡ CTE) тАФ trace ╨╜╨░ 3-input ╨┐╤А╨╕╨╝╨╡╤А╨╡ ╨┤╨╛ ╤Д╨╕╨║╤Б╨░╤Ж╨╕╨╕┬╗; (b) cross-link ╨▓ `~/.claude/skills/claude-booster/references/api-contract-rules.md` тАФ ╤А╨░╨╖╨┤╨╡╨╗ ┬лSQL formula verification┬╗ | OPEN |
+-| 2026-04-29 #3 | LMS | Y-3 backend ╨┐╨╡╤А╨▓╤Л╨╣ techlead-review ╨┐╤А╨╛╤Е╨╛╨┤ (`reviews/2026-04-29-y3-techlead-review.md`) | ╨Э╨░╨╣╨┤╨╡╨╜ gap: ┬лtest_streak_logic.py ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╨╡╤В ... gap=1, gap=2 ╨╜╨╡ ╨┐╨╛╨║╤А╤Л╤В╤Л┬╗ тАФ ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╜ S3 medium (non-blocking). ╨б ╤Г╤З╤С╤В╨╛╨╝ ╤В╨╛╨│╨╛, ╤З╤В╨╛ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╡ ╤В╨╡╤Б╤В╨╛╨▓ ╤Г╨║╤А╤Л╨╗╨╛ ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ bug ╨▓ SQL ╤Д╨╛╤А╨╝╤Г╨╗╨╡ (╤Б╨╝. #1), severity ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╨╗ ╨▒╤Л╤В╤М S2 (likely functional defect risk) | review-checklist.md ┬лTesting Checks┬╗ ╨╜╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В ╤П╨▓╨╜╨╛╨│╨╛ ╨┐╤А╨░╨▓╨╕╨╗╨░: ┬л╨╡╤Б╨╗╨╕ spec ┬з┬лTests┬╗ ╨┐╨╡╤А╨╡╤З╨╕╤Б╨╗╤П╨╡╤В required test files ╨╕ ╨╛╨╜╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╤О╤В тЖТ S2, ╨╜╨╡ S3┬╗ | test-gap (meta: severity-misclassification) | S3 (╤Б╨░╨╝ ╨┐╨╛ ╤Б╨╡╨▒╨╡ review-defect), ╨╜╨╛ ╨┐╤А╨╕╨▓╤С╨╗ ╨║ S2 implication | Y-3.1 ╤А╨░╤Г╨╜╨┤ ╨╖╨░╨║╤А╤Л╨╗ gap | `~/.claude/skills/techlead-code-reviewer/references/testing-checks.md` тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ╨╜╨╛╨▓╤Л╨╣ ╤А╨░╨╖╨┤╨╡╨╗ ┬лSpec-Mandated Test Files┬╗: ┬л╨╡╤Б╨╗╨╕ spec ╤П╨▓╨╜╨╛ ╨┐╨╡╤А╨╡╤З╨╕╤Б╨╗╤П╨╡╤В required test files (╤З╨╡╤А╨╡╨╖ ┬з┬лTests┬╗ / ┬з┬лTest Coverage┬╗ ╤Б╨╡╨║╤Ж╨╕╤О) ╨╕ ╨╛╨╜╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╤О╤В тАФ ╤Н╤В╨╛ S2, ╨╜╨╡ S3, ╨┐╨╛╤В╨╛╨╝╤Г ╤З╤В╨╛ spec author ╤П╨▓╨╜╨╛ ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╗ ╨╕╤Е ╨║╨░╨║ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨┤╨╗╤П acceptance┬╗ | OPEN |
++| 2026-04-29 #1 | LMS | Y-3 backend execution (inline /executor-pro path) | Spec ┬з8 ┬лTests┬╗ listed `test_streak_logic.py` ╤Б edge cases (gap=1, gap=2, today_active, single day) ╨║╨░╨║ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╣ тАФ executor ╨╜╨░╨┐╨╕╤Б╨░╨╗ 4 ╨┤╤А╤Г╨│╨╕╤Е test files ╨╜╨╛ ╨Э╨Х test_streak_logic. Acceptance criterion ┬з11 ┬л/me/streak ╨║╨╛╤А╤А╨╡╨║╤В╨╜╨╛ ╤Б╤З╨╕╤В╨░╨╡╤В streak ╤Б edge cases┬╗ ╨┐╤А╨╛╤И╤С╨╗ ╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О (╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╡ failing-╤В╨╡╤Б╤В╨╛╨▓ ╤В╤А╨░╨║╤В╨╛╨▓╨░╨╜╨╛ ╨║╨░╨║ PASS). ╨Т Y-3.1 ╤А╨░╤Г╨╜╨┤╨╡ edge tests ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜╤Л тАФ ╨┐╨╛╨╣╨╝╨░╨╗╨╕ ╨║╤А╨╕╤В╨╕╤З╨╡╤Б╨║╨╕╨╣ bug ╨▓ SQL ╤Д╨╛╤А╨╝╤Г╨╗╨╡ `d - rn*1d` ╨┤╨╗╤П `ORDER BY d DESC` (math incorrect тАФ ╨║╨░╨╢╨┤╤Л╨╣ ╨┤╨╡╨╜╤М ╨▓ ╤Б╨▓╨╛╨╡╨╣ grp тЖТ streak ╨▓╤Б╨╡╨│╨┤╨░ =1) | executor-pro inline path ╨╜╨╡ ╨┐╤А╨╛╨▓╨╡╤А╨╕╨╗ line-by-line spec ┬з┬лTests┬╗ ╤Б╨┐╨╕╤Б╨╛╨║ ╨┐╨╡╤А╨╡╨┤ closure; SKILL.md ╨╜╨╡ ╨╕╨╝╨╡╨╡╤В ╤П╨▓╨╜╨╛╨│╨╛ ╤И╨░╨│╨░ ┬л╨│╤А╨╡╨┐╨╜╤Г╤В╤М spec ╨╜╨░ ╤Г╨┐╨╛╨╝╤П╨╜╤Г╤В╤Л╨╡ test_*.py ╨╕ ╨┐╨╛╨┤╤В╨▓╨╡╤А╨┤╨╕╤В╤М ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╨╡┬╗. **REPEAT** ╤В╨╛╨│╨╛ ╨╢╨╡ ╨║╨╗╨░╤Б╤Б╨░ ╨║╨░╨║ 2026-04-28 #3 (`tests/test_y15_live_smoke.py` ╨╜╨╡ ╤Б╨╛╨╖╨┤╨░╨╜ ╨▓╨╛╨┐╤А╨╡╨║╨╕ tech-spec ┬з16) тАФ 2-╨╣ ╤Б╨╗╤Г╤З╨░╨╣ ╨┐╨╛╨┤╤А╤П╨┤ ╨┤╨╗╤П inline-executor path | test-gap + scope-violation | S2 (╨┐╨╛╨╣╨╝╨░╨╗ ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ bug тАФ streak SQL ╨┤╨░╨▓╨░╨╗ streak=1 ╨▓╨╝╨╡╤Б╤В╨╛ N ╨┤╨╗╤П ╨▓╤Б╨╡╤Е multi-day users) | Y-3.1 ╤А╨░╤Г╨╜╨┤ /fastapi-api-developer ╨┤╨╛╨▒╨░╨▓╨╕╨╗ test_streak_logic.py ╤Б 8 edge cases + ╨╕╤Б╨┐╤А╨░╨▓╨╕╨╗ SQL formula `d - rn*1d` тЖТ `d + rn*1d` ╨┤╨╗╤П DESC | (a) `~/.claude/skills/executor-pro/SKILL.md` ┬з Output Contract тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ┬лSpec Test Coverage Audit: ╨┤╨╗╤П ╨║╨░╨╢╨┤╨╛╨│╨╛ test_*.py ╤Г╨┐╨╛╨╝╤П╨╜╤Г╤В╨╛╨│╨╛ ╨▓ spec ┬зTests/┬зTests/Unit/┬зTests/Integration тАФ ╨┐╨╛╨┤╤В╨▓╨╡╤А╨┤╨╕╤В╤М ╤Б╤Г╤Й╨╡╤Б╤В╨▓╨╛╨▓╨░╨╜╨╕╨╡ ╨▓ ╤А╨╡╨┐╨╛ + ╤Б╤В╨░╤В╤Г╤Б pass/fail┬╗; (b) **ESCALATION** ╨▓ `/claude-booster` ╨а╨╡╨╢╨╕╨╝ A тАФ ╨┐╨╛╨▓╤В╨╛╤А ╨┐╨░╤В╤В╨╡╤А╨╜╨░ 2 ╤А╨░╨╖╨░ ╨┐╨╛╨┤╤А╤П╨┤ ╤В╤А╨╡╨▒╤Г╨╡╤В ╨░╤Г╨┤╨╕╤В╨░ /executor-pro ╨╕ /fastapi-api-developer ╨╜╨░ ┬лspec test list adherence┬╗; (c) `~/.claude/skills/fastapi-api-developer/SKILL.md` ╨и╨░╨│ 4 тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М bullet ┬лgrep spec ╨╜╨░ ╨║╨╛╨╜╨║╤А╨╡╤В╨╜╤Л╨╡ ╨╕╨╝╨╡╨╜╨░ test_*.py тАФ ╨▓╤Б╨╡ ╨╗╨╕ ╤Б╨╛╨╖╨┤╨░╨╜╤Л ╨╕ ╨╖╨╡╨╗╤С╨╜╤Л╨╡┬╗ | FIXED 2026-05-02 |
++| 2026-04-29 #2 | LMS | LMS-side spec ╨╜╨░╨┐╨╕╤Б╨░╨╜╨╕╨╡ (Y-3 backend) | LMS-side spec ┬з5.4 ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В SQL ╤И╨░╨▒╨╗╨╛╨╜ ╨┤╨╗╤П streak gap-detection ╤Б ╨▒╤Г╨│╨│╨╛╨▓╨░╨╜╨╜╨╛╨╣ ╤Д╨╛╤А╨╝╤Г╨╗╨╛╨╣ `d - rn*1d` ╨┤╨╗╤П `ORDER BY d DESC` (╨╝╨░╤В╨╡╨╝╨░╤В╨╕╤З╨╡╤Б╨║╨╕ ╨╜╨╡╨▓╨╡╤А╨╜╨╛ тАФ ╨║╨░╨╢╨┤╤Л╨╣ ╨┤╨╡╨╜╤М ╨▓ ╤Б╨▓╨╛╨╡╨╣ grp). ╨д╨╛╤А╨╝╤Г╨╗╨░ ╤Б╨║╨╛╨┐╨╕╤А╨╛╨▓╨░╨╜╨░ verbatim ╨╕╨╖ CB authority spec ┬з7.2.4 ╨▒╨╡╨╖ semantic validation | tech-spec-composer/spec-writer paths ╨╜╨╡ ╨╕╨╝╨╡╤О╤В ╤И╨░╨│╨░ ┬лmentally trace SQL formula on 3-day input┬╗. ╨Я╤А╨╕╨╜╤П╤В upstream-╤Д╨╛╤А╨╝╤Г╨╗╤Г ╨║╨░╨║ ╨╡╤Б╤В╤М. CB authority spec ╤В╨╛╨╢╨╡ buggy тАФ root cause ╨▓ spec authoring, ╨╜╨╡ ╨▓ impl | api-drift (╤В╨╛╤З╨╜╨╡╨╡: ┬лspecification-reuse-without-verification┬╗) | S2 (bug ╤Г╤И╤С╨╗ ╨▒╤Л ╨╜╨░ ╨┐╤А╨╛╨┤ ╨▒╨╡╨╖ edge-╤В╨╡╤Б╤В╨╛╨▓) | Y-3.1 fix ╨▓ ╨║╨╛╨┤╨╡; spec backsync тАФ Y-3.2 follow-up (S2-A1 ╨▓ techlead-final review) | (a) `~/.claude/skills/tech-spec-composer/SKILL.md` ╨╕╨╗╨╕ `~/.claude/skills/spec-writer/SKILL.md` ╨и╨░╨│ ┬л╨Р╨╜╨░╨╗╨╕╨╖┬╗ тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ┬л╨╡╤Б╨╗╨╕ spec ╨▓╨║╨╗╤О╤З╨░╨╡╤В raw SQL ╤Б window-╤Д╤Г╨╜╨║╤Ж╨╕╤П╨╝╨╕ (ROW_NUMBER, gap-detection, ╤А╨╡╨║╤Г╤А╤Б╨╕╨▓╨╜╤Л╨╡ CTE) тАФ trace ╨╜╨░ 3-input ╨┐╤А╨╕╨╝╨╡╤А╨╡ ╨┤╨╛ ╤Д╨╕╨║╤Б╨░╤Ж╨╕╨╕┬╗; (b) cross-link ╨▓ `~/.claude/skills/claude-booster/references/api-contract-rules.md` тАФ ╤А╨░╨╖╨┤╨╡╨╗ ┬лSQL formula verification┬╗ | FIXED 2026-05-02 |
++| 2026-04-29 #3 | LMS | Y-3 backend ╨┐╨╡╤А╨▓╤Л╨╣ techlead-review ╨┐╤А╨╛╤Е╨╛╨┤ (`reviews/2026-04-29-y3-techlead-review.md`) | ╨Э╨░╨╣╨┤╨╡╨╜ gap: ┬лtest_streak_logic.py ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╨╡╤В ... gap=1, gap=2 ╨╜╨╡ ╨┐╨╛╨║╤А╤Л╤В╤Л┬╗ тАФ ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╜ S3 medium (non-blocking). ╨б ╤Г╤З╤С╤В╨╛╨╝ ╤В╨╛╨│╨╛, ╤З╤В╨╛ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╨╕╨╡ ╤В╨╡╤Б╤В╨╛╨▓ ╤Г╨║╤А╤Л╨╗╨╛ ╤А╨╡╨░╨╗╤М╨╜╤Л╨╣ bug ╨▓ SQL ╤Д╨╛╤А╨╝╤Г╨╗╨╡ (╤Б╨╝. #1), severity ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╨╗ ╨▒╤Л╤В╤М S2 (likely functional defect risk) | review-checklist.md ┬лTesting Checks┬╗ ╨╜╨╡ ╤Б╨╛╨┤╨╡╤А╨╢╨╕╤В ╤П╨▓╨╜╨╛╨│╨╛ ╨┐╤А╨░╨▓╨╕╨╗╨░: ┬л╨╡╤Б╨╗╨╕ spec ┬з┬лTests┬╗ ╨┐╨╡╤А╨╡╤З╨╕╤Б╨╗╤П╨╡╤В required test files ╨╕ ╨╛╨╜╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╤О╤В тЖТ S2, ╨╜╨╡ S3┬╗ | test-gap (meta: severity-misclassification) | S3 (╤Б╨░╨╝ ╨┐╨╛ ╤Б╨╡╨▒╨╡ review-defect), ╨╜╨╛ ╨┐╤А╨╕╨▓╤С╨╗ ╨║ S2 implication | Y-3.1 ╤А╨░╤Г╨╜╨┤ ╨╖╨░╨║╤А╤Л╨╗ gap | `~/.claude/skills/techlead-code-reviewer/references/testing-checks.md` тАФ ╨┤╨╛╨▒╨░╨▓╨╕╤В╤М ╨╜╨╛╨▓╤Л╨╣ ╤А╨░╨╖╨┤╨╡╨╗ ┬лSpec-Mandated Test Files┬╗: ┬л╨╡╤Б╨╗╨╕ spec ╤П╨▓╨╜╨╛ ╨┐╨╡╤А╨╡╤З╨╕╤Б╨╗╤П╨╡╤В required test files (╤З╨╡╤А╨╡╨╖ ┬з┬лTests┬╗ / ┬з┬лTest Coverage┬╗ ╤Б╨╡╨║╤Ж╨╕╤О) ╨╕ ╨╛╨╜╨╕ ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╤О╤В тАФ ╤Н╤В╨╛ S2, ╨╜╨╡ S3, ╨┐╨╛╤В╨╛╨╝╤Г ╤З╤В╨╛ spec author ╤П╨▓╨╜╨╛ ╨║╨╗╨░╤Б╤Б╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╗ ╨╕╤Е ╨║╨░╨║ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨┤╨╗╤П acceptance┬╗ | FIXED 2026-05-02 |
+ | 2026-04-28 #3 | LMS | Y-1.5 review-gate fail-then-pass | (1) `try/db.rollback()` ╨┤╨╗╤П concurrent INSERT users ╨╛╤В╨║╨░╤В╤Л╨▓╨░╨╗ ╨╛╤Б╨╜╨╛╨▓╨╜╤Г╤О tx тЖТ magic_link.consumed_at ╤Б╤В╨░╨╜╨╛╨▓╨╕╨╗╤Б╤П NULL тЖТ token re-usable (security regression); (2) ╨░╨╜╨░╨╗╨╛╨│╨╕╤З╨╜╨╛ TG/VK auto-create тАФ orphan users ╨┐╤А╨╕ race ╨╜╨░ UNIQUE(kind,value); (3) `tests/test_y15_live_smoke.py` ╨╜╨╡ ╤Б╨╛╨╖╨┤╨░╨╜ ╨▓╨╛╨┐╤А╨╡╨║╨╕ tech-spec ┬з16; (4) LMS spec ┬з6.2-6.4 ╨╜╨╡ ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╤Л ╨┐╨╛╨┤ auto-create ╨▓ same-commit | executor-pro ╨┐╤А╨╛╤З╤С╨╗ tech-spec ┬з5 ┬лAtomic INSERT тАж ON CONFLICT DO NOTHING┬╗ ╨╜╨╛ ╤А╨╡╨░╨╗╨╕╨╖╨╛╨▓╨░╨╗ ╤З╨╡╤А╨╡╨╖ try/rollback ╨▓╨╝╨╡╤Б╤В╨╛ savepoint/ON CONFLICT тАФ anti-pattern ╨┤╨╗╤П multi-step ╤В╤А╨░╨╜╨╖╨░╨║╤Ж╨╕╨╣. ┬з16 live smoke ╤Г╨┐╤Г╤Й╨╡╨╜ ╨╕╨╖ ╤З╨╡╨║-╨╗╨╕╤Б╤В╨░ (╨▒╤Л╨╗ ╤В╨╛╨╗╤М╨║╨╛ ╨▓ ┬з6.7 ╨║╨░╨║ 4 ╤Д╨░╨╣╨╗╨░). LMS spec ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ ╨┐╤А╨╛╨┐╤Г╤Й╨╡╨╜╨╛: cross-project mirror ╨▒╤Л╨╗ ╨╛╨▒╨╜╨╛╨▓╨╗╤С╨╜, LMS-╤Б╨╛╨▒╤Б╤В╨▓╨╡╨╜╨╜╤Л╨╣ spec тАФ ╨╜╨╡╤В (╨┐╨╛╨▓╤В╨╛╤А ╨┐╨░╤В╤В╨╡╤А╨╜╨░ 2026-04-28 #1) | LOGIC + PROCESS | S2 | review-gate 12 ╨╕╨╖╨╝╨╡╤А╨╡╨╜╨╕╨╣ (1-╨╣ ╨┐╤А╨╛╤Е╨╛╨┤) | savepoint pattern ╤З╨╡╤А╨╡╨╖ `db.begin_nested()` (3 ╤Б╨╡╤А╨▓╨╕╤Б╨░); `tests/test_b1_regression_consumed_at_persists_after_savepoint_rollback` reproduces race; `tests/test_y15_live_smoke.py` ╤Б╨╛╨╖╨┤╨░╨╜ ╤Б CB_LMS_LIVE_SMOKE_Y15 gate; LMS spec ┬з6.2-6.4 + ╤И╨░╨┐╨║╨░ ╨╛╨▒╨╜╨╛╨▓╨╗╨╡╨╜╤Л ╨┐╨╛╨┤ Y-1.5 ╤Б╨╡╨╝╨░╨╜╤В╨╕╨║╤Г | executor-pro ╤З╨╡╨║╨╗╨╕╤Б╤В ╨┐╨╛╤Б╨╗╨╡ auto-create ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╨╕: (a) ╨┤╨╗╤П INSERT ╨▓╨╛ ╨▓╤А╨╡╨╝╤П ╤Г╨╢╨╡-╨╛╤В╨║╤А╤Л╤В╨╛╨╣ tx ╨╕╤Б╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╤М `db.begin_nested()` ╨╕╨╗╨╕ `INSERT тАж ON CONFLICT DO NOTHING`, ╨╜╨╕╨║╨╛╨│╨┤╨░ ╨╜╨╡ `db.rollback()`; (b) tech-spec ┬з┬лLive smoke┬╗ / ┬з┬л╨в╨╡╤Б╤В╤Л┬╗ ╨╛╨▒╨╛╨╕╤Е ╤З╨╕╤В╨░╤В╤М ╨║╨░╨║ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╤Л╨╡ ╨░╤А╤В╨╡╤Д╨░╨║╤В╤Л; (c) ╨┐╤А╨╕ ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╨╕ public response schema тАФ grep ╨╜╨░ ╤Б╨▓╨╛╨╣ spec ╨╕ ╨╛╨▒╨╜╨╛╨▓╨╕╤В╤М same-commit (╨┐╨╛╨▓╤В╨╛╤А prevention 2026-04-28 #2) | FIXED | (1) ╨Я╨╕╤Б╤М╨╝╨╛ ╨╜╨╡ ╨┐╤А╨╕╤И╨╗╨╛ ╨╕╨╖-╨╖╨░ hardcoded URL `https://learn.victor-komlev.ru/auth/verify` ╨▒╨╡╨╖ `/magic-link/consume` segment + RESEND_API_KEY=null ╨▓ dev; (2) `MeResponse` ╨╛╨╢╨╕╨┤╨░╨╗╤Б╤П ╨║╨░╨║ `{full_name, identities[]}` ╨╜╨╛ ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П ╨┐╨╗╨╛╤Б╨║╨░╤П `{id,email,tg_id,is_service}`; (3) `AuthTokenResponse` ╨╛╨╢╨╕╨┤╨░╨╗╤Б╤П ╤Б ╨▓╨╗╨╛╨╢╨╡╨╜╨╜╤Л╨╝ `user`, ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П тАФ ╤В╨╛╨╗╤М╨║╨╛ `{access_token,refresh_token,token_type}`; (4) frontend route paths ╨▓ Y-2 spec ╨╛╤И╨╕╨▒╨╛╤З╨╜╨╛ ╨┐╨╡╤А╨╡╨╕╨╝╨╡╨╜╨╛╨▓╨░╨╜╤Л ╨┐╨╛╨┤ API-╨╕╨╝╨╡╨╜╨░ ╨▓ ╨┐╨╡╤А╨▓╨╛╨╝ Path-A (SPW ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В `/request`+`/consume` ╨║╨░╨║ frontend Next.js routes, API endpoints тАФ `/send`+`/verify`) | ╨в╨╛╤В ╨╢╨╡ ╨║╨╗╨░╤Б╤Б ╤З╤В╨╛ ╨╕ #1: ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╤П Y-1 ╤Г╤И╨╗╨░ ╨╛╤В ╤А╨░╨╜╨╜╨╕╤Е ╤З╨╡╤А╨╜╨╛╨▓╨╕╨║╨╛╨▓ ADR-0011/LMS-0001 (╨┐╨╗╨╛╤Б╨║╨╕╨╡ ╤Б╤Е╨╡╨╝╤Л ╨▓╨╝╨╡╤Б╤В╨╛ ╨▓╨╗╨╛╨╢╨╡╨╜╨╜╤Л╤Е user) ╨╕ ╨╖╨░╤Е╨░╤А╨┤╨║╨╛╨┤╨╕╨╗╨░ prod-URL ╨▒╨╡╨╖ env. Backsync-╤Ж╨╕╨║╨╗ ╨║ spec ╨╜╨╡ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜. ╨Ф╨╛╨┐╨╛╨╗╨╜╨╕╤В╨╡╨╗╤М╨╜╨╛: ╨┐╤А╨╕ ╨┐╨╡╤А╨▓╨╛╨╝ Path-A ╤П ╤Б╨╗╨╕╨╗ frontend Next.js routes ╨╕ LMS API endpoints ╨▓ ╨╡╨┤╨╕╨╜╨╛╨╡ ╨╕╨╝╤П (`/verify`), ╨╜╨╡ ╤А╨░╨╖╨╗╨╕╤З╨╕╨▓ ╤Б╨╗╨╛╨╕ | INTEGRATION + SPEC | S2 | live smoke MG-1 (╨┐╨╛╨┐╤Л╤В╨║╨░ ╤А╨╡╨░╨╗╤М╨╜╨╛╨│╨╛ ╨▓╤Е╨╛╨┤╨░ ╤З╨╡╤А╨╡╨╖ SPW) | LMS hotfix: `Settings.public_base_url` env + dev-fallback (╨╗╨╛╨│╨╕╤А╨╛╨▓╨░╨╜╨╕╨╡ ╨│╨╛╤В╨╛╨▓╨╛╨╣ ╤Б╤Б╤Л╨╗╨║╨╕ ╨▓ stdout ╨╡╤Б╨╗╨╕ RESEND_API_KEY ╨┐╤Г╤Б╤В). LMS spec ┬з6.6 + ┬з6.7: ╨┤╨╛╨▒╨░╨▓╨╗╨╡╨╜╤Л ╤П╨▓╨╜╤Л╨╡ contracts MeResponse/AuthTokenResponse ╨╕ URL-╤Б╤Е╨╡╨╝╨░ ╨┐╨╕╤Б╤М╨╝╨░. LMS-0001 ADR ╤Б╤В╤А╨╛╨║╨░ 196: ╨┐╨╗╨╛╤Б╨║╨╕╨╣ CurrentUser. CB Y-2 spec: ╨╛╤В╨║╨░╤В frontend route paths (`/request`+`/consume`). SPW commit `6877e04`: ╤В╨╕╨┐╤Л ╨║╨╗╨╕╨╡╨╜╤В╨░ ╨┐╨╛╨┤ ╤Д╨░╨║╤В╨╕╤З╨╡╤Б╨║╨╕╨╣ ╨║╨╛╨╜╤В╤А╨░╨║╤В | (a) ╨┐╤А╨╕ ╨╗╤О╨▒╨╛╨╝ ╨╕╨╖╨╝╨╡╨╜╨╡╨╜╨╕╨╕ ╨┐╤Г╨▒╨╗╨╕╤З╨╜╨╛╨│╨╛ response schema тАФ ╨╛╨▒╨╜╨╛╨▓╨╕╤В╤М spec/ADR ╨▓ ╤В╨╛╨╝ ╨╢╨╡ PR (gate ╨▓ review-gate); (b) preflight-╨┐╤А╨╛╨▓╨╡╤А╨║╨░ ╨┐╨╡╤А╨╡╨┤ smoke: `grep "victor-komlev.ru" app/services/` тАФ hardcoded prod-URL ╨╖╨░╨┐╤А╨╡╤Й╤С╨╜, ╨▓╤Б╤С ╤З╨╡╤А╨╡╨╖ `settings.public_base_url`; (c) ╤А╨░╨╖╨╗╨╕╤З╨░╤В╤М ╨▓ spec **frontend Next.js routes** (UX-╨╕╨╝╨╡╨╜╨░) ╨╕ **API endpoints** (╨║╨╛╨╜╤В╤А╨░╨║╤В ╨╝╨╡╨╢╨┤╤Г SPW ╨╕ LMS) тАФ ╨╛╤В╨┤╨╡╨╗╤М╨╜╤Л╨╡ ╤В╨░╨▒╨╗╨╕╤Ж╤Л; (d) skill `/executor-pro` ╨╛╨▒╤П╨╖╨░╨╜ ╨┐╨╛╤Б╨╗╨╡ ╤А╨╡╨░╨╗╨╕╨╖╨░╤Ж╨╕╨╕ API ╤Б╤А╨░╨▓╨╜╨╕╤В╤М response-╨╝╨╛╨┤╨╡╨╗╨╕ ╤Б ╨╛╨┐╨╕╤Б╨░╨╜╨╕╨╡╨╝ ╨▓ ADR/spec ╨╕ ╤Н╤Б╨║╨░╨╗╨╕╤А╨╛╨▓╨░╤В╤М ╨╗╤О╨▒╨╛╨╡ ╤А╨░╤Б╤Е╨╛╨╢╨┤╨╡╨╜╨╕╨╡, ╨╜╨╡ ╨┤╨╡╨╗╨░╤В╤М ╨╝╨╛╨╗╤З╨░╨╗╨╕╨▓╨╛╨╡ ╤Г╨┐╤А╨╛╤Й╨╡╨╜╨╕╨╡ | done |
+ 
+ ## ╨з╨╡╨║╨╗╨╕╤Б╤В weekly review
+diff --git a/tests/test_guest_attribution.py b/tests/test_guest_attribution.py
+index 17a33bb..c3ba8f5 100644
+--- a/tests/test_guest_attribution.py
++++ b/tests/test_guest_attribution.py
+@@ -1,43 +1,17 @@
+ """
+-╨в╨╡╤Б╤В╤Л ╨│╨╛╤Б╤В╨╡╨▓╨╛╨╣ ╤Б╨╡╤Б╤Б╨╕╨╕ ╨╕ ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╨╕.
++╨в╨╡╤Б╤В╤Л ╨│╨╛╤Б╤В╨╡╨▓╨╛╨╣ ╤Б╨╡╤Б╤Б╨╕╨╕ ╨╕ ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╨╕ (Phase Y-1 + Y-5).
+ 
+-╨Я╨╛╨║╤А╤Л╨▓╨░╨╡╤В:
+-- POST /embed/session тЖТ 201 + guest_session_id
+-- POST /embed/session/{id}/attempts тЖТ 201
+-- attribute_guest_session: guest_attempt ╨┐╤А╨╕╨▓╤П╨╖╤Л╨▓╨░╨╡╤В╤Б╤П ╨║ user_id
+-- ╨Я╨╛╨▓╤В╨╛╤А╨╜╨░╤П ╨░╤В╤А╨╕╨▒╤Г╤Ж╨╕╤П ╨╜╨╡ ╤Г╨┤╨▓╨░╨╕╨▓╨░╨╡╤В ╨┐╤А╨╕╨▓╤П╨╖╨║╤Г
++Y-1 endpoint'╤Л /embed/session* ╤Г╨┤╨░╨╗╨╡╨╜╤Л ╨▓ Y-5; ╤Н╤В╨╛╤В ╤Д╨░╨╣╨╗ ╤В╨╡╨┐╨╡╤А╤М ╨┐╨╛╨║╤А╤Л╨▓╨░╨╡╤В
++unit-╨╗╨╛╨│╨╕╨║╤Г attribute_guest_session (registration-time tx). ╨Я╨╛╨╗╨╜╤Л╨╡
++endpoint-╤В╨╡╤Б╤В╤Л Y-5 тАФ ╨▓ test_y5_guest_endpoints.py.
+ """
+ import pytest
+ 
+ 
+-@pytest.mark.asyncio
+-async def test_create_guest_session(client):
+-    """POST /embed/session ╤Б╨╛╨╖╨┤╨░╤С╤В ╨│╨╛╤Б╤В╨╡╨▓╤Г╤О ╤Б╨╡╤Б╤Б╨╕╤О."""
+-    resp = await client.post("/api/v1/embed/session")
+-    assert resp.status_code == 201
+-    data = resp.json()
+-    assert "guest_session_id" in data
+-    assert len(data["guest_session_id"]) == 36
+-
+-
+-@pytest.mark.asyncio
+-async def test_create_guest_attempt(client):
+-    """POST /embed/session/{id}/attempts ╤Б╨╛╨╖╨┤╨░╤С╤В ╨┐╨╛╨┐╤Л╤В╨║╤Г ╨│╨╛╤Б╤В╤П."""
+-    session_resp = await client.post("/api/v1/embed/session")
+-    session_id = session_resp.json()["guest_session_id"]
+-
+-    attempt_resp = await client.post(
+-        f"/api/v1/embed/session/{session_id}/attempts",
+-        json={"answer_json": {"answer": "42"}, "is_correct": True},
+-    )
+-    assert attempt_resp.status_code == 201
+-    assert "attempt_id" in attempt_resp.json()
+-
+-
+ @pytest.mark.asyncio
+ async def test_attribute_guest_session(db):
+     """attribute_guest_session ╨┐╤А╨╕╨▓╤П╨╖╤Л╨▓╨░╨╡╤В ╨┐╨╛╨┐╤Л╤В╨║╨╕ ╨║ user_id."""
+-    from sqlalchemy import text, select
++    from sqlalchemy import text
+     from app.models.guest_session import GuestSession
+     from app.models.guest_attempt import GuestAttempt
+     from app.services.auth.guest_attribution_service import attribute_guest_session

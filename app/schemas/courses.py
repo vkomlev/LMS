@@ -156,6 +156,11 @@ class CourseRead(BaseModel):
         description="Внешний код курса (для импорта/интеграций), например 'COURSE-PY-01'. Может быть null для старых курсов.",
         examples=["COURSE-PY-01", None],
     )
+    is_public_demo: bool = Field(
+        default=False,
+        description="Доступен ли курс гостям без регистрации (Phase Y-5).",
+        examples=[False, True],
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

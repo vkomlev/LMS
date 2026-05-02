@@ -1,43 +1,17 @@
 """
-Тесты гостевой сессии и атрибуции.
+Тесты гостевой сессии и атрибуции (Phase Y-1 + Y-5).
 
-Покрывает:
-- POST /embed/session → 201 + guest_session_id
-- POST /embed/session/{id}/attempts → 201
-- attribute_guest_session: guest_attempt привязывается к user_id
-- Повторная атрибуция не удваивает привязку
+Y-1 endpoint'ы /embed/session* удалены в Y-5; этот файл теперь покрывает
+unit-логику attribute_guest_session (registration-time tx). Полные
+endpoint-тесты Y-5 — в test_y5_guest_endpoints.py.
 """
 import pytest
 
 
 @pytest.mark.asyncio
-async def test_create_guest_session(client):
-    """POST /embed/session создаёт гостевую сессию."""
-    resp = await client.post("/api/v1/embed/session")
-    assert resp.status_code == 201
-    data = resp.json()
-    assert "guest_session_id" in data
-    assert len(data["guest_session_id"]) == 36
-
-
-@pytest.mark.asyncio
-async def test_create_guest_attempt(client):
-    """POST /embed/session/{id}/attempts создаёт попытку гостя."""
-    session_resp = await client.post("/api/v1/embed/session")
-    session_id = session_resp.json()["guest_session_id"]
-
-    attempt_resp = await client.post(
-        f"/api/v1/embed/session/{session_id}/attempts",
-        json={"answer_json": {"answer": "42"}, "is_correct": True},
-    )
-    assert attempt_resp.status_code == 201
-    assert "attempt_id" in attempt_resp.json()
-
-
-@pytest.mark.asyncio
 async def test_attribute_guest_session(db):
     """attribute_guest_session привязывает попытки к user_id."""
-    from sqlalchemy import text, select
+    from sqlalchemy import text
     from app.models.guest_session import GuestSession
     from app.models.guest_attempt import GuestAttempt
     from app.services.auth.guest_attribution_service import attribute_guest_session

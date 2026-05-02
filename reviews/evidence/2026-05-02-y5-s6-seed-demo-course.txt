@@ -1,0 +1,34 @@
+Y-5 S6 — Operator seed: пометка 1 demo-курса
+=============================================
+Дата: 2026-05-02
+Tech-spec: tech-spec-Y5-guest-embed-v1.md §6.6
+Исполнитель: автономно через .env-loaded скрипт (dev DB, локальная PG)
+
+ШАГ 1 — Выбор кандидата (MCP read):
+SELECT c.id, c.course_uid, c.title, COUNT(t.id) AS tasks_with_uid
+FROM courses c
+JOIN tasks t ON t.course_id = c.id
+WHERE t.external_uid IS NOT NULL
+  AND COALESCE(t.task_content->>'type','SA') IN ('SA','SC','MC')
+GROUP BY c.id, c.title, c.course_uid
+HAVING COUNT(t.id) >= 3
+ORDER BY COUNT(t.id) DESC
+LIMIT 10;
+
+Top-1 кандидат: id=108 course_uid="wp:rabota-so-strokami-v-python"
+title="Работа со строками в Python" tasks_with_uid=20.
+
+ШАГ 2 — Применение UPDATE (через async скрипт + .env DATABASE_URL):
+UPDATE courses SET is_public_demo=TRUE WHERE id=108
+RETURNING id, course_uid, title, is_public_demo;
+
+Результат: UPDATED 1 row {'id': 108, 'course_uid': 'wp:rabota-so-strokami-v-python',
+'title': 'Работа со строками в Python', 'is_public_demo': True}
+
+ШАГ 3 — Verify (MCP read):
+SELECT id, course_uid, title, is_public_demo FROM courses WHERE is_public_demo=TRUE;
+
+Результат: ровно 1 row — id=108 course_uid="wp:rabota-so-strokami-v-python".
+
+Откат (если потребуется):
+UPDATE courses SET is_public_demo=FALSE WHERE id=108;

@@ -95,3 +95,9 @@ class Settings:
         self.cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in (
             "true", "1", "yes"
         )
+
+        # Phase Y-5: JWT-секрет для подписи embed URL-token (HS256).
+        # Single-use enforce через Redis jti marker (TTL = embed_jwt_ttl_sec).
+        # Backup в password-manager (как FERNET_MASTER_KEY).
+        self.embed_jwt_secret: str = os.getenv("CB_EMBED_JWT_SECRET", "")
+        self.embed_jwt_ttl_sec: int = int(os.getenv("CB_EMBED_JWT_TTL_SEC", "300"))
