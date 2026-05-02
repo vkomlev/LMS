@@ -307,6 +307,107 @@ async def test_resolve_next_item_with_active():
             return False
 
 
+async def test_compute_task_state_active_attempt_passed():
+    """
+    Regression (2026-05-02): course-level attempt model.
+
+    Фикс: compute_task_state не должен фильтровать `a.finished_at IS NOT NULL`.
+    start-or-get-attempt возвращает один открытый attempt на (user, course),
+    в который накапливаются task_results по многим задачам без finish.
+    Если task_result имеет ratio>=0.5, состояние должно быть PASSED — даже когда
+    содержащий attempt ещё не завершён.
+
+    До фикса: attempts_used=0, state=OPEN/IN_PROGRESS → resolve_next_item
+    отдавал ту же задачу снова и снова.
+    """
+    print("\n=== Тест: compute_task_state (PASSED при незавершённом course-level attempt) ===")
+    engine = create_async_engine(settings.database_url)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+    svc = LearningEngineService()
+
+    async with async_session() as session:
+        try:
+            # Найти (user, task) где есть task_result с ratio>=0.5 в АКТИВНОМ
+            # (finished_at IS NULL, cancelled_at IS NULL) attempt
+            r = await session.execute(text("""
+                SELECT tr.user_id, tr.task_id
+                FROM task_results tr
+                JOIN attempts a ON a.id = tr.attempt_id
+                WHERE a.finished_at IS NULL AND a.cancelled_at IS NULL
+                  AND tr.max_score > 0 AND tr.score::float / tr.max_score >= 0.5
+                LIMIT 1
+            """))
+            row = r.first()
+            if not row:
+                print("[SKIP] Нет (user, task) с PASS-ответом в активном course-level attempt")
+                return True
+            student_id, task_id = row[0], row[1]
+            state = await svc.compute_task_state(session, student_id, task_id)
+            assert state.state == "PASSED", (
+                f"Regression: при ratio>=0.5 в активном attempt ожидался PASSED, "
+                f"получено {state.state} (attempts_used={state.attempts_used})"
+            )
+            assert state.attempts_used >= 1, (
+                f"attempts_used должен учитывать task_results из активного attempt, "
+                f"получено {state.attempts_used}"
+            )
+            print(f"[PASS] state=PASSED attempts_used={state.attempts_used}")
+            return True
+        except AssertionError as e:
+            print(f"[FAIL] {e}")
+            return False
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+async def test_resolve_next_item_skips_passed_in_active_attempt():
+    """
+    Regression (2026-05-02): resolve_next_item не должен возвращать ту же задачу,
+    по которой уже есть PASS-ответ в активном course-level attempt.
+    Связан с test_compute_task_state_active_attempt_passed.
+    """
+    print("\n=== Тест: resolve_next_item не возвращает PASSED-задачу из активного attempt ===")
+    engine = create_async_engine(settings.database_url)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+    svc = LearningEngineService()
+
+    async with async_session() as session:
+        try:
+            r = await session.execute(text("""
+                SELECT tr.user_id, tr.task_id
+                FROM task_results tr
+                JOIN attempts a ON a.id = tr.attempt_id
+                JOIN user_courses uc ON uc.user_id = tr.user_id AND uc.is_active = true
+                WHERE a.finished_at IS NULL AND a.cancelled_at IS NULL
+                  AND tr.max_score > 0 AND tr.score::float / tr.max_score >= 0.5
+                LIMIT 1
+            """))
+            row = r.first()
+            if not row:
+                print("[SKIP] Нет (user, task) PASS в активном attempt + активный курс")
+                return True
+            student_id, task_id = row[0], row[1]
+            result = await svc.resolve_next_item(session, student_id)
+            if result.type == "task":
+                assert result.task_id != task_id, (
+                    f"Regression: next-item вернул ту же задачу {task_id}, "
+                    f"хотя она уже PASSED в активном attempt"
+                )
+            print(f"[PASS] next-item type={result.type} task_id={result.task_id} (не {task_id})")
+            return True
+        except AssertionError as e:
+            print(f"[FAIL] {e}")
+            return False
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
 async def main():
     print("=" * 60)
     print("Тесты Learning Engine Service (этап 2)")
@@ -319,6 +420,8 @@ async def main():
         await test_compute_course_state(),
         await test_resolve_next_item_no_active(),
         await test_resolve_next_item_with_active(),
+        await test_compute_task_state_active_attempt_passed(),
+        await test_resolve_next_item_skips_passed_in_active_attempt(),
     ]
     print("\n" + "=" * 60)
     print("ИТОГИ:")

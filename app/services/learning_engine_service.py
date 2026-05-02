@@ -94,33 +94,39 @@ class LearningEngineService:
         task_id: int,
     ) -> TaskStateResult:
         """
-        Состояние задания по последней завершённой попытке.
+        Состояние задания по последнему task_result.
 
-        attempts_used = число завершённых попыток по задаче (с записью в task_results).
-        state: OPEN/IN_PROGRESS если нет завершённой попытки;
-        PASSED если last_score/last_max_score >= 0.5;
-        FAILED если последняя завершённая не PASSED;
-        BLOCKED_LIMIT если attempts_used >= limit и нет PASSED.
+        Архитектура: attempts — course-level (один открытый attempt на (user, course),
+        накапливает task_results по многим задачам, см. start-or-get-attempt).
+        Поэтому фильтруем НЕ по a.finished_at, а по a.cancelled_at: учитываем
+        task_results как из активного, так и из завершённого course-level attempt.
+
+        attempts_used = число поданных решений по задаче (= COUNT task_results).
+        state:
+          - OPEN если нет ни одного task_result;
+          - PASSED если last_score/last_max_score >= 0.5 (по последнему submitted_at);
+          - FAILED если последний task_result не PASSED, attempts_used < limit;
+          - BLOCKED_LIMIT если attempts_used >= limit и нет PASSED.
         """
         limit = await self.get_effective_attempt_limit(db, student_id, task_id)
 
-        # Количество завершённых попыток по этой задаче (есть task_result по task_id)
+        # Число поданных ответов по задаче (учитывая активный course-level attempt)
         count_stmt = text("""
-            SELECT COUNT(DISTINCT a.id)
-            FROM attempts a
-            INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
+            SELECT COUNT(*)
+            FROM task_results tr
+            INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+            WHERE tr.user_id = :student_id AND tr.task_id = :task_id
         """)
         r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
         attempts_used = r.scalar() or 0
 
-        # Последняя завершённая попытка по задаче (по finished_at)
+        # Последний task_result по задаче (по submitted_at task_results)
         last_stmt = text("""
-            SELECT a.id, a.finished_at, tr.score, tr.max_score
-            FROM attempts a
-            INNER JOIN task_results tr ON tr.attempt_id = a.id AND tr.task_id = :task_id
-            WHERE a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
-            ORDER BY a.finished_at DESC
+            SELECT a.id, tr.submitted_at, tr.score, tr.max_score
+            FROM task_results tr
+            INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+            WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+            ORDER BY tr.submitted_at DESC, tr.id DESC
             LIMIT 1
         """)
         r = await db.execute(last_stmt, {"student_id": student_id, "task_id": task_id})
@@ -202,15 +208,18 @@ class LearningEngineService:
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
 
-        # Число заданий в дереве, по которым последняя завершённая попытка — PASS (Learning Engine V1, этап 6)
+        # Число заданий в дереве, по которым последний task_result — PASS.
+        # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
+        # (включая активный course-level attempt), порядок — по submitted_at task_result.
         tasks_with_last_pass_stmt = text("""
             WITH last_per_task AS (
                 SELECT DISTINCT ON (tr.task_id)
                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
                 FROM task_results tr
-                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.user_id = :student_id AND a.finished_at IS NOT NULL AND a.cancelled_at IS NULL
+                INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
                 INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
-                ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
+                WHERE tr.user_id = :student_id
+                ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
             )
             SELECT COUNT(*) FROM last_per_task
             WHERE last_max > 0 AND (last_score::float / last_max) >= :pass_threshold
