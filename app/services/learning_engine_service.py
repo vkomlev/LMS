@@ -203,8 +203,12 @@ class LearningEngineService:
         if not tree_ids:
             tree_ids = [course_id]
 
-        # Число заданий в дереве курса
-        tasks_count_stmt = select(func.count(Tasks.id)).where(Tasks.course_id.in_(tree_ids))
+        # Число заданий в дереве курса (TA исключаем — не отдаются клиентам,
+        # см. _first_incomplete_task; иначе course никогда не COMPLETED)
+        tasks_count_stmt = select(func.count(Tasks.id)).where(
+            Tasks.course_id.in_(tree_ids),
+            Tasks.task_content["type"].astext != "TA",
+        )
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
 
@@ -364,8 +368,20 @@ class LearningEngineService:
         """
         (task_id для следующего задания, task_id с blocked_limit или None).
         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
+
+        TA (Text Answer / развёрнутый ответ без авто-проверки) исключаются
+        из routing: ни один runtime-клиент (SPW, TG_LMS) их не рендерит,
+        в проде TA-задач не создаётся (только в тестовых seed-курсах).
+        Иначе ученик упирается в blocker «Тип задачи TA не поддерживается».
         """
-        tasks_stmt = select(Tasks.id).where(Tasks.course_id == course_id).order_by(Tasks.id.asc())
+        tasks_stmt = (
+            select(Tasks.id)
+            .where(
+                Tasks.course_id == course_id,
+                Tasks.task_content["type"].astext != "TA",
+            )
+            .order_by(Tasks.id.asc())
+        )
         r = await db.execute(tasks_stmt)
         task_ids = [row[0] for row in r.fetchall()]
 
