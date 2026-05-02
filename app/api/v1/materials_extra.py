@@ -14,13 +14,16 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Body, Query, File, UploadFile, HTTPException, status
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_async_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
+from app.services.materials_acl_service import assert_material_access
 from app.schemas.materials import (
     MaterialRead,
     MaterialReorderRequest,
@@ -488,3 +491,45 @@ async def import_materials_from_google_sheets(
         by_course=by_course_result,
         errors=global_errors,
     )
+
+
+# ---------------------------------------------------------------------------
+# Y-5.1: cookie-auth GET /materials/{id} (override CRUD service-key gate)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/materials/{material_id}",
+    response_model=MaterialRead,
+    summary="Получить материал по id (Y-5.1: cookie auth + ACL)",
+    responses={
+        200: {"description": "Материал найден и доступен"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Student не зачислен в курс материала"},
+        404: {"description": "Материал не существует"},
+    },
+)
+async def get_material_by_id(
+    material_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> MaterialRead:
+    """Вернуть материал по id с поддержкой cookie/Bearer/X-API-Key auth.
+
+    Параллель к Y-4 post-S5 fix /api/v1/tasks/{id}: переключает endpoint с
+    legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL. Регистрируется
+    в `materials_extra_router`, который подключен в `main.py` ДО CRUD-роутера
+    через `app.include_router(materials_extra,...)`. FastAPI matching first
+    wins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +
+    ACL по дереву user_courses + course_parents).
+    """
+    from app.models.materials import Materials  # noqa: PLC0415 — circular avoid
+
+    result = await db.execute(select(Materials).where(Materials.id == material_id))
+    material = result.scalar_one_or_none()
+    if material is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+    await assert_material_access(
+        db, current_user=current_user, material_course_id=material.course_id,
+    )
+    return material

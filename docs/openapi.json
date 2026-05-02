@@ -3271,6 +3271,114 @@
         ]
       }
     },
+    "/api/v1/materials/{material_id}": {
+      "get": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Получить материал по id (Y-5.1: cookie auth + ACL)",
+        "description": "Вернуть материал по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nПараллель к Y-4 post-S5 fix /api/v1/tasks/{id}: переключает endpoint с\nlegacy `Depends(get_db)` (X-API-Key only) на cookie+ACL. Регистрируется\nв `materials_extra_router`, который подключен в `main.py` ДО CRUD-роутера\nчерез `app.include_router(materials_extra,...)`. FastAPI matching first\nwins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +\nACL по дереву user_courses + course_parents).",
+        "operationId": "get_material_by_id_api_v1_materials__material_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Материал найден и доступен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Student не зачислен в курс материала"
+          },
+          "404": {
+            "description": "Материал не существует"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/materials/": {
       "post": {
         "tags": [
