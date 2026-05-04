@@ -306,11 +306,14 @@ async def claim_next_review(
     if user_id is not None:
         params["user_id"] = user_id
 
-    # Выбираем один task_result для ручной проверки. Y-4.2 (R-3 fix):
-    # дополнительно требуем `is_correct IS NULL` (не автопроверено) и тип задачи
-    # из whitelist `('SA_COM', 'TA')`. Без этих условий MC/SC/SA с автопроверкой
-    # (`is_correct IS NOT NULL, checked_at IS NULL` — design choice, см. ТЗ §2)
-    # попадали в очередь и преподаватель мог переопределить score через grade.
+    # Выбираем один task_result для ручной проверки. Y-6 pivot:
+    # семантика pending review = `tr.checked_at IS NULL` + whitelist типа
+    # `('SA_COM', 'TA')`. Раньше (Y-4.2) дополнительно требовалось
+    # `is_correct IS NULL` для отсечения автопроверенных MC/SC/SA. После
+    # Y-6 submit-side optimistic-PASSED записывает `is_correct=TRUE` сразу,
+    # поэтому `is_correct IS NULL` больше не подходит как маркер pending.
+    # Type-whitelist (`SA_COM`/`TA`) сам по себе исключает автопроверенные
+    # MC/SC/SA из очереди — независимо от их `checked_at`.
     r = await db.execute(
         text(f"""
             WITH cand AS (
@@ -318,7 +321,6 @@ async def claim_next_review(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
-                  AND tr.is_correct IS NULL
                   AND t.task_content->>'type' IN ('SA_COM', 'TA')
                   AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
                   AND {REVIEW_ACL_SQL}
@@ -467,31 +469,42 @@ async def grade_review(
     teacher_id: int,
     lock_token: str,
     score: int,
-    is_correct: bool,
     comment: Optional[str],
 ) -> dict:
-    """Атомарно оценить task_result (Phase Y-4).
+    """Атомарно оценить task_result (Phase Y-4 → Y-6 derived).
 
     Шаги в одной транзакции (caller commit'ит):
     1. SELECT FROM task_results WHERE id=:rid FOR UPDATE
     2. Validate: not_found → 404; lock mismatch / expired → 409;
-       is_correct IS NOT NULL → 409 «уже оценено»;
+       checked_at IS NOT NULL → 409 «уже оценено»;
        score > max_score → 422.
-    3. UPDATE task_results: is_correct, score, checked_at, checked_by,
+    3. Compute derived: `is_correct = score/max_score >= REVIEW_PASS_THRESHOLD_RATIO`.
+    4. UPDATE task_results: is_correct, score, checked_at, checked_by,
        metrics.comment, обнулить review_claim_*.
+
+    Y-6 (2026-05-04): teacher больше не передаёт `is_correct` явно —
+    он передаёт только `score` (и опц. `comment`). is_correct выводится
+    server-side через REVIEW_PASS_THRESHOLD_RATIO. Idempotency check
+    переключён с `is_correct IS NOT NULL` на `checked_at IS NOT NULL`,
+    т.к. после Stage 1 optimistic-PASSED `is_correct` уже не NULL для
+    SA_COM/TA даже до grade.
 
     Возвращает dict с полями для caller'а: result_id, task_id, user_id,
     user_email, score, max_score, is_correct, comment, task_title.
     Caller отвечает за inbox INSERT, audit, email scheduling, commit.
     """
+    from app.core.config import Settings as _SettingsCls
+    _settings = _SettingsCls()
+
     now = datetime.now(timezone.utc)
 
     # SELECT FOR UPDATE — сериализует двух teacher'ов
     r = await db.execute(
         text(
             "SELECT tr.id, tr.task_id, tr.user_id, tr.score, tr.max_score, "
-            "       tr.is_correct, tr.review_claimed_by, tr.review_claim_token, "
-            "       tr.review_claim_expires_at, tr.attempt_id, tr.metrics "
+            "       tr.is_correct, tr.checked_at, tr.review_claimed_by, "
+            "       tr.review_claim_token, tr.review_claim_expires_at, "
+            "       tr.attempt_id, tr.metrics "
             "FROM task_results tr WHERE tr.id = :rid FOR UPDATE"
         ),
         {"rid": result_id},
@@ -502,12 +515,17 @@ async def grade_review(
 
     (
         _id, task_id, user_id, _score, max_score,
-        existing_is_correct, claimed_by, claim_token, claim_expires_at,
+        _existing_is_correct, existing_checked_at,
+        claimed_by, claim_token, claim_expires_at,
         attempt_id, metrics_existing,
     ) = row
 
-    # Уже оценено — повторный grade с тем же lock_token → 409 «уже оценено»
-    if existing_is_correct is not None:
+    # Y-6: idempotency check по `checked_at IS NOT NULL`
+    # (был `is_correct IS NOT NULL` в Y-4; Stage 1 optimistic-PASSED
+    # делает is_correct предсказуемо TRUE на submit, поэтому он больше
+    # не маркер «оценено»). Регрейд после grade — отдельный endpoint
+    # POST /regrade (Stage 3).
+    if existing_checked_at is not None:
         raise GradeConflictError("Заявка уже оценена")
 
     # lock_token mismatch / not claimed
@@ -537,6 +555,13 @@ async def grade_review(
         raise GradeValidationError(
             f"score={score} превышает max_score={effective_max}"
         )
+
+    # Y-6 derived: is_correct из ratio (configurable, default 0.2).
+    # Trace: score=1, max=15 → 0.067 < 0.2 → False
+    #        score=3, max=15 → 0.200 >= 0.2 → True
+    #        score=15, max=15 → 1.0 >= 0.2 → True
+    pass_ratio = float(_settings.review_pass_threshold_ratio)
+    is_correct: bool = (float(score) / float(effective_max)) >= pass_ratio
 
     # Обновляем metrics.comment поверх существующих metrics (jsonb_set безопасен
     # для NULL через coalesce). comment может быть NULL — храним как JSON null.
@@ -609,7 +634,151 @@ async def grade_review(
 def _json_dumps(payload: dict) -> str:
     """Сериализовать dict в JSON-строку для bind в text() с CAST AS jsonb."""
     import json
-    return json.dumps(payload, ensure_ascii=False)
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+async def regrade_review(
+    db: AsyncSession,
+    *,
+    result_id: int,
+    actor_user_id: int,
+    score: int,
+    comment: Optional[str],
+) -> dict:
+    """Y-6 Stage 3: re-grade уже оценённой проверки.
+
+    Шаги в одной транзакции (caller commit'ит):
+    1. SELECT FOR UPDATE task_results WHERE id=:rid.
+    2. Validate: not_found → 404; checked_at IS NULL → 409 «not yet graded»
+       (regrade требует initial grade); score > max_score → 422.
+    3. Snapshot old: old_score, old_is_correct.
+    4. Compute new is_correct = (score / max_score) >= REVIEW_PASS_THRESHOLD_RATIO.
+    5. Append regrade event в metrics.regrade_history JSON-array.
+    6. UPDATE task_results: score, is_correct, checked_at=now() (re-bump),
+       checked_by=actor, metrics.
+
+    Concurrency: SELECT FOR UPDATE сериализует параллельные regrade.
+    Re-grade НЕ idempotent — каждый event важен (audit полный history).
+
+    ACL — caller'side: endpoint должен сначала проверить is_service /
+    methodist / teacher_courses(course_id).
+    """
+    from app.core.config import Settings as _SettingsCls
+    _settings = _SettingsCls()
+
+    now = datetime.now(timezone.utc)
+
+    r = await db.execute(
+        text(
+            "SELECT tr.id, tr.task_id, tr.user_id, tr.score, tr.max_score, "
+            "       tr.is_correct, tr.checked_at, tr.attempt_id, tr.metrics "
+            "FROM task_results tr WHERE tr.id = :rid FOR UPDATE"
+        ),
+        {"rid": result_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        raise GradeNotFoundError()
+
+    (
+        _id, task_id, user_id, old_score, max_score,
+        old_is_correct, existing_checked_at, attempt_id, metrics_existing,
+    ) = row
+
+    # regrade требует, чтобы initial grade уже состоялся.
+    if existing_checked_at is None:
+        raise GradeConflictError(
+            "Заявка ещё не оценена — сначала вызовите grade"
+        )
+
+    effective_max = int(max_score) if max_score is not None else 0
+    if effective_max <= 0:
+        raise GradeValidationError(
+            "max_score не задан для задачи; regrade невозможен"
+        )
+    if score > effective_max:
+        raise GradeValidationError(
+            f"score={score} превышает max_score={effective_max}"
+        )
+
+    pass_ratio = float(_settings.review_pass_threshold_ratio)
+    new_is_correct: bool = (float(score) / float(effective_max)) >= pass_ratio
+    old_score_int = int(old_score) if old_score is not None else 0
+    old_is_correct_bool = bool(old_is_correct) if old_is_correct is not None else False
+
+    # Append regrade event в metrics.regrade_history (JSON array).
+    metrics_dict = dict(metrics_existing) if metrics_existing else {}
+    history = list(metrics_dict.get("regrade_history") or [])
+    history.append({
+        "at": now.isoformat(),
+        "by": int(actor_user_id),
+        "old_score": old_score_int,
+        "old_is_correct": old_is_correct_bool,
+        "new_score": int(score),
+        "new_is_correct": new_is_correct,
+        "comment": comment,
+    })
+    metrics_dict["regrade_history"] = history
+    if comment is not None:
+        metrics_dict["comment"] = comment
+    elif "comment" in metrics_dict:
+        metrics_dict.pop("comment", None)
+
+    await db.execute(
+        text(
+            "UPDATE task_results SET "
+            "  is_correct = :is_correct, "
+            "  score = :score, "
+            "  checked_at = :now_ts, "
+            "  checked_by = :actor, "
+            "  metrics = CAST(:metrics AS jsonb) "
+            "WHERE id = :rid"
+        ),
+        {
+            "is_correct": new_is_correct,
+            "score": int(score),
+            "now_ts": now,
+            "actor": int(actor_user_id),
+            "metrics": _json_dumps(metrics_dict),
+            "rid": result_id,
+        },
+    )
+
+    # Догрузить task_title + course_id + user_email для caller (notify/email).
+    r2 = await db.execute(
+        text(
+            "SELECT COALESCE(task_content->>'title', external_uid) AS title, "
+            "course_id FROM tasks WHERE id = :tid"
+        ),
+        {"tid": task_id},
+    )
+    trow = r2.fetchone()
+    task_title = trow[0] if trow else None
+    course_id = trow[1] if trow and len(trow) > 1 else None
+
+    r3 = await db.execute(
+        text("SELECT email FROM users WHERE id = :uid"),
+        {"uid": user_id},
+    )
+    urow = r3.fetchone()
+    user_email = urow[0] if urow else None
+
+    return {
+        "result_id": result_id,
+        "task_id": task_id,
+        "user_id": user_id,
+        "user_email": user_email,
+        "old_score": old_score_int,
+        "old_is_correct": old_is_correct_bool,
+        "new_score": int(score),
+        "new_is_correct": new_is_correct,
+        "max_score": effective_max,
+        "comment": comment,
+        "task_title": task_title,
+        "course_id": course_id,
+        "attempt_id": attempt_id,
+        "checked_at": now,
+    }
 
 
 async def get_pending_count(
@@ -623,8 +792,8 @@ async def get_pending_count(
     Включает только заявки, которые сейчас НЕ захвачены (или захват просрочен).
     """
     now = datetime.now(timezone.utc)
-    # Y-4.2 (R-3 fix): добавлены `is_correct IS NULL` + whitelist типа, чтобы
-    # не учитывать автопроверенные SA/SC/MC (см. claim_next_review комментарий).
+    # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
+    # `('SA_COM','TA')`. См. claim_next_review комментарий.
     r = await db.execute(
         text(
             f"""
@@ -632,7 +801,6 @@ async def get_pending_count(
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
-              AND tr.is_correct IS NULL
               AND t.task_content->>'type' IN ('SA_COM', 'TA')
               AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
               AND {REVIEW_ACL_SQL}
@@ -675,15 +843,14 @@ async def get_teacher_workload(
     overdue_total = int(row[2] or 0)
     open_help_requests_total = open_manual_help + open_blocked_limit
 
-    # Y-4.2 (R-3 fix): pending_manual_reviews_total отражает только SA_COM/TA
-    # с pending-статусом, не автопроверенные.
+    # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
+    # `('SA_COM','TA')`.
     r2 = await db.execute(
         text(f"""
             SELECT COUNT(*)
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
-              AND tr.is_correct IS NULL
               AND t.task_content->>'type' IN ('SA_COM', 'TA')
               AND {REVIEW_ACL_SQL}
         """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов

@@ -33,6 +33,9 @@ from app.schemas.teacher_next_modes import (
     ReviewClaimNextResponse,
     ReviewGradeRequest,
     ReviewGradeResponse,
+    ReviewRegradePartScore,
+    ReviewRegradeRequest,
+    ReviewRegradeResponse,
     ReviewReleaseRequest,
     ReviewReleaseResponse,
 )
@@ -44,6 +47,7 @@ from app.services.teacher_queue_service import (
     claim_next_review,
     get_pending_count,
     grade_review,
+    regrade_review,
     release_review_claim,
 )
 
@@ -160,7 +164,6 @@ async def review_grade(
             teacher_id=body.teacher_id,
             lock_token=body.lock_token,
             score=body.score,
-            is_correct=body.is_correct,
             comment=body.comment,
         )
     except GradeNotFoundError:
@@ -178,13 +181,23 @@ async def review_grade(
     comment_v: Optional[str] = grade_data["comment"]
     task_title: Optional[str] = grade_data["task_title"]
 
+    # Y-6 notification kind: positive grade → 'sa_com_graded' (existing UX),
+    # negative → 'task_returned_for_rework' (NEW, student inbox показывает
+    # CTA «Решить заново»; SPW Stage 6.4 рендерит).
+    notif_kind = "sa_com_graded" if is_correct_v else "task_returned_for_rework"
+    notif_title = (
+        "Преподаватель оценил вашу попытку"
+        if is_correct_v
+        else "Учитель не принял ответ — задача возвращена в очередь"
+    )
+
     # Inbox запись (внутри той же транзакции — атомарно с UPDATE)
-    inbox_content = _render_inbox_content(score, max_score, comment_v)
+    inbox_content = _render_inbox_content(score, max_score, comment_v, is_correct_v)
     notification = await inbox_service.create_for_user(
         db,
         user_id=student_id,
-        kind="sa_com_graded",
-        title="Преподаватель оценил вашу попытку",
+        kind=notif_kind,
+        title=notif_title,
         content=inbox_content,
         payload={
             "task_id": task_id,
@@ -193,11 +206,15 @@ async def review_grade(
             "max_score": max_score,
             "is_correct": is_correct_v,
             "comment": comment_v,
+            "previous_score": None,
         },
         created_by=body.teacher_id,
     )
 
-    # Audit events
+    # Audit events.
+    # Y-6: при negative grade добавляем `teacher.review.rejected` поверх
+    # обычного graded — чтобы в audit-стороне можно было гранулярно мониторить
+    # частоту отказов / тренд по преподавателю.
     await audit_service.log_event(
         db,
         audit_service.TEACHER_REVIEW_GRADED,
@@ -210,8 +227,23 @@ async def review_grade(
             "max_score": max_score,
             "is_correct": is_correct_v,
             "comment_length": len(comment_v) if comment_v else 0,
+            "derived_via": "review_pass_threshold_ratio",
         },
     )
+    if not is_correct_v:
+        await audit_service.log_event(
+            db,
+            audit_service.TEACHER_REVIEW_REJECTED,
+            user_id=body.teacher_id,
+            ip=ip,
+            details={
+                "result_id": result_id,
+                "task_id": task_id,
+                "score": score,
+                "max_score": max_score,
+                "student_id": student_id,
+            },
+        )
     await audit_service.log_event(
         db,
         audit_service.STUDENT_NOTIFICATION_CREATED,
@@ -219,17 +251,19 @@ async def review_grade(
         ip=ip,
         details={
             "notification_id": notification.id,
-            "kind": "sa_com_graded",
+            "kind": notif_kind,
             "result_id": result_id,
         },
     )
 
     await db.commit()
 
-    # Email best-effort после commit. Не передаём db в background — open new session
-    # внутри _send_email_after_commit при необходимости (audit email.failed).
+    # Email best-effort после commit. Y-6: отправляем только для positive
+    # grade — для negative student узнаёт через inbox (SPW push) + TG-бот.
+    # Open new session внутри _send_email_after_commit при необходимости
+    # (audit email.failed).
     recipient_email = grade_data.get("user_email")
-    if recipient_email:
+    if recipient_email and is_correct_v:
         background_tasks.add_task(
             _send_email_and_audit_failure,
             recipient_email=recipient_email,
@@ -247,6 +281,204 @@ async def review_grade(
         max_score=max_score,
         is_correct=is_correct_v,
         comment=comment_v,
+        notification_id=notification.id,
+    )
+
+
+@router.post(
+    "/{result_id}/regrade",
+    response_model=ReviewRegradeResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Изменить ранее выставленную оценку (Phase Y-6)",
+    responses={
+        200: {"description": "Оценка изменена; inbox создан; regrade_history append"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Нет права изменять оценку для этого курса"},
+        404: {"description": "task_result не существует"},
+        409: {"description": "Заявка ещё не оценена (сначала grade)"},
+        422: {"description": "score > max_score"},
+    },
+)
+async def review_regrade(
+    request: Request,
+    result_id: int = Path(..., description="ID результата (task_result)"),
+    body: ReviewRegradeRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> ReviewRegradeResponse:
+    """Re-grade уже оценённой проверки.
+
+    Y-6 Stage 3. Доступен:
+    - service-key (X-API-Key) — bypass;
+    - user с role в {admin, methodist} — bypass любой курс;
+    - teacher на course-tree (или ancestor) задачи.
+
+    Notification kind:
+    - old=TRUE → new=FALSE → 'task_returned_for_rework'
+    - old=FALSE → new=TRUE → 'sa_com_graded'
+    - same direction → 'sa_com_regraded' (informational)
+
+    Audit: `teacher.review.regraded` (всегда) + `teacher.review.rejected`
+    при new_is_correct=FALSE.
+
+    Concurrency: SELECT FOR UPDATE; не idempotent — каждый regrade event
+    сохраняется в `metrics.regrade_history` (полный history).
+    """
+    ip = request.client.host if request.client else "unknown"
+
+    # ACL: service / methodist / admin / teacher на course-tree.
+    if not current_user.is_service:
+        # Сначала прочитаем task_result → task → course_id для course-level ACL.
+        from sqlalchemy import text as _text
+        r = await db.execute(
+            _text(
+                "SELECT t.course_id FROM task_results tr "
+                "JOIN tasks t ON t.id = tr.task_id "
+                "WHERE tr.id = :rid"
+            ),
+            {"rid": result_id},
+        )
+        row = r.fetchone()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "task_result не найден")
+        course_id_for_acl: int = int(row[0])
+        from app.services.teacher_queue_service import teacher_course_acl as _acl_clause
+        # Простая проверка: user либо имеет admin/methodist role, либо teacher
+        # на course-tree (через teacher_course_acl helper).
+        acl_check = await db.execute(
+            _text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+                "  WHERE ur.user_id=:uid AND r.name IN ('admin','methodist')"
+                ") AS has_role, "
+                "EXISTS ("
+                f"  SELECT 1 WHERE {_acl_clause(':course_id_param')}"  # nosec B608 — _acl_clause возвращает SQL из закрытого набора литералов модуля; динамические значения только через bind
+                ") AS has_teacher_course"
+            ),
+            {
+                "uid": current_user.id,
+                "teacher_id": current_user.id,
+                "course_id_param": course_id_for_acl,
+            },
+        )
+        acl_row = acl_check.fetchone()
+        if not (acl_row and (acl_row[0] or acl_row[1])):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет права изменить оценку")
+
+    try:
+        rg_data = await regrade_review(
+            db,
+            result_id=result_id,
+            actor_user_id=current_user.id,
+            score=body.score,
+            comment=body.comment,
+        )
+    except GradeNotFoundError:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task_result не найден")
+    except GradeConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, e.message)
+    except GradeValidationError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, e.message)
+
+    student_id = int(rg_data["user_id"])
+    task_id = int(rg_data["task_id"])
+    old_score = int(rg_data["old_score"])
+    old_is_correct = bool(rg_data["old_is_correct"])
+    new_score = int(rg_data["new_score"])
+    new_is_correct = bool(rg_data["new_is_correct"])
+    max_score = int(rg_data["max_score"])
+    comment_v = rg_data["comment"]
+    checked_at = rg_data["checked_at"]
+
+    # Notification kind logic.
+    if old_is_correct and not new_is_correct:
+        notif_kind = "task_returned_for_rework"
+        notif_title = "Учитель пере-оценил ответ — задача снова в очереди"
+    elif (not old_is_correct) and new_is_correct:
+        notif_kind = "sa_com_graded"
+        notif_title = "Учитель пере-оценил — ответ принят"
+    else:
+        notif_kind = "sa_com_regraded"
+        notif_title = "Учитель пере-оценил вашу попытку"
+
+    inbox_content = (
+        f"Балл изменён: {old_score}/{max_score} → {new_score}/{max_score}."
+    )
+    if comment_v:
+        clipped = comment_v if len(comment_v) <= 200 else comment_v[:200] + "…"
+        inbox_content = f"{inbox_content} {clipped}"
+
+    notification = await inbox_service.create_for_user(
+        db,
+        user_id=student_id,
+        kind=notif_kind,
+        title=notif_title,
+        content=inbox_content,
+        payload={
+            "task_id": task_id,
+            "attempt_id": rg_data.get("attempt_id"),
+            "score": new_score,
+            "max_score": max_score,
+            "is_correct": new_is_correct,
+            "previous_score": old_score,
+            "previous_is_correct": old_is_correct,
+            "comment": comment_v,
+        },
+        created_by=current_user.id,
+    )
+
+    # Audit
+    await audit_service.log_event(
+        db,
+        audit_service.TEACHER_REVIEW_REGRADED,
+        user_id=current_user.id,
+        ip=ip,
+        details={
+            "result_id": result_id,
+            "task_id": task_id,
+            "old_score": old_score,
+            "new_score": new_score,
+            "old_is_correct": old_is_correct,
+            "new_is_correct": new_is_correct,
+            "comment_length": len(comment_v) if comment_v else 0,
+        },
+    )
+    if not new_is_correct:
+        await audit_service.log_event(
+            db,
+            audit_service.TEACHER_REVIEW_REJECTED,
+            user_id=current_user.id,
+            ip=ip,
+            details={
+                "result_id": result_id,
+                "task_id": task_id,
+                "score": new_score,
+                "max_score": max_score,
+                "student_id": student_id,
+                "via": "regrade",
+            },
+        )
+    await audit_service.log_event(
+        db,
+        audit_service.STUDENT_NOTIFICATION_CREATED,
+        user_id=student_id,
+        ip=ip,
+        details={
+            "notification_id": notification.id,
+            "kind": notif_kind,
+            "result_id": result_id,
+        },
+    )
+
+    await db.commit()
+
+    return ReviewRegradeResponse(
+        result_id=result_id,
+        task_id=task_id,
+        old=ReviewRegradePartScore(score=old_score, is_correct=old_is_correct),
+        new=ReviewRegradePartScore(score=new_score, is_correct=new_is_correct),
+        comment=comment_v,
+        checked_at=checked_at,
         notification_id=notification.id,
     )
 
@@ -270,15 +502,24 @@ async def get_pending_count_endpoint(
 
 
 def _render_inbox_content(
-    score: int, max_score: int, comment: Optional[str]
+    score: int, max_score: int, comment: Optional[str], is_correct: bool
 ) -> str:
-    """Готовый текст inbox-уведомления для ученика."""
-    base = f"Преподаватель оценил вашу попытку: {score}/{max_score}"
+    """Готовый текст inbox-уведомления для ученика.
+
+    Y-6: разное вступление для positive/negative grade.
+    """
+    if is_correct:
+        base = f"Преподаватель принял ответ: {score}/{max_score}"
+    else:
+        base = (
+            f"Преподаватель не принял ответ ({score}/{max_score}). "
+            "Задача снова в очереди — вы можете отправить новый ответ."
+        )
     if comment:
         # Ограничение длины content — по уроку UX (inbox показывает короткий текст);
         # полный comment доступен через payload.comment.
         clipped = comment if len(comment) <= 200 else comment[:200] + "…"
-        return f"{base}. {clipped}"
+        return f"{base} {clipped}"
     return base
 
 

@@ -101,3 +101,27 @@ class Settings:
         # Backup в password-manager (как FERNET_MASTER_KEY).
         self.embed_jwt_secret: str = os.getenv("CB_EMBED_JWT_SECRET", "")
         self.embed_jwt_ttl_sec: int = int(os.getenv("CB_EMBED_JWT_TTL_SEC", "300"))
+
+        # Phase Y-6: review-loop constants.
+        # REVIEW_PASS_THRESHOLD_RATIO — для derived `is_correct` в teacher
+        # grade/regrade: is_correct = (score / max_score >= ratio).
+        # Отдельная константа от auto-check PASS_THRESHOLD_RATIO=0.5 (SC/MC/SA),
+        # т.к. семантика разная: rubric-pass у teacher мягче, 20% уже даёт
+        # «попытка засчитана».
+        self.review_pass_threshold_ratio: float = float(
+            os.getenv("REVIEW_PASS_THRESHOLD_RATIO", "0.2")
+        )
+        # ESCALATION_TIMEOUT_HOURS — pending review старше N часов
+        # → push методисту (Stage 4 cron).
+        self.escalation_timeout_hours: int = int(
+            os.getenv("ESCALATION_TIMEOUT_HOURS", "48")
+        )
+        # ESCALATION_CRON_INTERVAL_MIN — интервал тика APScheduler.
+        self.escalation_cron_interval_min: int = int(
+            os.getenv("ESCALATION_CRON_INTERVAL_MIN", "5")
+        )
+        # METHODIST_RATE_LIMIT_PER_DAY_PER_COURSE — verhinder spam:
+        # не более N escalation push'ей по одному курсу в сутки.
+        self.methodist_rate_limit_per_day_per_course: int = int(
+            os.getenv("METHODIST_RATE_LIMIT_PER_DAY_PER_COURSE", "1")
+        )

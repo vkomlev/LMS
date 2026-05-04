@@ -341,3 +341,28 @@ app.include_router(me_notifications_router, prefix=API_PREFIX)
 app.include_router(embed_router)
 app.include_router(learning_guest_router, prefix=API_PREFIX)
 app.include_router(auth_test_session_router, prefix=API_PREFIX)
+
+# Phase Y-6: methodist escalations
+from app.api.v1.methodist_escalations import router as methodist_escalations_router
+app.include_router(methodist_escalations_router, prefix=API_PREFIX)
+
+
+# Phase Y-6: APScheduler для escalation cron (review-loop).
+# Multi-worker safe через PG advisory lock внутри tick'а.
+from app.services import escalation_service as _y6_escalation_service
+
+
+@app.on_event("startup")
+async def _start_y6_escalation_scheduler() -> None:
+    try:
+        _y6_escalation_service.start_scheduler()
+    except Exception:
+        logger.exception("Y-6: failed to start escalation scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_y6_escalation_scheduler() -> None:
+    try:
+        _y6_escalation_service.stop_scheduler()
+    except Exception:
+        logger.exception("Y-6: failed to stop escalation scheduler")

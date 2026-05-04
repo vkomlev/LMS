@@ -118,11 +118,16 @@ class TeacherWorkloadResponse(BaseModel):
 # ----- Review Grade (Phase Y-4) -----
 
 class ReviewGradeRequest(BaseModel):
-    """Тело запроса grade для SA_COM-проверки."""
+    """Тело запроса grade для SA_COM/TA-проверки.
+
+    Y-6 (2026-05-04): убрано поле `is_correct` — оно теперь выводится
+    server-side через `REVIEW_PASS_THRESHOLD_RATIO`. Teacher передаёт
+    только `score` и опц. `comment`. На клиенте «Принять» = `score=max_score`,
+    «Отклонить» = `score=0`, «Указать балл» = произвольное значение.
+    """
     teacher_id: int = Field(..., description="ID преподавателя, выставляющего оценку")
     lock_token: str = Field(..., min_length=1, description="Токен блокировки из claim-next")
     score: int = Field(..., ge=0, description="Балл (0..max_score), max_score проверяется в сервисе")
-    is_correct: bool = Field(..., description="True = принято, False = отклонено")
     comment: Optional[str] = Field(
         None, max_length=4096, description="Комментарий преподавателя (опционально)"
     )
@@ -137,6 +142,38 @@ class ReviewGradeResponse(BaseModel):
     is_correct: bool
     comment: Optional[str] = None
     notification_id: int = Field(..., description="ID созданной inbox-записи ученика")
+
+
+# ----- Review Regrade (Phase Y-6) -----
+
+class ReviewRegradeRequest(BaseModel):
+    """Тело запроса regrade для уже оценённой проверки.
+
+    Y-6 Stage 3. Используется teacher'ом / методистом, чтобы изменить
+    оценку (score/comment) после grade. Не idempotent — каждый regrade
+    event записывается в `metrics.regrade_history` array.
+    """
+    score: int = Field(..., ge=0, description="Новый балл (0..max_score)")
+    comment: Optional[str] = Field(
+        None, max_length=4096, description="Комментарий преподавателя (опционально)"
+    )
+
+
+class ReviewRegradePartScore(BaseModel):
+    """Снимок score/is_correct до или после regrade."""
+    score: int
+    is_correct: bool
+
+
+class ReviewRegradeResponse(BaseModel):
+    """Ответ regrade endpoint."""
+    result_id: int
+    task_id: int
+    old: ReviewRegradePartScore
+    new: ReviewRegradePartScore
+    comment: Optional[str] = None
+    checked_at: datetime
+    notification_id: int = Field(..., description="ID inbox-записи ученика")
 
 
 # ----- Pending Count (Phase Y-4, для TG_LMS поллера) -----

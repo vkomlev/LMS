@@ -351,6 +351,21 @@ async def submit_attempt_answers(
                     attempt_id, task.id,
                 )
 
+        # 2.3c Y-6 optimistic-PASSED для TA/SA_COM:
+        # на submit student получает PASSED моментально (учебный flow не блокируется),
+        # teacher проверит через pending-queue (checked_at IS NULL); negative grade
+        # вернёт задачу студенту. Если попытка истекла по времени — не подменяем
+        # (overdue → честный FAILED, как для остальных типов).
+        if (
+            task_content.type in ("SA_COM", "TA")
+            and not attempt.time_expired
+        ):
+            check_result = CheckResult(
+                score=check_result.max_score,
+                max_score=check_result.max_score,
+                is_correct=True,
+            )
+
         # 2.4 Записываем в task_results
         await task_results_service.create_from_check_result(
             db=db,

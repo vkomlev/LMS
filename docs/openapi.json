@@ -12901,6 +12901,122 @@
         }
       }
     },
+    "/api/v1/teacher/reviews/{result_id}/regrade": {
+      "post": {
+        "tags": [
+          "teacher_reviews"
+        ],
+        "summary": "Изменить ранее выставленную оценку (Phase Y-6)",
+        "description": "Re-grade уже оценённой проверки.\n\nY-6 Stage 3. Доступен:\n- service-key (X-API-Key) — bypass;\n- user с role в {admin, methodist} — bypass любой курс;\n- teacher на course-tree (или ancestor) задачи.\n\nNotification kind:\n- old=TRUE → new=FALSE → 'task_returned_for_rework'\n- old=FALSE → new=TRUE → 'sa_com_graded'\n- same direction → 'sa_com_regraded' (informational)\n\nAudit: `teacher.review.regraded` (всегда) + `teacher.review.rejected`\nпри new_is_correct=FALSE.\n\nConcurrency: SELECT FOR UPDATE; не idempotent — каждый regrade event\nсохраняется в `metrics.regrade_history` (полный history).",
+        "operationId": "review_regrade_api_v1_teacher_reviews__result_id__regrade_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID результата (task_result)",
+              "title": "Result Id"
+            },
+            "description": "ID результата (task_result)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRegradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Оценка изменена; inbox создан; regrade_history append",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRegradeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Нет права изменять оценку для этого курса"
+          },
+          "404": {
+            "description": "task_result не существует"
+          },
+          "409": {
+            "description": "Заявка ещё не оценена (сначала grade)"
+          },
+          "422": {
+            "description": "score > max_score"
+          }
+        }
+      }
+    },
     "/api/v1/teacher/reviews/pending-count": {
       "get": {
         "tags": [
@@ -15093,6 +15209,133 @@
           },
           "404": {
             "description": "Endpoint disabled OR user not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/escalations/pending": {
+      "get": {
+        "tags": [
+          "methodist_escalations"
+        ],
+        "summary": "Список эскалаций для методиста (Phase Y-6)",
+        "description": "Возвращает свежие эскалации `review_escalated` и `course_pending_review`\nдля current_user (методиста). Используется TG_LMS methodist-поллером.",
+        "operationId": "list_pending_escalations_api_v1_methodist_escalations_pending_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Если указано — только эскалации с created_at >= since (ISO8601)",
+              "title": "Since"
+            },
+            "description": "Если указано — только эскалации с created_at >= since (ISO8601)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список (возможно пустой)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EscalationListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "У пользователя нет роли methodist"
           },
           "422": {
             "description": "Validation Error",
@@ -17708,6 +17951,83 @@
         ],
         "title": "EmbedTaskResponse",
         "description": "Ответ GET /embed-api/courses/{course_uid}/task/{external_uid}.\n\nWhitelisted поля. SA_COM/TA не отдаются (404). correct_answer\n/ solution_rules / max_attempts отсутствуют."
+      },
+      "EscalationItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "kind",
+          "payload"
+        ],
+        "title": "EscalationItem",
+        "description": "Элемент списка эскалаций для методиста."
+      },
+      "EscalationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EscalationItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Длина items (≤ limit)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "EscalationListResponse",
+        "description": "Ответ /escalations/pending."
       },
       "GuestAttemptCreateRequest": {
         "properties": {
@@ -21797,11 +22117,6 @@
             "title": "Score",
             "description": "Балл (0..max_score), max_score проверяется в сервисе"
           },
-          "is_correct": {
-            "type": "boolean",
-            "title": "Is Correct",
-            "description": "True = принято, False = отклонено"
-          },
           "comment": {
             "anyOf": [
               {
@@ -21820,11 +22135,10 @@
         "required": [
           "teacher_id",
           "lock_token",
-          "score",
-          "is_correct"
+          "score"
         ],
         "title": "ReviewGradeRequest",
-        "description": "Тело запроса grade для SA_COM-проверки."
+        "description": "Тело запроса grade для SA_COM/TA-проверки.\n\nY-6 (2026-05-04): убрано поле `is_correct` — оно теперь выводится\nserver-side через `REVIEW_PASS_THRESHOLD_RATIO`. Teacher передаёт\nтолько `score` и опц. `comment`. На клиенте «Принять» = `score=max_score`,\n«Отклонить» = `score=0`, «Указать балл» = произвольное значение."
       },
       "ReviewGradeResponse": {
         "properties": {
@@ -21876,6 +22190,104 @@
         ],
         "title": "ReviewGradeResponse",
         "description": "Ответ grade endpoint."
+      },
+      "ReviewRegradePartScore": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score",
+          "is_correct"
+        ],
+        "title": "ReviewRegradePartScore",
+        "description": "Снимок score/is_correct до или после regrade."
+      },
+      "ReviewRegradeRequest": {
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Score",
+            "description": "Новый балл (0..max_score)"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Комментарий преподавателя (опционально)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "score"
+        ],
+        "title": "ReviewRegradeRequest",
+        "description": "Тело запроса regrade для уже оценённой проверки.\n\nY-6 Stage 3. Используется teacher'ом / методистом, чтобы изменить\nоценку (score/comment) после grade. Не idempotent — каждый regrade\nevent записывается в `metrics.regrade_history` array."
+      },
+      "ReviewRegradeResponse": {
+        "properties": {
+          "result_id": {
+            "type": "integer",
+            "title": "Result Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "old": {
+            "$ref": "#/components/schemas/ReviewRegradePartScore"
+          },
+          "new": {
+            "$ref": "#/components/schemas/ReviewRegradePartScore"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          },
+          "notification_id": {
+            "type": "integer",
+            "title": "Notification Id",
+            "description": "ID inbox-записи ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result_id",
+          "task_id",
+          "old",
+          "new",
+          "checked_at",
+          "notification_id"
+        ],
+        "title": "ReviewRegradeResponse",
+        "description": "Ответ regrade endpoint."
       },
       "ReviewReleaseRequest": {
         "properties": {

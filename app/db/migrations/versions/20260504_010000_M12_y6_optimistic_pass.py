@@ -1,0 +1,114 @@
+"""M12: Y-6 optimistic-PASSED backfill + индекс pending review.
+
+Revision ID: m12_y6_optimistic_pass
+Revises: m11_courses_is_public_demo
+Create Date: 2026-05-04
+
+Phase Y-6 (review-loop) — backfill in-flight pending TA/SA_COM:
+учитель ещё не оценил (`checked_at IS NULL`), но новый optimistic
+flow (Stage 1) выставляет `is_correct=TRUE, score=max_score` сразу
+на submit, чтобы student продвигался по курсу. Эта миграция приводит
+ЛЕГАСИ pending записи в тот же state — иначе после деплоя Stage 1
+old-style pending (is_correct=NULL) останутся «зависшими» для
+student (state=NEW), хотя teacher uses checked_at-семантику.
+
+Действия:
+1) UPDATE task_results SET is_correct=TRUE, score=max_score,
+   metrics += {backfill_y6_optimistic: true}
+   WHERE is_correct IS NULL AND checked_at IS NULL
+     AND task_content->>'type' IN ('SA_COM','TA').
+
+2) CREATE INDEX idx_task_results_pending_review
+   ON task_results (submitted_at, checked_at)
+   WHERE checked_at IS NULL.
+   Используется новой queue/escalation query (Stage 4).
+
+   ВАЖНО: индекс создаётся без CONCURRENTLY, потому что Alembic
+   env.py обёртывает миграцию в транзакцию. На текущем объёме
+   task_results dev/staging это безопасно. В prod (Y-7 deploy)
+   индекс пред-создать ВРУЧНУЮ через CONCURRENTLY до alembic
+   upgrade — затем `IF NOT EXISTS` отработает no-op:
+
+       CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_task_results_pending_review
+       ON task_results (submitted_at, checked_at)
+       WHERE checked_at IS NULL;
+
+   См. tech-spec Y-6 §11.1 + §15 «Pre-deploy в prod».
+
+Acceptance:
+- Pre-count: SELECT COUNT(*) FROM task_results tr JOIN tasks t
+  ON t.id=tr.task_id WHERE tr.is_correct IS NULL
+    AND tr.checked_at IS NULL
+    AND t.task_content->>'type' IN ('SA_COM','TA').
+  Запомнить N.
+- Post-count: SELECT COUNT(*) FROM task_results
+  WHERE metrics->>'backfill_y6_optimistic'='true'.
+  Должно быть = N.
+- Idempotent: повторный upgrade match'ит 0 строк.
+
+Downgrade: возврат is_correct=NULL и score=0 по metrics-маркеру;
+DROP INDEX. Безопасно — мы знаем точное множество затронутых строк.
+
+См. tech-spec: D:/Work/ContentBackbone/docs/tech-specs/tech-spec-Y6-review-loop-v1.md §6 «M12».
+"""
+from typing import Sequence, Union
+
+from alembic import op
+
+
+revision: str = "m12_y6_optimistic_pass"
+down_revision: Union[str, None] = "m11_courses_is_public_demo"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    # 1) Backfill in-flight pending TA/SA_COM с is_correct=NULL.
+    #    Optimistic-PASSED: is_correct=TRUE, score=max_score.
+    #    metrics += {backfill_y6_optimistic: true} — маркер для downgrade
+    #    и audit.
+    op.execute(
+        """
+        WITH legacy_pending AS (
+            SELECT tr.id, tr.max_score AS lp_max_score
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE tr.is_correct IS NULL
+              AND tr.checked_at IS NULL
+              AND t.task_content->>'type' IN ('SA_COM', 'TA')
+        )
+        UPDATE task_results tr
+        SET is_correct = TRUE,
+            score = lp.lp_max_score,
+            metrics = COALESCE(tr.metrics, '{}'::jsonb)
+                      || jsonb_build_object('backfill_y6_optimistic', true)
+        FROM legacy_pending lp
+        WHERE tr.id = lp.id
+        """
+    )
+
+    # 2) Партиал-индекс для Y-6 escalation cron / queue queries.
+    #    Без CONCURRENTLY — см. docstring «Pre-deploy в prod».
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_task_results_pending_review
+        ON task_results (submitted_at, checked_at)
+        WHERE checked_at IS NULL
+        """
+    )
+
+
+def downgrade() -> None:
+    # Rollback: вернуть is_correct=NULL и score=0 для backfill-записей
+    # по metrics-маркеру. Безопасно — мы точно знаем множество.
+    op.execute(
+        """
+        UPDATE task_results
+        SET is_correct = NULL,
+            score = 0,
+            metrics = metrics - 'backfill_y6_optimistic'
+        WHERE metrics ? 'backfill_y6_optimistic'
+          AND (metrics->>'backfill_y6_optimistic')::boolean = true
+        """
+    )
+    op.execute("DROP INDEX IF EXISTS idx_task_results_pending_review")

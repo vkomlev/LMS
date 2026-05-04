@@ -203,11 +203,10 @@ class LearningEngineService:
         if not tree_ids:
             tree_ids = [course_id]
 
-        # Число заданий в дереве курса (TA исключаем — не отдаются клиентам,
-        # см. _first_incomplete_task; иначе course никогда не COMPLETED)
+        # Число заданий в дереве курса (Y-6: TA снова учитываем —
+        # SPW рендерит TaskFormTA, optimistic-PASSED продвигает state).
         tasks_count_stmt = select(func.count(Tasks.id)).where(
             Tasks.course_id.in_(tree_ids),
-            Tasks.task_content["type"].astext != "TA",
         )
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
@@ -253,6 +252,48 @@ class LearningEngineService:
                 """),
                 {"student_id": student_id, "course_id": course_id, "state": state},
             )
+
+        # Y-6 Stage 4.3: course-completion event-driven escalation.
+        # Если курс достиг COMPLETED, но есть pending TA/SA_COM (`checked_at IS NULL`)
+        # → notify методиста (idempotent через `task_results.metrics.completion_escalated_at`).
+        if state == "COMPLETED":
+            try:
+                pending_res = await db.execute(
+                    text(
+                        """
+                        SELECT tr.id FROM task_results tr
+                        JOIN tasks t ON t.id = tr.task_id
+                        WHERE tr.user_id = :sid
+                          AND t.course_id = ANY(:cids)
+                          AND tr.checked_at IS NULL
+                          AND t.task_content->>'type' IN ('SA_COM','TA')
+                        """
+                    ),
+                    {"sid": student_id, "cids": tree_ids},
+                )
+                pending_ids = [int(r[0]) for r in pending_res.fetchall()]
+                if pending_ids:
+                    from app.core.config import Settings as _SettingsCls
+                    from app.services import methodist_notify_service as _mn
+                    _settings = _SettingsCls()
+                    await _mn.escalate_course_completion(
+                        db,
+                        student_id=int(student_id),
+                        course_id=int(course_id),
+                        pending_result_ids=pending_ids,
+                        rate_limit_per_day=int(
+                            _settings.methodist_rate_limit_per_day_per_course
+                        ),
+                    )
+            except Exception:
+                # Эскалация не должна валить compute_course_state. Если что-то
+                # пошло не так — просто залогируем. Студент видит свой COMPLETED,
+                # cron-tick подберёт по timeout позже.
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "Y-6 course_completion escalation failed (student=%s course=%s)",
+                    student_id, course_id,
+                )
 
         return CourseState(state=state, course_id=course_id)
 
@@ -369,17 +410,14 @@ class LearningEngineService:
         (task_id для следующего задания, task_id с blocked_limit или None).
         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
 
-        TA (Text Answer / развёрнутый ответ без авто-проверки) исключаются
-        из routing: ни один runtime-клиент (SPW, TG_LMS) их не рендерит,
-        в проде TA-задач не создаётся (только в тестовых seed-курсах).
-        Иначе ученик упирается в blocker «Тип задачи TA не поддерживается».
+        Y-6: TA снова в routing — SPW рендерит TaskFormTA, на submit
+        задача получает optimistic-PASSED, learning engine продолжает
+        курс. Stop-gap фильтр `type != 'TA'` (commit cf1908c, 2026-05-02)
+        снят — иначе course не достигнет COMPLETED для курсов с TA.
         """
         tasks_stmt = (
             select(Tasks.id)
-            .where(
-                Tasks.course_id == course_id,
-                Tasks.task_content["type"].astext != "TA",
-            )
+            .where(Tasks.course_id == course_id)
             .order_by(Tasks.id.asc())
         )
         r = await db.execute(tasks_stmt)

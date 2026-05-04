@@ -33,3 +33,6 @@ PyJWT>=2.9.0
 
 # Phase Y-1.5 — security gate (acceptance §10 Bandit clean)
 bandit>=1.9.0
+
+# Phase Y-6 — escalation cron (review-loop)
+APScheduler>=3.10,<4
