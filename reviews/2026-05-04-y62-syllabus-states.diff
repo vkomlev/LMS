@@ -1,0 +1,1480 @@
+﻿diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 9aa0f56..2189ea5 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -18,11 +18,12 @@ import logging
+ from datetime import datetime, timedelta, timezone
+ from typing import Literal
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
++from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_async_db, require_authenticated
+ from app.auth.current_user import CurrentUser
++from app.services.courses_acl_service import assert_course_access
+ from app.core.config import Settings
+ from app.schemas.auth import (
+     IdentityLinkEmailRequest,
+@@ -43,6 +44,7 @@ from app.schemas.me import (
+     LastPositionRead,
+     MeResponse,
+     StreakRead,
++    SyllabusStatesResponse,
+ )
+ from app.services import me_service
+ from app.services.audit_service import log_event
+@@ -116,6 +118,47 @@ async def list_courses(
+     ]
+ 
+ 
++# тФАтФА GET /me/courses/{course_id}/syllabus-states (Phase Y-6.2) тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++@router.get(
++    "/courses/{course_id}/syllabus-states",
++    response_model=SyllabusStatesResponse,
++    summary="╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨╖╨░╨┤╨░╤З+╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ (Phase Y-6.2)",
++    responses={
++        200: {"description": "╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╤П ╨▓╤Б╨╡╤Е items + blocked_courses"},
++        401: {"description": "╨Э╨╡ ╨░╤Г╤В╨╡╨╜╤В╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╜"},
++        403: {"description": "Student ╨╜╨╡ ╨╖╨░╤З╨╕╤Б╨╗╨╡╨╜ ╨▓ ╨║╤Г╤А╤Б (╨╕╨╗╨╕ ancestor)"},
++    },
++)
++async def get_course_syllabus_states(
++    response: Response,
++    course_id: int = Path(..., description="ID ╨║╨╛╤А╨╜╨╡╨▓╨╛╨│╨╛ course (╨╗╤О╨▒╨╛╨╣ ╤Г╨╖╨╡╨╗ ╨┤╨╡╤А╨╡╨▓╨░)"),
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> SyllabusStatesResponse:
++    """╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ syllabus-╨┤╨╡╤А╨╡╨▓╨░ ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ ╨╜╨░ SPW (Phase Y-6.2).
++
++    SPW ╤А╨╡╨╜╨┤╨╡╤А╨╕╤В:
++    - per-task chip (passed/pending_review/failed/blocked_limit/in_progress/not_started)
++    - per-material chip (completed/not_started)
++    - ЁЯФТ-╨╝╨░╤А╨║╨╡╤А ╨╜╨░ subcourse-╤Г╨╖╨╗╨╡, ╨╡╤Б╨╗╨╕ course_id тИИ blocked_courses
++
++    ACL: ╤В╨╛╤В ╨╢╨╡ helper `assert_course_access` (Y-5.2): service-key /
++    teacher / methodist / admin тАФ bypass; student тАФ ╤В╨╛╨╗╤М╨║╨╛ ╨┤╨╡╤А╨╡╨▓╨╛
++    `user_courses + course_parents`.
++
++    Cache: `private, max-age=15` тАФ SPW ╨░╨│╤А╨╡╤Б╤Б╨╕╨▓╨╜╨╛ invalidate'╨╕╤В queryKey
++    `["learning","syllabus-states", course_id]` ╨┐╨╛╤Б╨╗╨╡ ╨║╨░╨╢╨┤╨╛╨│╨╛ submit /
++    material-complete (Y-6.2 frontend invariant).
++    """
++    await assert_course_access(db, current_user=current_user, course_id=course_id)
++    payload = await me_service.get_syllabus_states(
++        db, user_id=current_user.id, root_course_id=course_id
++    )
++    response.headers["Cache-Control"] = "private, max-age=15"
++    return SyllabusStatesResponse(**payload)
++
++
+ # тФАтФА GET /me/last-position тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
+ 
+ @router.get("/last-position", response_model=LastPositionRead | None)
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 5dd5747..f05d7d6 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -1,8 +1,8 @@
+-"""Pydantic ╤Б╤Е╨╡╨╝╤Л ╨┤╨╗╤П /me ╤Н╨╜╨┤╨┐╨╛╨╕╨╜╤В╨╛╨▓ (Phase Y-1 + Y-3)."""
++"""Pydantic ╤Б╤Е╨╡╨╝╤Л ╨┤╨╗╤П /me ╤Н╨╜╨┤╨┐╨╛╨╕╨╜╤В╨╛╨▓ (Phase Y-1 + Y-3 + Y-6.2)."""
+ from datetime import date, datetime
+-from typing import Literal
++from typing import Literal, Union
+ 
+-from pydantic import BaseModel
++from pydantic import BaseModel, Field
+ 
+ 
+ class MeResponse(BaseModel):
+@@ -86,3 +86,58 @@ class HistoryItem(BaseModel):
+     received_at: datetime
+     submitted_at: datetime
+     checked_at: datetime | None
++
++
++# тФАтФА Phase Y-6.2: /me/courses/{course_id}/syllabus-states тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++SyllabusTaskStatus = Literal[
++    "passed",
++    "pending_review",
++    "failed",
++    "blocked_limit",
++    "in_progress",
++    "not_started",
++]
++
++SyllabusMaterialStatus = Literal["completed", "not_started"]
++
++
++class SyllabusTaskItem(BaseModel):
++    """╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П ╨▓ syllabus-╨┤╨╡╤А╨╡╨▓╨╡ ╨║╤Г╤А╤Б╨░."""
++
++    kind: Literal["task"] = "task"
++    task_id: int
++    course_id: int = Field(..., description="ID owner-╨║╤Г╤А╤Б╨░ (subcourse, ╨╜╨╡ root)")
++    status: SyllabusTaskStatus
++    attempts_used: int
++    attempts_limit_effective: int
++    last_score: int | None
++    last_max_score: int | None
++    last_submitted_at: datetime | None
++
++
++class SyllabusMaterialItem(BaseModel):
++    """╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░ ╨▓ syllabus-╨┤╨╡╤А╨╡╨▓╨╡ ╨║╤Г╤А╤Б╨░."""
++
++    kind: Literal["material"] = "material"
++    material_id: int
++    course_id: int = Field(..., description="ID owner-╨║╤Г╤А╤Б╨░ (subcourse, ╨╜╨╡ root)")
++    status: SyllabusMaterialStatus
++    completed_at: datetime | None
++
++
++SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]
++
++
++class SyllabusStatesResponse(BaseModel):
++    """╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨▓╤Б╨╡╤Е ╨╖╨░╨┤╨░╤З+╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ syllabus.
++
++    Phase Y-6.2: SPW ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ ╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╤Б per-item ╤Б╤В╨░╤В╤Г╤Б╨░╨╝╨╕
++    (passed / pending_review / failed / blocked / in_progress / not_started)
++    ╨╕ ╨┤╨╗╤П ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ subcourse-╤Г╨╖╨╗╨╛╨▓ ╤З╨╡╤А╨╡╨╖ `blocked_courses` (course_dependencies
++    ╨╜╨╡ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╤Л).
++    """
++
++    course_id: int
++    items: list[SyllabusItem]
++    blocked_courses: list[int]
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 8d56a8e..98ff729 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -477,6 +477,245 @@ LIMIT :limit OFFSET :offset
+ """
+ 
+ 
++# тФАтФА Phase Y-6.2: /me/courses/{course_id}/syllabus-states тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++# Single SQL: tasks + materials ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╤Б last task_result ╨╕
++# completed_at ╨┤╨╗╤П ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓. tree_ids ╤Б╨╛╨▒╨╕╤А╨░╨╡╤В╤Б╤П ╨╖╨░╤А╨░╨╜╨╡╨╡ ╨╜╨░ ╤Б╤В╨╛╤А╨╛╨╜╨╡
++# Python ╤З╨╡╤А╨╡╨╖ LearningEngineService._collect_courses_in_order, ╤З╤В╨╛╨▒╤Л
++# ╤Б╨╛╤Е╤А╨░╨╜╨╕╤В╤М depth-first ╨┐╨╛╤А╤П╨┤╨╛╨║ ╤Б ╤Г╤З╤С╤В╨╛╨╝ course_parents.order_number.
++#
++# attempts_used = COUNT task_results ╨┐╨╛ active (cancelled_at IS NULL) attempts тАФ
++# ╨┐╨░╤А╨╜╨╛╤Б╤В╤М ╤Б learning_engine_service.compute_task_state (Y-5.3 fix).
++# attempts_limit_effective: override тЖТ tasks.max_attempts тЖТ DEFAULT_MAX_ATTEMPTS.
++_SYLLABUS_TASKS_SQL = """
++WITH last_per_task AS (
++    SELECT DISTINCT ON (tr.task_id)
++        tr.task_id,
++        tr.is_correct,
++        tr.checked_at,
++        tr.score,
++        tr.max_score,
++        tr.submitted_at
++    FROM task_results tr
++    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++    WHERE tr.user_id = :user_id
++      AND tr.task_id IN (
++          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
++      )
++    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
++),
++attempts_per_task AS (
++    SELECT tr.task_id, COUNT(*) AS used
++    FROM task_results tr
++    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++    WHERE tr.user_id = :user_id
++      AND tr.task_id IN (
++          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
++      )
++    GROUP BY tr.task_id
++),
++override_per_task AS (
++    SELECT task_id, max_attempts_override AS lim
++    FROM student_task_limit_override
++    WHERE student_id = :user_id
++),
++open_course_attempt AS (
++    SELECT DISTINCT a.course_id
++    FROM attempts a
++    WHERE a.user_id = :user_id
++      AND a.cancelled_at IS NULL
++      AND a.finished_at IS NULL
++      AND a.course_id = ANY(:tree_ids)
++)
++SELECT
++    t.id AS task_id,
++    t.course_id,
++    lp.is_correct AS last_is_correct,
++    lp.checked_at AS last_checked_at,
++    lp.score AS last_score,
++    lp.max_score AS last_max_score,
++    lp.submitted_at AS last_submitted_at,
++    COALESCE(ap.used, 0) AS attempts_used,
++    COALESCE(op.lim, t.max_attempts, :default_max) AS attempts_limit_effective,
++    EXISTS (
++        SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
++    ) AS has_open_attempt
++FROM tasks t
++LEFT JOIN last_per_task lp ON lp.task_id = t.id
++LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
++LEFT JOIN override_per_task op ON op.task_id = t.id
++WHERE t.course_id = ANY(:tree_ids)
++ORDER BY t.course_id, t.id
++"""
++
++_SYLLABUS_MATERIALS_SQL = """
++SELECT
++    m.id AS material_id,
++    m.course_id,
++    m.order_position,
++    smp.completed_at
++FROM materials m
++LEFT JOIN student_material_progress smp
++    ON smp.material_id = m.id
++   AND smp.student_id = :user_id
++   AND smp.status = 'completed'
++WHERE m.course_id = ANY(:tree_ids)
++  AND m.is_active = true
++ORDER BY m.course_id,
++         m.order_position ASC NULLS LAST,
++         m.id ASC
++"""
++
++_BLOCKED_COURSES_SQL = """
++SELECT DISTINCT cd.course_id
++FROM course_dependencies cd
++WHERE cd.course_id = ANY(:tree_ids)
++  AND NOT EXISTS (
++      SELECT 1 FROM student_course_state scs
++      WHERE scs.student_id = :user_id
++        AND scs.course_id = cd.required_course_id
++        AND scs.state = 'COMPLETED'
++  )
++"""
++
++
++def _compute_syllabus_task_status(row: dict) -> str:
++    """╨Ь╨░╨┐╨┐╨╕╨╜╨│ last task_result + attempts тЖТ public-status ╤Б╤В╤А╨╛╨║╨░.
++
++    ╨Я╤А╨░╨▓╨╕╨╗╨░ (╤Б╨╝. tech-spec syllabus-states):
++    - passed         тАФ last is_correct=TRUE, checked_at NOT NULL
++    - pending_review тАФ last is_correct=TRUE, checked_at IS NULL (Y-6 optimistic);
++                       ╤В╨░╨║╨╢╨╡ legacy IS NULL pending (pre-Y-6 SA_COM/TA)
++    - failed         тАФ last is_correct=FALSE ╨╕ attempts_used < limit
++    - blocked_limit  тАФ last is_correct=FALSE ╨╕ attempts_used >= limit
++    - in_progress    тАФ ╨╜╨╡╤В task_result, ╨╜╨╛ ╨╡╤Б╤В╤М ╨╛╤В╨║╤А╤Л╤В╤Л╨╣ course-level attempt
++    - not_started    тАФ ╨╜╨╡╤В task_result ╨╕ ╨╜╨╡╤В ╨╛╤В╨║╤А╤Л╤В╨╛╨│╨╛ attempt
++    """
++    last_submitted = row["last_submitted_at"]
++    is_correct = row["last_is_correct"]
++    checked_at = row["last_checked_at"]
++    attempts_used = int(row["attempts_used"] or 0)
++    limit_eff = int(row["attempts_limit_effective"] or 0)
++    has_open = bool(row["has_open_attempt"])
++
++    if last_submitted is None:
++        return "in_progress" if has_open else "not_started"
++
++    if is_correct is True:
++        return "passed" if checked_at is not None else "pending_review"
++    if is_correct is None:
++        # legacy pre-Y-6 pending state (TA/SA_COM ╨┤╨╛ optimistic-PASSED backfill)
++        return "pending_review"
++    # is_correct is False
++    if limit_eff > 0 and attempts_used >= limit_eff:
++        return "blocked_limit"
++    return "failed"
++
++
++async def get_syllabus_states(
++    db: AsyncSession,
++    user_id: int,
++    root_course_id: int,
++) -> dict:
++    """╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨╖╨░╨┤╨░╤З+╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╨┤╨╗╤П SPW syllabus-╤А╨╡╨╜╨┤╨╡╤А╨░.
++
++    Phase Y-6.2. Single SQL roundtrip per resource (tasks/materials/blocked):
++    - tree_ids тАФ depth-first traversal ╤З╨╡╤А╨╡╨╖ LearningEngineService
++      (╤Г╤З╨╕╤В╤Л╨▓╨░╨╡╤В course_parents.order_number)
++    - per-task status тАФ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╕╨╣ task_result ├Ч attempts_used ├Ч override
++    - per-material status тАФ student_material_progress.status='completed'
++    - blocked_courses тАФ course_dependencies ╨▒╨╡╨╖ COMPLETED prerequisite
++      ╨▓ `student_course_state` ╨┐╨╛╨╗╤М╨╖╨╛╨▓╨░╤В╨╡╨╗╤П.
++
++    Items emit'╤П╤В╤Б╤П: ╨┤╨╗╤П ╨║╨░╨╢╨┤╨╛╨│╨╛ course ╨▓ depth-first order тАФ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╤Л
++    (╨┐╨╛ order_position), ╨╖╨░╤В╨╡╨╝ ╨╖╨░╨┤╨░╨╜╨╕╤П (╨┐╨╛ id) тАФ ╨┐╨░╤А╨╕╤В╨╡╤В ╤Б
++    `_first_incomplete_material` / `_first_incomplete_task` ╨▓ learning engine.
++
++    Args:
++        db: async session.
++        user_id: ID ╤Б╤В╤Г╨┤╨╡╨╜╤В╨░.
++        root_course_id: ID ╨║╨╛╤А╨╜╨╡╨▓╨╛╨│╨╛ course (╨╗╤О╨▒╨╛╨╣ ╤Г╨╖╨╡╨╗ ╨┤╨╡╤А╨╡╨▓╨░).
++
++    Returns:
++        dict {course_id, items, blocked_courses}.
++    """
++    # ╨Ш╨╝╨┐╨╛╤А╤В inline ╨▓╨╛ ╨╕╨╖╨▒╨╡╨╢╨░╨╜╨╕╨╡ circular import (engine тЖТ repos тЖТ ...)
++    from app.services.learning_engine_service import (
++        DEFAULT_MAX_ATTEMPTS,
++        LearningEngineService,
++    )
++
++    engine = LearningEngineService()
++    tree_ids: list[int] = await engine._collect_courses_in_order(db, root_course_id)
++    if not tree_ids:
++        tree_ids = [root_course_id]
++
++    tasks_res = await db.execute(
++        text(_SYLLABUS_TASKS_SQL),
++        {
++            "user_id": user_id,
++            "tree_ids": tree_ids,
++            "default_max": DEFAULT_MAX_ATTEMPTS,
++        },
++    )
++    task_rows = tasks_res.mappings().all()
++
++    materials_res = await db.execute(
++        text(_SYLLABUS_MATERIALS_SQL),
++        {"user_id": user_id, "tree_ids": tree_ids},
++    )
++    material_rows = materials_res.mappings().all()
++
++    blocked_res = await db.execute(
++        text(_BLOCKED_COURSES_SQL),
++        {"user_id": user_id, "tree_ids": tree_ids},
++    )
++    blocked_courses: list[int] = [int(r[0]) for r in blocked_res.fetchall()]
++
++    # ╨У╤А╤Г╨┐╨┐╨╕╤А╨╛╨▓╨║╨░ ╨┐╨╛ course_id ╨┤╨╗╤П depth-first emit
++    materials_by_course: dict[int, list[dict]] = {}
++    for r in material_rows:
++        materials_by_course.setdefault(r["course_id"], []).append(dict(r))
++    tasks_by_course: dict[int, list[dict]] = {}
++    for r in task_rows:
++        tasks_by_course.setdefault(r["course_id"], []).append(dict(r))
++
++    items: list[dict] = []
++    for cid in tree_ids:
++        for m in materials_by_course.get(cid, []):
++            items.append(
++                {
++                    "kind": "material",
++                    "material_id": int(m["material_id"]),
++                    "course_id": int(m["course_id"]),
++                    "status": "completed" if m["completed_at"] is not None else "not_started",
++                    "completed_at": m["completed_at"],
++                }
++            )
++        for t in tasks_by_course.get(cid, []):
++            items.append(
++                {
++                    "kind": "task",
++                    "task_id": int(t["task_id"]),
++                    "course_id": int(t["course_id"]),
++                    "status": _compute_syllabus_task_status(t),
++                    "attempts_used": int(t["attempts_used"] or 0),
++                    "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
++                    "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
++                    "last_max_score": (
++                        int(t["last_max_score"]) if t["last_max_score"] is not None else None
++                    ),
++                    "last_submitted_at": t["last_submitted_at"],
++                }
++            )
++
++    return {
++        "course_id": root_course_id,
++        "items": items,
++        "blocked_courses": blocked_courses,
++    }
++
++
+ async def get_history(
+     db: AsyncSession,
+     user_id: int,
+diff --git a/docs/openapi.json b/docs/openapi.json
+index a370647..46570ee 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -13804,6 +13804,113 @@
+         }
+       }
+     },
++    "/api/v1/me/courses/{course_id}/syllabus-states": {
++      "get": {
++        "tags": [
++          "me"
++        ],
++        "summary": "╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨╖╨░╨┤╨░╤З+╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ (Phase Y-6.2)",
++        "description": "╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ syllabus-╨┤╨╡╤А╨╡╨▓╨░ ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ ╨╜╨░ SPW (Phase Y-6.2).\n\nSPW ╤А╨╡╨╜╨┤╨╡╤А╨╕╤В:\n- per-task chip (passed/pending_review/failed/blocked_limit/in_progress/not_started)\n- per-material chip (completed/not_started)\n- ЁЯФТ-╨╝╨░╤А╨║╨╡╤А ╨╜╨░ subcourse-╤Г╨╖╨╗╨╡, ╨╡╤Б╨╗╨╕ course_id тИИ blocked_courses\n\nACL: ╤В╨╛╤В ╨╢╨╡ helper `assert_course_access` (Y-5.2): service-key /\nteacher / methodist / admin тАФ bypass; student тАФ ╤В╨╛╨╗╤М╨║╨╛ ╨┤╨╡╤А╨╡╨▓╨╛\n`user_courses + course_parents`.\n\nCache: `private, max-age=15` тАФ SPW ╨░╨│╤А╨╡╤Б╤Б╨╕╨▓╨╜╨╛ invalidate'╨╕╤В queryKey\n`[\"learning\",\"syllabus-states\", course_id]` ╨┐╨╛╤Б╨╗╨╡ ╨║╨░╨╢╨┤╨╛╨│╨╛ submit /\nmaterial-complete (Y-6.2 frontend invariant).",
++        "operationId": "get_course_syllabus_states_api_v1_me_courses__course_id__syllabus_states_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "course_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID ╨║╨╛╤А╨╜╨╡╨▓╨╛╨│╨╛ course (╨╗╤О╨▒╨╛╨╣ ╤Г╨╖╨╡╨╗ ╨┤╨╡╤А╨╡╨▓╨░)",
++              "title": "Course Id"
++            },
++            "description": "ID ╨║╨╛╤А╨╜╨╡╨▓╨╛╨│╨╛ course (╨╗╤О╨▒╨╛╨╣ ╤Г╨╖╨╡╨╗ ╨┤╨╡╤А╨╡╨▓╨░)"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╤П ╨▓╤Б╨╡╤Е items + blocked_courses",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/SyllabusStatesResponse"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "╨Э╨╡ ╨░╤Г╤В╨╡╨╜╤В╨╕╤Д╨╕╤Ж╨╕╤А╨╛╨▓╨░╨╜"
++          },
++          "403": {
++            "description": "Student ╨╜╨╡ ╨╖╨░╤З╨╕╤Б╨╗╨╡╨╜ ╨▓ ╨║╤Г╤А╤Б (╨╕╨╗╨╕ ancestor)"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/me/last-position": {
+       "get": {
+         "tags": [
+@@ -23104,6 +23211,177 @@
+         "title": "StudentResponse",
+         "description": "╨Ю╤В╨▓╨╡╤В ╤Г╤З╨╡╨╜╨╕╨║╨░ ╨▓ ╤В╨╡╤А╨╝╨╕╨╜╨░╤Е ╨║╨╛╨╜╨║╤А╨╡╤В╨╜╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕.\n\n╨Ф╨╗╤П ╤А╨░╨╖╨╜╤Л╤Е ╤В╨╕╨┐╨╛╨▓ ╨╖╨░╨┤╨░╤З ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╤О╤В╤Б╤П ╤А╨░╨╖╨╜╤Л╨╡ ╨┐╨╛╨╗╤П:\n- SC/MC: selected_option_ids;\n- SA/SA_COM: value; ╨┤╨╗╤П ╤В╨╕╨┐╨╛╨▓ ╤Б ╨║╨╛╨╝╨╝╨╡╨╜╤В╨░╤А╨╕╨╡╨╝ (SA_COM ╨╕ ╤В.╨┐.) тАФ ╨╛╨┐╤Ж╨╕╨╛╨╜╨░╨╗╤М╨╜╨╛ comment;\n- TA: text."
+       },
++      "SyllabusMaterialItem": {
++        "properties": {
++          "kind": {
++            "type": "string",
++            "const": "material",
++            "title": "Kind",
++            "default": "material"
++          },
++          "material_id": {
++            "type": "integer",
++            "title": "Material Id"
++          },
++          "course_id": {
++            "type": "integer",
++            "title": "Course Id",
++            "description": "ID owner-╨║╤Г╤А╤Б╨░ (subcourse, ╨╜╨╡ root)"
++          },
++          "status": {
++            "type": "string",
++            "enum": [
++              "completed",
++              "not_started"
++            ],
++            "title": "Status"
++          },
++          "completed_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Completed At"
++          }
++        },
++        "type": "object",
++        "required": [
++          "material_id",
++          "course_id",
++          "status",
++          "completed_at"
++        ],
++        "title": "SyllabusMaterialItem",
++        "description": "╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨░ ╨▓ syllabus-╨┤╨╡╤А╨╡╨▓╨╡ ╨║╤Г╤А╤Б╨░."
++      },
++      "SyllabusStatesResponse": {
++        "properties": {
++          "course_id": {
++            "type": "integer",
++            "title": "Course Id"
++          },
++          "items": {
++            "items": {
++              "anyOf": [
++                {
++                  "$ref": "#/components/schemas/SyllabusTaskItem"
++                },
++                {
++                  "$ref": "#/components/schemas/SyllabusMaterialItem"
++                }
++              ]
++            },
++            "type": "array",
++            "title": "Items"
++          },
++          "blocked_courses": {
++            "items": {
++              "type": "integer"
++            },
++            "type": "array",
++            "title": "Blocked Courses"
++          }
++        },
++        "type": "object",
++        "required": [
++          "course_id",
++          "items",
++          "blocked_courses"
++        ],
++        "title": "SyllabusStatesResponse",
++        "description": "╨б╨╜╨╕╨╝╨╛╨║ ╤Б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╣ ╨▓╤Б╨╡╤Е ╨╖╨░╨┤╨░╤З+╨╝╨░╤В╨╡╤А╨╕╨░╨╗╨╛╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ syllabus.\n\nPhase Y-6.2: SPW ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В ╨┤╨╗╤П ╤А╨╡╨╜╨┤╨╡╤А╨░ ╨┤╨╡╤А╨╡╨▓╨░ ╨║╤Г╤А╤Б╨░ ╤Б per-item ╤Б╤В╨░╤В╤Г╤Б╨░╨╝╨╕\n(passed / pending_review / failed / blocked / in_progress / not_started)\n╨╕ ╨┤╨╗╤П ╨▒╨╗╨╛╨║╨╕╤А╨╛╨▓╨║╨╕ subcourse-╤Г╨╖╨╗╨╛╨▓ ╤З╨╡╤А╨╡╨╖ `blocked_courses` (course_dependencies\n╨╜╨╡ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╤Л)."
++      },
++      "SyllabusTaskItem": {
++        "properties": {
++          "kind": {
++            "type": "string",
++            "const": "task",
++            "title": "Kind",
++            "default": "task"
++          },
++          "task_id": {
++            "type": "integer",
++            "title": "Task Id"
++          },
++          "course_id": {
++            "type": "integer",
++            "title": "Course Id",
++            "description": "ID owner-╨║╤Г╤А╤Б╨░ (subcourse, ╨╜╨╡ root)"
++          },
++          "status": {
++            "type": "string",
++            "enum": [
++              "passed",
++              "pending_review",
++              "failed",
++              "blocked_limit",
++              "in_progress",
++              "not_started"
++            ],
++            "title": "Status"
++          },
++          "attempts_used": {
++            "type": "integer",
++            "title": "Attempts Used"
++          },
++          "attempts_limit_effective": {
++            "type": "integer",
++            "title": "Attempts Limit Effective"
++          },
++          "last_score": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Score"
++          },
++          "last_max_score": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Max Score"
++          },
++          "last_submitted_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Submitted At"
++          }
++        },
++        "type": "object",
++        "required": [
++          "task_id",
++          "course_id",
++          "status",
++          "attempts_used",
++          "attempts_limit_effective",
++          "last_score",
++          "last_max_score",
++          "last_submitted_at"
++        ],
++        "title": "SyllabusTaskItem",
++        "description": "╨б╨╛╤Б╤В╨╛╤П╨╜╨╕╨╡ ╨╖╨░╨┤╨░╨╜╨╕╤П ╨▓ syllabus-╨┤╨╡╤А╨╡╨▓╨╡ ╨║╤Г╤А╤Б╨░."
++      },
+       "TaskBulkUpsertRequest": {
+         "properties": {
+           "items": {
+diff --git a/tests/test_y62_syllabus_states.py b/tests/test_y62_syllabus_states.py
+new file mode 100644
+index 0000000..9414cd6
+--- /dev/null
++++ b/tests/test_y62_syllabus_states.py
+@@ -0,0 +1,779 @@
++"""Phase Y-6.2 integration tests: GET /api/v1/me/courses/{id}/syllabus-states.
++
++╨Я╨╛╨║╤А╤Л╨▓╨░╨╡╤В:
++- 401 ╨▒╨╡╨╖ auth
++- 403 student ╨▒╨╡╨╖ enrollment ╨▓ ╨┤╨╡╤А╨╡╨▓╨╡ ╨║╤Г╤А╤Б╨░
++- Hierarchical ACL: student тЖТ root тЖТ grandchild
++- Teacher / methodist bypass (extended-role)
++- 6 task-╤Б╤В╨░╤В╤Г╤Б╨╛╨▓: passed / pending_review / failed / blocked_limit / in_progress / not_started
++- Edge: max_score=0 + is_correct=TRUE тЖТ passed (auto-check ╨┐╤А╨╛╤Е╨╛╨┤╨╕╤В ╨▒╨╡╨╖ ╨▒╨░╨╗╨╗╨╛╨▓)
++- Material completed / not_started
++- blocked_courses ╤З╨╡╤А╨╡╨╖ course_dependencies
++- Cache-Control header (private, max-age=15)
++- Performance smoke (root ╤Б 50+ ╨╖╨░╨┤╨░╤З╨░╨╝╨╕)
++
++╨в╨╡╤Б╤В╤Л ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╤О╤В ╤А╨╡╨░╨╗╤М╨╜╤Л╨╡ ╨║╤Г╤А╤Б╤Л ╨╕╨╖ dev DB (╨┐╨░╤В╤В╨╡╤А╨╜ test_acl_hierarchical_y41).
++"""
++from __future__ import annotations
++
++import random
++import time
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Helpers тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++async def _create_student(db, *, prefix: str = "y62") -> tuple[int, str, str]:
++    """╨б╨╛╨╖╨┤╨░╤В╤М student-╤О╨╖╨╡╤А╨░ + email-identity + session.
++
++    Returns:
++        (user_id, access_token, email)
++    """
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=f"{prefix}-stud", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token, email
++
++
++async def _grant_role(db, user_id: int, role_name: str) -> None:
++    """╨Я╤А╨╕╨▓╤П╨╖╨░╤В╤М ╤А╨╛╨╗╤М (╤Б╨╛╨╖╨┤╨░╤С╨╝ role ╨╡╤Б╨╗╨╕ ╨╡╤С ╨╜╨╡╤В)."""
++    res = await db.execute(text("SELECT id FROM roles WHERE name=:n"), {"n": role_name})
++    row = res.fetchone()
++    if row is None:
++        # ╨б╨╛╨╖╨┤╨░╤С╨╝ role ╤Б ╤П╨▓╨╜╤Л╨╝ id ╨╕╨╖ sequence (╨╡╤Б╨╗╨╕ ╨╡╤Б╤В╤М) ╨╕╨╗╨╕ max+1
++        ins = await db.execute(
++            text(
++                "INSERT INTO roles (id, name) "
++                "VALUES (COALESCE((SELECT MAX(id) FROM roles), 0) + 1, :n) "
++                "RETURNING id"
++            ),
++            {"n": role_name},
++        )
++        role_id = int(ins.scalar_one())
++    else:
++        role_id = int(row[0])
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r) "
++            "ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "r": role_id},
++    )
++    await db.commit()
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active) "
++            "VALUES (:u, :c, true) ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++    await db.commit()
++
++
++async def _pick_root_course(db) -> int:
++    """╨Ы╤О╨▒╨╛╨╣ root-╨║╤Г╤А╤Б (╨▒╨╡╨╖ parent ╨▓ course_parents) ╤Б >=1 ╨╖╨░╨┤╨░╤З╨╡╨╣."""
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT c.id FROM courses c
++                WHERE c.id NOT IN (SELECT course_id FROM course_parents)
++                  AND EXISTS (SELECT 1 FROM tasks t WHERE t.course_id = c.id)
++                LIMIT 1
++                """
++            )
++        )
++    ).fetchone()
++    if row is None:
++        pytest.skip("╨Э╨╡╤В root-╨║╤Г╤А╤Б╨░ ╤Б ╨╖╨░╨┤╨░╤З╨░╨╝╨╕")
++    return int(row[0])
++
++
++async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
++    """╨в╤А╨╕╨┐╨╗╨╡╤В root тЖТ child тЖТ grandchild ╤Б ╨╖╨░╨┤╨░╤З╨╡╨╣ ╨▓ grandchild."""
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT cp_outer.parent_course_id AS root_id,
++                       cp_outer.course_id AS child_id,
++                       cp_inner.course_id AS grandchild_id
++                FROM course_parents cp_outer
++                JOIN course_parents cp_inner ON cp_inner.parent_course_id = cp_outer.course_id
++                JOIN tasks t ON t.course_id = cp_inner.course_id
++                WHERE cp_outer.parent_course_id NOT IN (SELECT course_id FROM course_parents)
++                LIMIT 1
++                """
++            )
++        )
++    ).fetchone()
++    if row is None:
++        pytest.skip("╨Э╨╡╤В ╤Ж╨╡╨┐╨╛╤З╨║╨╕ rootтЖТchildтЖТgrandchild ╤Б task")
++    return int(row[0]), int(row[1]), int(row[2])
++
++
++async def _pick_task_in_course(db, course_id: int) -> tuple[int, int]:
++    """╨Т╨╛╨╖╨▓╤А╨░╤Й╨░╨╡╤В (task_id, max_attempts_or_null_as_int)."""
++    row = (
++        await db.execute(
++            text("SELECT id, COALESCE(max_attempts, 0) FROM tasks WHERE course_id = :c LIMIT 1"),
++            {"c": course_id},
++        )
++    ).fetchone()
++    if row is None:
++        pytest.skip(f"╨Э╨╡╤В ╨╖╨░╨┤╨░╤З ╨▓ course_id={course_id}")
++    return int(row[0]), int(row[1])
++
++
++async def _pick_other_root(db, exclude_root_id: int) -> int:
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT id FROM courses
++                WHERE id != :exc
++                  AND id NOT IN (SELECT course_id FROM course_parents)
++                LIMIT 1
++                """
++            ),
++            {"exc": exclude_root_id},
++        )
++    ).fetchone()
++    if row is None:
++        pytest.skip("╨Э╨╡╤В ╨┤╤А╤Г╨│╨╛╨│╨╛ root-╨║╤Г╤А╤Б╨░")
++    return int(row[0])
++
++
++async def _create_attempt(
++    db, *, user_id: int, course_id: int, finished: bool = False, cancelled: bool = False
++) -> int:
++    """╨б╨╛╨╖╨┤╨░╤В╤М course-level attempt; ╨▓╨╡╤А╨╜╤Г╤В╤М ╨╡╨│╨╛ id."""
++    finished_at = datetime.now(timezone.utc) if finished else None
++    cancelled_at = datetime.now(timezone.utc) if cancelled else None
++    res = await db.execute(
++        text(
++            "INSERT INTO attempts (user_id, course_id, source_system, finished_at, cancelled_at) "
++            "VALUES (:u, :c, 'spw', :f, :ca) RETURNING id"
++        ),
++        {"u": user_id, "c": course_id, "f": finished_at, "ca": cancelled_at},
++    )
++    aid = int(res.scalar_one())
++    await db.commit()
++    return aid
++
++
++async def _create_task_result(
++    db,
++    *,
++    user_id: int,
++    task_id: int,
++    attempt_id: int | None = None,
++    is_correct: bool | None = True,
++    score: int = 10,
++    max_score: int = 10,
++    checked_at: datetime | None = None,
++    submitted_at: datetime | None = None,
++) -> int:
++    """╨б╨╛╨╖╨┤╨░╤В╤М task_result ╤Б ╤Г╨┐╤А╨░╨▓╨╗╤П╨╡╨╝╤Л╨╝╨╕ ╤Д╨╗╨░╨│╨░╨╝╨╕."""
++    if submitted_at is None:
++        submitted_at = datetime.now(timezone.utc)
++    res = await db.execute(
++        text(
++            "INSERT INTO task_results "
++            "(score, user_id, task_id, attempt_id, submitted_at, count_retry, received_at, "
++            " max_score, source_system, is_correct, checked_at) "
++            "VALUES (:s, :u, :t, :aid, :now, 0, :now, :ms, 'spw', :ic, :chk) "
++            "RETURNING id"
++        ),
++        {
++            "s": score, "u": user_id, "t": task_id, "aid": attempt_id,
++            "now": submitted_at, "ms": max_score, "ic": is_correct, "chk": checked_at,
++        },
++    )
++    rid = int(res.scalar_one())
++    await db.commit()
++    return rid
++
++
++async def _set_attempt_limit_override(
++    db, *, student_id: int, task_id: int, limit: int
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_task_limit_override "
++            "(student_id, task_id, max_attempts_override) "
++            "VALUES (:s, :t, :l) "
++            "ON CONFLICT (student_id, task_id) DO UPDATE SET "
++            "max_attempts_override = EXCLUDED.max_attempts_override"
++        ),
++        {"s": student_id, "t": task_id, "l": limit},
++    )
++    await db.commit()
++
++
++async def _add_material(db, *, course_id: int, order_position: int = 1) -> int:
++    """╨б╨╛╨╖╨┤╨░╤В╤М ╤В╨╡╤Б╤В╨╛╨▓╤Л╨╣ material; ╨▓╨╡╤А╨╜╤Г╤В╤М material_id."""
++    res = await db.execute(
++        text(
++            "INSERT INTO materials "
++            "(title, course_id, type, content, order_position, is_active, "
++            " external_uid, created_at, updated_at) "
++            "VALUES (:title, :c, 'text', '{}'::jsonb, :ord, true, :uid, now(), now()) "
++            "RETURNING id"
++        ),
++        {
++            "title": f"y62-material-{random.randint(10**6, 10**8)}",
++            "c": course_id,
++            "ord": order_position,
++            "uid": f"y62-m-{random.randint(10**8, 10**10)}",
++        },
++    )
++    mid = int(res.scalar_one())
++    await db.commit()
++    return mid
++
++
++async def _mark_material_completed(db, *, student_id: int, material_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_material_progress "
++            "(student_id, material_id, status, completed_at) "
++            "VALUES (:s, :m, 'completed', now()) "
++            "ON CONFLICT (student_id, material_id) DO UPDATE SET "
++            "status = 'completed', completed_at = COALESCE("
++            "  student_material_progress.completed_at, now())"
++        ),
++        {"s": student_id, "m": material_id},
++    )
++    await db.commit()
++
++
++async def _add_course_dependency(
++    db, *, course_id: int, required_course_id: int
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO course_dependencies (course_id, required_course_id) "
++            "VALUES (:c, :r) ON CONFLICT DO NOTHING"
++        ),
++        {"c": course_id, "r": required_course_id},
++    )
++    await db.commit()
++
++
++async def _set_course_state(
++    db, *, student_id: int, course_id: int, state: str
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_course_state (student_id, course_id, state, updated_at) "
++            "VALUES (:s, :c, :st, now()) "
++            "ON CONFLICT (student_id, course_id) DO UPDATE SET "
++            "state = EXCLUDED.state, updated_at = now()"
++        ),
++        {"s": student_id, "c": course_id, "st": state},
++    )
++    await db.commit()
++
++
++async def _cleanup(
++    db,
++    *,
++    user_ids: list[int],
++    attempt_ids: list[int] | None = None,
++    result_ids: list[int] | None = None,
++    material_ids: list[int] | None = None,
++    course_dep_pairs: list[tuple[int, int]] | None = None,
++) -> None:
++    attempt_ids = attempt_ids or []
++    result_ids = result_ids or []
++    material_ids = material_ids or []
++    course_dep_pairs = course_dep_pairs or []
++
++    if result_ids:
++        await db.execute(
++            text("DELETE FROM task_results WHERE id = ANY(:ids)"),
++            {"ids": result_ids},
++        )
++    if attempt_ids:
++        await db.execute(
++            text("DELETE FROM attempts WHERE id = ANY(:ids)"),
++            {"ids": attempt_ids},
++        )
++    if material_ids:
++        await db.execute(
++            text("DELETE FROM student_material_progress WHERE material_id = ANY(:ids)"),
++            {"ids": material_ids},
++        )
++        await db.execute(
++            text("DELETE FROM materials WHERE id = ANY(:ids)"),
++            {"ids": material_ids},
++        )
++    if user_ids:
++        await db.execute(
++            text("DELETE FROM student_task_limit_override WHERE student_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++        await db.execute(
++            text("DELETE FROM student_course_state WHERE student_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++        await db.execute(
++            text("DELETE FROM user_courses WHERE user_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++        await db.execute(
++            text("DELETE FROM user_session WHERE user_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++        await db.execute(
++            text("DELETE FROM user_roles WHERE user_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++        await db.execute(
++            text("DELETE FROM identity_link WHERE user_id = ANY(:ids)"),
++            {"ids": user_ids},
++        )
++    for c, r in course_dep_pairs:
++        await db.execute(
++            text(
++                "DELETE FROM course_dependencies "
++                "WHERE course_id=:c AND required_course_id=:r"
++            ),
++            {"c": c, "r": r},
++        )
++    await db.commit()
++
++
++async def _find_item(items: list[dict], *, kind: str, id_key: str, target_id: int):
++    """╨Ш╤Й╨╡╤В item ╨▓ response.items ╨┐╨╛ (kind, id_key=target_id)."""
++    for it in items:
++        if it.get("kind") == kind and it.get(id_key) == target_id:
++            return it
++    return None
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Auth + ACL тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_syllabus_states_requires_auth(client):
++    """401 ╨▒╨╡╨╖ cookie/Bearer."""
++    resp = await client.get("/api/v1/me/courses/1/syllabus-states")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_syllabus_states_403_for_unenrolled_student(db, client):
++    """Student ╨▒╨╡╨╖ enrollment ╨▓ ╨┤╨╡╤А╨╡╨▓╨╡ тЖТ 403."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    # User ╨Э╨Х enrolled тАФ ╨╜╨╡ ╨╖╨░╤З╨╕╤Б╨╗╤П╨╡╨╝
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[user_id])
++
++
++@pytest.mark.asyncio
++async def test_syllabus_states_hierarchical_acl_enrolled_in_parent(db, client):
++    """Student enrolled ╨▓ parent тЖТ ╨▓╨╕╨┤╨╕╤В ╨┤╨╡╤А╨╡╨▓╨╛ ╨▓╨║╨╗╤О╤З╨░╤П child / grandchild."""
++    root_id, _child_id, _gc_id = await _pick_root_with_grandchild(db)
++    user_id, token, _ = await _create_student(db)
++    await _enroll(db, user_id, root_id)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["course_id"] == root_id
++        # ╨е╨╛╤В╤П ╨▒╤Л ╨╛╨┤╨╕╨╜ task ╨┤╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М ╨╕╨╖ grandchild (╨╕╨╗╨╕ ╨╜╨╕╨╢╨╡) тАФ ╨┐╤А╨╛╨▓╨╡╤А╤П╨╡╨╝
++        # ╤З╤В╨╛ ╨╛╨▒╤Е╨╛╨┤ ╨┤╨╡╤А╨╡╨▓╨░ ╨▓╨║╨╗╤О╤З╨╕╨╗ ╨▓╨╗╨╛╨╢╨╡╨╜╨╜╤Л╨╡ ╨║╤Г╤А╤Б╤Л.
++        tasks_courses = {it["course_id"] for it in body["items"] if it["kind"] == "task"}
++        assert len(tasks_courses) >= 1, "╨Ф╨╛╨╗╨╢╨╡╨╜ ╨▒╤Л╤В╤М ╤Е╨╛╤В╤М 1 task ╨╕╨╖ ╨┤╨╡╤А╨╡╨▓╨░"
++    finally:
++        await _cleanup(db, user_ids=[user_id])
++
++
++@pytest.mark.asyncio
++async def test_syllabus_states_teacher_bypass(db, client):
++    """Teacher (extended-role) bypass'╨╕╤В ACL тАФ ╨╝╨╛╨╢╨╡╤В ╤Б╨╝╨╛╤В╤А╨╡╤В╤М syllabus ╨╗╤О╨▒╨╛╨│╨╛ ╨║╤Г╤А╤Б╨░."""
++    user_id, token, _ = await _create_student(db, prefix="y62-tch")
++    await _grant_role(db, user_id, "teacher")
++    root_id = await _pick_root_course(db)
++    # ╨Э╨╡ enroll'╨╕╨╝ тАФ teacher ╨▓╤Б╤С ╤А╨░╨▓╨╜╨╛ ╨┤╨╛╨╗╨╢╨╡╨╜ ╨╕╨╝╨╡╤В╤М ╨┤╨╛╤Б╤В╤Г╨┐
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[user_id])
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Cache header тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_syllabus_states_cache_header(db, client):
++    """Cache-Control: private, max-age=15."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        cc = resp.headers.get("cache-control", "")
++        assert "private" in cc and "max-age=15" in cc, cc
++    finally:
++        await _cleanup(db, user_ids=[user_id])
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Task statuses тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_status_passed_checked(db, client):
++    """passed: is_correct=TRUE + checked_at NOT NULL."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
++    rid = await _create_task_result(
++        db, user_id=user_id, task_id=task_id, attempt_id=aid,
++        is_correct=True, score=10, max_score=10,
++        checked_at=datetime.now(timezone.utc),
++    )
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "passed", item
++        assert item["last_score"] == 10 and item["last_max_score"] == 10
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_status_pending_review_optimistic(db, client):
++    """pending_review: is_correct=TRUE + checked_at IS NULL (Y-6 optimistic)."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
++    rid = await _create_task_result(
++        db, user_id=user_id, task_id=task_id, attempt_id=aid,
++        is_correct=True, score=10, max_score=10, checked_at=None,
++    )
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "pending_review", item
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_status_failed_with_attempts_left(db, client):
++    """failed: is_correct=FALSE ╨╕ attempts_used < limit."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    # override limit=5, ╤З╤В╨╛╨▒╤Л 1 ╨┐╨╛╨┐╤Л╤В╨║╨░ << limit
++    await _set_attempt_limit_override(db, student_id=user_id, task_id=task_id, limit=5)
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
++    rid = await _create_task_result(
++        db, user_id=user_id, task_id=task_id, attempt_id=aid,
++        is_correct=False, score=0, max_score=10,
++    )
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "failed", item
++        assert item["attempts_used"] == 1
++        assert item["attempts_limit_effective"] == 5
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_status_blocked_limit(db, client):
++    """blocked_limit: is_correct=FALSE + attempts_used >= limit."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    # ╨б╨╜╨╕╨╖╨╕╨╝ limit ╨┤╨╛ 2 ╤З╤В╨╛╨▒╤Л ╨▒╤Л╤Б╤В╤А╨╡╨╡ ╤Г╨┐╨╡╤А╨╡╤В╤М╤Б╤П
++    await _set_attempt_limit_override(db, student_id=user_id, task_id=task_id, limit=2)
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
++    # 2 ╨╜╨╡╤Г╨┤╨░╤З╨╜╤Л╨╡ ╨┐╨╛╨┐╤Л╤В╨║╨╕
++    rids = []
++    base_ts = datetime.now(timezone.utc)
++    for i in range(2):
++        rids.append(
++            await _create_task_result(
++                db, user_id=user_id, task_id=task_id, attempt_id=aid,
++                is_correct=False, score=0, max_score=10,
++                submitted_at=base_ts + timedelta(seconds=i),
++            )
++        )
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "blocked_limit", item
++        assert item["attempts_used"] == 2
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=rids)
++
++
++@pytest.mark.asyncio
++async def test_status_in_progress_open_attempt(db, client):
++    """in_progress: ╨╛╤В╨║╤А╤Л╤В╤Л╨╣ attempt ╨▒╨╡╨╖ task_result ╨┤╨╗╤П ╤Н╤В╨╛╨╣ ╨╖╨░╨┤╨░╤З╨╕."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    # ╨Ю╤В╨║╤А╤Л╤В╤Л╨╣ attempt (finished_at=NULL, cancelled_at=NULL); task_result ╨╛╤В╤Б╤Г╤В╤Б╤В╨▓╤Г╨╡╤В
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id, finished=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "in_progress", item
++        assert item["last_submitted_at"] is None
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid])
++
++
++@pytest.mark.asyncio
++async def test_status_not_started_default(db, client):
++    """not_started: ╨╜╨╕ attempt'╨░, ╨╜╨╕ task_result."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        assert item["status"] == "not_started", item
++        assert item["attempts_used"] == 0
++        assert item["last_submitted_at"] is None
++    finally:
++        await _cleanup(db, user_ids=[user_id])
++
++
++@pytest.mark.asyncio
++async def test_status_passed_edge_max_score_zero(db, client):
++    """edge: max_score=0 + is_correct=TRUE тЖТ passed (auto-check ╨▒╨╡╨╖ ╨▒╨░╨╗╨╗╨╛╨▓)."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    task_id, _ = await _pick_task_in_course(db, root_id)
++    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
++    rid = await _create_task_result(
++        db, user_id=user_id, task_id=task_id, attempt_id=aid,
++        is_correct=True, score=0, max_score=0,
++        checked_at=datetime.now(timezone.utc),
++    )
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
++        assert item is not None
++        # is_correct=TRUE + checked_at NOT NULL тЖТ passed, ╨╜╨╡╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛ ╨╛╤В max_score
++        assert item["status"] == "passed", item
++        assert item["last_max_score"] == 0
++    finally:
++        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Materials тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_material_completed_and_not_started(db, client):
++    """material: ╨╛╨┤╨╕╨╜ completed, ╨▓╤В╨╛╤А╨╛╨╣ not_started."""
++    user_id, token, _ = await _create_student(db)
++    root_id = await _pick_root_course(db)
++    await _enroll(db, user_id, root_id)
++    m1 = await _add_material(db, course_id=root_id, order_position=900)
++    m2 = await _add_material(db, course_id=root_id, order_position=901)
++    await _mark_material_completed(db, student_id=user_id, material_id=m1)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        items = resp.json()["items"]
++        item1 = await _find_item(items, kind="material", id_key="material_id", target_id=m1)
++        item2 = await _find_item(items, kind="material", id_key="material_id", target_id=m2)
++        assert item1 is not None and item1["status"] == "completed"
++        assert item1["completed_at"] is not None
++        assert item2 is not None and item2["status"] == "not_started"
++        assert item2["completed_at"] is None
++    finally:
++        await _cleanup(db, user_ids=[user_id], material_ids=[m1, m2])
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Blocked courses тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_blocked_courses_via_dependencies(db, client):
++    """blocked_courses: course_dependencies ╨▒╨╡╨╖ COMPLETED prerequisite."""
++    root_id, child_id, _gc_id = await _pick_root_with_grandchild(db)
++    user_id, token, _ = await _create_student(db)
++    await _enroll(db, user_id, root_id)
++
++    # ╨Э╨░╨╣╨┤╤С╨╝ ╨┤╤А╤Г╨│╨╛╨╣ root-╨║╤Г╤А╤Б ╨║╨░╨║ prerequisite
++    other_root = await _pick_other_root(db, exclude_root_id=root_id)
++    # ╨Э╤Г╨╢╨╜╨╛ ╤Г╨▒╨╡╨┤╨╕╤В╤М╤Б╤П ╤З╤В╨╛ user ╨Э╨Х ╨╕╨╝╨╡╨╡╤В COMPLETED ╨┐╨╛ other_root
++    # (╨┐╨╛ ╤Г╨╝╨╛╨╗╤З╨░╨╜╨╕╤О student_course_state ╨┐╤Г╤Б╤В тЖТ not COMPLETED тЖТ blocked)
++    await _add_course_dependency(db, course_id=child_id, required_course_id=other_root)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        body = resp.json()
++        assert child_id in body["blocked_courses"], body["blocked_courses"]
++    finally:
++        await _cleanup(
++            db,
++            user_ids=[user_id],
++            course_dep_pairs=[(child_id, other_root)],
++        )
++
++
++@pytest.mark.asyncio
++async def test_blocked_courses_unblocks_after_prerequisite_completed(db, client):
++    """blocked_courses ╨┐╤Г╤Б╤В╨╛╨╣ ╨╡╤Б╨╗╨╕ prerequisite COMPLETED."""
++    root_id, child_id, _gc_id = await _pick_root_with_grandchild(db)
++    user_id, token, _ = await _create_student(db)
++    await _enroll(db, user_id, root_id)
++    other_root = await _pick_other_root(db, exclude_root_id=root_id)
++    await _add_course_dependency(db, course_id=child_id, required_course_id=other_root)
++    # ╨Я╨╛╨╝╨╡╤З╨░╨╡╨╝ prerequisite COMPLETED
++    await _set_course_state(db, student_id=user_id, course_id=other_root, state="COMPLETED")
++    try:
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        body = resp.json()
++        assert child_id not in body["blocked_courses"], body["blocked_courses"]
++    finally:
++        await _cleanup(
++            db,
++            user_ids=[user_id],
++            course_dep_pairs=[(child_id, other_root)],
++        )
++
++
++# тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА Performance smoke тФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФАтФА
++
++
++@pytest.mark.asyncio
++async def test_perf_smoke_50_tasks(db, client):
++    """Performance smoke: ╨║╤Г╤А╤Б ╤Б >=50 ╨╖╨░╨┤╨░╤З ╨╛╤В╨▓╨╡╤З╨░╨╡╤В ╨╖╨░ < 2 ╤Б╨╡╨║."""
++    # ╨Э╨░╨╣╨┤╤С╨╝ root ╨║╤Г╤А╤Б ╤Б >= 50 ╨╖╨░╨┤╨░╤З╨░╨╝╨╕ ╨▓ ╨┤╨╡╤А╨╡╨▓╨╡ (root + ╨┐╨╛╤В╨╛╨╝╨║╨╕)
++    row = (
++        await db.execute(
++            text(
++                """
++                WITH RECURSIVE tree AS (
++                    SELECT c.id AS root_id, c.id AS member_id
++                    FROM courses c
++                    WHERE c.id NOT IN (SELECT course_id FROM course_parents)
++                    UNION ALL
++                    SELECT t.root_id, cp.course_id
++                    FROM tree t
++                    JOIN course_parents cp ON cp.parent_course_id = t.member_id
++                )
++                SELECT t.root_id, COUNT(*) AS cnt
++                FROM tree t
++                JOIN tasks tk ON tk.course_id = t.member_id
++                GROUP BY t.root_id
++                HAVING COUNT(*) >= 50
++                ORDER BY cnt DESC
++                LIMIT 1
++                """
++            )
++        )
++    ).fetchone()
++    if row is None:
++        pytest.skip("╨Э╨╡╤В root-╨║╤Г╤А╤Б╨╛╨▓ ╤Б >=50 ╨╖╨░╨┤╨░╤З ╨┤╨╗╤П perf-smoke")
++    root_id = int(row[0])
++
++    user_id, token, _ = await _create_student(db, prefix="y62-perf")
++    await _enroll(db, user_id, root_id)
++    try:
++        t0 = time.monotonic()
++        resp = await client.get(
++            f"/api/v1/me/courses/{root_id}/syllabus-states",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        elapsed = time.monotonic() - t0
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        task_items = [it for it in body["items"] if it["kind"] == "task"]
++        assert len(task_items) >= 50, len(task_items)
++        # 2 sec тАФ ╤Й╨╡╨┤╤А╤Л╨╣ ╨┐╨╛╤А╨╛╨│; ╨╗╨╛╨║╨░╨╗╤М╨╜╨╛ single CTE ╨▓╤Л╨┤╨░╤С╤В <300ms
++        assert elapsed < 2.0, f"Slow response: {elapsed:.2f}s for {len(task_items)} tasks"
++    finally:
++        await _cleanup(db, user_ids=[user_id])

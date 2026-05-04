@@ -13804,6 +13804,113 @@
         }
       }
     },
+    "/api/v1/me/courses/{course_id}/syllabus-states": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Снимок состояний задач+материалов поддерева курса (Phase Y-6.2)",
+        "description": "Снимок состояний syllabus-дерева для рендера на SPW (Phase Y-6.2).\n\nSPW рендерит:\n- per-task chip (passed/pending_review/failed/blocked_limit/in_progress/not_started)\n- per-material chip (completed/not_started)\n- 🔒-маркер на subcourse-узле, если course_id ∈ blocked_courses\n\nACL: тот же helper `assert_course_access` (Y-5.2): service-key /\nteacher / methodist / admin — bypass; student — только дерево\n`user_courses + course_parents`.\n\nCache: `private, max-age=15` — SPW агрессивно invalidate'ит queryKey\n`[\"learning\",\"syllabus-states\", course_id]` после каждого submit /\nmaterial-complete (Y-6.2 frontend invariant).",
+        "operationId": "get_course_syllabus_states_api_v1_me_courses__course_id__syllabus_states_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID корневого course (любой узел дерева)",
+              "title": "Course Id"
+            },
+            "description": "ID корневого course (любой узел дерева)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Состояния всех items + blocked_courses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyllabusStatesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Student не зачислен в курс (или ancestor)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/last-position": {
       "get": {
         "tags": [
@@ -23103,6 +23210,177 @@
         "type": "object",
         "title": "StudentResponse",
         "description": "Ответ ученика в терминах конкретной задачи.\n\nДля разных типов задач используются разные поля:\n- SC/MC: selected_option_ids;\n- SA/SA_COM: value; для типов с комментарием (SA_COM и т.п.) — опционально comment;\n- TA: text."
+      },
+      "SyllabusMaterialItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "material",
+            "title": "Kind",
+            "default": "material"
+          },
+          "material_id": {
+            "type": "integer",
+            "title": "Material Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "ID owner-курса (subcourse, не root)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "not_started"
+            ],
+            "title": "Status"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_id",
+          "course_id",
+          "status",
+          "completed_at"
+        ],
+        "title": "SyllabusMaterialItem",
+        "description": "Состояние материала в syllabus-дереве курса."
+      },
+      "SyllabusStatesResponse": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SyllabusTaskItem"
+                },
+                {
+                  "$ref": "#/components/schemas/SyllabusMaterialItem"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "blocked_courses": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Blocked Courses"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "items",
+          "blocked_courses"
+        ],
+        "title": "SyllabusStatesResponse",
+        "description": "Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.\n\nPhase Y-6.2: SPW использует для рендера дерева курса с per-item статусами\n(passed / pending_review / failed / blocked / in_progress / not_started)\nи для блокировки subcourse-узлов через `blocked_courses` (course_dependencies\nне выполнены)."
+      },
+      "SyllabusTaskItem": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "task",
+            "title": "Kind",
+            "default": "task"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "ID owner-курса (subcourse, не root)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "pending_review",
+              "failed",
+              "blocked_limit",
+              "in_progress",
+              "not_started"
+            ],
+            "title": "Status"
+          },
+          "attempts_used": {
+            "type": "integer",
+            "title": "Attempts Used"
+          },
+          "attempts_limit_effective": {
+            "type": "integer",
+            "title": "Attempts Limit Effective"
+          },
+          "last_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Score"
+          },
+          "last_max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Max Score"
+          },
+          "last_submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Submitted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "course_id",
+          "status",
+          "attempts_used",
+          "attempts_limit_effective",
+          "last_score",
+          "last_max_score",
+          "last_submitted_at"
+        ],
+        "title": "SyllabusTaskItem",
+        "description": "Состояние задания в syllabus-дереве курса."
       },
       "TaskBulkUpsertRequest": {
         "properties": {

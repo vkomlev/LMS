@@ -477,6 +477,245 @@ LIMIT :limit OFFSET :offset
 """
 
 
+# ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ────────────────────
+
+# Single SQL: tasks + materials поддерева курса с last task_result и
+# completed_at для материалов. tree_ids собирается заранее на стороне
+# Python через LearningEngineService._collect_courses_in_order, чтобы
+# сохранить depth-first порядок с учётом course_parents.order_number.
+#
+# attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts —
+# парность с learning_engine_service.compute_task_state (Y-5.3 fix).
+# attempts_limit_effective: override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
+_SYLLABUS_TASKS_SQL = """
+WITH last_per_task AS (
+    SELECT DISTINCT ON (tr.task_id)
+        tr.task_id,
+        tr.is_correct,
+        tr.checked_at,
+        tr.score,
+        tr.max_score,
+        tr.submitted_at
+    FROM task_results tr
+    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+    WHERE tr.user_id = :user_id
+      AND tr.task_id IN (
+          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
+      )
+    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+),
+attempts_per_task AS (
+    SELECT tr.task_id, COUNT(*) AS used
+    FROM task_results tr
+    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+    WHERE tr.user_id = :user_id
+      AND tr.task_id IN (
+          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
+      )
+    GROUP BY tr.task_id
+),
+override_per_task AS (
+    SELECT task_id, max_attempts_override AS lim
+    FROM student_task_limit_override
+    WHERE student_id = :user_id
+),
+open_course_attempt AS (
+    SELECT DISTINCT a.course_id
+    FROM attempts a
+    WHERE a.user_id = :user_id
+      AND a.cancelled_at IS NULL
+      AND a.finished_at IS NULL
+      AND a.course_id = ANY(:tree_ids)
+)
+SELECT
+    t.id AS task_id,
+    t.course_id,
+    lp.is_correct AS last_is_correct,
+    lp.checked_at AS last_checked_at,
+    lp.score AS last_score,
+    lp.max_score AS last_max_score,
+    lp.submitted_at AS last_submitted_at,
+    COALESCE(ap.used, 0) AS attempts_used,
+    COALESCE(op.lim, t.max_attempts, :default_max) AS attempts_limit_effective,
+    EXISTS (
+        SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
+    ) AS has_open_attempt
+FROM tasks t
+LEFT JOIN last_per_task lp ON lp.task_id = t.id
+LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
+LEFT JOIN override_per_task op ON op.task_id = t.id
+WHERE t.course_id = ANY(:tree_ids)
+ORDER BY t.course_id, t.id
+"""
+
+_SYLLABUS_MATERIALS_SQL = """
+SELECT
+    m.id AS material_id,
+    m.course_id,
+    m.order_position,
+    smp.completed_at
+FROM materials m
+LEFT JOIN student_material_progress smp
+    ON smp.material_id = m.id
+   AND smp.student_id = :user_id
+   AND smp.status = 'completed'
+WHERE m.course_id = ANY(:tree_ids)
+  AND m.is_active = true
+ORDER BY m.course_id,
+         m.order_position ASC NULLS LAST,
+         m.id ASC
+"""
+
+_BLOCKED_COURSES_SQL = """
+SELECT DISTINCT cd.course_id
+FROM course_dependencies cd
+WHERE cd.course_id = ANY(:tree_ids)
+  AND NOT EXISTS (
+      SELECT 1 FROM student_course_state scs
+      WHERE scs.student_id = :user_id
+        AND scs.course_id = cd.required_course_id
+        AND scs.state = 'COMPLETED'
+  )
+"""
+
+
+def _compute_syllabus_task_status(row: dict) -> str:
+    """Маппинг last task_result + attempts → public-status строка.
+
+    Правила (см. tech-spec syllabus-states):
+    - passed         — last is_correct=TRUE, checked_at NOT NULL
+    - pending_review — last is_correct=TRUE, checked_at IS NULL (Y-6 optimistic);
+                       также legacy IS NULL pending (pre-Y-6 SA_COM/TA)
+    - failed         — last is_correct=FALSE и attempts_used < limit
+    - blocked_limit  — last is_correct=FALSE и attempts_used >= limit
+    - in_progress    — нет task_result, но есть открытый course-level attempt
+    - not_started    — нет task_result и нет открытого attempt
+    """
+    last_submitted = row["last_submitted_at"]
+    is_correct = row["last_is_correct"]
+    checked_at = row["last_checked_at"]
+    attempts_used = int(row["attempts_used"] or 0)
+    limit_eff = int(row["attempts_limit_effective"] or 0)
+    has_open = bool(row["has_open_attempt"])
+
+    if last_submitted is None:
+        return "in_progress" if has_open else "not_started"
+
+    if is_correct is True:
+        return "passed" if checked_at is not None else "pending_review"
+    if is_correct is None:
+        # legacy pre-Y-6 pending state (TA/SA_COM до optimistic-PASSED backfill)
+        return "pending_review"
+    # is_correct is False
+    if limit_eff > 0 and attempts_used >= limit_eff:
+        return "blocked_limit"
+    return "failed"
+
+
+async def get_syllabus_states(
+    db: AsyncSession,
+    user_id: int,
+    root_course_id: int,
+) -> dict:
+    """Снимок состояний задач+материалов поддерева курса для SPW syllabus-рендера.
+
+    Phase Y-6.2. Single SQL roundtrip per resource (tasks/materials/blocked):
+    - tree_ids — depth-first traversal через LearningEngineService
+      (учитывает course_parents.order_number)
+    - per-task status — последний task_result × attempts_used × override
+    - per-material status — student_material_progress.status='completed'
+    - blocked_courses — course_dependencies без COMPLETED prerequisite
+      в `student_course_state` пользователя.
+
+    Items emit'ятся: для каждого course в depth-first order — материалы
+    (по order_position), затем задания (по id) — паритет с
+    `_first_incomplete_material` / `_first_incomplete_task` в learning engine.
+
+    Args:
+        db: async session.
+        user_id: ID студента.
+        root_course_id: ID корневого course (любой узел дерева).
+
+    Returns:
+        dict {course_id, items, blocked_courses}.
+    """
+    # Импорт inline во избежание circular import (engine → repos → ...)
+    from app.services.learning_engine_service import (
+        DEFAULT_MAX_ATTEMPTS,
+        LearningEngineService,
+    )
+
+    engine = LearningEngineService()
+    tree_ids: list[int] = await engine._collect_courses_in_order(db, root_course_id)
+    if not tree_ids:
+        tree_ids = [root_course_id]
+
+    tasks_res = await db.execute(
+        text(_SYLLABUS_TASKS_SQL),
+        {
+            "user_id": user_id,
+            "tree_ids": tree_ids,
+            "default_max": DEFAULT_MAX_ATTEMPTS,
+        },
+    )
+    task_rows = tasks_res.mappings().all()
+
+    materials_res = await db.execute(
+        text(_SYLLABUS_MATERIALS_SQL),
+        {"user_id": user_id, "tree_ids": tree_ids},
+    )
+    material_rows = materials_res.mappings().all()
+
+    blocked_res = await db.execute(
+        text(_BLOCKED_COURSES_SQL),
+        {"user_id": user_id, "tree_ids": tree_ids},
+    )
+    blocked_courses: list[int] = [int(r[0]) for r in blocked_res.fetchall()]
+
+    # Группировка по course_id для depth-first emit
+    materials_by_course: dict[int, list[dict]] = {}
+    for r in material_rows:
+        materials_by_course.setdefault(r["course_id"], []).append(dict(r))
+    tasks_by_course: dict[int, list[dict]] = {}
+    for r in task_rows:
+        tasks_by_course.setdefault(r["course_id"], []).append(dict(r))
+
+    items: list[dict] = []
+    for cid in tree_ids:
+        for m in materials_by_course.get(cid, []):
+            items.append(
+                {
+                    "kind": "material",
+                    "material_id": int(m["material_id"]),
+                    "course_id": int(m["course_id"]),
+                    "status": "completed" if m["completed_at"] is not None else "not_started",
+                    "completed_at": m["completed_at"],
+                }
+            )
+        for t in tasks_by_course.get(cid, []):
+            items.append(
+                {
+                    "kind": "task",
+                    "task_id": int(t["task_id"]),
+                    "course_id": int(t["course_id"]),
+                    "status": _compute_syllabus_task_status(t),
+                    "attempts_used": int(t["attempts_used"] or 0),
+                    "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+                    "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
+                    "last_max_score": (
+                        int(t["last_max_score"]) if t["last_max_score"] is not None else None
+                    ),
+                    "last_submitted_at": t["last_submitted_at"],
+                }
+            )
+
+    return {
+        "course_id": root_course_id,
+        "items": items,
+        "blocked_courses": blocked_courses,
+    }
+
+
 async def get_history(
     db: AsyncSession,
     user_id: int,

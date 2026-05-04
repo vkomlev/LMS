@@ -18,11 +18,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_authenticated
 from app.auth.current_user import CurrentUser
+from app.services.courses_acl_service import assert_course_access
 from app.core.config import Settings
 from app.schemas.auth import (
     IdentityLinkEmailRequest,
@@ -43,6 +44,7 @@ from app.schemas.me import (
     LastPositionRead,
     MeResponse,
     StreakRead,
+    SyllabusStatesResponse,
 )
 from app.services import me_service
 from app.services.audit_service import log_event
@@ -114,6 +116,47 @@ async def list_courses(
         )
         for it in items
     ]
+
+
+# ── GET /me/courses/{course_id}/syllabus-states (Phase Y-6.2) ───────────────
+
+@router.get(
+    "/courses/{course_id}/syllabus-states",
+    response_model=SyllabusStatesResponse,
+    summary="Снимок состояний задач+материалов поддерева курса (Phase Y-6.2)",
+    responses={
+        200: {"description": "Состояния всех items + blocked_courses"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Student не зачислен в курс (или ancestor)"},
+    },
+)
+async def get_course_syllabus_states(
+    response: Response,
+    course_id: int = Path(..., description="ID корневого course (любой узел дерева)"),
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> SyllabusStatesResponse:
+    """Снимок состояний syllabus-дерева для рендера на SPW (Phase Y-6.2).
+
+    SPW рендерит:
+    - per-task chip (passed/pending_review/failed/blocked_limit/in_progress/not_started)
+    - per-material chip (completed/not_started)
+    - 🔒-маркер на subcourse-узле, если course_id ∈ blocked_courses
+
+    ACL: тот же helper `assert_course_access` (Y-5.2): service-key /
+    teacher / methodist / admin — bypass; student — только дерево
+    `user_courses + course_parents`.
+
+    Cache: `private, max-age=15` — SPW агрессивно invalidate'ит queryKey
+    `["learning","syllabus-states", course_id]` после каждого submit /
+    material-complete (Y-6.2 frontend invariant).
+    """
+    await assert_course_access(db, current_user=current_user, course_id=course_id)
+    payload = await me_service.get_syllabus_states(
+        db, user_id=current_user.id, root_course_id=course_id
+    )
+    response.headers["Cache-Control"] = "private, max-age=15"
+    return SyllabusStatesResponse(**payload)
 
 
 # ── GET /me/last-position ───────────────────────────────────────────────────

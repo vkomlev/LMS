@@ -1,8 +1,8 @@
-"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3)."""
+"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2)."""
 from datetime import date, datetime
-from typing import Literal
+from typing import Literal, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MeResponse(BaseModel):
@@ -86,3 +86,58 @@ class HistoryItem(BaseModel):
     received_at: datetime
     submitted_at: datetime
     checked_at: datetime | None
+
+
+# ── Phase Y-6.2: /me/courses/{course_id}/syllabus-states ─────────────────────
+
+SyllabusTaskStatus = Literal[
+    "passed",
+    "pending_review",
+    "failed",
+    "blocked_limit",
+    "in_progress",
+    "not_started",
+]
+
+SyllabusMaterialStatus = Literal["completed", "not_started"]
+
+
+class SyllabusTaskItem(BaseModel):
+    """Состояние задания в syllabus-дереве курса."""
+
+    kind: Literal["task"] = "task"
+    task_id: int
+    course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
+    status: SyllabusTaskStatus
+    attempts_used: int
+    attempts_limit_effective: int
+    last_score: int | None
+    last_max_score: int | None
+    last_submitted_at: datetime | None
+
+
+class SyllabusMaterialItem(BaseModel):
+    """Состояние материала в syllabus-дереве курса."""
+
+    kind: Literal["material"] = "material"
+    material_id: int
+    course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
+    status: SyllabusMaterialStatus
+    completed_at: datetime | None
+
+
+SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]
+
+
+class SyllabusStatesResponse(BaseModel):
+    """Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.
+
+    Phase Y-6.2: SPW использует для рендера дерева курса с per-item статусами
+    (passed / pending_review / failed / blocked / in_progress / not_started)
+    и для блокировки subcourse-узлов через `blocked_courses` (course_dependencies
+    не выполнены).
+    """
+
+    course_id: int
+    items: list[SyllabusItem]
+    blocked_courses: list[int]
