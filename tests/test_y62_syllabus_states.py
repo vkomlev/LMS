@@ -417,6 +417,62 @@ async def test_syllabus_states_hierarchical_acl_enrolled_in_parent(db, client):
 
 
 @pytest.mark.asyncio
+async def test_syllabus_states_sections_meta(db, client):
+    """Y-6.2 ext: sections[] содержит depth-first walk дерева с titles+depth.
+
+    Контракт:
+    - root курс — sections[0] с depth=0, parent_course_id=None.
+    - все course_id из items[] есть в sections[].course_id.
+    - порядок sections[] — depth-first (тот же что items[]).
+    - title не пуст для всех.
+    """
+    root_id, child_id, gc_id = await _pick_root_with_grandchild(db)
+    user_id, token, _ = await _create_student(db, prefix="y62-sec")
+    await _enroll(db, user_id, root_id)
+    try:
+        resp = await client.get(
+            f"/api/v1/me/courses/{root_id}/syllabus-states",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        sections = body.get("sections")
+        assert isinstance(sections, list) and len(sections) > 0, "sections должен быть непустым"
+
+        # Root — первый, depth=0, parent=None
+        root_section = sections[0]
+        assert root_section["course_id"] == root_id
+        assert root_section["depth"] == 0
+        assert root_section["parent_course_id"] is None
+        assert isinstance(root_section["title"], str) and root_section["title"], "root.title пустой"
+
+        # Дочерние / внучатые курсы тоже есть с правильным depth
+        section_ids = {s["course_id"] for s in sections}
+        assert child_id in section_ids, "child_id должен быть в sections"
+        assert gc_id in section_ids, "grandchild_id должен быть в sections"
+
+        # depth монотонно растёт при углублении (parent < child)
+        depth_by_id = {s["course_id"]: s["depth"] for s in sections}
+        assert depth_by_id[child_id] >= 1
+        assert depth_by_id[gc_id] >= 2
+
+        # Все course_id из items[] должны быть среди sections[]
+        item_courses = {it["course_id"] for it in body["items"]}
+        missing = item_courses - section_ids
+        assert not missing, f"items имеют course_id вне sections: {missing}"
+
+        # Каждая секция имеет title не-пустой и parent_course_id указан для не-root
+        for s in sections:
+            assert s["title"], f"empty title for course_id={s['course_id']}"
+            if s["depth"] > 0:
+                assert s["parent_course_id"] is not None, (
+                    f"non-root section без parent_course_id: {s}"
+                )
+    finally:
+        await _cleanup(db, user_ids=[user_id])
+
+
+@pytest.mark.asyncio
 async def test_syllabus_states_teacher_bypass(db, client):
     """Teacher (extended-role) bypass'ит ACL — может смотреть syllabus любого курса."""
     user_id, token, _ = await _create_student(db, prefix="y62-tch")

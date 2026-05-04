@@ -6,7 +6,7 @@ TZ-handling: streak compute ВСЕГДА в Europe/Moscow на стороне с
 """
 import logging
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -612,6 +612,65 @@ def _compute_syllabus_task_status(row: dict) -> str:
     return "failed"
 
 
+async def _collect_section_meta(
+    db: AsyncSession,
+    courses_repo: Any,
+    root_id: int,
+) -> list[dict]:
+    """Depth-first walk дерева с meta для рендера syllabus sections (Phase Y-6.2 ext).
+
+    Параллельный walker к `LearningEngineService._collect_courses_in_order`
+    (тот возвращает только IDs); этот возвращает богатый dict для SPW
+    sticky-headers — `course_id`, `title`, `depth`, `parent_course_id`,
+    `order_number`. Совпадает с logic _collect_courses_in_order по сортировке
+    (order_number ASC NULLS LAST, затем id) — items[] и sections[] идут в одном
+    порядке.
+
+    Args:
+        db: async session.
+        courses_repo: instance CoursesRepository (для get_children + get).
+        root_id: ID корневого course.
+
+    Returns:
+        list[dict] — depth-first walk; первый элемент = root.
+    """
+    result: list[dict] = []
+
+    root_course = await courses_repo.get(db, root_id)
+    if root_course is None:
+        return result
+    result.append(
+        {
+            "course_id": root_course.id,
+            "title": root_course.title,
+            "depth": 0,
+            "parent_course_id": None,
+            "order_number": None,
+        }
+    )
+
+    async def walk(parent_id: int, depth: int) -> None:
+        children = await courses_repo.get_children(db, parent_id)
+        sorted_children = sorted(
+            children,
+            key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id),
+        )
+        for course, order in sorted_children:
+            result.append(
+                {
+                    "course_id": course.id,
+                    "title": course.title,
+                    "depth": depth,
+                    "parent_course_id": parent_id,
+                    "order_number": order,
+                }
+            )
+            await walk(course.id, depth + 1)
+
+    await walk(root_id, 1)
+    return result
+
+
 async def get_syllabus_states(
     db: AsyncSession,
     user_id: int,
@@ -620,12 +679,16 @@ async def get_syllabus_states(
     """Снимок состояний задач+материалов поддерева курса для SPW syllabus-рендера.
 
     Phase Y-6.2. Single SQL roundtrip per resource (tasks/materials/blocked):
-    - tree_ids — depth-first traversal через LearningEngineService
-      (учитывает course_parents.order_number)
+    - tree_ids — depth-first traversal через `_collect_section_meta`
+      (учитывает course_parents.order_number; те же правила сортировки,
+      что и `LearningEngineService._collect_courses_in_order`)
     - per-task status — последний task_result × attempts_used × override
     - per-material status — student_material_progress.status='completed'
     - blocked_courses — course_dependencies без COMPLETED prerequisite
       в `student_course_state` пользователя.
+    - sections (Y-6.2 ext) — список подкурсов с titles+depth для SPW
+      sticky-headers (нужно потому что `/courses/{id}/tree` legacy
+      service-key only — недоступен студенту под cookie auth).
 
     Items emit'ятся: для каждого course в depth-first order — материалы
     (по order_position), затем задания (по id) — паритет с
@@ -637,7 +700,7 @@ async def get_syllabus_states(
         root_course_id: ID корневого course (любой узел дерева).
 
     Returns:
-        dict {course_id, items, blocked_courses}.
+        dict {course_id, items, blocked_courses, sections}.
     """
     # Импорт inline во избежание circular import (engine → repos → ...)
     from app.services.learning_engine_service import (
@@ -646,9 +709,18 @@ async def get_syllabus_states(
     )
 
     engine = LearningEngineService()
-    tree_ids: list[int] = await engine._collect_courses_in_order(db, root_course_id)
-    if not tree_ids:
-        tree_ids = [root_course_id]
+    section_meta = await _collect_section_meta(db, engine._courses_repo, root_course_id)
+    if not section_meta:
+        section_meta = [
+            {
+                "course_id": root_course_id,
+                "title": "",
+                "depth": 0,
+                "parent_course_id": None,
+                "order_number": None,
+            }
+        ]
+    tree_ids: list[int] = [m["course_id"] for m in section_meta]
 
     tasks_res = await db.execute(
         text(_SYLLABUS_TASKS_SQL),
@@ -713,6 +785,7 @@ async def get_syllabus_states(
         "course_id": root_course_id,
         "items": items,
         "blocked_courses": blocked_courses,
+        "sections": section_meta,
     }
 
 

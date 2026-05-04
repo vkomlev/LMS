@@ -23259,6 +23259,55 @@
         "title": "SyllabusMaterialItem",
         "description": "Состояние материала в syllabus-дереве курса."
       },
+      "SyllabusSectionMeta": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth",
+            "description": "0 для root, 1+ для подкурсов"
+          },
+          "parent_course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Course Id",
+            "description": "None для root; для подкурса — ID непосредственного родителя в обходе"
+          },
+          "order_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Number",
+            "description": "course_parents.order_number (для отладки/UI sort внутри одного уровня)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "title",
+          "depth"
+        ],
+        "title": "SyllabusSectionMeta",
+        "description": "Метаданные подкурса в syllabus — для рендера sticky-headers и иерархии (Phase Y-6.2)."
+      },
       "SyllabusStatesResponse": {
         "properties": {
           "course_id": {
@@ -23285,6 +23334,14 @@
             },
             "type": "array",
             "title": "Blocked Courses"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/SyllabusSectionMeta"
+            },
+            "type": "array",
+            "title": "Sections",
+            "description": "Depth-first walk дерева курса с metadata подкурсов (course_id, title, depth, parent_course_id, order_number). Order — тот же, по которому emit'ятся items. Phase Y-6.2 SPW."
           }
         },
         "type": "object",
@@ -23294,7 +23351,7 @@
           "blocked_courses"
         ],
         "title": "SyllabusStatesResponse",
-        "description": "Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.\n\nPhase Y-6.2: SPW использует для рендера дерева курса с per-item статусами\n(passed / pending_review / failed / blocked / in_progress / not_started)\nи для блокировки subcourse-узлов через `blocked_courses` (course_dependencies\nне выполнены)."
+        "description": "Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.\n\nPhase Y-6.2: SPW использует для рендера дерева курса с per-item статусами\n(passed / pending_review / failed / blocked / in_progress / not_started)\nи для блокировки subcourse-узлов через `blocked_courses` (course_dependencies\nне выполнены).\n\n`sections` (Y-6.2 ext): depth-first walk дерева с titles+depth — нужен SPW\nдля рендера sticky-headers подкурсов (`/courses/{id}/tree` legacy\nservice-key only, недоступен под cookie auth)."
       },
       "SyllabusTaskItem": {
         "properties": {

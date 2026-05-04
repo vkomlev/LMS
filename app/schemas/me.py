@@ -129,6 +129,20 @@ class SyllabusMaterialItem(BaseModel):
 SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]
 
 
+class SyllabusSectionMeta(BaseModel):
+    """Метаданные подкурса в syllabus — для рендера sticky-headers и иерархии (Phase Y-6.2)."""
+
+    course_id: int
+    title: str
+    depth: int = Field(..., description="0 для root, 1+ для подкурсов")
+    parent_course_id: int | None = Field(
+        None, description="None для root; для подкурса — ID непосредственного родителя в обходе"
+    )
+    order_number: int | None = Field(
+        None, description="course_parents.order_number (для отладки/UI sort внутри одного уровня)"
+    )
+
+
 class SyllabusStatesResponse(BaseModel):
     """Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.
 
@@ -136,8 +150,20 @@ class SyllabusStatesResponse(BaseModel):
     (passed / pending_review / failed / blocked / in_progress / not_started)
     и для блокировки subcourse-узлов через `blocked_courses` (course_dependencies
     не выполнены).
+
+    `sections` (Y-6.2 ext): depth-first walk дерева с titles+depth — нужен SPW
+    для рендера sticky-headers подкурсов (`/courses/{id}/tree` legacy
+    service-key only, недоступен под cookie auth).
     """
 
     course_id: int
     items: list[SyllabusItem]
     blocked_courses: list[int]
+    sections: list[SyllabusSectionMeta] = Field(
+        default_factory=list,
+        description=(
+            "Depth-first walk дерева курса с metadata подкурсов "
+            "(course_id, title, depth, parent_course_id, order_number). "
+            "Order — тот же, по которому emit'ятся items. Phase Y-6.2 SPW."
+        ),
+    )
