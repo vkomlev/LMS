@@ -105,11 +105,16 @@ async def main(apply: bool) -> int:
         r_guest_att = await db.execute(text("DELETE FROM guest_attempt"))
         r_guest_sess = await db.execute(text("DELETE FROM guest_session"))
 
-        # 5. magic_link — без FK; чистим NULL и email тестовых users
+        # 5. magic_link — без FK; чистим NULL, email тестовых users
+        #    и любые email на тестовых доменах (@example.*).
+        #    Прямой фильтр по доменам важен: если тестовые users уже
+        #    снесены прошлым прогоном, подзапрос даст пустоту, и
+        #    осиротевшие magic_link останутся навсегда.
         r_magic = await db.execute(
             text(
                 f"DELETE FROM magic_link "
                 f"WHERE email IS NULL "
+                f"OR email ILIKE '%@example.%' "
                 f"OR email IN ("
                 f"  SELECT email FROM users "
                 f"  WHERE id NOT IN ({real_csv}) AND email IS NOT NULL"

@@ -132,9 +132,15 @@ async def _create_pending_tr(
 
 
 async def _cleanup(db, *, user_ids: list[int], result_ids: list[int]):
-    """Чистит созданные тестом записи. users НЕ удаляем — audit_event имеет
-    append-only trigger, и попытка cascade DELETE упадёт. Orphan users
-    в test DB допустимы (test_grade_endpoint_y4 поступает так же)."""
+    """Локальная очистка результатов теста.
+
+    NB: session-scoped autouse фикстура `_cleanup_test_artifacts` в
+    `tests/conftest.py` снимает users и каскадно всё остальное в конце
+    прогона. Этот helper оставлен для случаев, когда внутри теста
+    нужно явно убрать task_results/notifications до создания следующих
+    (например, чтобы не ловить unique-constraint конфликт). Удалять
+    users отсюда не обязательно — каскад фикстуры заберёт их сам.
+    """
     if result_ids:
         await db.execute(
             text("DELETE FROM notifications WHERE (payload->>'result_id')::int = ANY(:ids)"),
