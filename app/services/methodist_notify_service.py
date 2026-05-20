@@ -92,7 +92,8 @@ async def escalate_pending_timeout(
         await db.execute(
             text(
                 "UPDATE task_results SET metrics = "
-                "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
+                "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+                "  || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
                 "WHERE id = :rid"
             ),
             {"rid": int(result_id), "ts": datetime.now(timezone.utc).isoformat()},
@@ -109,7 +110,8 @@ async def escalate_pending_timeout(
         await db.execute(
             text(
                 "UPDATE task_results SET metrics = "
-                "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
+                "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+                "  || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
                 "WHERE id = :rid"
             ),
             {"rid": int(result_id), "ts": datetime.now(timezone.utc).isoformat()},
@@ -145,7 +147,8 @@ async def escalate_pending_timeout(
     await db.execute(
         text(
             "UPDATE task_results SET metrics = "
-            "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
+            "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+            "  || jsonb_build_object('escalated_at', CAST(:ts AS text)) "
             "WHERE id = :rid"
         ),
         {"rid": int(result_id), "ts": datetime.now(timezone.utc).isoformat()},
@@ -215,7 +218,8 @@ async def escalate_course_completion(
         await db.execute(
             text(
                 "UPDATE task_results SET metrics = "
-                "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
+                "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+                "  || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
                 "WHERE id = ANY(:ids)"
             ),
             {"ids": pending_ids, "ts": datetime.now(timezone.utc).isoformat()},
@@ -231,7 +235,8 @@ async def escalate_course_completion(
         await db.execute(
             text(
                 "UPDATE task_results SET metrics = "
-                "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
+                "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+                "  || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
                 "WHERE id = ANY(:ids)"
             ),
             {"ids": pending_ids, "ts": datetime.now(timezone.utc).isoformat()},
@@ -264,7 +269,8 @@ async def escalate_course_completion(
     await db.execute(
         text(
             "UPDATE task_results SET metrics = "
-            "  COALESCE(metrics,'{}'::jsonb) || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
+            "  (CASE WHEN jsonb_typeof(metrics) = 'object' THEN metrics ELSE '{}'::jsonb END) "
+            "  || jsonb_build_object('completion_escalated_at', CAST(:ts AS text)) "
             "WHERE id = ANY(:ids)"
         ),
         {"ids": pending_ids, "ts": datetime.now(timezone.utc).isoformat()},

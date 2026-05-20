@@ -73,7 +73,13 @@ async def escalation_cron_tick() -> dict:
                     WHERE tr.checked_at IS NULL
                       AND t.task_content->>'type' IN ('SA_COM','TA')
                       AND tr.submitted_at < (now() - (:h || ' hours')::interval)
-                      AND NOT (COALESCE(tr.metrics, '{}'::jsonb) ? 'escalated_at')
+                      AND (
+                          tr.metrics IS NULL
+                          OR (
+                              jsonb_typeof(tr.metrics) = 'object'
+                              AND NOT (tr.metrics ? 'escalated_at')
+                          )
+                      )
                     ORDER BY tr.submitted_at ASC
                     LIMIT 100
                     """

@@ -565,7 +565,8 @@ async def grade_review(
 
     # Обновляем metrics.comment поверх существующих metrics (jsonb_set безопасен
     # для NULL через coalesce). comment может быть NULL — храним как JSON null.
-    metrics_dict = dict(metrics_existing) if metrics_existing else {}
+    # Защита от legacy/тестовых данных, где metrics не-object (например, list).
+    metrics_dict = dict(metrics_existing) if isinstance(metrics_existing, dict) else {}
     if comment is not None:
         metrics_dict["comment"] = comment
     elif "comment" in metrics_dict:
@@ -707,7 +708,8 @@ async def regrade_review(
     old_is_correct_bool = bool(old_is_correct) if old_is_correct is not None else False
 
     # Append regrade event в metrics.regrade_history (JSON array).
-    metrics_dict = dict(metrics_existing) if metrics_existing else {}
+    # Защита от legacy/тестовых данных, где metrics не-object.
+    metrics_dict = dict(metrics_existing) if isinstance(metrics_existing, dict) else {}
     history = list(metrics_dict.get("regrade_history") or [])
     history.append({
         "at": now.isoformat(),
