@@ -1,0 +1,188 @@
+diff --git a/scripts/cleanup_test_artifacts.py b/scripts/cleanup_test_artifacts.py
+new file mode 100644
+index 0000000..788dcfd
+--- /dev/null
++++ b/scripts/cleanup_test_artifacts.py
+@@ -0,0 +1,182 @@
++"""Одноразовая очистка тестовых артефактов из Learn.public.
++
++Стратегия A: удалить всех users кроме реальных (id 2, 3, 142) — каскадно
++снимутся user_roles, identity_link, user_session, notifications, attempts,
++task_results, learning_events, help_requests, teacher_courses, user_courses,
++student_*, access_requests, social_posts, user_achievements.
++
++Дополнительно:
++- guest_session / guest_attempt — отдельная подсистема, очищается полностью.
++- magic_link — без FK к users, чистим записи с email тестовых users + email=NULL.
++- audit_event — очищаем записи тестовых users (триггер immutable временно отключаем).
++- product_event — пуст, не трогаем.
++- notifications.modified_by (FK NO ACTION) — занулить у тестовых до удаления users.
++
++Запуск:
++    python scripts/cleanup_test_artifacts.py            # dry-run (ROLLBACK)
++    python scripts/cleanup_test_artifacts.py --apply    # боевой COMMIT
++"""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import sys
++from pathlib import Path
++
++from dotenv import load_dotenv
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++load_dotenv(project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++
++REAL_USER_IDS = (2, 3, 142)
++
++TABLES_FOR_BEFORE_AFTER = [
++    "users",
++    "user_roles",
++    "user_session",
++    "identity_link",
++    "magic_link",
++    "audit_event",
++    "notifications",
++    "attempts",
++    "task_results",
++    "learning_events",
++    "student_material_progress",
++    "student_course_state",
++    "user_courses",
++    "teacher_courses",
++    "help_requests",
++    "help_request_replies",
++    "messages",
++    "guest_session",
++    "guest_attempt",
++    "access_requests",
++    "student_task_limit_override",
++    "student_teacher_links",
++    "user_achievements",
++    "social_posts",
++]
++
++
++async def count_rows(db, tables: list[str]) -> dict[str, int]:
++    out: dict[str, int] = {}
++    for t in tables:
++        row = (await db.execute(text(f'SELECT COUNT(*) FROM "{t}"'))).first()
++        out[t] = int(row[0])
++    return out
++
++
++async def main(apply: bool) -> int:
++    mode = "APPLY (COMMIT)" if apply else "DRY-RUN (ROLLBACK)"
++    print(f"=== Cleanup test artifacts — {mode} ===")
++    real_csv = ",".join(str(i) for i in REAL_USER_IDS)
++
++    async with async_session_factory() as db:
++        before = await count_rows(db, TABLES_FOR_BEFORE_AFTER)
++
++        # 1. Отключить immutable-trigger на audit_event на эту сессию
++        await db.execute(
++            text("ALTER TABLE audit_event DISABLE TRIGGER audit_event_no_modify")
++        )
++
++        # 2. Удалить audit_event тестовых users и осиротевшие
++        r_audit = await db.execute(
++            text(
++                f"DELETE FROM audit_event "
++                f"WHERE user_id IS NULL OR user_id NOT IN ({real_csv})"
++            )
++        )
++
++        # 3. Занулить notifications.modified_by у тестовых (FK NO ACTION)
++        r_notif_modby = await db.execute(
++            text(
++                f"UPDATE notifications SET modified_by = NULL "
++                f"WHERE modified_by IS NOT NULL AND modified_by NOT IN ({real_csv})"
++            )
++        )
++
++        # 4. Гости (guest_attempt CASCADE от guest_session)
++        r_guest_att = await db.execute(text("DELETE FROM guest_attempt"))
++        r_guest_sess = await db.execute(text("DELETE FROM guest_session"))
++
++        # 5. magic_link — без FK; чистим NULL и email тестовых users
++        r_magic = await db.execute(
++            text(
++                f"DELETE FROM magic_link "
++                f"WHERE email IS NULL "
++                f"OR email IN ("
++                f"  SELECT email FROM users "
++                f"  WHERE id NOT IN ({real_csv}) AND email IS NOT NULL"
++                f")"
++            )
++        )
++
++        # 6. Удалить тестовых users → CASCADE подберёт остальное
++        r_users = await db.execute(
++            text(f"DELETE FROM users WHERE id NOT IN ({real_csv})")
++        )
++
++        # 7. Вернуть триггер
++        await db.execute(
++            text("ALTER TABLE audit_event ENABLE TRIGGER audit_event_no_modify")
++        )
++
++        after = await count_rows(db, TABLES_FOR_BEFORE_AFTER)
++
++        print("\n--- DELETE/UPDATE rowcounts ---")
++        print(f"audit_event DELETE         : {r_audit.rowcount}")
++        print(f"notifications.modified_by  : {r_notif_modby.rowcount}")
++        print(f"guest_attempt DELETE       : {r_guest_att.rowcount}")
++        print(f"guest_session DELETE       : {r_guest_sess.rowcount}")
++        print(f"magic_link DELETE          : {r_magic.rowcount}")
++        print(f"users DELETE (cascading)   : {r_users.rowcount}")
++
++        print("\n--- BEFORE / AFTER per table ---")
++        print(f"{'table':<32}{'before':>10}{'after':>10}{'delta':>10}")
++        for t in TABLES_FOR_BEFORE_AFTER:
++            b, a = before[t], after[t]
++            print(f"{t:<32}{b:>10}{a:>10}{a - b:>+10}")
++
++        # Sanity checks (только в случае dry-run/apply одинаково):
++        # 1. Реальные users остались
++        live_real = (
++            await db.execute(
++                text(f"SELECT COUNT(*) FROM users WHERE id IN ({real_csv})")
++            )
++        ).scalar()
++        # 2. Курсы / материалы / задачи не тронуты
++        n_courses = (await db.execute(text("SELECT COUNT(*) FROM courses"))).scalar()
++        n_materials = (await db.execute(text("SELECT COUNT(*) FROM materials"))).scalar()
++        n_tasks = (await db.execute(text("SELECT COUNT(*) FROM tasks"))).scalar()
++
++        print("\n--- Sanity ---")
++        print(f"real users alive : {live_real} (expected 3)")
++        print(f"courses          : {n_courses} (expected 161)")
++        print(f"materials        : {n_materials} (expected 664)")
++        print(f"tasks            : {n_tasks} (expected 567)")
++
++        if apply:
++            await db.commit()
++            print("\nCOMMIT — изменения сохранены.")
++        else:
++            await db.rollback()
++            print("\nROLLBACK — dry-run, изменения откатаны.")
++
++    return 0
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument(
++        "--apply",
++        action="store_true",
++        help="Выполнить COMMIT. Без флага — dry-run (ROLLBACK).",
++    )
++    args = ap.parse_args()
++    sys.exit(asyncio.run(main(apply=args.apply)))
