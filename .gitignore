@@ -40,6 +40,8 @@ docs/*
 !docs/specs/**
 !docs/operations/
 !docs/operations/**
+!docs/briefs/
+!docs/briefs/**
 .cursor/*
 !.cursor/rules/
 
