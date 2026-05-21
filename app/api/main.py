@@ -104,6 +104,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request-ID для сквозной трассировки (Этап 4 tsk-004). Регистрируется
+# ПОСЛЕ CORS чтобы CORS-preflight responses (`OPTIONS`) тоже получали
+# X-Request-ID заголовок. ContextVar используется в logging filter
+# `RequestIDFilter` и в `audit_service.log_event` (details.request_id).
+from app.api.middleware.request_id import RequestIDMiddleware
+app.add_middleware(RequestIDMiddleware)
+
 # ✅ новый хэндлер доменных ошибок — минимально инвазивно
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
