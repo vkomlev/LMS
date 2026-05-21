@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 class Tasks(Base):
     """
     Задания курсов и правила их проверки.
+
+    Порядок показа (``order_position``) управляется триггерами БД
+    (``trg_set_task_order_position`` / ``trg_reorder_tasks_after_delete``).
+    Подробности — docs/database-triggers-contract.md разделы 13-14.
     """
     __tablename__ = "tasks"
     __table_args__ = (
@@ -92,6 +96,11 @@ class Tasks(Base):
         Integer,
         nullable=True,
         comment="Лимит времени на попытку в секундах (Learning Engine V1)",
+    )
+    order_position: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Позиция в курсе (NULL = автоматически в конец)",
     )
 
     course: Mapped["Courses"] = relationship(
