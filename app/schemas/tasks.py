@@ -33,6 +33,8 @@ class TaskCreate(BaseModel):
     external_uid и max_score опциональны, чтобы не ломать существующие клиенты:
     - external_uid — устойчивый ID из внешней системы (для импорта),
     - max_score   — максимальный балл за задачу.
+    - order_position — позиция в курсе (NULL = автоматически в конец;
+      управляется триггерами БД, см. docs/database-triggers-contract.md §13-14).
     """
     task_content: Any
     course_id: int
@@ -41,11 +43,21 @@ class TaskCreate(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    order_position: Optional[int] = Field(
+        default=None,
+        description=(
+            "Позиция задания в курсе. NULL = триггер БД проставит MAX+1 (в конец); "
+            "явное значение K сдвигает существующие задания с pos>=K на +1."
+        ),
+    )
 
 
 class TaskUpdate(BaseModel):
     """
     Схема обновления задания (полевая, все поля опциональны).
+
+    `order_position`: None означает «поле не передано, позицию не менять».
+    Явное число — новая позиция, триггер пересчитает остальные задания курса.
     """
     task_content: Optional[Any] = None
     course_id: Optional[int] = None
@@ -54,6 +66,13 @@ class TaskUpdate(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    order_position: Optional[int] = Field(
+        default=None,
+        description=(
+            "Новая позиция в курсе. None = не передавать (позицию не менять). "
+            "Явное число K — переместить задание на позицию K, триггер сдвинет соседей."
+        ),
+    )
 
 
 class TaskRead(BaseModel):
@@ -69,6 +88,13 @@ class TaskRead(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    order_position: Optional[int] = Field(
+        default=None,
+        description=(
+            "Позиция в курсе (управляется триггерами БД; "
+            "в норме всегда заполнен после INSERT триггером)."
+        ),
+    )
 
     hints_text: List[str] = Field(
         default_factory=list,
@@ -98,6 +124,11 @@ class TaskUpsertItem(BaseModel):
     """
     Один элемент для массового upsert'а задачи.
     Поля соответствуют структуре TaskCreate, плюс обязательный external_uid.
+
+    `order_position`:
+      - CREATE-ветка: явное число → триггер сдвинет соседей; NULL/None → MAX+1.
+      - UPDATE-ветка: явное число → переместить; None → позицию НЕ менять.
+        См. tasks_service.bulk_upsert.
     """
     external_uid: str
     course_id: int
@@ -105,6 +136,7 @@ class TaskUpsertItem(BaseModel):
     task_content: Any
     solution_rules: Any | None = None
     max_score: int | None = None
+    order_position: int | None = None
 
 
 class TaskBulkUpsertRequest(BaseModel):

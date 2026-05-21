@@ -23742,6 +23742,18 @@
               }
             ],
             "title": "Max Score"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position",
+            "description": "Позиция задания в курсе. NULL = триггер БД проставит MAX+1 (в конец); явное значение K сдвигает существующие задания с pos>=K на +1."
           }
         },
         "type": "object",
@@ -23751,7 +23763,7 @@
           "difficulty_id"
         ],
         "title": "TaskCreate",
-        "description": "Схема создания задания.\n\nexternal_uid и max_score опциональны, чтобы не ломать существующие клиенты:\n- external_uid — устойчивый ID из внешней системы (для импорта),\n- max_score   — максимальный балл за задачу."
+        "description": "Схема создания задания.\n\nexternal_uid и max_score опциональны, чтобы не ломать существующие клиенты:\n- external_uid — устойчивый ID из внешней системы (для импорта),\n- max_score   — максимальный балл за задачу.\n- order_position — позиция в курсе (NULL = автоматически в конец;\n  управляется триггерами БД, см. docs/database-triggers-contract.md §13-14)."
       },
       "TaskFindByExternalItem": {
         "properties": {
@@ -24031,6 +24043,18 @@
               }
             ],
             "title": "Max Score"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position",
+            "description": "Позиция в курсе (управляется триггерами БД; в норме всегда заполнен после INSERT триггером)."
           },
           "hints_text": {
             "items": {
@@ -24849,11 +24873,23 @@
               }
             ],
             "title": "Max Score"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position",
+            "description": "Новая позиция в курсе. None = не передавать (позицию не менять). Явное число K — переместить задание на позицию K, триггер сдвинет соседей."
           }
         },
         "type": "object",
         "title": "TaskUpdate",
-        "description": "Схема обновления задания (полевая, все поля опциональны)."
+        "description": "Схема обновления задания (полевая, все поля опциональны).\n\n`order_position`: None означает «поле не передано, позицию не менять».\nЯвное число — новая позиция, триггер пересчитает остальные задания курса."
       },
       "TaskUpsertItem": {
         "properties": {
@@ -24891,6 +24927,17 @@
               }
             ],
             "title": "Max Score"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
           }
         },
         "type": "object",
@@ -24901,7 +24948,7 @@
           "task_content"
         ],
         "title": "TaskUpsertItem",
-        "description": "Один элемент для массового upsert'а задачи.\nПоля соответствуют структуре TaskCreate, плюс обязательный external_uid."
+        "description": "Один элемент для массового upsert'а задачи.\nПоля соответствуют структуре TaskCreate, плюс обязательный external_uid.\n\n`order_position`:\n  - CREATE-ветка: явное число → триггер сдвинет соседей; NULL/None → MAX+1.\n  - UPDATE-ветка: явное число → переместить; None → позицию НЕ менять.\n    См. tasks_service.bulk_upsert."
       },
       "TaskValidateRequest": {
         "properties": {

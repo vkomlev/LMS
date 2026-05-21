@@ -251,6 +251,9 @@ class TasksService(BaseService[Tasks]):
                     "task_content": data["task_content"],
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
+                    # CREATE: пробрасываем order_position как есть.
+                    # None → триггер БД проставит MAX+1; явное число → сдвиг соседей.
+                    "order_position": data.get("order_position"),
                 }
                 # используем наш переопределенный create для валидации
                 task = await self.create(db, obj_in)
@@ -264,6 +267,10 @@ class TasksService(BaseService[Tasks]):
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
                 }
+                # UPDATE: order_position пробрасываем ТОЛЬКО при явном значении.
+                # None в payload означает «поле не передано, позицию не менять».
+                if data.get("order_position") is not None:
+                    obj_in["order_position"] = data["order_position"]
                 # используем наш переопределенный update для валидации
                 task = await self.update(db, existing, obj_in)
                 results.append((external_uid, "updated", task.id))
