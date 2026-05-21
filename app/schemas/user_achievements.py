@@ -20,5 +20,4 @@ class UserAchievementRead(BaseModel):
     earned_at: datetime
     progress: Optional[Any]
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)

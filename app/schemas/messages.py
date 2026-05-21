@@ -46,8 +46,7 @@ class MessageRead(BaseModel):
     attachment_url: Optional[str] = None
     attachment_id: Optional[str] = None
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
 class MarkReadRequest(BaseModel):
     user_id: int = Field(..., description="Кто помечает (получатель сообщений)")
@@ -66,8 +65,7 @@ class InboxItem(BaseModel):
     unread_count: int = Field(..., description="Кол-во непрочитанных от этого собеседника")
     last_message: MessageRead = Field(..., description="Последнее сообщение в диалоге")
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class InboxResponse(BaseModel):

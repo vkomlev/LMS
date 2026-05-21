@@ -22,7 +22,7 @@ async def create_user_achievement(
     obj_in: UserAchievementCreate = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
-    return await service.create(db, obj_in.dict())
+    return await service.create(db, obj_in.model_dump())
 
 @router.get(
     "/{user_id}/{achievement_id}", response_model=UserAchievementRead
@@ -49,7 +49,7 @@ async def update_user_achievement(
     updated = await service.update_by_keys(
         db,
         {"user_id": user_id, "achievement_id": achievement_id},
-        obj_in.dict(exclude_unset=True),
+        obj_in.model_dump(exclude_unset=True),
     )
     if not updated:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")

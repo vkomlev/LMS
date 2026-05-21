@@ -76,7 +76,7 @@ async def create_user_course(
     - `403` - Неверный или отсутствующий API ключ
     - `422` - Ошибка валидации данных запроса
     """
-    return await service.create(db, obj_in.dict())
+    return await service.create(db, obj_in.model_dump())
 
 
 @router.get(
@@ -127,7 +127,7 @@ async def update_user_course(
     updated = await service.update_by_keys(
         db,
         {"user_id": user_id, "course_id": course_id},
-        obj_in.dict(exclude_unset=True),
+        obj_in.model_dump(exclude_unset=True),
     )
     if not updated:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")

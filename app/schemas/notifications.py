@@ -20,5 +20,4 @@ class NotificationRead(BaseModel):
     modified_by: Optional[int]
     modified_at: datetime
 
-    class Config:
-        model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True)

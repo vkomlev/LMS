@@ -41,7 +41,7 @@ def create_composite_router(
         obj_in: create_schema = Body(...),
         db: AsyncSession = Depends(get_db),
     ):
-        return await service.create(db, obj_in.dict())
+        return await service.create(db, obj_in.model_dump())
 
     # GET /{key1}/{key2}/… → read
     path = "/" + "/".join(f"{{{f}}}" for f in pk_fields)
@@ -66,7 +66,7 @@ def create_composite_router(
         db: AsyncSession = Depends(get_db),
         **kwargs: int,
     ):
-        updated = await service.update_by_keys(db, kwargs, obj_in.dict(exclude_unset=True))
+        updated = await service.update_by_keys(db, kwargs, obj_in.model_dump(exclude_unset=True))
         if not updated:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
         return updated
@@ -107,7 +107,7 @@ def create_crud_router(
         payload = obj_in.json() if hasattr(obj_in, "json") else json.dumps(obj_in)
         logger.info(f"[{prefix}] create payload: %s", payload)
         try:
-            result = await service.create(db, obj_in.dict())
+            result = await service.create(db, obj_in.model_dump())
             logger.info(f"[{prefix}] created id=%s", getattr(result, "id", None))
             return result
         except Exception as e:
@@ -162,7 +162,7 @@ def create_crud_router(
         try:
             # Исключаем только не установленные поля
             # None значения для обязательных полей фильтруются в репозитории
-            update_data = obj_in.dict(exclude_unset=True)
+            update_data = obj_in.model_dump(exclude_unset=True)
             updated = await service.update(db, db_obj, update_data)
             logger.info(f"[{prefix}] update id=%s success", item_id)
             return updated
