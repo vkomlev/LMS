@@ -418,7 +418,7 @@ class LearningEngineService:
         tasks_stmt = (
             select(Tasks.id)
             .where(Tasks.course_id == course_id)
-            .order_by(Tasks.id.asc())
+            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
         )
         r = await db.execute(tasks_stmt)
         task_ids = [row[0] for row in r.fetchall()]

@@ -386,6 +386,13 @@ class TasksService(BaseService[Tasks]):
         """
         Получить задачи курса с пагинацией.
 
+        Порядок результата детерминирован:
+        ``ORDER BY order_position NULLS LAST, id`` — совпадает с порядком,
+        который использует Learning Engine ``next-item picker`` и
+        отражает контракт триггеров ``trg_set_task_order_position`` /
+        ``trg_reorder_tasks_after_delete`` (см. docs/database-triggers-contract.md
+        разделы 13-14).
+
         Args:
             db: Асинхронная сессия БД.
             course_id: ID курса.
@@ -396,15 +403,24 @@ class TasksService(BaseService[Tasks]):
         Returns:
             Кортеж (список задач, общее количество).
         """
-        from sqlalchemy import and_
+        from sqlalchemy import func, select
 
         filters = [self.repo.model.course_id == course_id]
         if difficulty_id is not None:
             filters.append(self.repo.model.difficulty_id == difficulty_id)
 
-        return await self.paginate(
-            db,
-            limit=limit,
-            offset=offset,
-            filters=filters,
+        list_stmt = (
+            select(self.repo.model)
+            .where(*filters)
+            .order_by(
+                self.repo.model.order_position.asc().nulls_last(),
+                self.repo.model.id.asc(),
+            )
+            .limit(limit)
+            .offset(offset)
         )
+        count_stmt = select(func.count()).select_from(self.repo.model).where(*filters)
+
+        items = (await db.execute(list_stmt)).scalars().all()
+        total = (await db.execute(count_stmt)).scalar() or 0
+        return list(items), int(total)
