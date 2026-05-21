@@ -285,16 +285,29 @@ async def test_t13_delete_across_courses_independent(db):
 
 @pytest.mark.asyncio
 async def test_t14_backfill_invariant_on_existing_data(db):
-    """T14. Бекфилл по id ASC: для существующих данных
-    ROW_NUMBER OVER (PARTITION BY course_id ORDER BY id) совпадает с order_position."""
+    """T14. После Этапа 1.7 (LMS@94b9122) порядок задач в каждом курсе равен
+    ROW_NUMBER OVER (PARTITION BY course_id ORDER BY difficulty_id, group_type, id),
+    где group_type: SC|MC=1, TA|SA=2, SA_COM=3. Это контракт сортировки
+    в tasks_service.get_by_course() и me_service.get_syllabus_states().
+    """
     rows = (
         await db.execute(
             text(
                 """
                 WITH expected AS (
                     SELECT id, course_id,
-                           ROW_NUMBER() OVER (PARTITION BY course_id ORDER BY id ASC) AS pos
+                           ROW_NUMBER() OVER (
+                               PARTITION BY course_id
+                               ORDER BY difficulty_id ASC,
+                                        CASE task_content->>'type'
+                                            WHEN 'SC' THEN 1 WHEN 'MC' THEN 1
+                                            WHEN 'TA' THEN 2 WHEN 'SA' THEN 2
+                                            WHEN 'SA_COM' THEN 3 ELSE 99
+                                        END ASC,
+                                        id ASC
+                           ) AS pos
                     FROM tasks
+                    WHERE course_id IS NOT NULL
                 )
                 SELECT COUNT(*) AS mismatches
                 FROM tasks t
@@ -304,7 +317,9 @@ async def test_t14_backfill_invariant_on_existing_data(db):
             )
         )
     ).first()
-    assert int(rows.mismatches) == 0, "Бекфилл нарушен на существующих данных"
+    assert int(rows.mismatches) == 0, (
+        "Порядок задач не соответствует правилу 1.7 (difficulty+group_type+id)"
+    )
 
 
 @pytest.mark.asyncio
@@ -344,6 +359,14 @@ async def test_t15_recompute_after_delete_matches_rownumber(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(
+    reason=(
+        "Snapshot-инвариант (order_position NULLS LAST,id ≡ id) был верен "
+        "только сразу после бекфилла Этапа 1.6. Этап 1.7 (LMS@94b9122) "
+        "намеренно переупорядочил tasks по правилу difficulty+group_type+id, "
+        "поэтому равенство не сохраняется. Новый инвариант покрыт T14."
+    )
+)
 async def test_t25_snapshot_le_ordering_equivalent_to_id_ordering(db):
     """T25. Для всех существующих данных:
     ORDER BY order_position NULLS LAST, id  ===  ORDER BY id (старый LE).

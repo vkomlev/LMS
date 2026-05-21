@@ -545,7 +545,7 @@ LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
 LEFT JOIN override_per_task op ON op.task_id = t.id
 WHERE t.course_id = ANY(:tree_ids)
-ORDER BY t.course_id, t.id
+ORDER BY t.course_id, t.order_position ASC NULLS LAST, t.id ASC
 """
 
 _SYLLABUS_MATERIALS_SQL = """
@@ -691,8 +691,9 @@ async def get_syllabus_states(
       service-key only — недоступен студенту под cookie auth).
 
     Items emit'ятся: для каждого course в depth-first order — материалы
-    (по order_position), затем задания (по id) — паритет с
-    `_first_incomplete_material` / `_first_incomplete_task` в learning engine.
+    (по order_position NULLS LAST, id) и задания (по order_position NULLS LAST,
+    id) — тот же контракт, что и tasks_service.get_by_course() / LE
+    next-item picker (см. docs/database-triggers-contract.md §13-14).
 
     Args:
         db: async session.
