@@ -583,6 +583,77 @@ await db.commit()
 
 ---
 
+### 15. Bulk reorder для `tasks` через session-variable `app.skip_task_order_trigger`
+
+**Endpoint:** `POST /api/v1/courses/{course_id}/tasks/reorder`
+**Сервис:** `TasksService.reorder_tasks`
+**Репозиторий:** `TasksRepository.reorder_tasks`
+**Зеркало:** `MaterialsService.reorder_materials` / `MaterialsRepository.reorder_materials`.
+
+#### Логика паттерна
+
+```sql
+-- В одной транзакции:
+SELECT set_config('app.skip_task_order_trigger', 'true', true);  -- is_local=true
+UPDATE tasks SET order_position = :pos1 WHERE id = :tid1 AND course_id = :cid;
+UPDATE tasks SET order_position = :pos2 WHERE id = :tid2 AND course_id = :cid;
+-- ...
+COMMIT;  -- session-var сбрасывается автоматически (is_local=true)
+```
+
+Триггер `trg_set_task_order_position` имеет условие:
+```sql
+WHEN (current_setting('app.skip_task_order_trigger', true) IS DISTINCT FROM 'true')
+```
+— пока флаг `'true'`, BEFORE INSERT/UPDATE триггер пропускается, и наши явные
+позиции попадают в БД без каскадного пересдвига соседей.
+
+#### Гарантии
+
+- **Атомарность:** все `UPDATE`'ы и `commit` в одной транзакции; при сбое
+  никакая часть нового порядка не применяется (rollback).
+- **Изоляция transaction-scoped:** третий параметр `set_config(..., true)` —
+  `is_local=true`, значение видно только в текущей транзакции и сбрасывается
+  по `COMMIT`/`ROLLBACK`. Не утекает в другие сессии (тест F5 в
+  `tests/test_tasks_order_position.py`).
+- **Триггер активен после commit:** следующий обычный `INSERT`/`UPDATE`
+  снова идёт через `set_task_order_position` (тест BR6).
+
+#### Валидация в сервисе (расширение относительно materials)
+
+| Код | Условие |
+|---|---|
+| 404 | `course_id` не существует |
+| 422 | Дубликат `task_id` в теле запроса |
+| 422 | Дубликат `order_position` в теле запроса |
+| 400 | `task_id` не принадлежит указанному `course_id` |
+
+#### Partial reorder
+
+Допускается отправлять порядок только для подмножества заданий курса:
+не перечисленные задания сохраняют свои текущие позиции. Это **сознательное**
+поведение для drag-list UI методиста. Возможны коллизии позиций между
+«переданными» и «непереданными» задачами — клиент отвечает за консистентность.
+
+#### Что НЕ нужно делать в коде
+
+```python
+# ❌ ЗАПРЕЩЕНО: отключать триггер через ALTER TABLE
+await db.execute(text("ALTER TABLE tasks DISABLE TRIGGER trg_set_task_order_position"))
+# ... UPDATE'ы ...
+await db.execute(text("ALTER TABLE tasks ENABLE TRIGGER trg_set_task_order_position"))
+
+# ❌ ЗАПРЕЩЕНО: эмулировать reorder через PATCH в цикле без транзакции
+for item in new_order:
+    await db.execute(update(Tasks).where(Tasks.id == item["task_id"]).values(...))
+    await db.commit()  # промежуточный commit — клиент в случае обрыва увидит частичный порядок
+
+# ✅ ПРАВИЛЬНО: использовать TasksRepository.reorder_tasks
+return await self.repo.reorder_tasks(db, course_id, task_orders)
+```
+
+---
+
 ## 🔍 Как проверить наличие триггеров
 
 ```sql
