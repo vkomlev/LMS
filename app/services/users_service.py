@@ -17,11 +17,14 @@ class UsersService(BaseService[Users]):
         super().__init__(repo)
 
     async def create(self, db: AsyncSession, obj_in: Dict[str, Any]) -> Users:
-        """Создать пользователя. Если password_hash не передан, подставляется пустая строка (БД требует NOT NULL)."""
-        data = dict(obj_in)
-        if data.get("password_hash") is None:
-            data["password_hash"] = ""
-        return await self.repo.create(db, data)
+        """Создать пользователя.
+
+        После M1 (2026-04-28) `password_hash` стал NULLABLE — пустая строка
+        больше не подставляется. Тру-passwordless flow Y-1: для создаваемых
+        users поле всегда `NULL`. Полное удаление колонки запланировано
+        в M14 (tsk-004 этап 2).
+        """
+        return await self.repo.create(db, dict(obj_in))
 
     async def get_id_by_tg_id(self, db: AsyncSession, tg_id: int) -> int | None:
         """
