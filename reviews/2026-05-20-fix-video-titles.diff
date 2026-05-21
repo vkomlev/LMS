@@ -1,0 +1,299 @@
+diff --git a/scripts/fix_video_titles.py b/scripts/fix_video_titles.py
+new file mode 100644
+index 0000000..d4508da
+--- /dev/null
++++ b/scripts/fix_video_titles.py
+@@ -0,0 +1,293 @@
++"""Восстановить корректные заголовки видеоматериалов из source_item.body (WP HTML).
++
++Контекст: 223 материала `type='video'` в `Learn.public.materials` имеют
++title='Видеоурок' — деграция при импорте с WP. Правильные заголовки лежат
++в `content_hub.source_item.body` в виде:
++    <a href="https://vk.com/video-53400615_456239780">Знакомство с IDLE Python</a>
++
++Стратегия:
++1. Загрузить кандидатов (id, url, external_uid).
++2. Извлечь course_slug из external_uid (`wp:mat:<author>:<slug>:<pos>`).
++3. По course_slug найти source_item (`wp:course:<author>:<slug>`) и
++   получить его body.
++4. Regex: `<a href="<url>"[^>]*>(.*?)</a>` → новый title.
++5. Dry-run: показать сэмпл, статистику found/not_found.
++6. --apply: UPDATE materials SET title=... в транзакции (с проверкой
++   `WHERE title='Видеоурок'` для идемпотентности).
++
++Запуск:
++    python scripts/fix_video_titles.py            # dry-run
++    python scripts/fix_video_titles.py --apply    # COMMIT
++"""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import html
++import re
++import sys
++from collections import defaultdict
++from pathlib import Path
++from urllib.parse import urlparse
++
++from dotenv import load_dotenv
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++load_dotenv(project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++
++BAD_TITLE = "Видеоурок"
++EXT_UID_RE = re.compile(r"^wp:mat:(?P<author>[^:]+):(?P<slug>[^:]+):\d+$")
++# Допускаем минорные различия URL: query / trailing slash / http(s)
++# Ищем по VK video id (часть после "video"), который уникален в HTML страницы.
++VK_VIDEO_ID_RE = re.compile(r"video(-?\d+_\d+)")
++
++
++def extract_vk_id(url: str | None) -> str | None:
++    """Из `https://vk.com/video-53400615_456239986` вытащить `-53400615_456239986`."""
++    if not url:
++        return None
++    m = VK_VIDEO_ID_RE.search(url)
++    return m.group(1) if m else None
++
++
++def find_title_in_html(body: str, vk_id: str) -> str | None:
++    """Ищем `<a href="...video<VK_ID>...">текст</a>` в HTML и возвращаем текст."""
++    pattern = re.compile(
++        r'<a[^>]+href="[^"]*video' + re.escape(vk_id) + r'[^"]*"[^>]*>(.*?)</a>',
++        re.IGNORECASE | re.DOTALL,
++    )
++    m = pattern.search(body)
++    if not m:
++        return None
++    raw = m.group(1)
++    # Убрать вложенные теги, декодировать HTML entities
++    text_only = re.sub(r"<[^>]+>", "", raw)
++    text_only = html.unescape(text_only).strip()
++    return text_only or None
++
++
++_ALL_VK_LINKS_RE = re.compile(
++    r'<a[^>]+href="(https?://(?:www\.)?vk\.com/video-?\d+_\d+[^"]*)"[^>]*>(.*?)</a>',
++    re.IGNORECASE | re.DOTALL,
++)
++
++
++def list_vk_links_in_html(body: str) -> list[tuple[str, str]]:
++    """Все VK-видео-ссылки в HTML в порядке появления: [(url, title), ...]."""
++    out: list[tuple[str, str]] = []
++    for m in _ALL_VK_LINKS_RE.finditer(body):
++        url = m.group(1)
++        raw_title = re.sub(r"<[^>]+>", "", m.group(2))
++        title = html.unescape(raw_title).strip()
++        if title:
++            out.append((url, title))
++    return out
++
++
++async def main(apply: bool) -> int:
++    mode = "APPLY (COMMIT)" if apply else "DRY-RUN (ROLLBACK)"
++    print(f"=== Fix video titles — {mode} ===\n")
++
++    async with async_session_factory() as db:
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT id, external_uid, content, "
++                    "content->'sources'->0->>'url' AS url "
++                    "FROM materials "
++                    "WHERE type='video' AND title=:bad "
++                    "ORDER BY id"
++                ),
++                {"bad": BAD_TITLE},
++            )
++        ).fetchall()
++        print(f"Кандидаты: {len(rows)}")
++
++        # Сгруппировать по course_slug — один HTML на много материалов
++        # Tuple: (material_id, url, author, position, content_json)
++        by_slug: dict[str, list[tuple[int, str | None, str, int, dict]]] = defaultdict(list)
++        unparsable_uid: list[tuple[int, str | None]] = []
++        for r in rows:
++            mid, ext_uid, url, content_json = r.id, r.external_uid, r.url, r.content
++            m = EXT_UID_RE.match(ext_uid or "")
++            if not m:
++                unparsable_uid.append((mid, ext_uid))
++                continue
++            slug = m.group("slug")
++            # позиция = последний сегмент external_uid (число после последнего ":")
++            try:
++                position = int((ext_uid or "").rsplit(":", 1)[-1])
++            except ValueError:
++                position = -1
++            by_slug[slug].append((mid, url, m.group("author"), position, content_json))
++
++        print(f"Курсов-источников: {len(by_slug)}")
++        print(f"Без распарсенного external_uid: {len(unparsable_uid)}")
++
++        # Загрузить source_item.body для всех нужных course-uid
++        course_uids = [
++            f"wp:course:{items[0][2]}:{slug}"
++            for slug, items in by_slug.items()
++        ]
++        bodies = {}
++        if course_uids:
++            res = await db.execute(
++                text(
++                    "SELECT global_uid, body FROM content_hub.source_item "
++                    "WHERE global_uid = ANY(:uids)"
++                ),
++                {"uids": course_uids},
++            )
++            for row in res.fetchall():
++                bodies[row.global_uid] = row.body or ""
++        print(f"Загружено source_item: {len(bodies)} (из {len(course_uids)} запрошенных)\n")
++
++        # Сопоставить: для каждого material — найти title (и URL для пустых sources)
++        # title_updates: (mid, new_title)
++        # content_updates: (mid, new_content_json, new_title) — заполняем URL+title
++        title_updates: list[tuple[int, str]] = []
++        content_updates: list[tuple[int, dict, str]] = []
++        no_url_no_html: list[tuple[int, str]] = []  # пустой URL И в HTML не сопоставили
++        no_source: list[tuple[int, str]] = []
++        no_match: list[tuple[int, str, str]] = []
++
++        for slug, items in by_slug.items():
++            author = items[0][2]
++            course_uid = f"wp:course:{author}:{slug}"
++            body = bodies.get(course_uid)
++            if body is None:
++                for mid, _, _, _, _ in items:
++                    no_source.append((mid, course_uid))
++                continue
++
++            # Парсим все VK-ссылки страницы единожды — в порядке появления.
++            html_links = list_vk_links_in_html(body)
++
++            # Сортируем элементы по позиции — чтобы материал position=N
++            # сопоставлять с N-м VK-видео страницы при пустом URL.
++            items_sorted = sorted(items, key=lambda x: x[3])
++            empty_position_idx = 0  # сквозной счётчик материалов без URL
++
++            for mid, url, _, position, content_json in items_sorted:
++                vk_id = extract_vk_id(url)
++                if vk_id:
++                    new_title = find_title_in_html(body, vk_id)
++                    if not new_title:
++                        no_match.append((mid, url or "", course_uid))
++                        continue
++                    title_updates.append((mid, new_title))
++                else:
++                    # URL пустой — берём из html_links по порядку появления
++                    if empty_position_idx >= len(html_links):
++                        no_url_no_html.append((mid, course_uid))
++                        empty_position_idx += 1
++                        continue
++                    src_url, src_title = html_links[empty_position_idx]
++                    empty_position_idx += 1
++
++                    new_content = dict(content_json) if content_json else {}
++                    new_content["sources"] = [
++                        {
++                            "url": src_url,
++                            "type": "url",
++                            "quality": None,
++                            "file_path": None,
++                            "thumbnail_url": None,
++                            "duration_seconds": None,
++                            "telegram_file_id": None,
++                        }
++                    ]
++                    new_content.setdefault("default_source", 0)
++                    content_updates.append((mid, new_content, src_title))
++
++        print(f"Найдено новых заголовков (URL есть):     {len(title_updates)}")
++        print(f"Дополнение URL+title из HTML (URL пуст): {len(content_updates)}")
++        print(f"Пустой URL И ничего в HTML:              {len(no_url_no_html)}")
++        print(f"Без source_item:                         {len(no_source)}")
++        print(f"URL есть, в HTML нет:                    {len(no_match)}")
++        print()
++
++        # Сэмплы
++        print("--- Сэмпл title-only (id, title) ---")
++        for mid, title in title_updates[:10]:
++            print(f"  {mid}: {title!r}")
++        if content_updates:
++            print("\n--- Сэмпл content+title (id, url, title) ---")
++            for mid, cj, title in content_updates[:5]:
++                src_url = cj["sources"][0]["url"]
++                print(f"  {mid}: {src_url} -> {title!r}")
++        if no_match:
++            print(f"\n--- URL есть, нет в HTML (первые 5) ---")
++            for mid, url, cu in no_match[:5]:
++                print(f"  {mid}: url={url} course={cu}")
++        if no_url_no_html:
++            print(f"\n--- Пустой URL и в HTML ничего: {no_url_no_html[:5]}")
++
++        if not title_updates and not content_updates:
++            print("\nНечего обновлять.")
++            return 0
++
++        import json as _json
++
++        # Применить title-only
++        for mid, new_title in title_updates:
++            await db.execute(
++                text(
++                    "UPDATE materials SET title = :t, updated_at = now() "
++                    "WHERE id = :i AND title = :bad"
++                ),
++                {"t": new_title, "i": mid, "bad": BAD_TITLE},
++            )
++        # Применить content+title (URL+title для пустых sources)
++        for mid, new_content, new_title in content_updates:
++            await db.execute(
++                text(
++                    "UPDATE materials "
++                    "SET title = :t, content = CAST(:c AS jsonb), updated_at = now() "
++                    "WHERE id = :i AND title = :bad"
++                ),
++                {
++                    "t": new_title,
++                    "c": _json.dumps(new_content, ensure_ascii=False),
++                    "i": mid,
++                    "bad": BAD_TITLE,
++                },
++            )
++
++        # Верификация
++        still_bad = (
++            await db.execute(
++                text(
++                    "SELECT COUNT(*) FROM materials "
++                    "WHERE type='video' AND title = :bad"
++                ),
++                {"bad": BAD_TITLE},
++            )
++        ).scalar()
++        applied = len(title_updates) + len(content_updates)
++        print(f"\nПосле UPDATE: всё ещё с title='{BAD_TITLE}': {still_bad}")
++        print(f"Применено: {applied} (title-only={len(title_updates)} + "
++              f"content+title={len(content_updates)}); "
++              f"ожидаем still_bad={len(rows) - applied}")
++
++        if apply:
++            await db.commit()
++            print("\nCOMMIT — изменения сохранены.")
++        else:
++            await db.rollback()
++            print("\nROLLBACK — dry-run, изменения откатаны.")
++
++    return 0
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--apply", action="store_true", help="Выполнить COMMIT. Без флага — dry-run.")
++    args = ap.parse_args()
++    sys.exit(asyncio.run(main(apply=args.apply)))
