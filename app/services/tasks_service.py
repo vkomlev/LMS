@@ -431,3 +431,79 @@ class TasksService(BaseService[Tasks]):
         items = (await db.execute(list_stmt)).scalars().all()
         total = (await db.execute(count_stmt)).scalar() or 0
         return list(items), int(total)
+
+    async def reorder_tasks(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        task_orders: List[Dict[str, int]],
+    ) -> List[Tasks]:
+        """
+        Массовое изменение порядка заданий курса.
+
+        Зеркало ``MaterialsService.reorder_materials`` с расширенной валидацией:
+
+        - **404** — курс ``course_id`` не найден;
+        - **422** — обнаружены дубликаты ``task_id`` в теле запроса;
+        - **422** — обнаружены дубликаты ``order_position`` в теле запроса;
+        - **400** — ``task_id`` не принадлежит курсу ``course_id`` или не найден.
+
+        Partial reorder допустим: можно прислать порядок только для подмножества
+        заданий курса; остальные сохраняют свои текущие позиции.
+
+        Атомарность обеспечивает ``TasksRepository.reorder_tasks`` через
+        session-variable ``app.skip_task_order_trigger`` + bulk UPDATE + commit
+        в одной транзакции.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        if not task_orders:
+            return []
+
+        # 1. Курс существует
+        courses_service = CoursesService()
+        course = await courses_service.repo.get(db, course_id)
+        if not course:
+            raise DomainError(
+                detail=f"Курс с ID {course_id} не найден",
+                status_code=404,
+            )
+
+        # 2. Нет дубликатов task_id
+        task_ids = [item["task_id"] for item in task_orders]
+        if len(task_ids) != len(set(task_ids)):
+            duplicates = sorted({tid for tid in task_ids if task_ids.count(tid) > 1})
+            raise DomainError(
+                detail=f"Обнаружены дубликаты task_id в теле запроса: {duplicates}",
+                status_code=422,
+            )
+
+        # 3. Нет дубликатов order_position
+        positions = [item["order_position"] for item in task_orders]
+        if len(positions) != len(set(positions)):
+            duplicates = sorted({p for p in positions if positions.count(p) > 1})
+            raise DomainError(
+                detail=f"Обнаружены дубликаты order_position в теле запроса: {duplicates}",
+                status_code=422,
+            )
+
+        # 4. Все task_id принадлежат курсу
+        ids_in_course = await self.repo.list_ids_by_course(db, course_id)
+        for tid in task_ids:
+            if tid not in ids_in_course:
+                raise DomainError(
+                    detail=(
+                        f"Задание с ID {tid} не принадлежит курсу {course_id} "
+                        f"или не найдено"
+                    ),
+                    status_code=400,
+                )
+
+        # 5. Bulk UPDATE через repo (атомарный commit внутри)
+        try:
+            return await self.repo.reorder_tasks(db, course_id, task_orders)
+        except IntegrityError as e:
+            raise DomainError(
+                detail=f"Ошибка при изменении порядка заданий: {e!s}",
+                status_code=400,
+            )

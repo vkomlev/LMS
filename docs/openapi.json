@@ -6185,6 +6185,64 @@
         ]
       }
     },
+    "/api/v1/courses/{course_id}/tasks/reorder": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Изменить порядок заданий курса (bulk reorder)",
+        "description": "Массовое изменение порядка заданий курса.\n\nПринимает список ``(task_id, order_position)``; устанавливает позиции\nатомарно в одной транзакции с временно отключённым триггером\n``trg_set_task_order_position`` (через session-variable\n``app.skip_task_order_trigger``, см. docs/database-triggers-contract.md §15).\nВозвращает обновлённые задания, отсортированные по ``order_position``.\n\nЗеркальный endpoint ``POST /api/v1/courses/{course_id}/materials/reorder``.\nИспользуется веб-фронтом методиста для drag-and-drop переупорядочивания.\nTelegram-бот использует single-``PATCH /api/v1/tasks/{task_id}`` (фаза 2)\nс активным триггером.\n\nКоды ответа:\n- 200 — успех (включая пустой ``task_orders: []`` → ``updated=0``)\n- 400 — task_id не принадлежит курсу\n- 404 — курс не найден\n- 422 — дубликаты task_id или order_position в теле",
+        "operationId": "reorder_course_tasks_api_v1_courses__course_id__tasks_reorder_post",
+        "security": [
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskReorderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskReorderResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/find-by-external": {
       "post": {
         "tags": [
@@ -23996,6 +24054,47 @@
         "title": "TaskOption",
         "description": "Вариант ответа для задач с выбором (SC/MC/SA_COM)."
       },
+      "TaskOrderItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID задания"
+          },
+          "order_position": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Order Position",
+            "description": "Новая позиция в курсе"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "order_position"
+        ],
+        "title": "TaskOrderItem",
+        "description": "Элемент списка порядка заданий при reorder."
+      },
+      "TaskOrderRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "order_position": {
+            "type": "integer",
+            "title": "Order Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "order_position"
+        ],
+        "title": "TaskOrderRead",
+        "description": "Элемент ответа reorder: id задания и его новая позиция."
+      },
       "TaskRead": {
         "properties": {
           "id": {
@@ -24089,6 +24188,46 @@
         ],
         "title": "TaskRead",
         "description": "Схема чтения задания.\nLearning Engine V1, этап 5: hints_text, hints_video, has_hints из task_content."
+      },
+      "TaskReorderRequest": {
+        "properties": {
+          "task_orders": {
+            "items": {
+              "$ref": "#/components/schemas/TaskOrderItem"
+            },
+            "type": "array",
+            "title": "Task Orders",
+            "description": "Список пар (task_id, order_position) для установки нового порядка"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_orders"
+        ],
+        "title": "TaskReorderRequest",
+        "description": "Запрос на изменение порядка заданий курса."
+      },
+      "TaskReorderResponse": {
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Updated"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TaskOrderRead"
+            },
+            "type": "array",
+            "title": "Tasks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "updated"
+        ],
+        "title": "TaskReorderResponse",
+        "description": "Ответ на изменение порядка заданий."
       },
       "TaskResultCreate": {
         "properties": {

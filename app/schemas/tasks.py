@@ -120,6 +120,35 @@ class TaskRead(BaseModel):
             object.__setattr__(self, "has_hints", hh)
         return self
 
+# ---------- Bulk reorder (этап 1.8 / зеркало materials reorder) ----------
+
+
+class TaskOrderItem(BaseModel):
+    """Элемент списка порядка заданий при reorder."""
+    task_id: int = Field(..., description="ID задания")
+    order_position: int = Field(..., ge=1, description="Новая позиция в курсе")
+
+
+class TaskReorderRequest(BaseModel):
+    """Запрос на изменение порядка заданий курса."""
+    task_orders: List[TaskOrderItem] = Field(
+        ...,
+        description="Список пар (task_id, order_position) для установки нового порядка",
+    )
+
+
+class TaskOrderRead(BaseModel):
+    """Элемент ответа reorder: id задания и его новая позиция."""
+    id: int
+    order_position: int
+
+
+class TaskReorderResponse(BaseModel):
+    """Ответ на изменение порядка заданий."""
+    updated: int = Field(..., ge=0)
+    tasks: List[TaskOrderRead] = Field(default_factory=list)
+
+
 class TaskUpsertItem(BaseModel):
     """
     Один элемент для массового upsert'а задачи.
