@@ -12,15 +12,18 @@ from app.auth.current_user import CurrentUser
 from app.services.tasks_acl_service import assert_task_access
 from app.services.courses_acl_service import assert_course_access
 from app.schemas.tasks import (
-    TaskRead, 
-    TaskBulkUpsertRequest, 
-    TaskBulkUpsertResponse, 
-    TaskBulkUpsertResultItem, 
-    TaskValidateResponse, 
+    TaskRead,
+    TaskBulkUpsertRequest,
+    TaskBulkUpsertResponse,
+    TaskBulkUpsertResultItem,
+    TaskValidateResponse,
     TaskValidateRequest,
     TaskFindByExternalResponse,
     TaskFindByExternalItem,
     TaskFindByExternalRequest,
+    TaskReorderRequest,
+    TaskReorderResponse,
+    TaskOrderRead,
     GoogleSheetsImportRequest,
     GoogleSheetsImportResponse,
     GoogleSheetsImportError,
@@ -324,6 +327,62 @@ async def bulk_upsert_tasks_endpoint(
     ]
 
     return TaskBulkUpsertResponse(results=results)
+
+@router.post(
+    "/courses/{course_id}/tasks/reorder",
+    response_model=TaskReorderResponse,
+    summary="Изменить порядок заданий курса (bulk reorder)",
+)
+async def reorder_course_tasks(
+    course_id: int,
+    body: TaskReorderRequest = Body(...),
+    db: AsyncSession = Depends(get_db),
+) -> TaskReorderResponse:
+    """
+    Массовое изменение порядка заданий курса.
+
+    Принимает список ``(task_id, order_position)``; устанавливает позиции
+    атомарно в одной транзакции с временно отключённым триггером
+    ``trg_set_task_order_position`` (через session-variable
+    ``app.skip_task_order_trigger``, см. docs/database-triggers-contract.md §15).
+    Возвращает обновлённые задания, отсортированные по ``order_position``.
+
+    Зеркальный endpoint ``POST /api/v1/courses/{course_id}/materials/reorder``.
+    Используется веб-фронтом методиста для drag-and-drop переупорядочивания.
+    Telegram-бот использует single-``PATCH /api/v1/tasks/{task_id}`` (фаза 2)
+    с активным триггером.
+
+    Коды ответа:
+    - 200 — успех (включая пустой ``task_orders: []`` → ``updated=0``)
+    - 400 — task_id не принадлежит курсу
+    - 404 — курс не найден
+    - 422 — дубликаты task_id или order_position в теле
+    """
+    logger = logging.getLogger("api.tasks_extra")
+    task_orders = [
+        {"task_id": x.task_id, "order_position": x.order_position}
+        for x in body.task_orders
+    ]
+    try:
+        tasks = await tasks_service.reorder_tasks(db, course_id, task_orders)
+    except Exception as e:
+        logger.warning(
+            "reorder_tasks failed course_id=%s n=%s reason=%s",
+            course_id, len(task_orders), e,
+        )
+        raise
+    logger.info(
+        "reorder_tasks ok course_id=%s updated=%s",
+        course_id, len(tasks),
+    )
+    return TaskReorderResponse(
+        updated=len(tasks),
+        tasks=[
+            TaskOrderRead(id=t.id, order_position=t.order_position or 0)
+            for t in tasks
+        ],
+    )
+
 
 @router.post(
     "/tasks/find-by-external",
