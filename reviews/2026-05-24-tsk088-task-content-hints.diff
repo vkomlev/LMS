@@ -1,0 +1,264 @@
+﻿diff --git a/app/schemas/task_content.py b/app/schemas/task_content.py
+index 08a58c7..36f4e75 100644
+--- a/app/schemas/task_content.py
++++ b/app/schemas/task_content.py
+@@ -140,6 +140,29 @@ class TaskContent(BaseModel):
+         description="╨Т╨╜╨╡╤И╨╜╨╕╨╣ ╨║╨╛╨┤ ╨║╤Г╤А╤Б╨░ (courses.course_uid), ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╨╡╤В╤Б╤П ╨┤╨╗╤П ╨╕╨╝╨┐╨╛╤А╤В╨░.",
+     )
+ 
++    hints_text: List[str] = Field(
++        default_factory=list,
++        description=(
++            "╨в╨╡╨║╤Б╤В╨╛╨▓╤Л╨╡ ╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ ╨┤╨╗╤П ╨╖╨░╨┤╨░╨╜╨╕╤П. ╨б╨╛╤Е╤А╨░╨╜╤П╤О╤В╤Б╤П ╨▓ tasks.task_content "
++            "╨╕ ╨┐╨╛╨┤╨╜╨╕╨╝╨░╤О╤В╤Б╤П ╨▓ TaskRead.hints_text (╤Б╨╝. extract_hints_from_task_content)."
++        ),
++    )
++    hints_video: List[str] = Field(
++        default_factory=list,
++        description=(
++            "╨б╤Б╤Л╨╗╨║╨╕ ╨╜╨░ ╨▓╨╕╨┤╨╡╨╛-╨┐╨╛╨┤╤Б╨║╨░╨╖╨║╨╕ (VK/YouTube/etc) ╨┤╨╗╤П ╨╖╨░╨┤╨░╨╜╨╕╤П. ╨б╨╛╤Е╤А╨░╨╜╤П╤О╤В╤Б╤П "
++            "╨▓ tasks.task_content ╨╕ ╨┐╨╛╨┤╨╜╨╕╨╝╨░╤О╤В╤Б╤П ╨▓ TaskRead.hints_video."
++        ),
++    )
++    has_hints: bool = Field(
++        default=False,
++        description=(
++            "╨Ъ╨╡╤И╨╕╤А╨╛╨▓╨░╨╜╨╜╤Л╨╣ ╤Д╨╗╨░╨│ ╨╜╨░╨╗╨╕╤З╨╕╤П ╨┐╨╛╨┤╤Б╨║╨░╨╖╨╛╨║ (text ╨╕╨╗╨╕ video). ╨Т TaskRead "
++            "╨┐╨╡╤А╨╡╤Б╤З╨╕╤В╤Л╨▓╨░╨╡╤В╤Б╤П ╨┐╨╛ ╤Д╨░╨║╤В╤Г ╨╜╨░╨╗╨╕╤З╨╕╤П hints_text/hints_video; ╨▓ task_content "
++            "╤Е╤А╨░╨╜╨╕╤В╤Б╤П ╨┤╨╗╤П ╤Г╨┤╨╛╨▒╤Б╤В╨▓╨░ ╨▓╨╜╨╡╤И╨╜╨╕╤Е ╤З╨╕╤В╨░╤В╨╡╨╗╨╡╨╣."
++        ),
++    )
++
+     @model_validator(mode="after")
+     def validate_by_type(self) -> "TaskContent":
+         """
+diff --git a/tests/test_tsk088_task_content_hints_preserved.py b/tests/test_tsk088_task_content_hints_preserved.py
+new file mode 100644
+index 0000000..e06273e
+--- /dev/null
++++ b/tests/test_tsk088_task_content_hints_preserved.py
+@@ -0,0 +1,224 @@
++"""tsk-088: TaskContent schema ╨┤╨╛╨╗╨╢╨╡╨╜ ╤Б╨╛╤Е╤А╨░╨╜╤П╤В╤М hints_text/hints_video/has_hints.
++
++╨а╨╡╨│╤А╨╡╤Б╤Б╨╕╤П: ╨┤╨╛ ╤Д╨╕╨║╤Б╨░ Pydantic v2 default `extra='ignore'` silently ╨╛╤В╨▒╤А╨░╤Б╤Л╨▓╨░╨╗
++╨╜╨╡╨╕╨╖╨▓╨╡╤Б╤В╨╜╤Л╨╡ ╨┐╨╛╨╗╤П ╨┐╤А╨╕ `TaskContent.model_validate(...)`. ╨Т `tasks_service` ╤Н╤В╨╛
++╨┐╤А╨╕╨▓╨╛╨┤╨╕╨╗╨╛ ╨║ ╤В╨╛╨╝╤Г, ╤З╤В╨╛ `task_content_obj.model_dump()` ╨▓╨╛╨╖╨▓╤А╨░╤Й╨░╨╗ JSON ╨▒╨╡╨╖
++hints, ╨╕ `bulk_upsert` / `create` / `update` ╨╖╨░╨┐╨╕╤Б╤Л╨▓╨░╨╗╨╕ ╨▓ `tasks.task_content`
++╤Г╤А╨╡╨╖╨░╨╜╨╜╤Г╤О ╨▓╨╡╤А╤Б╨╕╤О тАФ VK-╤А╨░╨╖╨▒╨╛╤А╤Л ╨Т╨╕╨║╤В╨╛╤А╨░, ╨┐╤А╨╕╨▓╤П╨╖╨░╨╜╨╜╤Л╨╡ ╨║ pilot tasks tsk-004
++Phase 6.6, ╨╜╨╡ ╤Б╨╛╤Е╤А╨░╨╜╤П╨╗╨╕╤Б╤М ╨▓ LMS.
++
++Acceptance:
++- AC-1: TaskContent.model_validate/model_dump round-trip ╤Б╨╛╤Е╤А╨░╨╜╤П╨╡╤В hints.
++- AC-2: TaskContent ╨▒╨╡╨╖ hints тЖТ ╨┤╨╡╤Д╨╛╨╗╤В╤Л `[], [], False` (backward compat).
++- AC-4: bulk_upsert ╤Б hints_video тЖТ ╨╖╨░╨┤╨░╤З╨░ ╨▓ ╨С╨Ф ╨╕╨╝╨╡╨╡╤В hints_video ╨▓ jsonb.
++- AC-3: TaskRead.has_hints ╨║╨╛╤А╤А╨╡╨║╤В╨╜╨╛ derive ╨┐╨╛╤Б╨╗╨╡ round-trip ╤З╨╡╤А╨╡╨╖ ╤Б╨╡╤А╨▓╨╕╤Б.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++from app.core.config import Settings
++from app.schemas.task_content import TaskContent
++from app.schemas.tasks import TaskRead
++from app.services.tasks_service import TasksService
++
++
++_settings = Settings()
++
++
++# ---------- unit-tests (schema) ----------
++
++
++def test_task_content_preserves_hints_round_trip():
++    """AC-1: model_validate тЖТ model_dump ╤Б╨╛╤Е╤А╨░╨╜╤П╨╡╤В hints_text/hints_video/has_hints."""
++    payload: dict[str, Any] = {
++        "type": "SA",
++        "stem": "╨з╤В╨╛ ╨▓╤Л╨▓╨╡╨┤╨╡╤В print(1+1)?",
++        "hints_text": ["╨Я╨╛╨┤╤Г╨╝╨░╨╣ ╨╛ ╤Б╨╗╨╛╨╢╨╡╨╜╨╕╨╕"],
++        "hints_video": ["https://vk.com/video-1_2"],
++        "has_hints": True,
++    }
++    tc = TaskContent.model_validate(payload)
++    assert tc.hints_text == ["╨Я╨╛╨┤╤Г╨╝╨░╨╣ ╨╛ ╤Б╨╗╨╛╨╢╨╡╨╜╨╕╨╕"]
++    assert tc.hints_video == ["https://vk.com/video-1_2"]
++    assert tc.has_hints is True
++
++    dumped = tc.model_dump()
++    assert dumped["hints_text"] == ["╨Я╨╛╨┤╤Г╨╝╨░╨╣ ╨╛ ╤Б╨╗╨╛╨╢╨╡╨╜╨╕╨╕"]
++    assert dumped["hints_video"] == ["https://vk.com/video-1_2"]
++    assert dumped["has_hints"] is True
++
++
++def test_task_content_defaults_when_hints_absent():
++    """AC-2: backward compat тАФ ╨╖╨░╨┤╨░╤З╨░ ╨▒╨╡╨╖ hints ╨┐╨╛╨╗╤Г╤З╨░╨╡╤В ╨┤╨╡╤Д╨╛╨╗╤В╤Л."""
++    payload = {"type": "SA", "stem": "stem"}
++    tc = TaskContent.model_validate(payload)
++    assert tc.hints_text == []
++    assert tc.hints_video == []
++    assert tc.has_hints is False
++
++    dumped = tc.model_dump()
++    assert dumped["hints_text"] == []
++    assert dumped["hints_video"] == []
++    assert dumped["has_hints"] is False
++
++
++def test_task_content_preserves_only_video_hints():
++    """AC-4 (core): ╤В╨╛╨╗╤М╨║╨╛ hints_video (╨│╨╗╨░╨▓╨╜╤Л╨╣ ╨║╨╡╨╣╤Б tsk-004 Phase 6.6 pilot)."""
++    payload = {
++        "type": "SA",
++        "stem": "stem",
++        "hints_video": ["https://vk.com/video-220754053_456239998"],
++    }
++    tc = TaskContent.model_validate(payload)
++    dumped = tc.model_dump()
++    assert dumped["hints_video"] == ["https://vk.com/video-220754053_456239998"]
++    assert dumped["hints_text"] == []
++
++
++# ---------- integration: bulk_upsert e2e ----------
++
++
++_SOLUTION_RULES: dict[str, Any] = {
++    "type": "SA",
++    "accepted_answers": ["2"],
++    "max_score": 1,
++}
++
++
++@pytest_asyncio.fixture(scope="function", autouse=True)
++async def _cleanup_tsk088_course():
++    """`TasksService.bulk_upsert` ╨║╨╛╨╝╨╝╨╕╤В╨╕╤В тАФ ╨╜╤Г╨╢╨╡╨╜ ╨┐╨╛╤Б╤В-test cleanup."""
++    yield
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        async with AsyncSession(engine, expire_on_commit=False) as session:
++            async with session.begin():
++                await session.execute(
++                    text(
++                        "DELETE FROM tasks WHERE course_id IN ("
++                        "  SELECT id FROM courses WHERE title = 'test_tsk088'"
++                        ")"
++                    )
++                )
++                await session.execute(
++                    text("DELETE FROM courses WHERE title = 'test_tsk088'")
++                )
++    finally:
++        await engine.dispose()
++
++
++async def _new_course(db: AsyncSession) -> int:
++    row = (
++        await db.execute(
++            text(
++                """
++                INSERT INTO courses (title, description, access_level, is_required)
++                VALUES ('test_tsk088', 'test', 'self_guided', false)
++                RETURNING id
++                """
++            )
++        )
++    ).first()
++    await db.flush()
++    return int(row.id)
++
++
++@pytest.mark.asyncio
++async def test_bulk_upsert_preserves_hints_video_in_db(db: AsyncSession):
++    """AC-4: bulk_upsert ╤Б hints_video тЖТ SELECT ╨╕╨╖ tasks.task_content ╨╕╨╝╨╡╨╡╤В hints_video."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    items = [
++        {
++            "external_uid": "TSK088-1",
++            "course_id": course_id,
++            "difficulty_id": 1,
++            "task_content": {
++                "type": "SA",
++                "stem": "stem-088-1",
++                "hints_video": ["https://vk.com/video-220754053_456239998"],
++                "hints_text": ["╨Я╨╛╨┤╤Г╨╝╨░╨╣ ╨╛ ╤Б╨▓╨╛╨╣╤Б╤В╨▓╨░╤Е"],
++                "has_hints": True,
++            },
++            "solution_rules": _SOLUTION_RULES,
++            "max_score": 1,
++        }
++    ]
++    res = await service.bulk_upsert(db, items)
++    assert res[0][1] == "created"
++    new_id = res[0][2]
++
++    # ╨з╨╕╤В╨░╨╡╨╝ ╨╕╨╖ ╨С╨Ф ╨╜╨░╨┐╤А╤П╨╝╤Г╤О, ╤З╤В╨╛╨▒╤Л ╤Г╨▒╨╡╨┤╨╕╤В╤М╤Б╤П, ╤З╤В╨╛ hints ╨▓ jsonb ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╤Л
++    row = (
++        await db.execute(
++            text(
++                "SELECT task_content FROM tasks WHERE id = :tid"
++            ),
++            {"tid": new_id},
++        )
++    ).first()
++    tc = row.task_content
++    assert tc["hints_video"] == ["https://vk.com/video-220754053_456239998"]
++    assert tc["hints_text"] == ["╨Я╨╛╨┤╤Г╨╝╨░╨╣ ╨╛ ╤Б╨▓╨╛╨╣╤Б╤В╨▓╨░╤Е"]
++    assert tc["has_hints"] is True
++
++
++@pytest.mark.asyncio
++async def test_task_read_derives_has_hints_after_bulk_upsert(db: AsyncSession):
++    """AC-3: TaskRead.has_hints derive ╨║╨╛╤А╤А╨╡╨║╤В╨╜╨╛ ╨┐╨╛╤Б╨╗╨╡ round-trip ╤З╨╡╤А╨╡╨╖ ╤Б╨╡╤А╨▓╨╕╤Б."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    items = [
++        {
++            "external_uid": "TSK088-2",
++            "course_id": course_id,
++            "difficulty_id": 1,
++            "task_content": {
++                "type": "SA",
++                "stem": "stem-088-2",
++                "hints_video": ["https://vk.com/video-1_2"],
++            },
++            "solution_rules": _SOLUTION_RULES,
++            "max_score": 1,
++        }
++    ]
++    await service.bulk_upsert(db, items)
++
++    row = (
++        await db.execute(
++            text(
++                """
++                SELECT id, task_content, course_id, difficulty_id,
++                       solution_rules, external_uid, max_score, order_position
++                FROM tasks
++                WHERE external_uid = :uid
++                """
++            ),
++            {"uid": "TSK088-2"},
++        )
++    ).first()
++
++    read = TaskRead.model_validate(
++        {
++            "id": row.id,
++            "task_content": row.task_content,
++            "course_id": row.course_id,
++            "difficulty_id": row.difficulty_id,
++            "solution_rules": row.solution_rules,
++            "external_uid": row.external_uid,
++            "max_score": row.max_score,
++            "order_position": row.order_position,
++        }
++    )
++    assert read.hints_video == ["https://vk.com/video-1_2"]
++    assert read.hints_text == []
++    assert read.has_hints is True

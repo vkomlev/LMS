@@ -140,6 +140,29 @@ class TaskContent(BaseModel):
         description="Внешний код курса (courses.course_uid), используется для импорта.",
     )
 
+    hints_text: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Текстовые подсказки для задания. Сохраняются в tasks.task_content "
+            "и поднимаются в TaskRead.hints_text (см. extract_hints_from_task_content)."
+        ),
+    )
+    hints_video: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Ссылки на видео-подсказки (VK/YouTube/etc) для задания. Сохраняются "
+            "в tasks.task_content и поднимаются в TaskRead.hints_video."
+        ),
+    )
+    has_hints: bool = Field(
+        default=False,
+        description=(
+            "Кешированный флаг наличия подсказок (text или video). В TaskRead "
+            "пересчитывается по факту наличия hints_text/hints_video; в task_content "
+            "хранится для удобства внешних читателей."
+        ),
+    )
+
     @model_validator(mode="after")
     def validate_by_type(self) -> "TaskContent":
         """

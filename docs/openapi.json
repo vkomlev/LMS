@@ -23747,6 +23747,28 @@
             ],
             "title": "Course Uid",
             "description": "Внешний код курса (courses.course_uid), используется для импорта."
+          },
+          "hints_text": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hints Text",
+            "description": "Текстовые подсказки для задания. Сохраняются в tasks.task_content и поднимаются в TaskRead.hints_text (см. extract_hints_from_task_content)."
+          },
+          "hints_video": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Hints Video",
+            "description": "Ссылки на видео-подсказки (VK/YouTube/etc) для задания. Сохраняются в tasks.task_content и поднимаются в TaskRead.hints_video."
+          },
+          "has_hints": {
+            "type": "boolean",
+            "title": "Has Hints",
+            "description": "Кешированный флаг наличия подсказок (text или video). В TaskRead пересчитывается по факту наличия hints_text/hints_video; в task_content хранится для удобства внешних читателей.",
+            "default": false
           }
         },
         "type": "object",
