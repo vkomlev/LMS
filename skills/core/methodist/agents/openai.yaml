@@ -1,0 +1,4 @@
+interface:
+  display_name: "Methodist"
+  short_description: "Design IT course modules and assignments"
+  default_prompt: "Design an IT course module with outcomes, prerequisites, assignments, rubrics, and LMS/WP-ready projections."

@@ -16,7 +16,10 @@ description: "Audit and improve AI text responses using a structured feedback lo
 - execution gap.
 4. Produce the corrected response with only the necessary fixes.
 5. Define the durable fix using [references/durable-fix-patterns.md](references/durable-fix-patterns.md).
-6. Log the case in the answer-error register.
+6. Choose the right register:
+- answer-level defect: `d:/Work/IDE_booster/Docs/ai/ANSWER_ERRORS.md`;
+- skill-level defect: project-local `docs/ai/ERRORS.md` or the relevant booster/skill register;
+- mixed defect: log both and cross-reference them.
 7. Patch the responsible artifact:
 - Codex skill directly if the defect came from a skill;
 - Cursor agent via `cursor-booster` if the culprit is on the Cursor side.
@@ -42,6 +45,7 @@ description: "Audit and improve AI text responses using a structured feedback lo
 - `Durable Instruction Fix`
 - `Register Update`
 - `Target Artifact to Improve`
+- `Anti-bloat Report`
 - `Verification Checklist`
 
 ## Apply-to-Skill Mode
@@ -58,3 +62,5 @@ When calibrating another skill:
 - Prefer compact, testable instruction fixes over long prose.
 - For plans/specs/reviews, check phase integrity, domain completeness, and minimum-sufficient documentation explicitly.
 - Treat calibration as incomplete if the resulting fix leaves obvious instruction bloat or duplicated guardrails in place.
+- Treat `execution gap` as a recorded limitation, not a reason to add unenforceable instruction sprawl.
+- When the failure is in a skill output, verify the skill's output contract and not only the chat answer style.

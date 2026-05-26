@@ -1,6 +1,6 @@
 ---
 name: ai-orchestrator
-description: Orchestrate multi-agent execution across the booster setup using three work contours and three AI tiers (L/M/H), with project-aware routing, gates, and handoff artifacts. Use when planning or coordinating end-to-end task delivery across Cursor agents, Codex, and Claude.
+description: Orchestrate task execution in a Claude-only setup using three context levels (minimal/standard/full), with project-aware routing, gates, and handoff artifacts. Use when planning or coordinating end-to-end task delivery.
 ---
 
 # AI Orchestrator
@@ -19,10 +19,10 @@ Apply the booster-wide contract from [booster-runtime-contract.md](/d:/Work/IDE_
 1. Declare the orchestration mode (`standard` or `paranoid`) and keep execution posture explicit.
 2. Parse the request into objective, risk level, and affected projects.
 3. Select work contour and task type using [references/operating-model.md](references/operating-model.md).
-4. Route subtasks by tier:
-- Tier L -> Cursor agents
-- Tier M -> Codex
-- Tier H -> Claude
+4. Route subtasks by context level:
+   - `minimal` → executor-lite, formatting skills
+   - `standard` → spec-writer, change-plan-architect, tech-spec-composer
+   - `full` → ceo-review, eng-review, review-gate, architect-system-analyst
 5. For feature planning, redesign, or high-ambiguity product work, insert:
 - `product-review` when user value, acceptance, or scope justification must be pressure-tested;
 - `eng-review` when implementation boundaries, trust boundaries, rollback, or validation strategy must be pressure-tested.
@@ -121,7 +121,7 @@ Read [references/project-context.md](references/project-context.md) and include 
 - `Orchestration Mode`
 - `Execution Posture`
 - `Execution Topology`
-- `Tier Routing`
+- `Context Level Routing`
 - `Stage Plan`
 - `Handoffs and Artifacts`
 - `Quality Gates`

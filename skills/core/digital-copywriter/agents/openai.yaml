@@ -1,0 +1,4 @@
+interface:
+  display_name: "Digital Copywriter"
+  short_description: "Write human Russian digital content"
+  default_prompt: "Write publishable Russian digital content from the provided context with factual discipline and a human-quality check."

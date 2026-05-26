@@ -8,17 +8,20 @@ description: Prevent and fix text encoding issues (UTF-8 corruption, mojibake, m
 Use this skill whenever text files may be affected by encoding drift, including `reviews/*.md` and `reviews/*.diff`.
 
 ## Standard workflow
-1. Run `scripts/check_encoding.py` on target files (`docs` and `reviews`).
-2. If status is clean, proceed with edits.
-3. Save files as UTF-8 only.
-4. Run `scripts/check_encoding.py` again after edits.
-5. If mojibake is detected, do not continue with additional edits until recovered.
+1. Set explicit UTF-8 in the shell before reading or writing non-ASCII text.
+2. Run `scripts/check_encoding.py` on target files (`docs`, `reviews`, skills, rules, prompts).
+3. Classify each finding as `clean`, `BOM`, `mojibake`, or `mixed`.
+4. If status is clean/BOM, proceed with edits and save as UTF-8 without BOM unless a runtime requires BOM.
+5. Run `scripts/check_encoding.py` again after edits.
+6. If mojibake is detected, stop additional edits until recovered.
 
 ## Required safety rules
 - Treat UTF-8 as the only target encoding for docs and rules.
 - Do not use lossy recovery (`errors='ignore'`) as a final fix.
 - Prefer restore-from-last-good-state over speculative conversion.
 - For PowerShell pipelines, use UTF-8 output explicitly.
+- Do not trust terminal rendering for Cyrillic; verify bytes or hashes when parity matters.
+- For CLI Python on Windows, set `PYTHONUTF8=1` when scripts read/write non-ASCII files.
 
 ## PowerShell guidance
 Before bulk text operations:
@@ -54,3 +57,12 @@ Escalate to manual recovery when:
 - mixed encodings are present in one file,
 - automatic heuristics give ambiguous results,
 - critical docs/rules are affected across multiple files.
+
+## Recovery preference
+Use the last known good source first:
+
+1. `git log --all --oneline -- <file>`
+2. `git show <sha>:<file>` to inspect or restore clean bytes
+3. Re-apply intended edits on the clean base
+
+If there is no git history, create a backup before any conversion and verify restored text with another source or human-readable sample.

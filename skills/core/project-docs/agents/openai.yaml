@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Docs"
+  short_description: "Maintain AI and human project docs"
+  default_prompt: "Create or update two-layer project documentation for AI agents and human readers."

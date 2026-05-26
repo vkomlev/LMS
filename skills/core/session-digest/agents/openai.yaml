@@ -1,0 +1,4 @@
+interface:
+  display_name: "Session Digest"
+  short_description: "Summarize AI session history"
+  default_prompt: "Summarize local AI sessions for the requested period into a structured digest."

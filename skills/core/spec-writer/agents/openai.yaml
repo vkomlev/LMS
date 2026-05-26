@@ -1,0 +1,4 @@
+interface:
+  display_name: "Spec Writer"
+  short_description: "Turn vague requests into routed specs"
+  default_prompt: "Write an implementation-ready spec with context anchors, scope, acceptance criteria, risks, and skill routing."

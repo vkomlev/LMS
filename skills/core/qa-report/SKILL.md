@@ -33,19 +33,28 @@ It must not silently switch into fixing bugs. If remediation is needed, hand off
 3. Capture current-state test context:
 - environment and build or branch context;
 - prerequisites, data setup, feature flags, and dependencies;
+- Browser plugin availability, target URL, viewport/device class, and session/auth state when UI is involved;
+- project error-register prevention actions that must not regress;
 - what could not be tested and why.
-4. Execute reproducible checks:
+4. For browser-assisted QA, apply `Docs/ai-booster/browser-qa-runtime.md`:
+- reuse existing sessions when continuity is expected;
+- do not copy cookies, tokens, local storage, or auth headers into reports;
+- capture screenshot and DOM/route evidence according to the failure type;
+- record manual MFA, CAPTCHA, or credential handoff as a blocked or completed handoff step.
+5. Execute reproducible checks:
 - acceptance path walkthroughs;
+- local app smoke checklist for UI-backed flows;
 - regression checks for neighboring flows;
 - negative or edge-case checks where failure is plausible.
-5. For each issue, record:
+6. For each issue, record:
 - repro steps;
 - expected behavior;
 - observed behavior;
 - severity;
 - evidence.
-6. In `paranoid` mode, treat missing evidence, untestable critical paths, and ambiguous operator behavior as blockers rather than soft notes.
-7. End with a QA decision summary and the next safe step:
+7. For external write paths, distinguish mock evidence from gated live smoke evidence or operator verification replacement.
+8. In `paranoid` mode, treat missing evidence, untestable critical paths, and ambiguous operator behavior as blockers rather than soft notes.
+9. End with a QA decision summary and the next safe step:
 - fix now;
 - route to `qa-fix`;
 - escalate for investigation;
@@ -56,6 +65,7 @@ It must not silently switch into fixing bugs. If remediation is needed, hand off
 - `Execution Posture`
 - `Scope`
 - `Environment`
+- `Browser Runtime Context`
 - `Current-State Assessment`
 - `Coverage Summary`
 - `Blocking Issues`
@@ -66,16 +76,26 @@ It must not silently switch into fixing bugs. If remediation is needed, hand off
 - `Observed Behavior`
 - `Severity Assessment`
 - `Evidence`
+- `Screenshots or DOM Evidence`
+- `Manual Handoff Status`
+- `Known Error Regression Check`
 - `Recommended Next Step`
 
 ## Decision Rules
 - `FAIL`-equivalent QA outcome if any `S1` remains unresolved.
 - `FAIL`-equivalent QA outcome if a release-critical or operator-critical path could not be tested.
 - `FAIL`-equivalent QA outcome if observed behavior contradicts expected behavior on a primary path.
+- `FAIL`-equivalent QA outcome if a known project error-register prevention action regresses.
+- `FAIL`-equivalent QA outcome if external write paths have only mocks and no gated live smoke or operator replacement.
+- `FAIL`-equivalent QA outcome if a browser-critical path lacks both an authoritative UI signal and reproducible evidence.
+- `auth-blocked` outcome if MFA, CAPTCHA, credentials, or third-party approval blocks progress after safe preparation.
 - In `paranoid` mode, unresolved ambiguity on a critical path is treated as blocking.
 
 ## Quality Rules
 - Prefer reproducible evidence over general impressions.
 - Separate confirmed defects from hypotheses.
 - Every issue must include environment, repro, expected, observed, severity, and concrete next step.
+- For UI defects, include the strongest relevant evidence: screenshot for visual state, DOM/route/toast/status for authoritative behavior, or both when they answer different questions.
+- Never store or repeat browser cookies, tokens, passwords, OTPs, or local storage secrets.
 - Keep the report focused on behavior and acceptance risk, not architecture commentary.
+- Do not treat file opens, headers, or row counts as sufficient when the operator's business question still requires manual reconciliation.

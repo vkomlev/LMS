@@ -1,0 +1,4 @@
+interface:
+  display_name: "Executor Pro"
+  short_description: "Execute high-risk plans with gates"
+  default_prompt: "Execute this approved implementation plan with strict scope, validation gates, rollback notes, and review handoff."

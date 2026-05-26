@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tech Spec Composer"
+  short_description: "Create executor-ready technical tasks"
+  default_prompt: "Compose a deterministic technical assignment with context, boundaries, executor markers, acceptance checks, and handoff artifacts."

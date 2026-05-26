@@ -10,9 +10,11 @@ description: "Implement and debug FastAPI backend changes with PostgreSQL MCP-aw
 2. Restate objective, scope, and acceptance criteria.
 3. Inspect current API/service/repo code path before editing.
 4. For DB-aware work, run read-only MCP schema/data checks from [references/mcp-postgres-playbook.md](references/mcp-postgres-playbook.md).
-5. Implement minimal scoped changes (`api` -> `services` -> `repos` layering).
-6. Run smoke/test checks and analyze logs using `scripts/log_triage.py` and [references/log-debug-playbook.md](references/log-debug-playbook.md).
-7. Produce review-ready artifacts with PASS/FAIL prerequisites.
+5. For public API, auth, DB-write, or external-write changes, apply [references/api-contract-guards.md](references/api-contract-guards.md).
+6. Implement minimal scoped changes (`api` -> `services` -> `repos` layering).
+7. Run smoke/test checks and analyze logs using `scripts/log_triage.py` and [references/log-debug-playbook.md](references/log-debug-playbook.md).
+8. Verify every test file or edge case named in the source spec.
+9. Produce review-ready artifacts with PASS/FAIL prerequisites.
 
 ## Input Contract
 - `Objective`
@@ -24,8 +26,10 @@ description: "Implement and debug FastAPI backend changes with PostgreSQL MCP-aw
 - `Implementation Plan`
 - `Code Changes`
 - `DB Findings (MCP)`
+- `API Contract Guard Results`
 - `Log Diagnosis`
 - `Validation Results`
+- `Alembic Migration and Rollback Note` (if schema changed)
 - `Risks and Follow-ups`
 
 ## Optional Packaging For Cursor
@@ -38,3 +42,6 @@ Use [references/cursor-subagents-and-plugin.md](references/cursor-subagents-and-
 - For schema changes, require Alembic migration + rollback note.
 - Do not close bugfix loop without log evidence and endpoint smoke confirmation.
 - Keep changes minimal and mapped to acceptance criteria.
+- Keep routers thin, business logic in services, and SQL/data access in repositories.
+- For user-owned resources, prove ownership checks and negative tests.
+- For external write paths, mock-only coverage is not enough without a gated live smoke or explicit operator replacement.

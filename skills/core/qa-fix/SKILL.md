@@ -39,22 +39,32 @@ It should consume reproducible QA findings first, then apply the smallest safe f
 3. Establish the current-state baseline:
 - affected flows or modules;
 - baseline test or smoke results;
+- Browser plugin availability, target URL, viewport/device class, and session/auth state when UI is involved;
 - blocked or untestable paths;
-- current repository risk.
-4. For each issue, classify:
+- current repository risk;
+- known project error-register prevention actions relevant to the defect.
+4. For browser-assisted fixes, apply `Docs/ai-booster/browser-qa-runtime.md`:
+- preserve the original browser repro path;
+- reuse existing sessions when continuity is expected;
+- do not copy cookies, tokens, local storage, or auth headers into reports;
+- use manual handoff only for MFA, CAPTCHA, credentials, external approval, or risky side effects.
+5. For each issue, classify:
 - `fix now`;
 - `defer by chosen scope`;
 - `needs manual investigation`.
-5. Apply the smallest safe fix first:
+6. Apply the smallest safe fix first:
 - no opportunistic refactor;
 - no unrelated cleanup;
 - no silent contract changes without evidence.
-6. After each fix, run focused verification first, then broader regression checks where relevant.
-7. In `paranoid` mode:
+7. After each fix, run focused verification first, then broader regression checks where relevant.
+8. Re-run the exact original repro path before marking an issue fixed.
+9. When a UI fix changes behavior or layout, reload the local app and capture before/after browser evidence using screenshot, DOM/route/toast/status, or console error evidence as appropriate.
+10. For external write paths, require gated live smoke evidence or an explicit operator verification replacement before claiming release readiness.
+11. In `paranoid` mode:
 - treat missing verification evidence as unresolved;
 - prefer fewer, stronger fixes over a broad sweep;
 - escalate instead of guessing on schema, security, auth, or ambiguous side effects.
-8. End with a structured QA remediation result:
+12. End with a structured QA remediation result:
 - fixed;
 - deferred by scope;
 - still blocked;
@@ -67,22 +77,34 @@ It should consume reproducible QA findings first, then apply the smallest safe f
 - `Consumed QA Artifacts`
 - `Scope`
 - `Environment`
+- `Browser Runtime Context`
 - `Current-State Assessment`
 - `Fixed Issues`
 - `Deferred Issues`
 - `Needs Manual Investigation`
 - `Validation Results`
+- `Screenshots or DOM Evidence`
+- `Manual Handoff Status`
+- `Original Repro Recheck`
+- `Known Error Regression Check`
 - `Residual Risks`
 - `Recommended Next Step`
 
 ## Decision Rules
 - Do not claim success without post-fix verification.
 - Do not mark a critical path as fixed if the exact repro path was not rechecked.
+- Do not mark external write paths release-ready on mock evidence alone.
+- Do not mark a browser-critical path fixed without an authoritative post-fix UI signal and reproducible evidence.
+- Do not request secrets in chat when the user can complete MFA, CAPTCHA, or credential entry directly in the browser.
+- Do not close a known recurring defect without checking the relevant project error-register prevention action.
 - Defer instead of guessing when the safe fix direction is unclear.
 - In `paranoid` mode, unresolved ambiguity on a critical path remains blocking.
 
 ## Quality Rules
 - Prefer existing QA artifacts over re-discovering the same issue from scratch.
 - Every fixed issue must include the original behavior, the fix direction, and the verification result.
+- For UI fixes, include before/after evidence when visual state, route state, toast/status, or interaction behavior changed.
+- Never store or repeat browser cookies, tokens, passwords, OTPs, or local storage secrets.
 - Keep fixes minimal and scoped to the observed defect.
 - If a defect cannot be safely fixed, say so explicitly and route it to investigation or gate failure.
+- When 3 or more issues share one root cause, fix the common cause first instead of applying scattered local patches.

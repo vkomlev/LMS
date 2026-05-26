@@ -1,0 +1,4 @@
+interface:
+  display_name: "Travel Copywriter"
+  short_description: "Write grounded Russian travel content"
+  default_prompt: "Write grounded Russian travel content for the requested format using only supplied or verified facts."

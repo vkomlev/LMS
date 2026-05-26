@@ -1,4 +1,4 @@
 interface:
   display_name: "Response Quality Coach"
-  short_description: "Audit and improve AI text responses"
-  default_prompt: "Review this response quality, classify defects, and propose a durable fix."
+  short_description: "Diagnose and fix AI response defects"
+  default_prompt: "Audit this response, classify defects, run 5 Whys, propose a durable fix, and update the right register."

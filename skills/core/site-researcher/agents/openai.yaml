@@ -1,0 +1,4 @@
+interface:
+  display_name: "Site Researcher"
+  short_description: "Research websites for parsing and SEO"
+  default_prompt: "Research this website and produce evidence-backed mapping, DOM, SEO, competitor, or API findings."

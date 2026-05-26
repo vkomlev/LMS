@@ -64,6 +64,8 @@ It should consume the strongest available review artifacts first, especially out
 - correctness and behavioral regressions;
 - data and migration safety;
 - security and secret handling;
+- public API contract sync and hardcoded URL drift;
+- cross-project contract/memory sync for CB/LMS/SPW/TG_LMS changes;
 - QA evidence and blocked acceptance paths;
 - release readiness, rollback credibility, and operator readiness;
 - docs/config/runtime drift;
@@ -83,6 +85,8 @@ It should consume the strongest available review artifacts first, especially out
 - `Blocking Issues`
 - `Non-Blocking Improvements`
 - `Docs/Config/Runtime Drift Assessment`
+- `Public API Contract Assessment`
+- `Cross-Project Sync Assessment`
 - `Required Fixes`
 - `Required Tests`
 - `Required Validation Commands`
@@ -97,6 +101,9 @@ It should consume the strongest available review artifacts first, especially out
 - `FAIL` if QA reports blocked or untested acceptance paths that are required for integration or release confidence.
 - `FAIL` if release artifacts show `no-go`, non-credible rollback, or unready operator path for the planned release.
 - `FAIL` if docs/config/runtime drift makes deployment, operator flow, or repository understanding unsafe.
+- `FAIL` if a public API URL/method/schema/status changed without same-change spec/OpenAPI/docs backsync.
+- `FAIL` if cross-project CB/LMS/SPW/TG_LMS behavior changed without the relevant contract/state/changelog update or an explicit not-applicable reason.
+- `FAIL` if an external write path has only mock evidence and no gated live smoke or operator verification replacement.
 - `FAIL` if an upstream review already says `FAIL` and the blocking issues remain unresolved.
 - In `paranoid` mode, unresolved ambiguity is itself a blocking issue.
 
@@ -105,3 +112,4 @@ It should consume the strongest available review artifacts first, especially out
 - Consume existing review artifacts instead of rewriting a second full review when the first one is already strong.
 - Every finding must include: impacted file/path, current-state risk, why it matters, and specific fix direction.
 - Keep the gate decision compact and binary: it is a go/no-go layer, not a brainstorming layer.
+- Check the project error register for repeated prevention actions before returning `PASS`.

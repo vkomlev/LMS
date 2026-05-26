@@ -1,0 +1,4 @@
+interface:
+  display_name: "Context Auditor"
+  short_description: "Detect scope drift and lost requirements"
+  default_prompt: "Audit this artifact against original goals, decisions, constraints, and known prevention actions."

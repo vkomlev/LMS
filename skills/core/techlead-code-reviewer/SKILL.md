@@ -21,6 +21,7 @@ Review for:
 - correctness and regressions;
 - architecture and layering;
 - tests, observability, security, and rollback;
+- public API contract sync, hardcoded URLs, IDOR, and external write-path evidence;
 - critical UX/navigation correctness;
 - spec clarity and date/time safety;
 - phase integrity, domain completeness, and operator-critical acceptance paths;
@@ -29,8 +30,9 @@ Review for:
 ## Workflow
 1. Declare the review mode (`standard` or `paranoid`) and keep `report-only` posture explicit.
 2. Read the changed files and identify affected runtime paths, docs, config, and operator touchpoints.
-3. Apply the baseline checklist from [references/review-checklist.md](references/review-checklist.md).
-4. Apply domain checklists only where relevant:
+3. Read the project error register when present and check whether current changes repeat a known prevention action.
+4. Apply the baseline checklist from [references/review-checklist.md](references/review-checklist.md).
+5. Apply domain checklists only where relevant:
 - [references/architecture-checks.md](references/architecture-checks.md)
 - [references/migration-checks.md](references/migration-checks.md)
 - [references/testing-checks.md](references/testing-checks.md)
@@ -39,15 +41,15 @@ Review for:
 - [references/ux-critical-checks.md](references/ux-critical-checks.md)
 - [references/spec-ambiguity-checks.md](references/spec-ambiguity-checks.md)
 - [references/datetime-type-safety-checks.md](references/datetime-type-safety-checks.md)
-5. In `paranoid` mode, assume hidden breakage is more likely than the diff suggests and actively search for missing guards, stale contracts, unsafe defaults, and rollback gaps.
-6. Classify the review horizon explicitly:
+6. In `paranoid` mode, assume hidden breakage is more likely than the diff suggests and actively search for missing guards, stale contracts, unsafe defaults, and rollback gaps.
+7. Classify the review horizon explicitly:
 - `microstep implemented`
 - `current repository integration-safe`
 - `phase complete`
-7. Classify findings by severity and impact.
-8. If findings indicate Cursor-agent mistakes, log them via [references/cursor-agent-error-loop.md](references/cursor-agent-error-loop.md).
-9. Produce `PASS` or `FAIL`, required fixes, and reproducible validation commands.
-10. If the same phase is repeatedly `FAIL`, end with either explicit escalation or a tight next-iteration checklist.
+8. Classify findings by severity and impact.
+9. If findings indicate Cursor-agent mistakes, log them via [references/cursor-agent-error-loop.md](references/cursor-agent-error-loop.md).
+10. Produce `PASS` or `FAIL`, required fixes, and reproducible validation commands.
+11. If the same phase is repeatedly `FAIL`, end with either explicit escalation or a tight next-iteration checklist.
 
 For migration/cutover/closeout reviews, explicitly distinguish:
 - `entrypoint migrated`
@@ -68,6 +70,7 @@ Do not treat operator CLI relocation or orchestration wrapping as full migration
 - `Test Adequacy Assessment`
 - `Observability Assessment`
 - `Security Assessment`
+- `Public API Contract Assessment`
 - `UX/UI Critical Assessment`
 - `Spec Ambiguity Assessment`
 - `Date/Time Type Safety Assessment`
@@ -90,6 +93,9 @@ Do not treat operator CLI relocation or orchestration wrapping as full migration
 - `FAIL` if the phase business goal, domain prerequisites, or operator-critical acceptance chain are not proven.
 - `FAIL` for migration/closeout claims if legacy/external runtime still performs active execution or writes for a contour claimed as migrated, frozen, or read-only.
 - `FAIL` if docs/config/runtime drift makes the operator path, deployment path, or repository understanding unsafe.
+- `FAIL` if public API contract changes lack same-change docs/spec/OpenAPI backsync.
+- `FAIL` if external write paths are validated only by mocks without gated live smoke or explicit operator replacement.
+- `FAIL` if known project error-register prevention actions are violated again.
 - `FAIL` if critical UX controls, rollback, tests, or specification clarity are insufficient.
 - `FAIL` if significant Cursor-agent mistakes were found but not logged.
 - `PASS` only when blocking issues are resolved and validation is reproducible.

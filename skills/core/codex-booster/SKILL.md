@@ -11,10 +11,12 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - `configure`
 - `rollout`
 - `audit`
+- `optimize`
+- `import-claude`
 2. Determine the source case:
 - default source is the current chat if the user did not name another case;
 - extract the concrete incident, affected artifact, and expected behavior.
-3. Load fleet context from [references/fleet-map.md](references/fleet-map.md) and routing context from [references/skill-catalog.md](references/skill-catalog.md).
+3. Load fleet context from [references/fleet-map.md](references/fleet-map.md), routing context from [references/skill-catalog.md](references/skill-catalog.md), and shared booster invariants from [references/booster-shared.md](references/booster-shared.md).
 4. Before editing any skill, classify ownership and runtime:
 - canonical source-of-truth;
 - required mirrors/runtime copies;
@@ -59,8 +61,22 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - confirm UTF-8 bytes survived the operation;
 - compare canonical vs mirror copies by hash/bytes, not only terminal text;
 - fail the task if replacement `?` characters were introduced where the canonical source contains Cyrillic text.
-13. For rollout, use [references/rollout-ops.md](references/rollout-ops.md) and do dry-run first.
-14. Finish with deterministic commands, expected artifacts, and verification.
+13. Enforce strict UTF-8 as the default storage format for skill, rule, prompt, markdown, and similar text artifacts:
+- prefer UTF-8 without BOM unless a runtime explicitly requires BOM;
+- do not keep `cp1251` or other legacy encodings as a convenience workaround;
+- if a legacy encoded file is touched, normalize it to UTF-8 unless a documented runtime constraint forbids that conversion.
+14. In `optimize` mode:
+- load the current skill/agent instructions;
+- identify duplicated, overly specific, or incident-bound wording;
+- compress them into the smallest reusable invariant set that preserves behavior;
+- prefer shorter `SKILL.md` plus stronger references/checklists over instruction sprawl.
+15. In `import-claude` mode:
+- use [references/claude-import-checklist.md](references/claude-import-checklist.md);
+- compare live Claude coverage from `C:/Users/user/.claude` against source and Codex runtime before editing;
+- import platform-neutral invariants and adapt platform-specific mechanics through [references/codex-project-binding.md](references/codex-project-binding.md);
+- update source-of-truth first, then package runtime and project mirrors.
+16. For rollout, use [references/rollout-ops.md](references/rollout-ops.md) and do dry-run first.
+17. Finish with deterministic commands, expected artifacts, and verification.
 
 ## Input Contract
 - `Mode`
@@ -83,6 +99,7 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - `Runtime Placement Check`
 - `Runtime Boundary Check`
 - `Mirror Parity Check`
+- `Claude Practice Import Map`
 - `Post-Edit Skill Index Check`
 - `Cursor Error Loop Actions`
 - `Register Update`
@@ -98,3 +115,6 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - Treat skill/agent improvement as incomplete if repeated rules were not normalized and unnecessary instruction growth was left in place.
 - Treat any CLI-driven non-ASCII file update as incomplete until encoding was validated by explicit UTF-8 and byte-level parity checks.
 - Treat "missing Codex/Claude buttons" as unresolved until extension activation and workspace `state.vscdb` view visibility were both checked.
+- Treat UTF-8 as the required steady-state encoding for touched text artifacts unless a documented runtime constraint says otherwise.
+- In `optimize` mode, prefer behavioral equivalence with fewer instructions over verbatim preservation of duplicated wording.
+- In `import-claude` mode, import invariants and verified workflow patterns; do not copy Claude-only permissions, command syntax, hooks, or runtime assumptions without a Codex mapping.

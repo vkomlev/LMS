@@ -1,0 +1,4 @@
+interface:
+  display_name: "Encoding Guard"
+  short_description: "Protect UTF-8 text artifacts"
+  default_prompt: "Check and protect these text artifacts from encoding drift, mojibake, and lossy recovery."

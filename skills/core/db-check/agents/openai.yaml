@@ -1,0 +1,4 @@
+interface:
+  display_name: "DB Check"
+  short_description: "Validate database state safely"
+  default_prompt: "Run safe database checks for schema, invariants, risks, and review-ready evidence."

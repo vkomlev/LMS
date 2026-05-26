@@ -1,0 +1,4 @@
+interface:
+  display_name: "SMM Specialist"
+  short_description: "Plan TG/VK strategy and content"
+  default_prompt: "Create a TG/VK social strategy, content plan, warmup chain, or attraction plan with copywriter-ready briefs."
