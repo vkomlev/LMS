@@ -23771,6 +23771,7 @@
             "default": false
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "type",
@@ -26757,7 +26758,7 @@
               }
             ],
             "title": "Column Mapping",
-            "description": "Кастомный маппинг колонок таблицы на поля задачи. Если не указан, используется автоматический маппинг по стандартным названиям. Формат: {'поле_задачи': 'название_колонки_в_таблице'}. Доступные поля: external_uid, type, stem, options, correct_answer, max_score, course_uid, code, title, prompt, input_link, accepted_answers",
+            "description": "Кастомный маппинг колонок таблицы на поля задачи. Если не указан, используется автоматический маппинг по стандартным названиям. Формат: {'поле_задачи': 'название_колонки_в_таблице'}. Доступные поля: external_uid, type, stem, options, correct_answer, max_score, course_uid, code, title, prompt, task_content_json, input_link, accepted_answers",
             "examples": [
               {
                 "correct_answer": "Правильный ответ",

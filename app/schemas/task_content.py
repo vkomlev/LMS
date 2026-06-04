@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA"]
@@ -68,6 +68,8 @@ class TaskContent(BaseModel):
 
     Описывает то, что видит ученик: формулировка, подсказки, варианты, теги и т.п.
     """
+
+    model_config = ConfigDict(extra="allow")
 
     type: TaskType = Field(
         ...,
@@ -162,6 +164,20 @@ class TaskContent(BaseModel):
             "хранится для удобства внешних читателей."
         ),
     )
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _empty_title_to_none(cls, value: object) -> object:
+        """Пустую или пробельную строку названия привести к None.
+
+        Часть импортов (D4-конвейер ContentBackbone: kompege/yandex/polyakov/
+        sdamgia) присылает title="", из-за чего фронт SPW (tc.title ?? "Задача
+        #N") не подставляет автоподпись и задание выглядит безымянным.
+        Нормализуем на границе LMS, чтобы хранить единообразный null.
+        """
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     @model_validator(mode="after")
     def validate_by_type(self) -> "TaskContent":
