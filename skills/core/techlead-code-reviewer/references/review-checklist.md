@@ -30,6 +30,13 @@
 - Is any runtime-critical change present in code but missing from docs/config, or vice versa?
 - If generated or mirrored artifacts exist, were they kept in sync?
 
+## Repository Hygiene
+- Do commit messages follow the project's declared convention?
+- Are required spec/review/release artifacts tracked in the reviewed change?
+- Are temporary debug scripts, probes, caches, or local-only files left in the working tree?
+- Is there unrelated dirty drift that must be excluded before integration?
+- Are hygiene findings classified as `S3` unless they affect reproducibility, release contents, or the integration boundary?
+
 ## Phase Integrity Check
 - Is there a source-of-truth document for stage names and boundaries?
 - Does the review separate `microstep implemented`, `current repository integration-safe`, and `phase complete`?

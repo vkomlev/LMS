@@ -25,11 +25,12 @@ Review for:
 - critical UX/navigation correctness;
 - spec clarity and date/time safety;
 - phase integrity, domain completeness, and operator-critical acceptance paths;
-- docs/config/runtime drift that can make the repository or operator path misleading.
+- docs/config/runtime drift that can make the repository or operator path misleading;
+- repository hygiene that can pollute the reviewed integration: commit-message policy, missing required artifacts, temporary debug files, and unrelated dirty drift.
 
 ## Workflow
 1. Declare the review mode (`standard` or `paranoid`) and keep `report-only` posture explicit.
-2. Read the changed files and identify affected runtime paths, docs, config, and operator touchpoints.
+2. Read the changed files and identify affected runtime paths, docs, config, operator touchpoints, commit range/messages, untracked files, and unrelated dirty files.
 3. Read the project error register when present and check whether current changes repeat a known prevention action.
 4. Apply the baseline checklist from [references/review-checklist.md](references/review-checklist.md).
 5. Apply domain checklists only where relevant:
@@ -75,6 +76,7 @@ Do not treat operator CLI relocation or orchestration wrapping as full migration
 - `Spec Ambiguity Assessment`
 - `Date/Time Type Safety Assessment`
 - `Docs/Config/Runtime Drift Assessment`
+- `Repository Hygiene Assessment`
 - `Required Fixes`
 - `Required Validation Commands`
 - `Residual Risks`
@@ -93,12 +95,14 @@ Do not treat operator CLI relocation or orchestration wrapping as full migration
 - `FAIL` if the phase business goal, domain prerequisites, or operator-critical acceptance chain are not proven.
 - `FAIL` for migration/closeout claims if legacy/external runtime still performs active execution or writes for a contour claimed as migrated, frozen, or read-only.
 - `FAIL` if docs/config/runtime drift makes the operator path, deployment path, or repository understanding unsafe.
+- `FAIL` if a required spec/review/release artifact is missing from the reviewed change, or if unrelated dirty drift would be included in integration.
 - `FAIL` if public API contract changes lack same-change docs/spec/OpenAPI backsync.
 - `FAIL` if external write paths are validated only by mocks without gated live smoke or explicit operator replacement.
 - `FAIL` if known project error-register prevention actions are violated again.
 - `FAIL` if critical UX controls, rollback, tests, or specification clarity are insufficient.
 - `FAIL` if significant Cursor-agent mistakes were found but not logged.
 - `PASS` only when blocking issues are resolved and validation is reproducible.
+- Treat commit-message convention misses, temporary debug scripts, and unrelated dirty files as `S3` non-blocking findings unless they affect reproducibility, release contents, or the reviewed integration boundary.
 
 ## Quality Rules
 - Use Russian by default unless the user asked for another language.
@@ -106,3 +110,5 @@ Do not treat operator CLI relocation or orchestration wrapping as full migration
 - Keep the review defect-focused; avoid style-only commentary.
 - Prefer current-state evidence over roadmap intent.
 - Prefer one strong review artifact over bloated review paperwork.
+- Surface `S3` repository hygiene findings explicitly so `review-gate` and the weekly skill-improvement loop can consume them.
+- Check commit subjects against [git-commit-rules.md](/d:/Work/IDE_booster/Docs/ai-booster/git-commit-rules.md).

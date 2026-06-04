@@ -77,6 +77,7 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - update source-of-truth first, then package runtime and project mirrors.
 16. For rollout, use [references/rollout-ops.md](references/rollout-ops.md) and do dry-run first.
 17. Finish with deterministic commands, expected artifacts, and verification.
+18. For unattended weekly skill improvements, use [references/booster-shared.md](references/booster-shared.md) and stage edits through `scripts/weekly-skill-maintenance.py`; never write automated improvements directly into canonical skills.
 
 ## Input Contract
 - `Mode`

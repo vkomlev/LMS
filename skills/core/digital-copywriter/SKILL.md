@@ -18,7 +18,13 @@ If format or goal is missing, infer conservatively from the request; ask only wh
 1. Load available context:
 - user prompt and current thread;
 - supplied draft, digest, strategy, or SMM brief;
-- `D:/Work/ContentFactory/brand/*` and relevant `references/*` when the project exists.
+- `D:/Work/ContentFactory/docs/ai/CODEX_PROJECT.md` when the project exists;
+- `D:/Work/ContentFactory/brand/voice-guide.md` and `brand/glossary.md`;
+- `D:/Work/ContentFactory/references/subjects/victor-voice.md`;
+- the format template under `D:/Work/ContentFactory/templates/`;
+- the platform reference under `D:/Work/ContentFactory/references/platforms/` for TG or VK;
+- `D:/Work/ContentFactory/references/subjects/ege-informatika.md` for any EGE-related text;
+- relevant `D:/Work/IT_Businessman/docs/v2/` source material for the AI entrepreneur course or `it-writer` mode.
 2. Identify audience, platform, goal, facts, constraints, CTA, and forbidden claims.
 3. Mark missing business-critical facts as `[уточнить]`; do not fabricate numbers, cases, prices, dates, or credentials.
 4. Draft in the requested format with natural rhythm and concrete scenes.
@@ -41,4 +47,5 @@ If format or goal is missing, infer conservatively from the request; ask only wh
 - Prefer concrete details, varied sentence length, and a human point of view.
 - Keep platform norms: TG can be more direct; VK needs clearer context for colder readers.
 - If source context is too thin for a strong text, produce a useful draft with `[уточнить]`, not a confident fiction.
-
+- For outreach messages, also load `D:/Work/ContentFactory/templates/social/tg-outreach.md` and the applicable campaign brief.
+- For EGE texts, do not reconstruct exam structure or cohort timing from memory.

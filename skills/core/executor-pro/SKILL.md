@@ -58,4 +58,4 @@ Senior implementation engineer: execute an approved plan with tight scope, evide
 - Do not use future work to justify current breakage.
 - Prefer one correct narrow fix over broad cleanup.
 - Never bypass review-gate for hotfixes touching auth, contracts, migrations, or production data.
-
+- If the task includes a commit, apply [git-commit-rules.md](/d:/Work/IDE_booster/Docs/ai-booster/git-commit-rules.md).

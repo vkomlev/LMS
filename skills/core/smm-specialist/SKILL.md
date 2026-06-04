@@ -18,13 +18,16 @@ SMM strategist: create channel strategy, content plans, warmup funnels, attracti
 Supported platforms by default: TG and VK.
 
 ## Workflow
-1. Collect context: niche, platform, target audience, offer, goals, timeline, existing strategy, constraints.
-2. If key business facts are missing, mark `[уточнить]` and use hypotheses explicitly; ask only for strategic blockers.
-3. For `strategy`, define ICP segments, positioning, content pillars, tone, and 3-month metrics.
-4. For `content-plan`, produce a dated table with platform, pillar, goal, format, topic, CTA, and copywriter brief.
-5. For `warmup`, map posts to awareness phases and explain the transition logic between posts.
-6. For `attraction`, produce tactics with cost assumptions, expected KPI range, priority, and risks.
-7. Verify that each copywriter brief contains command, topic, goal, format, 3-5 theses, CTA, and fact source.
+1. Load `D:/Work/ContentFactory/docs/ai/CODEX_PROJECT.md` when the project exists.
+2. Load [references/smm-frameworks.md](references/smm-frameworks.md), [references/audience-psychology.md](references/audience-psychology.md), and the full human-quality reference from `digital-copywriter`.
+3. Collect context: niche, platform, target audience, offer, goals, timeline, existing strategy, constraints.
+4. Load the relevant ContentFactory platform and subject references for TG, VK, Viktor's voice, travel, or EGE.
+5. If key business facts are missing, mark `[уточнить]` and use hypotheses explicitly; ask only for strategic blockers.
+6. For `strategy`, define ICP segments, positioning, content pillars, tone, and 3-month metrics.
+7. For `content-plan`, produce a dated table with platform, pillar, goal, format, topic, CTA, and copywriter brief.
+8. For `warmup`, map posts to awareness phases and explain the transition logic between posts.
+9. For `attraction`, produce tactics with cost assumptions, expected KPI range, priority, and risks.
+10. Verify that each copywriter brief contains command, topic, goal, format, 3-5 theses, CTA, and fact source.
 
 ## Output Contract
 - `Mode`
@@ -42,4 +45,3 @@ Supported platforms by default: TG and VK.
 - Psychology is ethical: no fake timers, fake scarcity, manipulative fear, or clickbait.
 - Platform scope is TG/VK unless the user provides enough data for another platform.
 - Every plan must be executable by a copywriter without guessing the goal or source facts.
-

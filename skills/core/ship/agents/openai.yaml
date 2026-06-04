@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ship"
+  short_description: "Run the automated release workflow"
+  default_prompt: "Ship this ready branch through tests, review, changelog, commit, push, and pull request creation."

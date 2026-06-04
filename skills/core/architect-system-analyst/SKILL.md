@@ -33,6 +33,7 @@ Apply the booster-wide contract from [booster-runtime-contract.md](/d:/Work/IDE_
 - what is intentionally not introduced.
 7. Produce the delivery shape:
 - short phases with exit criteria;
+- concrete responsible skill for each implementation phase;
 - rollback/compatibility notes;
 - validation and observability plan.
 8. Add compact review-ready snapshots:
@@ -71,3 +72,4 @@ Apply the booster-wide contract from [booster-runtime-contract.md](/d:/Work/IDE_
 - Keep both architecture and documentation minimal.
 - Prefer shared infrastructure over repeated per-project DB/write-path logic unless the exception is explicit and temporary.
 - Every phase must have measurable exit criteria and a rollback note.
+- Every implementation phase must name a concrete responsible skill; missing skill ownership or placeholder `TBD`/`unassigned` is a defective handoff.

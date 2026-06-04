@@ -23,6 +23,8 @@ It should consume the strongest available review artifacts first, especially out
 1. Declare the gate mode (`standard` or `paranoid`) and keep `report-only` posture explicit.
 2. Read the current-state evidence:
 - changed files and affected runtime paths;
+- commit range and commit messages when the project defines a commit-message policy;
+- untracked files, expected review/spec artifacts, temporary debug scripts, and unrelated dirty files;
 - relevant review artifacts, if they already exist;
 - validation commands and observed results.
 3. If a `techlead-code-reviewer` artifact exists, explicitly consume these fields from it:
@@ -69,6 +71,7 @@ It should consume the strongest available review artifacts first, especially out
 - QA evidence and blocked acceptance paths;
 - release readiness, rollback credibility, and operator readiness;
 - docs/config/runtime drift;
+- repository hygiene: commit-message policy, missing expected artifacts, temporary debug files, and unrelated working-tree drift;
 - test adequacy and validation coverage;
 - maintainability only where it changes release safety.
 8. In `paranoid` mode, assume missing evidence is unsafe until proven otherwise.
@@ -87,6 +90,7 @@ It should consume the strongest available review artifacts first, especially out
 - `Docs/Config/Runtime Drift Assessment`
 - `Public API Contract Assessment`
 - `Cross-Project Sync Assessment`
+- `Repository Hygiene Assessment`
 - `Required Fixes`
 - `Required Tests`
 - `Required Validation Commands`
@@ -101,11 +105,14 @@ It should consume the strongest available review artifacts first, especially out
 - `FAIL` if QA reports blocked or untested acceptance paths that are required for integration or release confidence.
 - `FAIL` if release artifacts show `no-go`, non-credible rollback, or unready operator path for the planned release.
 - `FAIL` if docs/config/runtime drift makes deployment, operator flow, or repository understanding unsafe.
+- `FAIL` if a required spec/review/release artifact is missing from the reviewed change, or if unrelated dirty drift would be included in the integration.
 - `FAIL` if a public API URL/method/schema/status changed without same-change spec/OpenAPI/docs backsync.
 - `FAIL` if cross-project CB/LMS/SPW/TG_LMS behavior changed without the relevant contract/state/changelog update or an explicit not-applicable reason.
 - `FAIL` if an external write path has only mock evidence and no gated live smoke or operator verification replacement.
 - `FAIL` if an upstream review already says `FAIL` and the blocking issues remain unresolved.
 - In `paranoid` mode, unresolved ambiguity is itself a blocking issue.
+- Treat commit-message convention misses, temporary debug files, and unrelated dirty files as `S3` non-blocking findings unless they affect reproducibility, release contents, or the reviewed integration boundary.
+- Check commit subjects against [git-commit-rules.md](/d:/Work/IDE_booster/Docs/ai-booster/git-commit-rules.md).
 
 ## Quality Rules
 - Prefer current-state evidence over intended follow-up work.
@@ -113,3 +120,4 @@ It should consume the strongest available review artifacts first, especially out
 - Every finding must include: impacted file/path, current-state risk, why it matters, and specific fix direction.
 - Keep the gate decision compact and binary: it is a go/no-go layer, not a brainstorming layer.
 - Check the project error register for repeated prevention actions before returning `PASS`.
+- Surface repository hygiene findings explicitly even when they are non-blocking, so they can enter the weekly skill-improvement loop.

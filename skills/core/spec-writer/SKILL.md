@@ -11,7 +11,7 @@ description: Convert ambiguous requests into an implementation-ready specificati
 3. Define in-scope and out-of-scope items.
 4. List explicit constraints (tech, security, timeline, dependencies).
 5. Convert the request into numbered implementation steps.
-6. Assign one responsible skill to each implementation step.
+6. Assign one concrete responsible skill to each implementation step; use `manual` only with an explicit reason and blocking handoff.
 7. Define measurable acceptance criteria.
 8. Add risks and mitigation per risk.
 9. Produce a short execution checklist.
@@ -32,5 +32,5 @@ description: Convert ambiguous requests into an implementation-ready specificati
 - Avoid vague words (fast, robust, better) without metrics.
 - Make each acceptance criterion testable.
 - Prefer short, deterministic steps over broad guidance.
-- A spec without `Skill Routing` is incomplete.
+- A spec without `Skill Routing`, with any implementation step lacking a responsible skill, or with placeholder ownership such as `TBD`/`unassigned` is defective and incomplete.
 - Do not invent context when a local file, project memory, or cross-project contract can be checked.

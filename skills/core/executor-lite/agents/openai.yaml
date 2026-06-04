@@ -1,0 +1,4 @@
+interface:
+  display_name: "Executor Lite"
+  short_description: "Execute narrow routine changes"
+  default_prompt: "Execute this narrow routine change with minimal scope and focused validation."

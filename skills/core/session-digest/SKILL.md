@@ -20,18 +20,19 @@ Default to `today all` when the user does not specify a range.
 - Codex: `C:/Users/user/.codex/sessions`, `C:/Users/user/.codex/archived_sessions`;
 - Claude: `C:/Users/user/.claude/projects`;
 - project memory files when present.
-3. Filter by mtime first, then by event timestamps where the format supports it.
-4. Extract signal:
+3. For Claude JSONL imports, load [references/claude-jsonl-format.md](references/claude-jsonl-format.md). Treat it as Claude-only parsing guidance; do not assume Codex sessions use the same event schema.
+4. Filter by mtime first, then by event timestamps where the format supports it.
+5. Extract signal:
 - user tasks;
 - assistant summaries;
 - tool actions;
 - changed files;
 - validation commands;
 - outcomes and blockers.
-5. Cluster related prompts into task themes. Do not over-split tiny follow-ups.
-6. Redact secrets, tokens, credentials, and private keys.
-7. Produce a markdown digest plus a YAML block.
-8. Save only when the target output directory exists or the user asked for a saved artifact; otherwise return the digest in chat.
+6. Cluster related prompts into task themes. Do not over-split tiny follow-ups.
+7. Redact secrets, tokens, credentials, and private keys.
+8. Produce a markdown digest plus a YAML block.
+9. Save only when the target output directory exists or the user asked for a saved artifact; otherwise return the digest in chat.
 
 ## Output Contract
 - `Digest`
@@ -52,4 +53,3 @@ Default to `today all` when the user does not specify a range.
 - For large ranges, summarize by clusters and avoid dumping raw logs.
 - Treat session stores as read-only.
 - Write output as UTF-8.
-

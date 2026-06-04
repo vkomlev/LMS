@@ -27,8 +27,13 @@ Before closing an improvement:
 3. Move checklists with 3 or more items into `references/*.md`.
 4. Check neighboring skills before adding a new rule.
 5. Remove obsolete wording made redundant by the new invariant.
+6. Put reusable rules in this shared root before adding any skill-local wording.
 
 Prefer compact invariants over incident-specific exception lists.
+
+For unattended weekly improvements, stage changes through
+`scripts/weekly-skill-maintenance.py`. Never write automated improvements
+directly into canonical skills. The pre-write gate must pass before rollout.
 
 ## Ownership And Runtime
 
@@ -59,3 +64,22 @@ Any claim about latest Codex, OpenAI, Cursor, or Claude capabilities must includ
 - GA vs preview/experimental status;
 - a local fallback when the capability is unavailable.
 
+## Operator Communication
+
+Apply [operator-handoff-rules.md](operator-handoff-rules.md) in every Codex session:
+
+- work autonomously unless operator action is truly required or explicitly requested;
+- continue independent work when one step is blocked;
+- when operator action is unavoidable, provide a short step-by-step instruction;
+- write operator-facing messages in clear Russian, keeping literal commands, file names, program names, and error codes unchanged.
+
+## Commit Discipline
+
+Apply [git-commit-rules.md](/d:/Work/IDE_booster/Docs/ai-booster/git-commit-rules.md)
+whenever a commit may be created, even if no execution skill was invoked.
+
+- Use a Russian imperative subject in the form `<type>: <description>`.
+- Inspect staged files and diff before committing.
+- Keep one coherent change per commit; exclude secrets, temporary files, and unrelated drift.
+- Run relevant checks before committing and require `review-gate PASS` before integration to `main/master`.
+- Never rewrite history or force-push without explicit operator instruction.
