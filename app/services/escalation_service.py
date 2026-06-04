@@ -5,9 +5,11 @@ ESCALATION_TIMEOUT_HOURS → push методисту через `methodist_notif
 
 Multi-worker safety: APScheduler работает в каждом gunicorn-worker'е
 независимо. Чтобы избежать дубликата tick'а используется PG advisory lock
-(`pg_try_advisory_lock`) — non-blocking, безопасный по shutdown'ам.
-Только один worker за tick делает реальную работу; остальные мгновенно
-отступают.
+уровня транзакции (`pg_try_advisory_xact_lock`) — non-blocking, безопасный
+по shutdown'ам. Lock освобождается автоматически при commit/rollback/обрыве
+соединения, поэтому утечка в пул соединений невозможна (ручной unlock не
+нужен). Только один worker за tick делает реальную работу; остальные
+мгновенно отступают.
 
 Схема развёртывания:
 - Pre-deploy: убедиться что в `.env` есть REVIEW_PASS_THRESHOLD_RATIO,
@@ -33,7 +35,7 @@ from app.services import methodist_notify_service
 
 logger = logging.getLogger("app.escalation")
 
-# Произвольный 64-bit ключ для pg_try_advisory_lock. Зафиксирован в коде +
+# Произвольный 64-bit ключ для pg_try_advisory_xact_lock. Зафиксирован в коде +
 # задокументирован — не должен пересекаться с другими advisory locks
 # в проекте (на 2026-05-04 их нет).
 _ESCALATION_LOCK_KEY = 0x59365453  # ascii "Y6TS"
@@ -50,81 +52,76 @@ async def escalation_cron_tick() -> dict:
     summary = {"locked": False, "candidates": 0, "escalated": 0}
 
     async with async_session_factory() as db:
-        # Try advisory lock (non-blocking). Один worker — один tick.
+        # Transaction-scoped advisory lock (non-blocking): один worker — один tick.
+        # xact-lock освобождается автоматически при commit/rollback/обрыве
+        # соединения, поэтому утечка lock'а в пул соединений невозможна
+        # (в отличие от session-level pg_try_advisory_lock + ручной unlock).
         got_row = await db.execute(
-            text("SELECT pg_try_advisory_lock(:k) AS locked"),
+            text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
             {"k": _ESCALATION_LOCK_KEY},
         )
         got = bool(got_row.scalar())
         if not got:
-            logger.debug("escalation_cron_tick: advisory lock taken — skip")
+            logger.debug("escalation_cron_tick: advisory lock занят — skip")
             return summary
         summary["locked"] = True
 
-        try:
-            # Найти кандидатов: pending TA/SA_COM, timeout, ещё не escalated.
-            cutoff = datetime.now(timezone.utc)
-            res = await db.execute(
-                text(
-                    """
-                    SELECT tr.id, tr.task_id, tr.user_id, t.course_id, tr.submitted_at
-                    FROM task_results tr
-                    JOIN tasks t ON t.id = tr.task_id
-                    WHERE tr.checked_at IS NULL
-                      AND t.task_content->>'type' IN ('SA_COM','TA')
-                      AND tr.submitted_at < (now() - (:h || ' hours')::interval)
-                      AND (
-                          tr.metrics IS NULL
-                          OR (
-                              jsonb_typeof(tr.metrics) = 'object'
-                              AND NOT (tr.metrics ? 'escalated_at')
-                          )
+        # Найти кандидатов: pending TA/SA_COM, timeout, ещё не escalated.
+        cutoff = datetime.now(timezone.utc)
+        res = await db.execute(
+            text(
+                """
+                SELECT tr.id, tr.task_id, tr.user_id, t.course_id, tr.submitted_at
+                FROM task_results tr
+                JOIN tasks t ON t.id = tr.task_id
+                WHERE tr.checked_at IS NULL
+                  AND t.task_content->>'type' IN ('SA_COM','TA')
+                  AND tr.submitted_at < (now() - (:h || ' hours')::interval)
+                  AND (
+                      tr.metrics IS NULL
+                      OR (
+                          jsonb_typeof(tr.metrics) = 'object'
+                          AND NOT (tr.metrics ? 'escalated_at')
                       )
-                    ORDER BY tr.submitted_at ASC
-                    LIMIT 100
-                    """
-                ),
-                {"h": str(timeout_hours)},
-            )
-            rows = res.fetchall()
-            summary["candidates"] = len(rows)
+                  )
+                ORDER BY tr.submitted_at ASC
+                LIMIT 100
+                """
+            ),
+            {"h": str(timeout_hours)},
+        )
+        rows = res.fetchall()
+        summary["candidates"] = len(rows)
 
-            for row in rows:
-                rid, task_id, user_id, course_id, submitted_at = row
-                try:
-                    n = await methodist_notify_service.escalate_pending_timeout(
-                        db,
-                        result_id=int(rid),
-                        task_id=int(task_id),
-                        student_id=int(user_id),
-                        course_id=int(course_id) if course_id is not None else None,
-                        submitted_at=submitted_at,
-                        timeout_hours=timeout_hours,
-                        rate_limit_per_day=rate_limit_per_day,
-                    )
-                    if n > 0:
-                        summary["escalated"] += 1
-                except Exception:
-                    logger.exception(
-                        "escalation_cron_tick: failed for result_id=%s", rid
-                    )
-                    # Не валим весь tick — продолжаем для остальных кандидатов
+        for row in rows:
+            rid, task_id, user_id, course_id, submitted_at = row
+            try:
+                n = await methodist_notify_service.escalate_pending_timeout(
+                    db,
+                    result_id=int(rid),
+                    task_id=int(task_id),
+                    student_id=int(user_id),
+                    course_id=int(course_id) if course_id is not None else None,
+                    submitted_at=submitted_at,
+                    timeout_hours=timeout_hours,
+                    rate_limit_per_day=rate_limit_per_day,
+                )
+                if n > 0:
+                    summary["escalated"] += 1
+            except Exception:
+                logger.exception(
+                    "escalation_cron_tick: failed for result_id=%s", rid
+                )
+                # Не валим весь tick — продолжаем для остальных кандидатов
 
-            await db.commit()
-            logger.info(
-                "escalation_cron_tick done at=%s candidates=%s escalated=%s",
-                cutoff.isoformat(),
-                summary["candidates"],
-                summary["escalated"],
-            )
-        finally:
-            # Освободить advisory lock — даже если raise (хотя мы ловим
-            # exceptions выше; финальный raise свидетельствует о баге).
-            await db.execute(
-                text("SELECT pg_advisory_unlock(:k)"),
-                {"k": _ESCALATION_LOCK_KEY},
-            )
-            await db.commit()
+        # commit освобождает transaction-scoped advisory lock
+        await db.commit()
+        logger.info(
+            "escalation_cron_tick done at=%s candidates=%s escalated=%s",
+            cutoff.isoformat(),
+            summary["candidates"],
+            summary["escalated"],
+        )
 
     return summary
 
