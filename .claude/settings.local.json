@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "mcp__learn_public_db__query",
-      "mcp__content_backbone_db__query"
+      "mcp__content_backbone_db__query",
+      "Bash(cp \"C:/Users/user/.claude/CLAUDE.md\" \"C:/Users/user/.claude/skills/claude-booster/references/backups/global-CLAUDE.md-2026-05-20.md\" 2>&1 && echo OK)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\user\\.claude"
     ]
   }
 }
