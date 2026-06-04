@@ -8,6 +8,7 @@ correct option_id='A').
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any
 from uuid import uuid4
@@ -17,9 +18,9 @@ import pytest_asyncio
 from sqlalchemy import text
 
 
-_DEMO_COURSE_UID = "wp:rabota-so-strokami-v-python"
-_DEMO_TASK_ID_SC = 151
-_DEMO_TASK_EXTERNAL_UID_SC = "wp:task:komlev:rabota-so-strokami-v-python:cq:0:0"
+_DEMO_COURSE_UID = "pytest:y5-public-demo"
+_DEMO_TASK_ID_SC = 0
+_DEMO_TASK_EXTERNAL_UID_SC = "pytest:y5-public-demo:sc"
 _CORRECT_OPTION_ID = "A"
 _INCORRECT_OPTION_ID = "B"
 
@@ -55,6 +56,67 @@ async def _reset_y5_rate_limit_keys():
         yield
     finally:
         await redis.aclose()
+
+
+@pytest_asyncio.fixture(autouse=True, scope="function")
+async def _seed_y5_public_demo(db):
+    """Создать автономный demo-seed вместо зависимости от наполнения dev-БД."""
+    global _DEMO_TASK_ID_SC
+
+    difficulty_id = (
+        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
+    ).scalar_one()
+    course_id = (
+        await db.execute(
+            text(
+                "INSERT INTO courses (title, access_level, course_uid, is_public_demo) "
+                "VALUES ('pytest Y5 public demo', 'self_guided', :uid, TRUE) "
+                "RETURNING id"
+            ),
+            {"uid": _DEMO_COURSE_UID},
+        )
+    ).scalar_one()
+    task_content = {
+        "type": "SC",
+        "stem": "Выберите правильный вариант.",
+        "options": [
+            {"id": _CORRECT_OPTION_ID, "text": "Правильный вариант"},
+            {"id": _INCORRECT_OPTION_ID, "text": "Неправильный вариант"},
+        ],
+    }
+    solution_rules = {
+        "max_score": 1,
+        "correct_options": [_CORRECT_OPTION_ID],
+    }
+    _DEMO_TASK_ID_SC = int(
+        (
+            await db.execute(
+                text(
+                    "INSERT INTO tasks "
+                    "(external_uid, max_score, task_content, course_id, difficulty_id, solution_rules) "
+                    "VALUES (:uid, 1, CAST(:task_content AS jsonb), :course_id, :difficulty_id, "
+                    "CAST(:solution_rules AS jsonb)) "
+                    "RETURNING id"
+                ),
+                {
+                    "uid": _DEMO_TASK_EXTERNAL_UID_SC,
+                    "task_content": json.dumps(task_content, ensure_ascii=False),
+                    "course_id": course_id,
+                    "difficulty_id": difficulty_id,
+                    "solution_rules": json.dumps(solution_rules),
+                },
+            )
+        ).scalar_one()
+    )
+    await db.commit()
+    try:
+        yield
+    finally:
+        await db.execute(
+            text("DELETE FROM courses WHERE course_uid = :uid"),
+            {"uid": _DEMO_COURSE_UID},
+        )
+        await db.commit()
 
 
 # ─── helpers ────────────────────────────────────────────────────────────────

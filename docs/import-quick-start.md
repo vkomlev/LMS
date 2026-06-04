@@ -97,3 +97,15 @@ A: Вариант 1 | B: Вариант 2 | C: Вариант 3
 ## Полная документация
 
 См. [import-api-documentation.md](./import-api-documentation.md)
+
+## Extended task content
+
+Add the optional `task_content_json` column when a task needs images,
+attachments, multiple hints, or future `task_content` fields:
+
+```json
+{"hints_video":["https://vk.com/video/A"],"stem_images":["https://cdn.example/graph.png"]}
+```
+
+The JSON object is merged over the ordinary columns. Invalid JSON is reported
+for that row only; the remaining rows continue importing.

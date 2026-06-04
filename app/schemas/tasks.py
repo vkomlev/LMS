@@ -279,7 +279,7 @@ class GoogleSheetsImportRequest(BaseModel):
             "Если не указан, используется автоматический маппинг по стандартным названиям. "
             "Формат: {'поле_задачи': 'название_колонки_в_таблице'}. "
             "Доступные поля: external_uid, type, stem, options, correct_answer, max_score, "
-            "course_uid, code, title, prompt, input_link, accepted_answers"
+            "course_uid, code, title, prompt, task_content_json, input_link, accepted_answers"
         ),
         examples=[
             {

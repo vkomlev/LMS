@@ -1,0 +1,24 @@
+Review diff manifest for LMS import task_content_json extensions
+Date: 2026-06-02
+
+LMS files:
+- CHANGELOG.md
+- app/api/v1/tasks_extra.py
+- app/schemas/task_content.py
+- app/schemas/tasks.py
+- app/services/sheets_parser_service.py
+- docs/import-api-documentation.md
+- docs/import-quick-start.md
+- docs/openapi.json
+- tests/test_tasks_import_task_content_json.py
+
+ContentBackbone mirror files:
+- D:/Work/ContentBackbone/docs/cross-project/CHANGELOG.md
+- D:/Work/ContentBackbone/docs/cross-project/contracts/lms-api.md
+
+Review artifacts:
+- reviews/evidence/2026-06-02-import-task-content-ext-pytest.log
+- reviews/evidence/2026-06-02-import-task-content-ext-smoke.json
+- reviews/evidence/2026-06-02-import-task-content-ext-db-verify.sql
+- reviews/rollback_import_task_content_ext_2026-06-02.md
+

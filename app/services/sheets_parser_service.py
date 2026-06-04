@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import logging
 from typing import Dict, List, Optional, Tuple, Any
@@ -115,6 +116,7 @@ class SheetsParserService:
         external_uid = self._get_field(row, column_mapping, "external_uid", required=True)
         
         # Парсим тип задачи
+        assert task_type is not None  # required=True raises before this point.
         task_type_upper = task_type.upper().strip()
         if task_type_upper not in ("SC", "MC", "SA", "SA_COM", "TA"):
             raise DomainError(
@@ -150,7 +152,7 @@ class SheetsParserService:
             prompt = self._get_field(row, column_mapping, "prompt", required=False)
             if prompt:
                 task_content_data["prompt"] = prompt
-        
+
         # Парсим варианты ответа для SC/MC
         if task_type_parsed in ("SC", "MC"):
             options = self._parse_options(row, column_mapping)
@@ -169,6 +171,27 @@ class SheetsParserService:
                 # Добавляем ссылку в начало stem
                 task_content_data["stem"] = f"[{input_label}: {input_link}]\n\n{stem}"
         
+        task_content_json = self._get_field(
+            row,
+            column_mapping,
+            "task_content_json",
+            required=False,
+        )
+        if task_content_json:
+            try:
+                task_content_extra = json.loads(task_content_json)
+            except json.JSONDecodeError as exc:
+                raise DomainError(
+                    detail=f"task_content_json_invalid: {exc.msg}",
+                    status_code=400,
+                ) from exc
+            if not isinstance(task_content_extra, dict):
+                raise DomainError(
+                    detail="task_content_json_not_object",
+                    status_code=400,
+                )
+            task_content_data = {**task_content_data, **task_content_extra}
+
         task_content = TaskContent.model_validate(task_content_data)
         
         # Создаем SolutionRules
@@ -221,6 +244,7 @@ class SheetsParserService:
             "code": "code",
             "title": "title",
             "prompt": "prompt",
+            "task_content_json": "task_content_json",
             "options": "options",
             "correct_answer": "correct_answer",
             "max_score": "max_score",

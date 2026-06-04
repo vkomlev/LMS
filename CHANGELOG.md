@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2026-06-02 - Add task_content_json passthrough to task import
+
+- Added optional `task_content_json` Google Sheets column with shallow merge semantics.
+- Preserved unknown `TaskContent` keys for images, attachments, and future extensions.
+- Kept invalid JSON isolated to its source row.
+
 ## 2026-04-23 — Реорганизация документации
 
 **Для разработчика и AI-агента:**

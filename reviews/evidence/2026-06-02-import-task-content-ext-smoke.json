@@ -1,0 +1,60 @@
+{
+  "date": "2026-06-02",
+  "safe_live_google_read": {
+    "result": "PASS",
+    "rows": 20,
+    "headers_include_task_content_json": true
+  },
+  "live_http_dry_run": {
+    "result": "PASS",
+    "status": 200,
+    "imported": 18,
+    "updated": 0,
+    "total_rows": 19,
+    "errors": [
+      {
+        "row_index": 3,
+        "external_uid": "TEST-SC-003",
+        "error": "task_content_json_invalid: Expecting value"
+      }
+    ]
+  },
+  "live_http_apply": {
+    "result": "PASS",
+    "status": 200,
+    "imported": 0,
+    "updated": 18,
+    "total_rows": 19,
+    "errors": [
+      {
+        "row_index": 3,
+        "external_uid": "TEST-SC-003",
+        "error": "task_content_json_invalid: Expecting value"
+      }
+    ]
+  },
+  "db_verify": {
+    "result": "PASS",
+    "rows": [
+      {
+        "external_uid": "TEST-SC-001",
+        "stem_images": null,
+        "hints_video": []
+      },
+      {
+        "external_uid": "TEST-SC-002",
+        "stem_images": [
+          "graph.png"
+        ],
+        "hints_video": [
+          "url"
+        ]
+      },
+      {
+        "external_uid": "TEST-SC-003",
+        "stem_images": null,
+        "hints_video": null
+      }
+    ]
+  }
+}

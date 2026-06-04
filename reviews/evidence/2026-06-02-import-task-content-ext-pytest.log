@@ -1,0 +1,57 @@
+LMS import task_content_json validation evidence
+Date: 2026-06-02
+
+PASS: .venv\Scripts\python.exe -m pytest tests\test_tasks_import_task_content_json.py -q
+Result: 10 passed, 4 warnings in 1.21s
+
+PASS: .venv\Scripts\python.exe -m pytest tests\ -k "import" -v
+Result: 10 passed, 414 deselected, 4 warnings in 6.55s
+
+PASS: .venv\Scripts\python.exe -m pytest tests\test_tsk088_task_content_hints_preserved.py tests\test_hints_stage5.py -q
+Result: 11 passed, 4 warnings in 3.59s
+
+PASS: .venv\Scripts\python.exe -m compileall -q app\services\sheets_parser_service.py app\schemas\task_content.py app\schemas\tasks.py app\api\v1\tasks_extra.py tests\test_tasks_import_task_content_json.py
+
+PASS: git diff --check for task files and ContentBackbone mirrors
+
+UNAVAILABLE: .venv\Scripts\python.exe -m mypy ...
+Reason: mypy is not installed in the local virtual environment.
+
+BASELINE FAIL: python -m mypy --explicit-package-bases app\services\sheets_parser_service.py app\schemas\task_content.py app\schemas\tasks.py app\api\v1\tasks_extra.py
+Result: 41 errors in 14 files (checked 4 source files).
+The system Python environment can run mypy but does not contain all project
+dependencies. Reported errors include missing fastapi/starlette/googleapiclient
+imports and existing repository typing debt. One existing parser error is at
+app\services\sheets_parser_service.py:119. No error points to the added
+task_content_json parsing block.
+
+BASELINE FAIL: .venv\Scripts\python.exe -m pytest tests\ -q --tb=no
+Result: 48 failed, 370 passed, 5 skipped, 25 warnings in 414.49s.
+The failing tests are outside the changed import path. Observed classes include:
+- shared dev DB / Alembic head mismatch in tests/test_migrations.py;
+- asyncpg InterfaceError: another operation is in progress in unrelated HTTP tests;
+- existing ACL and teacher queue assertions outside the changed modules.
+
+BASELINE RESTORED: .venv\Scripts\python.exe -m pytest tests\ -q --tb=short
+Result: 413 passed, 11 skipped, 7 warnings in 462.48s.
+QA contour fixes:
+- ASGI requests use a per-request NullPool override in tests/conftest.py;
+- migration tests expect tasks_order_position_triggers head and tolerate localized
+  Windows subprocess output;
+- ACL tests select only Y-6 reviewable SA_COM/TA tasks;
+- tasks order-position T14 matches the migration contract: backfill by id ASC;
+- removed teacher-course auto-link triggers are no longer asserted as active;
+- Y-5 guest tests create and delete an isolated public-demo seed.
+
+PASS: .venv\Scripts\python.exe -m alembic current
+Result: tasks_order_position_triggers (head)
+
+PASS: live HTTP dry-run and apply on the operator-provided Google Sheet
+Result: dry-run accepted 18/19 rows; apply updated 18 rows; TEST-SC-003 returned
+row-level task_content_json_invalid; direct DB SELECT preserved TEST-SC-002
+stem_images=["graph.png"] and hints_video=["url"].
+
+MYPY BASELINE RESTORED: .venv\Scripts\python.exe scripts\run_mypy.py
+Result: Success: no issues found in 5 source files.
+The reproducible contour is declared in requirements-dev.txt, mypy.ini, and
+scripts/run_mypy.py.

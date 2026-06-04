@@ -33,6 +33,7 @@ from app.services.google_sheets_service import GoogleSheetsService
 from app.services.sheets_parser_service import SheetsParserService
 from app.services.courses_service import CoursesService
 from app.services.difficulty_levels_service import DifficultyLevelsService
+from app.utils.exceptions import DomainError
 from fastapi import HTTPException, status
 import logging
 
@@ -803,6 +804,7 @@ async def import_from_google_sheets(
             "code",
             "title",
             "prompt",
+            "task_content_json",
             "input_link",
             "accepted_answers",
         }
@@ -844,6 +846,8 @@ async def import_from_google_sheets(
                 column_mapping["title"] = header
             elif header_lower in ("prompt", "подсказка"):
                 column_mapping["prompt"] = header
+            elif header_lower in ("task_content_json", "task_content json", "json"):
+                column_mapping["task_content_json"] = header
             elif header_lower in ("input_link", "ссылка", "link"):
                 column_mapping["input_link"] = header
             elif header_lower in ("accepted_answers", "принятые"):
@@ -1065,6 +1069,14 @@ async def import_from_google_sheets(
             
             parsed_tasks.append(task_data)
             
+        except DomainError as e:
+            logger.warning("Task import row %d rejected: %s", row_index, e.detail)
+            errors.append(GoogleSheetsImportError(
+                row_index=row_index,
+                external_uid=row_dict.get(column_mapping.get("external_uid", ""), None) or None,
+                error=str(e.detail),
+            ))
+            continue
         except Exception as e:
             logger.exception("Ошибка при парсинге строки %d: %s", row_index, e)
             errors.append(GoogleSheetsImportError(

@@ -107,6 +107,7 @@ async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
                 JOIN course_parents cp_inner ON cp_inner.parent_course_id = cp_outer.course_id
                 JOIN tasks t ON t.course_id = cp_inner.course_id
                 WHERE cp_outer.parent_course_id NOT IN (SELECT course_id FROM course_parents)
+                  AND t.task_content->>'type' IN ('SA_COM', 'TA')
                 LIMIT 1
                 """
             )
@@ -120,12 +121,17 @@ async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
 async def _pick_task_in_course(db, course_id: int) -> int:
     row = (
         await db.execute(
-            text("SELECT id FROM tasks WHERE course_id = :c LIMIT 1"),
+            text(
+                "SELECT id FROM tasks "
+                "WHERE course_id = :c "
+                "AND task_content->>'type' IN ('SA_COM', 'TA') "
+                "LIMIT 1"
+            ),
             {"c": course_id},
         )
     ).fetchone()
     if row is None:
-        pytest.skip(f"Нет задач в course_id={course_id}")
+        pytest.skip(f"Нет review-задач SA_COM/TA в course_id={course_id}")
     return int(row[0])
 
 
@@ -193,7 +199,15 @@ async def test_teacher_root_sees_direct_child_review_pending(db, client):
     root_id, child_id, _grandchild_id = await _pick_root_with_grandchild(db)
     # Возьмём task непосредственно из child (depth=1)
     row = (
-        await db.execute(text("SELECT id FROM tasks WHERE course_id = :c LIMIT 1"), {"c": child_id})
+        await db.execute(
+            text(
+                "SELECT id FROM tasks "
+                "WHERE course_id = :c "
+                "AND task_content->>'type' IN ('SA_COM', 'TA') "
+                "LIMIT 1"
+            ),
+            {"c": child_id},
+        )
     ).fetchone()
     if row is None:
         pytest.skip(f"Нет задач непосредственно в child course_id={child_id}")
@@ -307,7 +321,15 @@ async def test_teacher_self_attached_root_with_root_task_still_works(db, client)
     # Используем root_id; task на root напрямую (не на child)
     root_id, _child, _gchild = await _pick_root_with_grandchild(db)
     row = (
-        await db.execute(text("SELECT id FROM tasks WHERE course_id = :c LIMIT 1"), {"c": root_id})
+        await db.execute(
+            text(
+                "SELECT id FROM tasks "
+                "WHERE course_id = :c "
+                "AND task_content->>'type' IN ('SA_COM', 'TA') "
+                "LIMIT 1"
+            ),
+            {"c": root_id},
+        )
     ).fetchone()
     if row is None:
         pytest.skip(f"Нет задач непосредственно в root course_id={root_id}")

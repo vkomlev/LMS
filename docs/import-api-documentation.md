@@ -660,3 +660,23 @@ if (response.status === 200) {
 
 **Версия документа:** 1.0  
 **Последнее обновление:** 2026-01-17
+
+## task_content_json passthrough column
+
+The optional `task_content_json` Google Sheets column contains a JSON object.
+The importer performs a shallow top-level merge after building `task_content`
+from flat columns. Keys from JSON override flat values. Unknown top-level keys
+are preserved in `tasks.task_content` for future extensions.
+
+Example:
+
+```json
+{"hints_video":["https://vk.com/video/A"],"stem_images":["https://cdn.example/graph.png"],"attached_file_paths":["https://cdn.example/data.xlsx"],"has_attached_file":true}
+```
+
+An empty cell is ignored. Invalid JSON produces a row-level
+`task_content_json_invalid: <reason>` error. A JSON value that is not an object
+produces `task_content_json_not_object`. Other valid rows continue importing.
+
+Google Sheets cells are subject to the Google Sheets cell-size limit; LMS does
+not add a smaller limit.
