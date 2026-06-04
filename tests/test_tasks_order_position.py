@@ -285,11 +285,7 @@ async def test_t13_delete_across_courses_independent(db):
 
 @pytest.mark.asyncio
 async def test_t14_backfill_invariant_on_existing_data(db):
-    """T14. После Этапа 1.7 (LMS@94b9122) порядок задач в каждом курсе равен
-    ROW_NUMBER OVER (PARTITION BY course_id ORDER BY difficulty_id, group_type, id),
-    где group_type: SC|MC=1, TA|SA=2, SA_COM=3. Это контракт сортировки
-    в tasks_service.get_by_course() и me_service.get_syllabus_states().
-    """
+    """T14. После миграции порядок существующих задач совпадает с id ASC."""
     rows = (
         await db.execute(
             text(
@@ -298,13 +294,7 @@ async def test_t14_backfill_invariant_on_existing_data(db):
                     SELECT id, course_id,
                            ROW_NUMBER() OVER (
                                PARTITION BY course_id
-                               ORDER BY difficulty_id ASC,
-                                        CASE task_content->>'type'
-                                            WHEN 'SC' THEN 1 WHEN 'MC' THEN 1
-                                            WHEN 'TA' THEN 2 WHEN 'SA' THEN 2
-                                            WHEN 'SA_COM' THEN 3 ELSE 99
-                                        END ASC,
-                                        id ASC
+                               ORDER BY id ASC
                            ) AS pos
                     FROM tasks
                     WHERE course_id IS NOT NULL
@@ -318,7 +308,7 @@ async def test_t14_backfill_invariant_on_existing_data(db):
         )
     ).first()
     assert int(rows.mismatches) == 0, (
-        "Порядок задач не соответствует правилу 1.7 (difficulty+group_type+id)"
+        "Порядок задач не соответствует backfill-правилу id ASC"
     )
 
 

@@ -7,6 +7,7 @@ import sys
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+import pytest
 
 # Загружаем переменные окружения
 env_path = Path(__file__).parent.parent / '.env'
@@ -86,9 +87,7 @@ async def test_triggers():
         triggers = result.fetchall()
         print(f"Триггеров создано: {len(triggers)}")
         expected_triggers = [
-            ('trg_auto_link_teacher_course_children', 'teacher_courses', 'AFTER', 'INSERT'),
-            ('trg_auto_unlink_teacher_course_children', 'teacher_courses', 'AFTER', 'DELETE'),
-            ('trg_sync_teacher_courses_on_child_added', 'course_parents', 'AFTER', 'INSERT'),
+            ('trg_check_teacher_course_no_parents', 'teacher_courses', 'BEFORE', 'INSERT'),
             # ⚠️ ТЕХНИЧЕСКИЙ ДОЛГ: trg_sync_teacher_courses_on_child_removed отключен
             # Логика перенесена в TeacherCoursesRepository.sync_on_child_removed()
             # ('trg_sync_teacher_courses_on_child_removed', 'course_parents', 'AFTER', 'DELETE'),
@@ -102,7 +101,7 @@ async def test_triggers():
 
 async def test_auto_link_children():
     """Тест 4: Автоматическая привязка детей при привязке родителя"""
-    print("\n=== Тест 4: Автоматическая привязка детей ===")
+    pytest.skip("Автопривязка удалена миграцией remove_auto_link_triggers")
     async with await get_db_session() as db:
         # Очищаем тестовые данные
         await db.execute(text("DELETE FROM teacher_courses WHERE teacher_id = 16"))
@@ -150,7 +149,7 @@ async def test_auto_link_children():
 
 async def test_auto_unlink_children():
     """Тест 5: Автоматическая отвязка детей при отвязке родителя"""
-    print("\n=== Тест 5: Автоматическая отвязка детей ===")
+    pytest.skip("Автоотвязка удалена миграцией remove_auto_link_triggers")
     async with await get_db_session() as db:
         # Проверяем текущее количество связей
         result = await db.execute(text("SELECT COUNT(*) FROM teacher_courses WHERE teacher_id = 16"))
@@ -173,7 +172,7 @@ async def test_auto_unlink_children():
 
 async def test_sync_on_child_added():
     """Тест 6: Синхронизация при добавлении ребенка в иерархию"""
-    print("\n=== Тест 6: Синхронизация при добавлении ребенка ===")
+    pytest.skip("Автосинхронизация удалена миграцией remove_auto_link_triggers")
     async with await get_db_session() as db:
         # Привязываем преподавателя к родительскому курсу
         await db.execute(text("INSERT INTO teacher_courses (teacher_id, course_id) VALUES (17, 1) ON CONFLICT DO NOTHING"))
@@ -216,7 +215,7 @@ async def test_sync_on_child_added():
 
 async def test_sync_on_child_removed():
     """Тест 7: Синхронизация при удалении ребенка из иерархии"""
-    print("\n=== Тест 7: Синхронизация при удалении ребенка ===")
+    pytest.skip("Автосинхронизация удалена миграцией remove_auto_link_triggers")
     async with await get_db_session() as db:
         # Находим ребенка курса 1, к которому привязан преподаватель 17
         # И который НЕ имеет других родителей (чтобы связь точно удалилась)
@@ -269,7 +268,7 @@ async def test_sync_on_child_removed():
 
 async def test_recursive_hierarchy():
     """Тест 8: Рекурсивная иерархия (родитель -> ребенок -> внук)"""
-    print("\n=== Тест 8: Рекурсивная иерархия ===")
+    pytest.skip("Автопривязка иерархии удалена миграцией remove_auto_link_triggers")
     async with await get_db_session() as db:
         # Проверяем существующую иерархию: курс 1 -> курс 10 -> курс 12
         result = await db.execute(text("""

@@ -1,0 +1,18 @@
+LMS reproducible mypy contour evidence
+Date: 2026-06-02
+
+SETUP:
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+Result: mypy 1.20.2 installed into the project virtual environment.
+
+PASS:
+.venv\Scripts\python.exe scripts\run_mypy.py
+Result: Success: no issues found in 5 source files.
+
+PASS:
+.venv\Scripts\python.exe -m mypy --config-file mypy.ini app\services\tasks_service.py app\api\v1\tasks_extra.py
+Result: Success: no issues found in 2 source files.
+
+PASS:
+.venv\Scripts\python.exe -m pytest tests\test_tasks_import_task_content_json.py -q
+Result: 10 passed, 4 warnings in 1.12s.

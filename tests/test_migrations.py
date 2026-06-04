@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 project_root = Path(__file__).resolve().parents[1]
-HEAD_REV = "m10_role_backfill"
+HEAD_REV = "tasks_order_position_triggers"
 M9_REV = "m9_zombie_sanitize"
 M8_REV = "20260430_010000_m8_inbox"
 M7_REV = "20260429_010000_m7_streak_idx"
@@ -21,16 +21,21 @@ M6_REV = "20260428_060000_m6_tg_sync"
 def _run_alembic(*args: str) -> subprocess.CompletedProcess:
     cmd = [sys.executable, "-m", "alembic"] + list(args)
     result = subprocess.run(
-        cmd, cwd=str(project_root), capture_output=True, text=True, encoding="utf-8"
+        cmd,
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return result
 
 
-def test_alembic_head_is_m10():
-    """Текущий head должен быть M10 (Phase Y-4 pre-S5 role backfill применён)."""
+def test_alembic_head_is_current():
+    """Текущий head должен соответствовать последней миграции проекта."""
     result = _run_alembic("current")
     assert result.returncode == 0, f"alembic current failed:\n{result.stderr}"
-    assert HEAD_REV in result.stdout or "m10_role_backfill" in result.stdout, (
+    assert HEAD_REV in result.stdout, (
         f"Expected {HEAD_REV} as head, got:\n{result.stdout}"
     )
 

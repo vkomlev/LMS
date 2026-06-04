@@ -177,6 +177,29 @@ async def db():
         await engine.dispose()
 
 
+@pytest.fixture(scope="function", autouse=True)
+def _override_app_db():
+    """Изолировать ASGI-запросы от глобального QueuePool между event loop тестов."""
+
+    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+        engine = create_async_engine(_settings.database_url, poolclass=NullPool)
+        try:
+            async with AsyncSession(engine, expire_on_commit=False) as session:
+                yield session
+        finally:
+            await engine.dispose()
+
+    previous_override = app.dependency_overrides.get(get_async_db)
+    app.dependency_overrides[get_async_db] = override_get_db
+    try:
+        yield
+    finally:
+        if previous_override is None:
+            app.dependency_overrides.pop(get_async_db, None)
+        else:
+            app.dependency_overrides[get_async_db] = previous_override
+
+
 @pytest_asyncio.fixture(scope="function")
 async def client():
     """HTTP-клиент для ASGI-тестов.
@@ -184,16 +207,5 @@ async def client():
     Переопределяет get_async_db чтобы использовать NullPool —
     иначе глобальный QueuePool хранит соединения из предыдущих event loop'ов.
     """
-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
-
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            yield session
-
-    app.dependency_overrides[get_async_db] = override_get_db
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-            yield c
-    finally:
-        app.dependency_overrides.pop(get_async_db, None)
-        await engine.dispose()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        yield c
