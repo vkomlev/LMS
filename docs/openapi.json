@@ -15514,6 +15514,42 @@
           }
         }
       }
+    },
+    "/api/v1/media/{sha_ext}": {
+      "get": {
+        "tags": [
+          "media"
+        ],
+        "summary": "Получить CAS-медиафайл по sha256-имени",
+        "description": "Отдаёт файл из CAS-хранилища ContentBackbone.\n\nsha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).\nEndpoint публичный — не требует аутентификации (изображения задач доступны\nчерез guest-mode, sha256-имена не поддаются перебору).\n\nHTTP 400 — неверный формат sha_ext.\nHTTP 404 — файл отсутствует в CAS.\nHTTP 200 — FileResponse с корректным content-type из allowlist.",
+        "operationId": "get_cas_media_api_v1_media__sha_ext__get",
+        "parameters": [
+          {
+            "name": "sha_ext",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Sha Ext"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -20168,7 +20204,7 @@
             "anyOf": [
               {
                 "type": "integer",
-                "minimum": 1.0
+                "minimum": 0.0
               },
               {
                 "type": "null"
