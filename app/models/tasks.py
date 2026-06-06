@@ -3,9 +3,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List
 
 from sqlalchemy import (
+    Boolean,
     Integer,
     ForeignKeyConstraint,
     PrimaryKeyConstraint,
+    String,
     Text,
     text,
 )
@@ -101,6 +103,19 @@ class Tasks(Base):
         Integer,
         nullable=True,
         comment="Позиция в курсе (NULL = автоматически в конец)",
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        server_default=text("true"),
+        nullable=False,
+        comment="Active flag for student-facing task routing",
+    )
+    requirement_level: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'required'"),
+        nullable=False,
+        comment="Content requirement level: skippable, recommended, required",
     )
 
     course: Mapped["Courses"] = relationship(

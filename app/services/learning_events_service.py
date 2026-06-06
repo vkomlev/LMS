@@ -344,7 +344,7 @@ async def set_material_completed(
             ON CONFLICT (student_id, material_id)
             DO UPDATE SET status = 'completed', completed_at = COALESCE(
                 student_material_progress.completed_at, now()
-            )
+            ), skipped_at = NULL
         """),
         {"student_id": student_id, "material_id": material_id},
     )
@@ -356,4 +356,94 @@ async def set_material_completed(
         {"student_id": student_id, "material_id": material_id},
     )
     row = r.fetchone()
+    return row[0] if row and row[0] else datetime.now(timezone.utc)
+
+
+async def set_material_skipped(
+    db: AsyncSession,
+    student_id: int,
+    material_id: int,
+) -> tuple[str, datetime | None]:
+    """
+    Idempotent skip marker for a material.
+
+    Returns (status, skipped_at). If material is already completed, returns
+    ("completed", None) and does not overwrite completion.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": material_id},
+    )
+    current = (
+        await db.execute(
+            text("""
+                SELECT status, skipped_at
+                FROM student_material_progress
+                WHERE student_id = :student_id AND material_id = :material_id
+            """),
+            {"student_id": student_id, "material_id": material_id},
+        )
+    ).fetchone()
+    if current is not None and current[0] == "completed":
+        return ("completed", None)
+
+    await db.execute(
+        text("""
+            INSERT INTO student_material_progress
+                (student_id, material_id, status, completed_at, skipped_at)
+            VALUES (:student_id, :material_id, 'skipped', NULL, now())
+            ON CONFLICT (student_id, material_id)
+            DO UPDATE SET
+                status = 'skipped',
+                completed_at = NULL,
+                skipped_at = COALESCE(student_material_progress.skipped_at, now())
+        """),
+        {"student_id": student_id, "material_id": material_id},
+    )
+    row = (
+        await db.execute(
+            text("""
+                SELECT skipped_at
+                FROM student_material_progress
+                WHERE student_id = :student_id AND material_id = :material_id
+            """),
+            {"student_id": student_id, "material_id": material_id},
+        )
+    ).fetchone()
+    return ("skipped", row[0] if row and row[0] else datetime.now(timezone.utc))
+
+
+async def set_task_skipped(
+    db: AsyncSession,
+    student_id: int,
+    task_id: int,
+) -> datetime:
+    """Idempotent skip marker for a task."""
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": task_id},
+    )
+    await db.execute(
+        text("""
+            INSERT INTO student_task_progress
+                (student_id, task_id, status, skipped_at, created_at, updated_at)
+            VALUES (:student_id, :task_id, 'skipped', now(), now(), now())
+            ON CONFLICT (student_id, task_id)
+            DO UPDATE SET
+                status = 'skipped',
+                skipped_at = COALESCE(student_task_progress.skipped_at, now()),
+                updated_at = now()
+        """),
+        {"student_id": student_id, "task_id": task_id},
+    )
+    row = (
+        await db.execute(
+            text("""
+                SELECT skipped_at
+                FROM student_task_progress
+                WHERE student_id = :student_id AND task_id = :task_id
+            """),
+            {"student_id": student_id, "task_id": task_id},
+        )
+    ).fetchone()
     return row[0] if row and row[0] else datetime.now(timezone.utc)

@@ -253,6 +253,8 @@ class TasksService(BaseService[Tasks]):
                     "max_score": data.get("max_score"),
                     # CREATE: пробрасываем order_position как есть.
                     # None → триггер БД проставит MAX+1; явное число → сдвиг соседей.
+                    "is_active": data.get("is_active", True),
+                    "requirement_level": data.get("requirement_level", "required"),
                     "order_position": data.get("order_position"),
                 }
                 # используем наш переопределенный create для валидации
@@ -266,6 +268,8 @@ class TasksService(BaseService[Tasks]):
                     "task_content": data["task_content"],
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
+                    "is_active": data.get("is_active", True),
+                    "requirement_level": data.get("requirement_level", "required"),
                 }
                 # UPDATE: order_position пробрасываем ТОЛЬКО при явном значении.
                 # None в payload означает «поле не передано, позицию не менять».

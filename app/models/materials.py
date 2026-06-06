@@ -74,6 +74,12 @@ class Materials(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, server_default=text("true"), nullable=False, comment="Активен ли материал"
     )
+    requirement_level: Mapped[str] = mapped_column(
+        String(16),
+        server_default=text("'required'"),
+        nullable=False,
+        comment="Content requirement level: skippable, recommended, required",
+    )
     external_uid: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, comment="Внешний идентификатор для импорта (уникален в паре с course_id)"
     )

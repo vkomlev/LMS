@@ -23,6 +23,8 @@ def test_learning_api_routes_registered():
     expected = [
         "/api/v1/learning/next-item",
         "/api/v1/learning/materials/{material_id}/complete",
+        "/api/v1/learning/materials/{material_id}/skip",
+        "/api/v1/learning/tasks/{task_id}/skip",
         "/api/v1/learning/tasks/{task_id}/start-or-get-attempt",
         "/api/v1/learning/tasks/{task_id}/state",
         "/api/v1/learning/tasks/{task_id}/request-help",

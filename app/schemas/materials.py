@@ -10,6 +10,7 @@ from app.schemas.material_content import (
     MaterialType,
     validate_material_content,
 )
+from app.schemas.content_requirement import RequirementLevel
 
 
 # ---------- CRUD схемы ----------
@@ -31,6 +32,7 @@ class MaterialCreate(BaseModel):
         description="Позиция в курсе (NULL = в конец, триггер БД установит автоматически)",
     )
     is_active: bool = True
+    requirement_level: RequirementLevel = "required"
     external_uid: Optional[str] = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -54,6 +56,7 @@ class MaterialUpdate(BaseModel):
     content: Optional[Any] = None
     order_position: Optional[int] = None
     is_active: Optional[bool] = None
+    requirement_level: Optional[RequirementLevel] = None
     external_uid: Optional[str] = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
@@ -78,6 +81,7 @@ class MaterialRead(BaseModel):
     content: Any
     order_position: Optional[int] = None
     is_active: bool
+    requirement_level: RequirementLevel
     external_uid: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -179,6 +183,8 @@ class MaterialsBulkUpsertItem(BaseModel):
         default=None,
         description="Позиция в курсе; None — поведение как при CRUD (триггер БД)",
     )
+
+    requirement_level: RequirementLevel = "required"
 
     @field_validator("external_uid", mode="before")
     @classmethod

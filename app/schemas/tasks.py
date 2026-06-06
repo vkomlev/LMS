@@ -4,6 +4,8 @@ from typing import Any, Optional, List, Literal, Dict, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.schemas.content_requirement import RequirementLevel
+
 
 def extract_hints_from_task_content(task_content: Any) -> Tuple[List[str], List[str], bool]:
     """
@@ -43,6 +45,8 @@ class TaskCreate(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    is_active: bool = True
+    requirement_level: RequirementLevel = "required"
     order_position: Optional[int] = Field(
         default=None,
         description=(
@@ -66,6 +70,8 @@ class TaskUpdate(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    is_active: Optional[bool] = None
+    requirement_level: Optional[RequirementLevel] = None
     order_position: Optional[int] = Field(
         default=None,
         description=(
@@ -88,6 +94,8 @@ class TaskRead(BaseModel):
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None
+    is_active: bool = True
+    requirement_level: RequirementLevel = "required"
     order_position: Optional[int] = Field(
         default=None,
         description=(
@@ -165,6 +173,8 @@ class TaskUpsertItem(BaseModel):
     task_content: Any
     solution_rules: Any | None = None
     max_score: int | None = None
+    is_active: bool = True
+    requirement_level: RequirementLevel = "required"
     order_position: int | None = None
 
 

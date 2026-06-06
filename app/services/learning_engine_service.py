@@ -207,9 +207,19 @@ class LearningEngineService:
         # SPW рендерит TaskFormTA, optimistic-PASSED продвигает state).
         tasks_count_stmt = select(func.count(Tasks.id)).where(
             Tasks.course_id.in_(tree_ids),
+            Tasks.is_active.is_(True),
+            Tasks.requirement_level.in_(("required", "skippable")),
         )
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
+
+        materials_count_stmt = select(func.count(Materials.id)).where(
+            Materials.course_id.in_(tree_ids),
+            Materials.is_active.is_(True),
+            Materials.requirement_level.in_(("required", "skippable")),
+        )
+        r = await db.execute(materials_count_stmt)
+        total_materials = r.scalar() or 0
 
         # Число заданий в дереве, по которым последний task_result — PASS.
         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
@@ -220,12 +230,28 @@ class LearningEngineService:
                     tr.task_id, tr.score AS last_score, tr.max_score AS last_max
                 FROM task_results tr
                 INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
-                INNER JOIN tasks t ON t.id = tr.task_id AND t.course_id = ANY(:course_ids)
+                INNER JOIN tasks t
+                    ON t.id = tr.task_id
+                   AND t.course_id = ANY(:course_ids)
+                   AND t.is_active = true
+                   AND t.requirement_level IN ('required', 'skippable')
                 WHERE tr.user_id = :student_id
                 ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
             )
-            SELECT COUNT(*) FROM last_per_task
-            WHERE last_max > 0 AND (last_score::float / last_max) >= :pass_threshold
+            SELECT COUNT(*) FROM (
+                SELECT task_id FROM last_per_task
+                WHERE last_max > 0 AND (last_score::float / last_max) >= :pass_threshold
+                UNION
+                SELECT stp.task_id
+                FROM student_task_progress stp
+                INNER JOIN tasks t
+                    ON t.id = stp.task_id
+                   AND t.course_id = ANY(:course_ids)
+                   AND t.is_active = true
+                   AND t.requirement_level IN ('required', 'skippable')
+                WHERE stp.student_id = :student_id
+                  AND stp.status = 'skipped'
+            ) done_tasks
         """)
         r = await db.execute(
             tasks_with_last_pass_stmt,
@@ -233,11 +259,31 @@ class LearningEngineService:
         )
         tasks_with_last_pass = r.scalar() or 0
 
-        if total_tasks == 0:
-            state: CourseStateType = "NOT_STARTED"
-        elif tasks_with_last_pass == 0:
+        materials_done_stmt = text("""
+            SELECT COUNT(*)
+            FROM student_material_progress smp
+            INNER JOIN materials m
+                ON m.id = smp.material_id
+               AND m.course_id = ANY(:course_ids)
+               AND m.is_active = true
+               AND m.requirement_level IN ('required', 'skippable')
+            WHERE smp.student_id = :student_id
+              AND smp.status IN ('completed', 'skipped')
+        """)
+        r = await db.execute(
+            materials_done_stmt,
+            {"student_id": student_id, "course_ids": tree_ids},
+        )
+        materials_done = r.scalar() or 0
+
+        total_items = total_tasks + total_materials
+        done_items = tasks_with_last_pass + materials_done
+
+        if total_items == 0:
+            state: CourseStateType = "COMPLETED"
+        elif done_items == 0:
             state = "NOT_STARTED"
-        elif tasks_with_last_pass >= total_tasks:
+        elif done_items >= total_items:
             state = "COMPLETED"
         else:
             state = "IN_PROGRESS"
@@ -379,7 +425,11 @@ class LearningEngineService:
         """ID первого материала курса, не отмеченного как completed для студента."""
         materials_stmt = (
             select(Materials.id)
-            .where(Materials.course_id == course_id, Materials.is_active.is_(True))
+            .where(
+                Materials.course_id == course_id,
+                Materials.is_active.is_(True),
+                Materials.requirement_level.in_(("required", "skippable")),
+            )
             .order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
         )
         r = await db.execute(materials_stmt)
@@ -390,7 +440,9 @@ class LearningEngineService:
 
         completed_stmt = text("""
             SELECT material_id FROM student_material_progress
-            WHERE student_id = :student_id AND material_id = ANY(:ids) AND status = 'completed'
+            WHERE student_id = :student_id
+              AND material_id = ANY(:ids)
+              AND status IN ('completed', 'skipped')
         """)
         r = await db.execute(completed_stmt, {"student_id": student_id, "ids": material_ids})
         completed_ids = {row[0] for row in r.fetchall()}
@@ -417,13 +469,33 @@ class LearningEngineService:
         """
         tasks_stmt = (
             select(Tasks.id)
-            .where(Tasks.course_id == course_id)
+            .where(
+                Tasks.course_id == course_id,
+                Tasks.is_active.is_(True),
+                Tasks.requirement_level.in_(("required", "skippable")),
+            )
             .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
         )
         r = await db.execute(tasks_stmt)
         task_ids = [row[0] for row in r.fetchall()]
+        if task_ids:
+            skipped_rows = await db.execute(
+                text("""
+                    SELECT task_id
+                    FROM student_task_progress
+                    WHERE student_id = :student_id
+                      AND task_id = ANY(:task_ids)
+                      AND status = 'skipped'
+                """),
+                {"student_id": student_id, "task_ids": task_ids},
+            )
+            skipped_ids = {int(row[0]) for row in skipped_rows.fetchall()}
+        else:
+            skipped_ids = set()
 
         for tid in task_ids:
+            if tid in skipped_ids:
+                continue
             state_result = await self.compute_task_state(db, student_id, tid)
             if state_result.state == "BLOCKED_LIMIT":
                 return (None, tid)

@@ -224,6 +224,7 @@ class MaterialsRepository(BaseRepository[Materials]):
             "content": dict(source.content),
             "order_position": order_position,
             "is_active": source.is_active,
+            "requirement_level": source.requirement_level,
             "external_uid": None,
         }
         return await self.create(db, data)

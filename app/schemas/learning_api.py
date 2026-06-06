@@ -42,6 +42,22 @@ class MaterialCompleteResponse(BaseModel):
     completed_at: Optional[datetime] = None
 
 
+# ----- Skip item -----
+
+class LearningSkipRequest(BaseModel):
+    student_id: int = Field(..., description="ID СЃС‚СѓРґРµРЅС‚Р°")
+
+
+class LearningSkipResponse(BaseModel):
+    ok: bool = True
+    student_id: int
+    kind: Literal["material", "task"]
+    material_id: Optional[int] = None
+    task_id: Optional[int] = None
+    status: Literal["skipped"] = "skipped"
+    skipped_at: datetime
+
+
 # ----- Start or get attempt -----
 
 class StartOrGetAttemptRequest(BaseModel):

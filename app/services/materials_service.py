@@ -224,6 +224,8 @@ class MaterialsService(BaseService[Materials]):
             return False
         if bool(existing.is_active) != bool(item.is_active):
             return False
+        if (existing.requirement_level or "required") != item.requirement_level:
+            return False
         if item.order_position is not None and existing.order_position != item.order_position:
             return False
         try:
@@ -369,6 +371,7 @@ class MaterialsService(BaseService[Materials]):
                         "caption": item.caption,
                         "order_position": item.order_position,
                         "is_active": item.is_active,
+                        "requirement_level": item.requirement_level,
                         "external_uid": item.external_uid,
                     }
                     row_key = (cid, ext)

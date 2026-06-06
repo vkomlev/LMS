@@ -97,9 +97,11 @@ SyllabusTaskStatus = Literal[
     "blocked_limit",
     "in_progress",
     "not_started",
+    "skipped",
 ]
 
-SyllabusMaterialStatus = Literal["completed", "not_started"]
+SyllabusMaterialStatus = Literal["completed", "not_started", "skipped"]
+RequirementLevel = Literal["skippable", "recommended", "required"]
 
 
 class SyllabusTaskItem(BaseModel):
@@ -109,6 +111,8 @@ class SyllabusTaskItem(BaseModel):
     task_id: int
     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
     status: SyllabusTaskStatus
+    requirement_level: RequirementLevel
+    is_active: bool = True
     attempts_used: int
     attempts_limit_effective: int
     last_score: int | None
@@ -123,6 +127,8 @@ class SyllabusMaterialItem(BaseModel):
     material_id: int
     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
     status: SyllabusMaterialStatus
+    requirement_level: RequirementLevel
+    is_active: bool = True
     completed_at: datetime | None
 
 

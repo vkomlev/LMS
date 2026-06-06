@@ -16,6 +16,8 @@ from app.schemas.learning_api import (
     NextItemResponse,
     MaterialCompleteRequest,
     MaterialCompleteResponse,
+    LearningSkipRequest,
+    LearningSkipResponse,
     StartOrGetAttemptRequest,
     StartOrGetAttemptResponse,
     TaskStateResponse,
@@ -29,6 +31,8 @@ from app.services.learning_events_service import (
     record_help_requested,
     record_hint_open,
     set_material_completed,
+    set_material_skipped,
+    set_task_skipped,
 )
 from app.services.help_requests_service import (
     get_or_create_help_request,
@@ -136,7 +140,93 @@ async def material_complete(
     )
 
 
+# ----- POST /learning/materials/{material_id}/skip -----
+
+@router.post(
+    "/materials/{material_id}/skip",
+    response_model=LearningSkipResponse,
+    summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+)
+async def material_skip(
+    material_id: int = Path(..., description="ID РјР°С‚РµСЂРёР°Р»Р°"),
+    body: LearningSkipRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> LearningSkipResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    material = await materials_service.get_by_id(db, material_id)
+    if material is None or not material.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ")
+    if material.requirement_level != "skippable":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="material_not_skippable",
+        )
+    user = await users_service.get_by_id(db, body.student_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎС‚СѓРґРµРЅС‚ РЅРµ РЅР°Р№РґРµРЅ")
+    progress_status, skipped_at = await set_material_skipped(db, body.student_id, material_id)
+    if progress_status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="already_completed",
+        )
+    await db.commit()
+    logger.info("material skip: student_id=%s material_id=%s", body.student_id, material_id)
+    return LearningSkipResponse(
+        ok=True,
+        student_id=body.student_id,
+        kind="material",
+        material_id=material_id,
+        status="skipped",
+        skipped_at=skipped_at,
+    )
+
+
 # ----- POST /learning/tasks/{task_id}/start-or-get-attempt -----
+
+@router.post(
+    "/tasks/{task_id}/skip",
+    response_model=LearningSkipResponse,
+    summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+)
+async def task_skip(
+    task_id: int = Path(..., description="ID Р·Р°РґР°РЅРёСЏ"),
+    body: LearningSkipRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> LearningSkipResponse:
+    if not current_user.is_service and current_user.id != body.student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    task = await tasks_service.get_by_id(db, task_id)
+    if task is None or not task.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ")
+    if task.requirement_level != "skippable":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="task_not_skippable",
+        )
+    user = await users_service.get_by_id(db, body.student_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎС‚СѓРґРµРЅС‚ РЅРµ РЅР°Р№РґРµРЅ")
+    state_result = await learning_service.compute_task_state(db, body.student_id, task_id)
+    if state_result.state == "PASSED":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="already_completed",
+        )
+    skipped_at = await set_task_skipped(db, body.student_id, task_id)
+    await db.commit()
+    logger.info("task skip: student_id=%s task_id=%s", body.student_id, task_id)
+    return LearningSkipResponse(
+        ok=True,
+        student_id=body.student_id,
+        kind="task",
+        task_id=task_id,
+        status="skipped",
+        skipped_at=skipped_at,
+    )
 
 @router.post(
     "/tasks/{task_id}/start-or-get-attempt",
@@ -152,7 +242,7 @@ async def start_or_get_attempt(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
-    if task is None:
+    if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:
@@ -231,7 +321,7 @@ async def get_task_state(
     if not current_user.is_service and current_user.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
-    if task is None:
+    if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
     user = await users_service.get_by_id(db, student_id)
     if user is None:
@@ -278,7 +368,7 @@ async def request_help(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     task = await tasks_service.get_by_id(db, task_id)
-    if task is None:
+    if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:
@@ -330,7 +420,7 @@ async def hint_events(
     Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
     """
     task = await tasks_service.get_by_id(db, task_id)
-    if task is None:
+    if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:

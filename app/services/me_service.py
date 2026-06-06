@@ -90,12 +90,15 @@ tasks_per_root AS (
     SELECT ct.root_course_id, t.id AS task_id
     FROM course_trees ct
     JOIN tasks t ON t.course_id = ct.member_course_id
+    WHERE t.is_active = true
+      AND t.requirement_level IN ('required', 'skippable')
 ),
 materials_per_root AS (
     SELECT ct.root_course_id, m.id AS material_id
     FROM course_trees ct
     JOIN materials m ON m.course_id = ct.member_course_id
     WHERE m.is_active = true
+      AND m.requirement_level IN ('required', 'skippable')
 ),
 last_attempt_per_task AS (
     SELECT DISTINCT ON (tr.task_id)
@@ -117,11 +120,18 @@ tasks_total_per_root AS (
 tasks_done_per_root AS (
     SELECT tpr.root_course_id,
            COUNT(*) FILTER (
-               WHERE lap.max_score > 0
-                 AND (lap.score::float / lap.max_score) >= :pass_ratio
+               WHERE (
+                   lap.max_score > 0
+                   AND (lap.score::float / lap.max_score) >= :pass_ratio
+               )
+               OR stp.task_id IS NOT NULL
            ) AS tasks_done
     FROM tasks_per_root tpr
     LEFT JOIN last_attempt_per_task lap USING (task_id)
+    LEFT JOIN student_task_progress stp
+        ON stp.task_id = tpr.task_id
+       AND stp.student_id = :user_id
+       AND stp.status = 'skipped'
     GROUP BY tpr.root_course_id
 ),
 materials_total_per_root AS (
@@ -135,7 +145,7 @@ materials_done_per_root AS (
     JOIN student_material_progress smp
         ON smp.material_id = mpr.material_id
        AND smp.student_id = :user_id
-       AND smp.status = 'completed'
+       AND smp.status IN ('completed', 'skipped')
     GROUP BY mpr.root_course_id
 ),
 last_active_per_root AS (
@@ -151,12 +161,12 @@ last_active_per_root AS (
         UNION ALL
         SELECT mpr.root_course_id,
                NULL::timestamptz AS tr_max,
-               MAX(smp.completed_at) AS smp_max
+               MAX(COALESCE(smp.completed_at, smp.skipped_at)) AS smp_max
         FROM materials_per_root mpr
         LEFT JOIN student_material_progress smp
             ON smp.material_id = mpr.material_id
            AND smp.student_id = :user_id
-           AND smp.status = 'completed'
+           AND smp.status IN ('completed', 'skipped')
         GROUP BY mpr.root_course_id
     ) U
     GROUP BY root_course_id
@@ -500,7 +510,9 @@ WITH last_per_task AS (
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
     WHERE tr.user_id = :user_id
       AND tr.task_id IN (
-          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
+          SELECT id FROM tasks
+          WHERE course_id = ANY(:tree_ids)
+            AND is_active = true
       )
     ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
 ),
@@ -510,7 +522,9 @@ attempts_per_task AS (
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
     WHERE tr.user_id = :user_id
       AND tr.task_id IN (
-          SELECT id FROM tasks WHERE course_id = ANY(:tree_ids)
+          SELECT id FROM tasks
+          WHERE course_id = ANY(:tree_ids)
+            AND is_active = true
       )
     GROUP BY tr.task_id
 ),
@@ -530,6 +544,10 @@ open_course_attempt AS (
 SELECT
     t.id AS task_id,
     t.course_id,
+    t.is_active,
+    t.requirement_level,
+    stp.status AS progress_status,
+    stp.skipped_at,
     lp.is_correct AS last_is_correct,
     lp.checked_at AS last_checked_at,
     lp.score AS last_score,
@@ -544,7 +562,12 @@ FROM tasks t
 LEFT JOIN last_per_task lp ON lp.task_id = t.id
 LEFT JOIN attempts_per_task ap ON ap.task_id = t.id
 LEFT JOIN override_per_task op ON op.task_id = t.id
+LEFT JOIN student_task_progress stp
+    ON stp.task_id = t.id
+   AND stp.student_id = :user_id
+   AND stp.status = 'skipped'
 WHERE t.course_id = ANY(:tree_ids)
+  AND t.is_active = true
 ORDER BY t.course_id, t.order_position ASC NULLS LAST, t.id ASC
 """
 
@@ -552,13 +575,17 @@ _SYLLABUS_MATERIALS_SQL = """
 SELECT
     m.id AS material_id,
     m.course_id,
+    m.is_active,
+    m.requirement_level,
     m.order_position,
-    smp.completed_at
+    smp.status AS progress_status,
+    smp.completed_at,
+    smp.skipped_at
 FROM materials m
 LEFT JOIN student_material_progress smp
     ON smp.material_id = m.id
    AND smp.student_id = :user_id
-   AND smp.status = 'completed'
+   AND smp.status IN ('completed', 'skipped')
 WHERE m.course_id = ANY(:tree_ids)
   AND m.is_active = true
 ORDER BY m.course_id,
@@ -599,6 +626,8 @@ def _compute_syllabus_task_status(row: dict) -> str:
     has_open = bool(row["has_open_attempt"])
 
     if last_submitted is None:
+        if row.get("progress_status") == "skipped":
+            return "skipped"
         return "in_progress" if has_open else "not_started"
 
     if is_correct is True:
@@ -761,7 +790,13 @@ async def get_syllabus_states(
                     "kind": "material",
                     "material_id": int(m["material_id"]),
                     "course_id": int(m["course_id"]),
-                    "status": "completed" if m["completed_at"] is not None else "not_started",
+                    "status": (
+                        "skipped"
+                        if m["progress_status"] == "skipped"
+                        else "completed" if m["completed_at"] is not None else "not_started"
+                    ),
+                    "requirement_level": m["requirement_level"],
+                    "is_active": bool(m["is_active"]),
                     "completed_at": m["completed_at"],
                 }
             )
@@ -772,6 +807,8 @@ async def get_syllabus_states(
                     "task_id": int(t["task_id"]),
                     "course_id": int(t["course_id"]),
                     "status": _compute_syllabus_task_status(t),
+                    "requirement_level": t["requirement_level"],
+                    "is_active": bool(t["is_active"]),
                     "attempts_used": int(t["attempts_used"] or 0),
                     "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
                     "last_score": int(t["last_score"]) if t["last_score"] is not None else None,
