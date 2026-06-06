@@ -1,0 +1,13 @@
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index 9738679..46ef4e0 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -106,7 +106,7 @@ class MaterialMoveRequest(BaseModel):
+     """Запрос на перемещение материала (в другую позицию или в другой курс)."""
+     new_order_position: Optional[int] = Field(
+         default=None,
+-        ge=1,
++        ge=0,
+         description="Новая позиция в курсе. При переносе в другой курс можно не передавать — материал встанет в конец. В рамках того же курса обязателен.",
+     )
+     course_id: Optional[int] = Field(
