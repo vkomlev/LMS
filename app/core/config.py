@@ -38,6 +38,17 @@ class Settings:
         )
         self.materials_upload_dir.mkdir(parents=True, exist_ok=True)
 
+        # ✅ CAS media root — разделяемый путь с ContentBackbone (ADR-0040, tsk-110).
+        # CB скачивает файлы в эту директорию; LMS читает из неё через /api/v1/media/.
+        # Структура: <cas_media_root>/<sha256[:2]>/<sha256hex>.<ext>
+        # В dev: D:\Work\ContentBackbone\data\media_store (оба сервиса на одной машине).
+        # В prod (Y-7): shared volume или S3 (отдельный ADR).
+        self.cas_media_root: Path = Path(
+            os.getenv("CAS_MEDIA_ROOT", "data/media_store")
+        )
+        # Директория создаётся при старте; CB пишет туда, LMS только читает.
+        self.cas_media_root.mkdir(parents=True, exist_ok=True)
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )

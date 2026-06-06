@@ -32,6 +32,7 @@ from app.api.v1.teacher_learning import router as teacher_learning_router
 from app.api.v1.teacher_help_requests import router as teacher_help_requests_router
 from app.api.v1.teacher_reviews import router as teacher_reviews_router
 from app.api.v1.teacher_workload import router as teacher_workload_router
+from app.api.v1.media import router as media_router  # tsk-110 ADR-0040
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -352,6 +353,9 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 # Phase Y-6: methodist escalations
 from app.api.v1.methodist_escalations import router as methodist_escalations_router
 app.include_router(methodist_escalations_router, prefix=API_PREFIX)
+
+# tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
+app.include_router(media_router, prefix=API_PREFIX)
 
 
 # Phase Y-6: APScheduler для escalation cron (review-loop).
