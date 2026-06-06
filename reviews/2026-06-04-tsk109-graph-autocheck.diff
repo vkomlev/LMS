@@ -1,0 +1,304 @@
+diff --git a/reviews/evidence/2026-06-04-tsk109-graph-autocheck-tasks.py b/reviews/evidence/2026-06-04-tsk109-graph-autocheck-tasks.py
+new file mode 100644
+index 0000000..d5cfa0b
+--- /dev/null
++++ b/reviews/evidence/2026-06-04-tsk109-graph-autocheck-tasks.py
+@@ -0,0 +1,298 @@
++# -*- coding: utf-8 -*-
++"""tsk-109 итерация 1: материал 363 «Контрольные вопросы» (подкурс 140) ->
++серия из 10 авто-проверяемых заданий SC/MC/SA_COM + гашение материала.
++
++Факты для верных ответов взяты из материалов 358-362 того же подкурса.
++Размещение: серия встаёт в начало списка заданий подкурса (order_position 1..10),
++существующие задания курса сдвигаются на +10. Материал 363 -> is_active=false.
++
++Всё в одной транзакции с самопроверкой инвариантов: COMMIT только если все
++проверки пройдены, иначе ROLLBACK.
++"""
++import io
++import os
++import re
++import sys
++
++import psycopg2
++from psycopg2.extras import Json
++
++sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
++
++COURSE_ID = 140
++MATERIAL_ID = 363
++COURSE_UID = "wp:zadanie-1-ege-po-informatike-informatsionnye-modeli"
++N = 10  # сколько заданий вставляем
++
++
++def load_dsn() -> str:
++    """Достаёт DATABASE_URL из .env и приводит к psycopg2-формату (без +asyncpg)."""
++    dsn = os.environ.get("LMS_DB_DSN")
++    if dsn:
++        return dsn
++    env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
++    url = None
++    with open(env_path, "r", encoding="utf-8") as fh:
++        for line in fh:
++            if line.startswith("DATABASE_URL"):
++                url = line.split("=", 1)[1].strip().strip('"').strip("'")
++                break
++    if not url:
++        raise RuntimeError("DATABASE_URL не найден в .env")
++    # postgresql+asyncpg://... -> postgresql://...
++    url = re.sub(r"^postgresql\+asyncpg://", "postgresql://", url)
++    return url
++
++
++# --- HTML-фрагменты таблицы и графа из вопроса 8 материала 363 -----------------
++TABLE_HTML = (
++    "<table><thead><tr><th></th><th>1</th><th>2</th><th>3</th><th>4</th></tr></thead>"
++    "<tbody>"
++    "<tr><td><b>1</b></td><td>–</td><td>5</td><td></td><td>9</td></tr>"
++    "<tr><td><b>2</b></td><td>5</td><td>–</td><td>3</td><td></td></tr>"
++    "<tr><td><b>3</b></td><td></td><td>3</td><td>–</td><td>4</td></tr>"
++    "<tr><td><b>4</b></td><td>9</td><td></td><td>4</td><td>–</td></tr>"
++    "</tbody></table>"
++)
++GRAPH_HTML = "<pre>    A\n   / \\\n  B   D\n   \\ /\n    C</pre>"
++
++
++def opt(oid: str, text: str) -> dict:
++    return {"id": oid, "text": text, "is_active": True, "explanation": ""}
++
++
++def sc(stem, options, correct):
++    return ("SC", stem, options, {"correct_options": correct, "short_answer": None})
++
++
++def mc(stem, options, correct):
++    return ("MC", stem, options, {"correct_options": correct, "short_answer": None})
++
++
++def sa(stem, value):
++    short = {
++        "regex": None,
++        "use_regex": False,
++        "normalization": ["trim", "lower"],
++        "accepted_answers": [{"score": 1, "value": value}],
++    }
++    return ("SA_COM", stem, None, {"correct_options": [], "short_answer": short})
++
++
++# difficulty_id: 1=THEORY, 2=EASY, 3=NORMAL
++SERIES = [
++    # (difficulty_id, builder)
++    (1, sc(
++        "<p>Что такое граф (сетевая модель данных)?</p>",
++        [opt("A", "Набор вершин, соединённых рёбрами"),
++         opt("B", "Упорядоченная последовательность чисел"),
++         opt("C", "Таблица из строк и столбцов без связей между ними"),
++         opt("D", "Программа для рисования схем")],
++        ["A"])),
++    (1, sc(
++        "<p>Какой граф называют взвешенным и что чаще всего обозначает вес ребра "
++        "в задании №1 ЕГЭ?</p>",
++        [opt("A", "Граф, где рёбрам присвоены веса; вес чаще всего обозначает "
++                  "длину пути (расстояние) между двумя пунктами"),
++         opt("B", "Граф, где все вершины одинаковой степени; вес — номер вершины"),
++         opt("C", "Граф без рёбер; вес — число вершин"),
++         opt("D", "Граф с утолщёнными линиями; вес — толщина линии")],
++        ["A"])),
++    (2, sc(
++        "<p>В таблице (матрице) граф задаётся ячейками на пересечении строк и "
++        "столбцов. Что означает заполненная (ненулевая) ячейка на пересечении "
++        "строки X и столбца Y?</p>",
++        [opt("A", "Между вершинами X и Y есть ребро (дорога), а число в ячейке — "
++                  "его вес"),
++         opt("B", "X и Y — это одна и та же вершина"),
++         opt("C", "Ячейка показывает степень вершины X"),
++         opt("D", "Заполненная ячейка означает, что дороги между X и Y нет")],
++        ["A"])),
++    (1, sc(
++        "<p>Что такое степень вершины и как найти её по таблице?</p>",
++        [opt("A", "Это число рёбер у вершины; по таблице — количество ненулевых "
++                  "ячеек в её строке (или столбце)"),
++         opt("B", "Это сумма всех весов в таблице"),
++         opt("C", "Это номер строки вершины"),
++         opt("D", "Это вес самого длинного ребра")],
++        ["A"])),
++    (1, sc(
++        "<p>Чем симметричная матрица расстояний отличается от несимметричной и как "
++        "это отражается на графе?</p>",
++        [opt("A", "В симметричной расстояние из X в Y равно расстоянию из Y в X "
++                  "(ячейки зеркальны относительно диагонали)"),
++         opt("B", "Симметричная матрица всегда заполнена полностью"),
++         opt("C", "В симметричной все веса равны между собой"),
++         opt("D", "Симметричность матрицы задаёт число вершин графа")],
++        ["A"])),
++    (2, sc(
++        "<p>Что такое «однозначное соотнесение» таблицы и графа?</p>",
++        [opt("A", "Для каждой вершины графа можно точно определить её строку и "
++                  "столбец в таблице — соответствие единственное"),
++         opt("B", "Любую вершину можно сопоставить с любым номером — вариантов много"),
++         opt("C", "Таблица и граф никак не связаны между собой"),
++         opt("D", "Соответствие удаётся установить только для одной вершины")],
++        ["A"])),
++    (3, mc(
++        "<p>Какие признаки помогают сопоставить вершины графа и номера в таблице "
++        "при «неоднозначном соотнесении»? Выберите все верные.</p>",
++        [opt("A", "Степень вершины (число связей)"),
++         opt("B", "С какими соседними вершинами она соединена (смежность)"),
++         opt("C", "Цвет линий на рисунке"),
++         opt("D", "Порядок букв в алфавите")],
++        ["A", "B"])),
++    (3, sc(
++        "<p>В таблице между пунктами 1, 2, 3, 4 даны такие данные:</p>" + TABLE_HTML +
++        "<p>И есть граф с вершинами A, B, C, D:</p>" + GRAPH_HTML +
++        "<p>Почему в этом случае нельзя однозначно сопоставить вершины "
++        "{A, B, C, D} и номера {1, 2, 3, 4}?</p>",
++        [opt("A", "Все вершины имеют одинаковую степень (2), и граф, и таблица "
++                  "образуют один и тот же цикл — по степеням вершины не различить "
++                  "(неоднозначное соотнесение)"),
++         opt("B", "В таблице не хватает данных о вершинах"),
++         opt("C", "Граф ориентированный"),
++         opt("D", "Веса рёбер слишком большие")],
++        ["A"])),
++    (2, sa(
++        "<p>По таблице ниже определите степень вершины 3 (число дорог из пункта 3). "
++        "В ответе запишите целое число.</p>" + TABLE_HTML,
++        "2")),
++    (2, sa(
++        "<p>По таблице ниже определите длину прямой дороги между пунктами 1 и 4. "
++        "В ответе запишите целое число.</p>" + TABLE_HTML,
++        "9")),
++]
++
++
++def build_rows():
++    rows = []
++    for i, (difficulty_id, (ttype, stem, options, extra)) in enumerate(SERIES, start=1):
++        ext_uid = f"lms:tsk109:c140:{i:02d}"
++        task_content = {
++            "code": None,
++            "stem": stem,
++            "tags": None,
++            "type": ttype,
++            "media": None,
++            "title": None,
++            "prompt": None,
++            "options": options,
++            "has_hints": False,
++            "course_uid": COURSE_UID,
++            "hints_text": [],
++            "hints_video": [],
++            "difficulty_code": None,
++        }
++        solution_rules = {
++            "max_score": 1,
++            "penalties": {"wrong_answer": 0, "extra_wrong_mc": 0, "missing_answer": 0},
++            "auto_check": True,
++            "text_answer": None,
++            "scoring_mode": "all_or_nothing",
++            "short_answer": extra["short_answer"],
++            "partial_rules": [],
++            "correct_options": extra["correct_options"],
++            "custom_scoring_config": None,
++            "manual_review_required": False,
++        }
++        rows.append((ext_uid, difficulty_id, i, task_content, solution_rules))
++    return rows
++
++
++def main() -> None:
++    apply = "--apply" in sys.argv
++    conn = psycopg2.connect(load_dsn())
++    conn.autocommit = False
++    cur = conn.cursor()
++    try:
++        cur.execute("SET LOCAL app.skip_task_order_trigger = 'true'")
++
++        cur.execute("SELECT count(*) FROM tasks WHERE course_id=%s", (COURSE_ID,))
++        before_cnt = cur.fetchone()[0]
++        cur.execute("SELECT is_active FROM materials WHERE id=%s", (MATERIAL_ID,))
++        mat_before = cur.fetchone()[0]
++        print(f"заданий в курсе {COURSE_ID} до: {before_cnt}; материал {MATERIAL_ID} "
++              f"is_active до: {mat_before}")
++
++        # 1. Сдвиг существующих заданий на +N (освобождаем позиции 1..N).
++        cur.execute(
++            "UPDATE tasks SET order_position = order_position + %s WHERE course_id=%s",
++            (N, COURSE_ID))
++        shifted = cur.rowcount
++
++        # 2. Вставка серии на позиции 1..N.
++        rows = build_rows()
++        for ext_uid, diff_id, pos, tc, sr in rows:
++            cur.execute(
++                "INSERT INTO tasks (external_uid, max_score, task_content, course_id, "
++                "difficulty_id, solution_rules, max_attempts, time_limit_sec, "
++                "order_position) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
++                (ext_uid, 1, Json(tc), COURSE_ID, diff_id, Json(sr), None, None, pos))
++
++        # 3. Гашение материала.
++        cur.execute("UPDATE materials SET is_active=false WHERE id=%s", (MATERIAL_ID,))
++        mat_upd = cur.rowcount
++
++        # --- Самопроверка инвариантов ---
++        cur.execute("SELECT count(*) FROM tasks WHERE course_id=%s", (COURSE_ID,))
++        after_cnt = cur.fetchone()[0]
++        cur.execute(
++            "SELECT min(order_position), max(order_position), count(*), "
++            "count(DISTINCT order_position) FROM tasks WHERE course_id=%s",
++            (COURSE_ID,))
++        pmin, pmax, pcnt, pdistinct = cur.fetchone()
++        cur.execute(
++            "SELECT count(*) FROM tasks WHERE course_id=%s AND external_uid "
++            "LIKE 'lms:tsk109:%%'", (COURSE_ID,))
++        series_cnt = cur.fetchone()[0]
++        cur.execute(
++            "SELECT order_position, task_content->>'type', "
++            "task_content->>'stem' FROM tasks WHERE external_uid LIKE 'lms:tsk109:%%' "
++            "ORDER BY order_position")
++        preview = cur.fetchall()
++        cur.execute("SELECT is_active FROM materials WHERE id=%s", (MATERIAL_ID,))
++        mat_after = cur.fetchone()[0]
++
++        print(f"сдвинуто заданий: {shifted}; вставлено серии: {series_cnt}")
++        print(f"заданий в курсе после: {after_cnt}")
++        print(f"order_position: min={pmin} max={pmax} count={pcnt} distinct={pdistinct}")
++        print(f"материал {MATERIAL_ID} is_active после: {mat_after} (обновлено строк {mat_upd})")
++        print("--- серия (позиция / тип / начало stem) ---")
++        for pos, typ, stem in preview:
++            print(f"  {pos:>2}  {typ:<7} {stem[:70]}")
++
++        checks = {
++            "вставлено ровно N": series_cnt == N,
++            "итог = было + N": after_cnt == before_cnt + N,
++            "позиции непрерывны 1..count": (pmin == 1 and pmax == pcnt
++                                            and pdistinct == pcnt),
++            "серия на позициях 1..N": [p[0] for p in preview] == list(range(1, N + 1)),
++            "материал погашен": mat_after is False and mat_upd == 1,
++            "сдвинуты все старые": shifted == before_cnt,
++        }
++        print("--- проверки ---")
++        for name, ok in checks.items():
++            print(f"  [{'OK' if ok else 'FAIL'}] {name}")
++
++        if all(checks.values()) and apply:
++            conn.commit()
++            print("РЕЗУЛЬТАТ: проверки пройдены, COMMIT.")
++        elif all(checks.values()):
++            conn.rollback()
++            print("РЕЗУЛЬТАТ: проверки пройдены (DRY-RUN), ROLLBACK. "
++                  "Запусти с --apply для записи.")
++        else:
++            conn.rollback()
++            print("РЕЗУЛЬТАТ: проверки НЕ пройдены, ROLLBACK.")
++            sys.exit(1)
++    except Exception as exc:  # noqa: BLE001
++        conn.rollback()
++        print(f"ОШИБКА: {exc!r}. ROLLBACK.")
++        raise
++    finally:
++        cur.close()
++        conn.close()
++
++
++if __name__ == "__main__":
++    main()
