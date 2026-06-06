@@ -11679,6 +11679,226 @@
         }
       }
     },
+    "/api/v1/learning/materials/{material_id}/skip": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+        "operationId": "material_skip_api_v1_learning_materials__material_id__skip_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID РјР°С‚РµСЂРёР°Р»Р°",
+              "title": "Material Id"
+            },
+            "description": "ID РјР°С‚РµСЂРёР°Р»Р°"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningSkipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningSkipResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/tasks/{task_id}/skip": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+        "operationId": "task_skip_api_v1_learning_tasks__task_id__skip_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID Р·Р°РґР°РЅРёСЏ",
+              "title": "Task Id"
+            },
+            "description": "ID Р·Р°РґР°РЅРёСЏ"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningSkipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningSkipResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/learning/tasks/{task_id}/start-or-get-attempt": {
       "post": {
         "tags": [
@@ -19846,6 +20066,81 @@
         ],
         "title": "LastPositionRead"
       },
+      "LearningSkipRequest": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID СЃС‚СѓРґРµРЅС‚Р°"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id"
+        ],
+        "title": "LearningSkipRequest"
+      },
+      "LearningSkipResponse": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok",
+            "default": true
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "material",
+              "task"
+            ],
+            "title": "Kind"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "status": {
+            "type": "string",
+            "const": "skipped",
+            "title": "Status",
+            "default": "skipped"
+          },
+          "skipped_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Skipped At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "kind",
+          "skipped_at"
+        ],
+        "title": "LearningSkipResponse"
+      },
       "LinkTokenIssueRequest": {
         "properties": {
           "kind": {
@@ -20175,6 +20470,16 @@
             "title": "Is Active",
             "default": true
           },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level",
+            "default": "required"
+          },
           "external_uid": {
             "anyOf": [
               {
@@ -20329,6 +20634,15 @@
             "type": "boolean",
             "title": "Is Active"
           },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level"
+          },
           "external_uid": {
             "anyOf": [
               {
@@ -20359,6 +20673,7 @@
           "type",
           "content",
           "is_active",
+          "requirement_level",
           "created_at",
           "updated_at"
         ],
@@ -20493,6 +20808,22 @@
               }
             ],
             "title": "Is Active"
+          },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "skippable",
+                  "recommended",
+                  "required"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level"
           },
           "external_uid": {
             "anyOf": [
@@ -23326,9 +23657,24 @@
             "type": "string",
             "enum": [
               "completed",
-              "not_started"
+              "not_started",
+              "skipped"
             ],
             "title": "Status"
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           },
           "completed_at": {
             "anyOf": [
@@ -23348,6 +23694,7 @@
           "material_id",
           "course_id",
           "status",
+          "requirement_level",
           "completed_at"
         ],
         "title": "SyllabusMaterialItem",
@@ -23472,9 +23819,24 @@
               "failed",
               "blocked_limit",
               "in_progress",
-              "not_started"
+              "not_started",
+              "skipped"
             ],
             "title": "Status"
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
           },
           "attempts_used": {
             "type": "integer",
@@ -23524,6 +23886,7 @@
           "task_id",
           "course_id",
           "status",
+          "requirement_level",
           "attempts_used",
           "attempts_limit_effective",
           "last_score",
@@ -23859,6 +24222,21 @@
               }
             ],
             "title": "Max Score"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level",
+            "default": "required"
           },
           "order_position": {
             "anyOf": [
@@ -24201,6 +24579,21 @@
               }
             ],
             "title": "Max Score"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level",
+            "default": "required"
           },
           "order_position": {
             "anyOf": [
@@ -25072,6 +25465,33 @@
             ],
             "title": "Max Score"
           },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "skippable",
+                  "recommended",
+                  "required"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level"
+          },
           "order_position": {
             "anyOf": [
               {
@@ -25125,6 +25545,21 @@
               }
             ],
             "title": "Max Score"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          },
+          "requirement_level": {
+            "type": "string",
+            "enum": [
+              "skippable",
+              "recommended",
+              "required"
+            ],
+            "title": "Requirement Level",
+            "default": "required"
           },
           "order_position": {
             "anyOf": [
