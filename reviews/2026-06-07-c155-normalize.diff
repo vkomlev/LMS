@@ -1,0 +1,534 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index cea04b7..b9f7541 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -2,8 +2,13 @@ from __future__ import annotations
+ 
+ from typing import List, Optional
+ from datetime import datetime, timedelta, timezone
++from uuid import uuid4
++import mimetypes
++import os
++import re
+ 
+-from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
++from fastapi import APIRouter, Depends, Body, File, HTTPException, status, Query, UploadFile
++from starlette.responses import FileResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import select
+ 
+@@ -20,6 +25,7 @@ from app.schemas.attempts import (
+     AttemptAnswersRequest,
+     AttemptAnswersResponse,
+     AttemptAnswerResult,
++    AttemptAttachmentRead,
+     AttemptFinishResponse,
+     AttemptCancelRequest,
+     AttemptCancelResponse,
+@@ -36,6 +42,7 @@ from app.services.task_results_service import TaskResultsService
+ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
++from app.core.config import Settings
+ 
+ from app.utils.exceptions import DomainError
+ 
+@@ -43,6 +50,8 @@ import logging
+ 
+ router = APIRouter(tags=["attempts"])
+ logger = logging.getLogger("api.attempts")
++settings = Settings()
++SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+ 
+ attempts_service = AttemptsService()
+ task_results_service = TaskResultsService()
+@@ -51,6 +60,12 @@ checking_service = CheckingService()
+ learning_engine_service = LearningEngineService()
+ 
+ 
++def _safe_upload_filename(filename: str | None) -> str:
++    base = os.path.basename(filename or "attachment")
++    safe = SAFE_FILENAME_RE.sub("_", base).strip("._")
++    return safe or "attachment"
++
++
+ # ---------- Внутренний helper для сборки AttemptWithResults ----------
+ 
+ 
+@@ -395,6 +410,103 @@ async def submit_attempt_answers(
+     )
+ 
+ 
++@router.post(
++    "/attempts/{attempt_id}/attachments",
++    response_model=AttemptAttachmentRead,
++    status_code=status.HTTP_201_CREATED,
++    summary="Загрузить файл к ответу в рамках попытки",
++)
++async def upload_attempt_attachment(
++    attempt_id: int,
++    file: UploadFile = File(..., description="Файл для прикрепления к ответу"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> AttemptAttachmentRead:
++    """
++    Загружает файл в контексте попытки.
++
++    Клиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.
++    Это не меняет scoring: вложение только хранится рядом с `answer_json`.
++    """
++    attempt = await attempts_service.get_by_id(db, attempt_id)
++    if attempt is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
++    if not current_user.is_service and current_user.id != attempt.user_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    if attempt.finished_at is not None or attempt.cancelled_at is not None:
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail="Загружать вложения можно только для активной попытки.",
++        )
++
++    settings.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
++
++    original_name = _safe_upload_filename(file.filename)
++    attachment_id = f"{attempt_id}_{uuid4().hex}_{original_name}"
++    file_path = settings.attempt_attachments_upload_dir / attachment_id
++
++    total = 0
++    try:
++        with open(file_path, "wb") as f:
++            while True:
++                chunk = await file.read(settings.attachment_chunk_size)
++                if not chunk:
++                    break
++                total += len(chunk)
++                if total > settings.max_attachment_size_bytes:
++                    raise HTTPException(
++                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
++                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
++                    )
++                f.write(chunk)
++    except HTTPException:
++        try:
++            if file_path.exists():
++                file_path.unlink()
++        except Exception:
++            pass
++        raise
++
++    attachment_url = f"/api/v1/attempts/{attempt_id}/attachments/{attachment_id}"
++    return AttemptAttachmentRead(
++        attachment_id=attachment_id,
++        attachment_url=attachment_url,
++        filename=original_name,
++        content_type=file.content_type or "application/octet-stream",
++        size_bytes=total,
++    )
++
++
++@router.get(
++    "/attempts/{attempt_id}/attachments/{attachment_id}",
++    summary="Скачать вложение ответа в рамках попытки",
++)
++async def download_attempt_attachment(
++    attempt_id: int,
++    attachment_id: str,
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++):
++    attempt = await attempts_service.get_by_id(db, attempt_id)
++    if attempt is None:
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
++    if not current_user.is_service and current_user.id != attempt.user_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    if not attachment_id.startswith(f"{attempt_id}_"):
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
++
++    file_path = settings.attempt_attachments_upload_dir / _safe_upload_filename(attachment_id)
++    if not file_path.exists():
++        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment file missing on server")
++
++    media_type = mimetypes.guess_type(attachment_id)[0] or "application/octet-stream"
++    return FileResponse(
++        path=str(file_path),
++        media_type=media_type,
++        filename=os.path.basename(attachment_id),
++    )
++
++
+ @router.post(
+     "/attempts/{attempt_id}/cancel",
+     response_model=AttemptCancelResponse,
+diff --git a/app/core/config.py b/app/core/config.py
+index a4b063a..5a74280 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -32,6 +32,12 @@ class Settings:
+         )
+         self.messages_upload_dir.mkdir(parents=True, exist_ok=True)
+ 
++        # Вложения к ответам учеников в stateful attempts.
++        self.attempt_attachments_upload_dir: Path = Path(
++            os.getenv("ATTEMPT_ATTACHMENTS_UPLOAD_DIR", "uploads/attempts")
++        )
++        self.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
++
+         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
+         self.materials_upload_dir: Path = Path(
+             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")
+@@ -135,4 +141,4 @@ class Settings:
+         # не более N escalation push'ей по одному курсу в сутки.
+         self.methodist_rate_limit_per_day_per_course: int = int(
+             os.getenv("METHODIST_RATE_LIMIT_PER_DAY_PER_COURSE", "1")
+-        )
+\ No newline at end of file
++        )
+diff --git a/app/schemas/attempts.py b/app/schemas/attempts.py
+index b880344..a139457 100644
+--- a/app/schemas/attempts.py
++++ b/app/schemas/attempts.py
+@@ -268,6 +268,16 @@ class AttemptAnswersResponse(BaseModel):
+     )
+ 
+ 
++class AttemptAttachmentRead(BaseModel):
++    """Метаданные файла, загруженного учеником в контексте попытки."""
++
++    attachment_id: str = Field(..., description="Серверный идентификатор файла")
++    attachment_url: str = Field(..., description="Относительный URL скачивания")
++    filename: str = Field(..., description="Исходное имя файла")
++    content_type: str = Field(..., description="MIME-тип файла")
++    size_bytes: int = Field(..., ge=0, description="Размер файла в байтах")
++
++
+ class AttemptFinishResponse(AttemptWithResults):
+     """
+     Ответ для POST /attempts/{id}/finish.
+diff --git a/docs/openapi.json b/docs/openapi.json
+index c521335..c49653f 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -11000,6 +11000,220 @@
+         }
+       }
+     },
++    "/api/v1/attempts/{attempt_id}/attachments": {
++      "post": {
++        "tags": [
++          "attempts"
++        ],
++        "summary": "Загрузить файл к ответу в рамках попытки",
++        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.",
++        "operationId": "upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "attempt_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Attempt Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "multipart/form-data": {
++              "schema": {
++                "$ref": "#/components/schemas/Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post"
++              }
++            }
++          }
++        },
++        "responses": {
++          "201": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/AttemptAttachmentRead"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/attempts/{attempt_id}/attachments/{attachment_id}": {
++      "get": {
++        "tags": [
++          "attempts"
++        ],
++        "summary": "Скачать вложение ответа в рамках попытки",
++        "operationId": "download_attempt_attachment_api_v1_attempts__attempt_id__attachments__attachment_id__get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "attempt_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Attempt Id"
++            }
++          },
++          {
++            "name": "attachment_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "title": "Attachment Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {}
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/attempts/{attempt_id}/cancel": {
+       "post": {
+         "tags": [
+@@ -16262,6 +16476,46 @@
+         "title": "AttemptAnswersResponse",
+         "description": "Ответ для POST /attempts/{id}/answers."
+       },
++      "AttemptAttachmentRead": {
++        "properties": {
++          "attachment_id": {
++            "type": "string",
++            "title": "Attachment Id",
++            "description": "Серверный идентификатор файла"
++          },
++          "attachment_url": {
++            "type": "string",
++            "title": "Attachment Url",
++            "description": "Относительный URL скачивания"
++          },
++          "filename": {
++            "type": "string",
++            "title": "Filename",
++            "description": "Исходное имя файла"
++          },
++          "content_type": {
++            "type": "string",
++            "title": "Content Type",
++            "description": "MIME-тип файла"
++          },
++          "size_bytes": {
++            "type": "integer",
++            "minimum": 0.0,
++            "title": "Size Bytes",
++            "description": "Размер файла в байтах"
++          }
++        },
++        "type": "object",
++        "required": [
++          "attachment_id",
++          "attachment_url",
++          "filename",
++          "content_type",
++          "size_bytes"
++        ],
++        "title": "AttemptAttachmentRead",
++        "description": "Метаданные файла, загруженного учеником в контексте попытки."
++      },
+       "AttemptCancelRequest": {
+         "properties": {
+           "reason": {
+@@ -16898,6 +17152,21 @@
+         ],
+         "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
+       },
++      "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post": {
++        "properties": {
++          "file": {
++            "type": "string",
++            "format": "binary",
++            "title": "File",
++            "description": "Файл для прикрепления к ответу"
++          }
++        },
++        "type": "object",
++        "required": [
++          "file"
++        ],
++        "title": "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post"
++      },
+       "Body_upload_material_file_api_v1_materials_upload_post": {
+         "properties": {
+           "file": {
+diff --git a/reviews/evidence/nav-missing-tasks.md b/reviews/evidence/nav-missing-tasks.md
+index 1d71b4e..b7f33e1 100644
+--- a/reviews/evidence/nav-missing-tasks.md
++++ b/reviews/evidence/nav-missing-tasks.md
+@@ -54,3 +54,29 @@
+ | 3 | 138 | Сложные | 4 | polyakov | 7615 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7615 | 2026-06-07 |
+ | 3 | 138 | Сложные | 4 | polyakov | 7616 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7616 | 2026-06-07 |
+ | 3 | 138 | Сложные | 4 | polyakov | 7617 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7617 | 2026-06-07 |
++| 4 | 155 | Простые | 2 | kompege | 3 | https://kompege.ru/task?id=3 | 2026-06-07 |
++| 4 | 155 | Простые | 2 | kompege | 48 | https://kompege.ru/task?id=48 | 2026-06-07 |
++| 4 | 155 | Простые | 2 | kompege | 109 | https://kompege.ru/task?id=109 | 2026-06-07 |
++| 4 | 155 | Простые | 2 | kompege | 112 | https://kompege.ru/task?id=112 | 2026-06-07 |
++| 4 | 155 | Простые | 2 | kompege | 114 | https://kompege.ru/task?id=114 | 2026-06-07 |
++| 4 | 155 | Средние | 3 | sdamgia | 75241 | https://inf-ege.sdamgia.ru/problem?id=75241 | 2026-06-07 |
++| 4 | 155 | Средние | 3 | sdamgia | 76701 | https://inf-ege.sdamgia.ru/problem?id=76701 | 2026-06-07 |
++| 4 | 155 | Средние | 3 | sdamgia | 76219 | https://inf-ege.sdamgia.ru/problem?id=76219 | 2026-06-07 |
++| 4 | 155 | Средние | 3 | sdamgia | 11341 | https://inf-ege.sdamgia.ru/problem?id=11341 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 2697 | https://kompege.ru/task?id=2697 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 712 | https://kompege.ru/task?id=712 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 296 | https://kompege.ru/task?id=296 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 19408 | https://kompege.ru/task?id=19408 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18944 | https://kompege.ru/task?id=18944 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18914 | https://kompege.ru/task?id=18914 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18360 | https://kompege.ru/task?id=18360 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18259 | https://kompege.ru/task?id=18259 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18161 | https://kompege.ru/task?id=18161 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 18129 | https://kompege.ru/task?id=18129 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 16251 | https://kompege.ru/task?id=16251 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 14322 | https://kompege.ru/task?id=14322 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 13819 | https://kompege.ru/task?id=13819 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | kompege | 12093 | https://kompege.ru/task?id=12093 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | sdamgia | 75241 | https://inf-ege.sdamgia.ru/problem?id=75241 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | sdamgia | 76701 | https://inf-ege.sdamgia.ru/problem?id=76701 | 2026-06-07 |
++| 4 | 155 | Сложные | 4 | sdamgia | 76219 | https://inf-ege.sdamgia.ru/problem?id=76219 | 2026-06-07 |

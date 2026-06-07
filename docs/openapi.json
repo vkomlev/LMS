@@ -11000,6 +11000,220 @@
         }
       }
     },
+    "/api/v1/attempts/{attempt_id}/attachments": {
+      "post": {
+        "tags": [
+          "attempts"
+        ],
+        "summary": "Загрузить файл к ответу в рамках попытки",
+        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.",
+        "operationId": "upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptAttachmentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/attempts/{attempt_id}/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "attempts"
+        ],
+        "summary": "Скачать вложение ответа в рамках попытки",
+        "operationId": "download_attempt_attachment_api_v1_attempts__attempt_id__attachments__attachment_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt Id"
+            }
+          },
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Attachment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/attempts/{attempt_id}/cancel": {
       "post": {
         "tags": [
@@ -16262,6 +16476,46 @@
         "title": "AttemptAnswersResponse",
         "description": "Ответ для POST /attempts/{id}/answers."
       },
+      "AttemptAttachmentRead": {
+        "properties": {
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id",
+            "description": "Серверный идентификатор файла"
+          },
+          "attachment_url": {
+            "type": "string",
+            "title": "Attachment Url",
+            "description": "Относительный URL скачивания"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename",
+            "description": "Исходное имя файла"
+          },
+          "content_type": {
+            "type": "string",
+            "title": "Content Type",
+            "description": "MIME-тип файла"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Size Bytes",
+            "description": "Размер файла в байтах"
+          }
+        },
+        "type": "object",
+        "required": [
+          "attachment_id",
+          "attachment_url",
+          "filename",
+          "content_type",
+          "size_bytes"
+        ],
+        "title": "AttemptAttachmentRead",
+        "description": "Метаданные файла, загруженного учеником в контексте попытки."
+      },
       "AttemptCancelRequest": {
         "properties": {
           "reason": {
@@ -16897,6 +17151,21 @@
           "user_id"
         ],
         "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
+      },
+      "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Файл для прикрепления к ответу"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post"
       },
       "Body_upload_material_file_api_v1_materials_upload_post": {
         "properties": {
