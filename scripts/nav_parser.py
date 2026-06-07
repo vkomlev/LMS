@@ -62,7 +62,8 @@ URL_PATTERNS = [
     ("kompege",  re.compile(r"kompege\.ru/task\?id=(\d+)")),
     ("sdamgia",  re.compile(r"sdamgia\.ru/problem\?id=(\d+)")),
     ("polyakov", re.compile(r"polyakov\.spb\.ru.+?topicId=(\d+)")),
-    ("yandex",   re.compile(r"education\.yandex\.ru/ege/task/([0-9a-f\-]{36})")),
+    ("yandex",   re.compile(r"education\.yandex\.ru/ege/(?:inf/)?task/([0-9a-f\-]{36})")),
+    ("yandex",   re.compile(r"education\.yandex\.ru/ege/(?:collections|variants)/([0-9a-f\-]{36})/task/(\d+)")),
 ]
 
 REGISTRY_PATH = os.path.normpath(
@@ -119,8 +120,26 @@ def _parse_url(href: str) -> tuple[str, str] | None:
     """(source, task_id) из URL задания, или None."""
     for source, pattern in URL_PATTERNS:
         if m := pattern.search(href):
-            return source, m.group(1)
+            task_id = ":".join(group for group in m.groups() if group is not None)
+            return source, task_id
     return None
+
+
+def _section_task_links(section_el) -> list[str]:
+    """Ссылки раздела до следующего заголовка; поддерживает ul и отдельные p."""
+    links: list[str] = []
+    current = section_el
+    while current:
+        current = current.find_next_sibling()
+        if current is None:
+            break
+        if current.name in ("h1", "h2", "h3", "h4"):
+            break
+        for a in current.find_all("a", href=True):
+            href = a.get("href", "")
+            if _parse_url(href):
+                links.append(href)
+    return links
 
 
 def _resolve_content_url(url: str, soup: BeautifulSoup) -> str | None:
@@ -161,20 +180,7 @@ def fetch_sections(start_url: str) -> tuple[dict[int, list[dict]], BeautifulSoup
         section_el = content_soup.find(id=anchor_id)
         if not section_el:
             continue
-        # Все <li> в ближайшем <ul> после заголовка
-        ul = section_el.find_next_sibling("ul")
-        if not ul:
-            # Возможно ul вложен иначе — ищем до следующего заголовка
-            ul = section_el.find_next("ul")
-        if not ul:
-            continue
-
-        for li in ul.find_all("li", recursive=False):
-            # Первая ссылка в li — ссылка на задание
-            task_link = li.find("a")
-            if not task_link:
-                continue
-            href = task_link.get("href", "")
+        for href in _section_task_links(section_el):
             parsed = _parse_url(href)
             if parsed:
                 source, task_id = parsed
@@ -378,9 +384,18 @@ def print_material_report(materials: list[dict]) -> list[dict]:
 
 def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int, list[dict]]:
     """Добавляет поля status, lms_course, lms_diff к каждому заданию."""
+    nav_diffs_by_task: dict[tuple[str, str], set[int]] = {}
+    for diff_id, tasks in sections.items():
+        for t in tasks:
+            key = (t["source"], t["task_id"])
+            nav_diffs_by_task.setdefault(key, set()).add(diff_id)
+
     for diff_id, tasks in sections.items():
         for t in tasks:
             source, task_id = t["source"], t["task_id"]
+            nav_diffs = nav_diffs_by_task[(source, task_id)]
+            if len(nav_diffs) > 1:
+                t["duplicate_nav_diffs"] = sorted(nav_diffs)
 
             # Первичный поиск: по external_uid (kompege/polyakov/sdamgia в не-wp_nav формате)
             if source != "yandex":
@@ -419,10 +434,11 @@ def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int,
                 lms_diff = in_course[0][1]
                 t["lms_diff"] = lms_diff
                 t["lms_course"] = course_id
+                diff_ok = lms_diff == diff_id or lms_diff in nav_diffs
                 if via_wp:
-                    t["status"] = "wp_ok" if lms_diff == diff_id else "wp_wrong"
+                    t["status"] = "wp_ok" if diff_ok else "wp_wrong"
                 else:
-                    t["status"] = "ok" if lms_diff == diff_id else "wrong_diff"
+                    t["status"] = "ok" if diff_ok else "wrong_diff"
             else:
                 t["status"] = "other_course"
                 t["lms_course"] = rows[0][0]
@@ -456,10 +472,19 @@ def print_report(sections: dict[int, list[dict]], course_id: int, task_num: int)
             s = t["status"]
             mark = status_mark.get(s, "[?]")
             src = f"{t['source']}:{t['task_id']}"
+            duplicate_diffs = t.get("duplicate_nav_diffs")
             if s == "ok":
-                detail = f"diff={diff_lms[diff_id]}"
+                if duplicate_diffs:
+                    variants = "/".join(str(d) for d in duplicate_diffs)
+                    detail = f"дубль в разделах {variants}, в LMS diff={t['lms_diff']}"
+                else:
+                    detail = f"diff={diff_lms[diff_id]}"
             elif s == "wp_ok":
-                detail = f"в wp_nav, diff={diff_lms[diff_id]}"
+                if duplicate_diffs:
+                    variants = "/".join(str(d) for d in duplicate_diffs)
+                    detail = f"в wp_nav, дубль в разделах {variants}, в LMS diff={t['lms_diff']}"
+                else:
+                    detail = f"в wp_nav, diff={diff_lms[diff_id]}"
             elif s == "wrong_diff":
                 detail = f"в LMS diff={t['lms_diff']} (нужно {diff_id}={diff_lms[diff_id]})"
                 wrong.append((diff_id, t))

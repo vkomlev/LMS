@@ -8,7 +8,8 @@
 
 Особенности:
 - вводных lms:c160:vvod:* нет;
-- в навигаторе: Простые=4, Средние=29, Сложные=0;
+- в навигаторе: Простые=4, Средние=31, Сложные=32;
+- yandex:c01534c6-0b3e-4da7-9d99-6c8d759babaf:9 отсутствует в LMS -> реестр missing;
 - материалы: 9 позиций навигатора, id=662 без ☝ -> recommended;
 - id=446 "Задания для закрепления" — раздел/контейнер, не материал навигатора -> inactive;
 - id=664 "Задание 9" — лишнее видео не из навигатора, URL от курса 8 -> inactive;
@@ -37,6 +38,20 @@ KOMPEGE_EASY_UIDS = (
     "ext:d4:kompege:20260602:2100",
 )
 TG_EASY_UIDS = ("tg:ege:785", "tg:ege:553", "tg:ege:498")
+WP_NAV_HARD_STIDS = {
+    "20488", "18258", "16256", "14661", "14249", "13824", "11228", "7674",
+    "7030", "6925", "6783", "6357", "6081", "2518", "2380", "2211",
+    "6335", "6336", "6337", "6338", "6339", "6340", "6341",
+    "4361eddf-5383-491c-a4a7-a67acaf27b9a",
+    "342217d2-3e89-4933-a422-940d9668bfa3",
+    "679cf8d3-a852-4dc0-a42f-e8b4825ea271",
+    "2c9beda9-8bb0-497c-b6d3-d4fd322f0df0",
+    "d62dc568-941a-44da-870b-b8cc21faee9f",
+    "d3ce64c1-1875-458b-b8d6-ae96bb169c58",
+    "4a521e4c-c1ac-440a-8fb2-3aa0bc59172c",
+    "6b618986-8c2b-4719-9f2e-5b3ab46b01e5",
+    "82c97d22-18da-44ce-aafa-9e25f9e55301",
+}
 MATERIAL_RECOMMENDED_IDS = (662,)
 MATERIAL_DEACTIVATE_IDS = (446, 664)
 
@@ -159,13 +174,37 @@ def main() -> None:
         print(f"Крылов PDF new+ext -> diff=2: {cur.rowcount}")
         checks["crylov pdf updated"] = cur.rowcount == 20
 
+        cur.execute(
+            """
+            UPDATE tasks SET difficulty_id=4
+            WHERE course_id=%s AND external_uid ILIKE 'wp_nav:%%'
+              AND task_content->>'source_task_id' = ANY(%s)
+            """,
+            (COURSE_ID, list(WP_NAV_HARD_STIDS)),
+        )
+        print(f"wp_nav Сложные -> diff=4: {cur.rowcount}")
+        checks["wp_nav hard updated"] = cur.rowcount == len(WP_NAV_HARD_STIDS)
+
         section("Requirement levels")
         cur.execute(
-            "UPDATE tasks SET requirement_level='required' WHERE course_id=%s AND is_active=true",
+            """
+            UPDATE tasks SET requirement_level='required'
+            WHERE course_id=%s AND is_active=true AND difficulty_id < 4
+            """,
             (COURSE_ID,),
         )
-        print(f"active tasks -> required: {cur.rowcount}")
-        checks["active tasks required"] = cur.rowcount == before_total
+        print(f"diff<4 active tasks -> required: {cur.rowcount}")
+        checks["diff<4 active tasks required"] = cur.rowcount == 72
+
+        cur.execute(
+            """
+            UPDATE tasks SET requirement_level='recommended'
+            WHERE course_id=%s AND is_active=true AND difficulty_id = 4
+            """,
+            (COURSE_ID,),
+        )
+        print(f"diff=4 active tasks -> recommended: {cur.rowcount}")
+        checks["diff=4 active tasks recommended"] = cur.rowcount == 32
 
         section("Переупорядочивание")
         cur.execute(
@@ -223,13 +262,17 @@ def main() -> None:
             """,
             (COURSE_ID,),
         )
-        checks["diff=3 required count = 77"] = cur.fetchone()[0] == 77
+        checks["diff=3 required count = 45"] = cur.fetchone()[0] == 45
 
         cur.execute(
-            "SELECT count(*) FROM tasks WHERE course_id=%s AND is_active=true AND difficulty_id=4",
+            """
+            SELECT count(*) FROM tasks
+            WHERE course_id=%s AND is_active=true AND difficulty_id=4
+              AND requirement_level='recommended'
+            """,
             (COURSE_ID,),
         )
-        checks["diff=4 active count = 0"] = cur.fetchone()[0] == 0
+        checks["diff=4 recommended count = 32"] = cur.fetchone()[0] == 32
 
         cur.execute(
             """
