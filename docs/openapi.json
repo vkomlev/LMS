@@ -11006,7 +11006,7 @@
           "attempts"
         ],
         "summary": "Загрузить файл к ответу в рамках попытки",
-        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.",
+        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.\nВ рамках одной попытки хранится одно актуальное вложение; повторная успешная загрузка\nзаменяет предыдущий файл. Загрузка разрешена только для активной попытки.",
         "operationId": "upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post",
         "security": [
           {
