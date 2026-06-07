@@ -109,6 +109,10 @@ def _slug_from_url(url: str) -> str:
     path = urlparse(url).path.strip("/")
     return path.split("/")[-1] if "/" in path else path
 
+
+def _norm_title(title: str | None) -> str:
+    return re.sub(r"\s+", " ", title or "").strip().casefold()
+
 # ── Парсинг задач ─────────────────────────────────────────────────────────────
 
 def _parse_url(href: str) -> tuple[str, str] | None:
@@ -265,29 +269,60 @@ def fetch_materials(nav_soup: BeautifulSoup, nav_url: str) -> list[dict]:
 
     return result
 
+
+def material_heading_candidates(nav_soup: BeautifulSoup) -> list[str]:
+    """Заголовки рядом с материалами для диагностики, если парсер ничего не нашёл."""
+    entry = (
+        nav_soup.find("div", class_="entry-content")
+        or nav_soup.find("article")
+        or nav_soup.find("main")
+    )
+    if not entry:
+        return []
+
+    headings: list[str] = []
+    for h in entry.find_all(("h2", "h3", "h4")):
+        text = h.get_text(" ", strip=True)
+        if text and any(ch in text[:4] for ch in ("📖", "👀", "❓", "🔁", "💻")):
+            headings.append(text)
+    return headings
+
 # ── Проверка LMS — материалы ──────────────────────────────────────────────────
 
 def check_lms_materials(materials: list[dict], course_id: int, cur) -> list[dict]:
     """Добавляет lms_id, lms_req, lms_active, status к каждому материалу."""
     for mat in materials:
         cur.execute(
-            "SELECT id, requirement_level, is_active "
+            "SELECT id, title, requirement_level, is_active "
             "FROM materials WHERE external_uid = %s AND course_id = %s",
             (mat["external_uid"], course_id),
         )
         row = cur.fetchone()
+        if row and _norm_title(row[1]) != _norm_title(mat["title"]):
+            cur.execute(
+                "SELECT id, title, requirement_level, is_active "
+                "FROM materials WHERE course_id = %s AND lower(title) = lower(%s) "
+                "ORDER BY is_active DESC, id LIMIT 1",
+                (course_id, mat["title"]),
+            )
+            title_row = cur.fetchone()
+            if title_row:
+                row = title_row
+                mat["matched_by"] = "title"
         if row:
             mat["lms_id"] = row[0]
-            mat["lms_req"] = row[1]
-            mat["lms_active"] = row[2]
-            if not row[2]:
+            mat["lms_title"] = row[1]
+            mat["lms_req"] = row[2]
+            mat["lms_active"] = row[3]
+            if not row[3]:
                 mat["status"] = "inactive"
-            elif row[1] == mat["req_level"]:
+            elif row[2] == mat["req_level"]:
                 mat["status"] = "ok"
             else:
                 mat["status"] = "diff"
         else:
             mat["lms_id"] = None
+            mat["lms_title"] = None
             mat["lms_req"] = None
             mat["lms_active"] = None
             mat["status"] = "missing"
@@ -319,7 +354,8 @@ def print_material_report(materials: list[dict]) -> list[dict]:
         nav_req = mat["req_level"]
         lms_req = mat.get("lms_req") or "—"
         lms_id  = mat.get("lms_id")  or "—"
-        print(f"  {mark} id={str(lms_id):<5} {uid:<65} nav={nav_req:<12} lms={lms_req}")
+        matched = f" via={mat['matched_by']}" if mat.get("matched_by") else ""
+        print(f"  {mark} id={str(lms_id):<5} {uid:<65} nav={nav_req:<12} lms={lms_req}{matched}")
         if s == "diff":
             diff_list.append(mat)
 
@@ -510,6 +546,12 @@ def main() -> None:
     print("\nПарсинг материалов...")
     materials = fetch_materials(nav_soup, args.url)
     print(f"  Найдено материалов в навигаторе: {len(materials)}")
+    if not materials:
+        headings = material_heading_candidates(nav_soup)
+        if headings:
+            print("  Диагностика: найденные заголовки-кандидаты материалов:")
+            for heading in headings:
+                print(f"    - {heading}")
 
     conn = psycopg2.connect(load_dsn())
     cur = conn.cursor()

@@ -187,7 +187,7 @@ GROUP BY difficulty_id ORDER BY difficulty_id;
 | 156 | 5 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит 95fc112) |
 | 157 | 6 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит a164dcc) |
 | 158 | 7 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит bb5174d) |
-| 159 | 8 | ✓ | ✓ | ✓ | ⚠️ | **DONE** (коммит 45208b5, материалы TODO — nav 0) |
+| 159 | 8 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит 45208b5 + follow-up `2026-06-07-c159-materials-icons.py`) |
 
 ---
 

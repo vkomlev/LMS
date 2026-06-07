@@ -6,7 +6,7 @@
 - vvod:01-06 diff=2, vvod:07-11 diff=3, vvod:12-13 diff=4 — НЕ ТРОГАТЬ difficulty!
 - crylov:v1t8 имеет «Уровень средний» в stem → остаётся diff=3 (НЕ diff=2)
 - 3 TG без маркера уровня — вводные/вспомогательные артефакты → деактивировать
-- nav_parser нашёл 0 материалов (нетипичная структура страницы) → материалы не трогаем
+- материалы закрыты follow-up скриптом `2026-06-07-c159-materials-icons.py`
 
 == Источник классификации ==
 nav_parser на zadanie-8-ege-po-informatike-kombinatorika + stem markers TG
@@ -44,10 +44,8 @@ nav_parser на zadanie-8-ege-po-informatike-kombinatorika + stem markers TG
     tg:ege:441 «Вспомогательное задание 8_9» → вспом. артефакт
 
 == Материалы ==
-  nav_parser нашёл 0 материалов (нетипичная структура nav-страницы курса 8).
-  TODO: проверить иконки вручную и обновить req_level в отдельном патче.
-  Текущее состояние: 7 активных материалов (id=439,440,441,653,654,655,656) — все required.
-  2 неактивных (id=442,443) — оставляем as is.
+  Follow-up по скрину навигатора: `2026-06-07-c159-materials-icons.py`.
+  id=440/654 → recommended; id=656 → is_active=false как дубль id=655.
 
 Задача: tsk-112
 """
