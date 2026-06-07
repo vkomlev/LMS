@@ -1,0 +1,205 @@
+# Единый чек-лист нормализации ЕГЭ-курса LMS
+
+**Версия**: 1.0 — 2026-06-07  
+**Задача**: tsk-112  
+**Источник**: `/response-quality-coach` — анализ ошибок сессий 2026-06-06/07
+
+---
+
+## Правила нормализации (источник правды)
+
+### Difficulty (сложность)
+| Источник задачи | difficulty_id | Правило |
+|-----------------|--------------|---------|
+| crylov PDF | 2 — Легко | всегда |
+| Навигатор «Простые» (ext:d4:kompege/sdamgia/polyakov) | 2 — Легко | по разделу |
+| Навигатор «Средние» | 3 — Средняя | по разделу |
+| Навигатор «Сложные» | 4 — Сложная | по разделу |
+| ТГ-задания (tg:ege:N) | ТОЛЬКО по маркеру в stem | «Уровень легкий/средний/сложный/тяжелый/олимпиадный» |
+| wp_nav задания | по source_task_id | проверить `task_content->>'source_kind'` + `'source_task_id'`, сопоставить с разделом навигатора. Исключение: blanket Сложная только если ВСЕ wp_nav курса подтверждены из раздела «Сложные» |
+| Вводные (lms:tsk109:cXXX:*) | не менять | зафиксированы |
+
+### requirement_level заданий
+| Тип | requirement_level |
+|-----|-------------------|
+| Вводные (lms:tsk109:cXXX:*) | `required` |
+| Теория (diff=1, non-vvod) | `required` |
+| Легко (diff=2, non-vvod) | `required` |
+| Средняя (diff=3, non-vvod) | `required` |
+| **Сложная (diff=4) — КРИТИЧНО** | **`recommended`** |
+
+### requirement_level материалов
+| Иконка навигатора | requirement_level |
+|-------------------|-------------------|
+| ☝️ | `required` |
+| (нет иконки) | `recommended` |
+| 🔽 | `skippable` |
+| Дубликат видео | деактивировать (`is_active=false`) |
+| Не в навигаторе | уточнить у оператора или `skippable` |
+
+### Порядок (order_position)
+- pos 1–10: вводные (lms:tsk109:cXXX:*) — **НЕ ТРОГАТЬ**
+- pos 11+: ORDER BY `difficulty_id ASC, order_position ASC` (Легко → Средняя → Сложная)
+- Деактивированные задания — в конец (max_active_pos + 1, +2, …)
+
+---
+
+## Шаблон нормализационного скрипта (обязательные шаги)
+
+```
+ШАГ 0: SET LOCAL app.skip_task_order_trigger = 'true'
+ШАГ 1: Снимок ДО (diff + req + pos)
+ШАГ 2: Материалы — req_level по иконкам навигатора + деактивация дубликатов
+ШАГ 3: crylov → difficulty=2
+ШАГ 4: Простые (nav, ext:d4) → difficulty=2
+ШАГ 5: Средние (nav, ext:d4) → difficulty=3      ← если есть в курсе
+ШАГ 6: Сложные (nav, ext:d4) → difficulty=4       ← только явно подтверждённые
+ШАГ 7: ТГ-задания → difficulty по stem (ТОЛЬКО маркер)
+ШАГ 8: wp_nav → difficulty по source_task_id (НЕ blanket)
+ШАГ 9: Деактивация нерелевантных заданий
+ШАГ 10: requirement_level заданий:
+         вводные → required
+         Теория+Легко+Средняя (non-vvod) → required
+         Сложная → recommended      ← ОБЯЗАТЕЛЬНО
+ШАГ 11: Переупорядочивание pos 11+
+ШАГ 12: Деактивированные → в конец
+ШАГ 13: Снимок ПОСЛЕ
+ШАГ 14: Проверки (checks dict)
+```
+
+### Правило checks dict — антипаттерн hardcoded active
+
+**ЗАПРЕЩЕНО**: `checks["итого активных = 69"] = total == 69`
+
+Это ломается при каждом следующем патче. Вместо этого:
+
+```python
+# Рассчитать ожидаемое dynamic-способом:
+cur.execute("SELECT count(*) FROM tasks WHERE course_id=%s AND is_active=true", (COURSE_ID,))
+expected_total = cur.fetchone()[0]
+# ... все шаги ...
+cur.execute("SELECT count(*) FROM tasks WHERE course_id=%s AND is_active=true", (COURSE_ID,))
+final_total = cur.fetchone()[0]
+# Проверять не абсолютное число, а дельту:
+expected_delta = -(len(TG_DEACTIVATE))   # только деактивации
+checks["итого: delta = -N деактивированных"] = (final_total - expected_total) == expected_delta
+```
+
+Или если деактиваций нет — проверять только что дублей нет и Сложных = ожидаемое:
+
+```python
+checks["Сложных active = N"] = hard_cnt == EXPECTED_HARD  # N берётся из разведки
+checks["нет дублей order_position"] = len(dups) == 0
+```
+
+---
+
+## Чек-лист ПЕРЕД написанием скрипта (разведка)
+
+- [ ] 1. Получен фрагмент навигатора от оператора с иконками и разделами
+- [ ] 2. SQL: текущее состояние курса (difficulty, req_level, positions, materials)
+- [ ] 3. SQL: все wp_nav задачи курса с source_kind + source_task_id
+- [ ] 4. Каждый wp_nav source_task_id сопоставлен с разделом навигатора вручную
+- [ ] 5. Выписан список материалов по id с иконками из навигатора
+- [ ] 6. Выписан список ТГ-заданий с текстом stem (для проверки маркера уровня)
+- [ ] 7. Определено ожидаемое итоговое число активных заданий (ПЕРЕД скриптом)
+
+## Чек-лист скрипта
+
+- [ ] `SET LOCAL app.skip_task_order_trigger = 'true'` в начале транзакции
+- [ ] Снимок ДО есть
+- [ ] Шаги для материалов включены (ШАГ 2)
+- [ ] wp_nav difficulty через source_task_id, не blanket (ШАГ 8)
+- [ ] ТГ difficulty ТОЛЬКО по stem, есть комментарий с цитатой маркера
+- [ ] `requirement_level Сложная → recommended` включён (ШАГ 10) и есть check
+- [ ] Переупорядочивание включено (ШАГ 11)
+- [ ] Деактивированные → в конец (ШАГ 12)
+- [ ] checks не используют hardcoded absolute total (см. антипаттерн выше)
+- [ ] Dry-run проходит все [OK] до запуска с --apply
+
+## Чек-лист ПОСЛЕ apply (обязательный SQL)
+
+Запустить в MCP после каждого --apply:
+
+```sql
+-- 1. Сложная должна быть recommended
+SELECT difficulty_id, requirement_level, count(*)
+FROM tasks WHERE course_id = :course_id AND is_active = true
+GROUP BY difficulty_id, requirement_level
+ORDER BY difficulty_id;
+-- FAIL-признак: строка diff=4 с requirement_level != 'recommended'
+
+-- 2. Материалы — должны быть mixed (не все required)
+SELECT requirement_level, count(*)
+FROM materials WHERE course_id = :course_id AND is_active = true
+GROUP BY requirement_level;
+-- FAIL-признак: только одна строка 'required' без 'recommended'/'skippable'
+
+-- 3. Вводные должны быть в pos 1-10
+SELECT min(order_position), max(order_position)
+FROM tasks
+WHERE course_id = :course_id
+  AND external_uid ILIKE 'lms:tsk109:%'
+  AND is_active = true;
+-- FAIL-признак: max > 10
+
+-- 4. Нет дублей позиций
+SELECT order_position, count(*)
+FROM tasks WHERE course_id = :course_id AND is_active = true
+GROUP BY order_position HAVING count(*) > 1;
+-- FAIL-признак: любые строки
+
+-- 5. Contiguous blocks: Легко < Средняя < Сложная
+SELECT difficulty_id,
+       min(order_position) FILTER (WHERE is_active) AS pos_min,
+       max(order_position) FILTER (WHERE is_active) AS pos_max
+FROM tasks WHERE course_id = :course_id
+  AND external_uid NOT ILIKE 'lms:tsk109:%'
+GROUP BY difficulty_id ORDER BY difficulty_id;
+-- FAIL-признак: max(Легко) >= min(Средняя) или max(Средняя) >= min(Сложная)
+```
+
+---
+
+## Текущий статус курсов (2026-06-07)
+
+| Курс | Задание | Difficulty | Req-level задач | Позиции | Материалы | Статус |
+|------|---------|------------|-----------------|---------|-----------|--------|
+| 138 | 3 | ✓ | ✓ (Сложная=recommended) | ✓ | ✓ | **DONE** |
+| 140 | 1 | ✓ diff OK | ✗ Сложная=required | ✗ mixed | ✗ all required | **НУЖНА ПРАВКА** |
+| 148 | 2 | ✓ diff OK | ✗ Сложная=required | ✗ mixed | ✗ all required | **НУЖНА ПРАВКА** |
+| 155 | 4 | ✓ diff OK | ✗ Сложная=required | ✗ mixed | ✗ all required | **НУЖНА ПРАВКА** |
+
+### Что нужно для курсов 140, 148, 155
+Не переписывать difficulty — оно правильное. Нужны три отдельных скрипта:
+1. ШАГ 2 (материалы по иконкам навигатора — нужен фрагмент навигатора от оператора)
+2. ШАГ 10 (requirement_level Сложная → recommended)
+3. ШАГ 11 (переупорядочивание)
+4. Верификационный SQL после
+
+**Важно**: не запускать до получения фрагментов навигатора для 140 и 148 (для материалов).
+
+---
+
+## Корневые причины проблем (5 Whys)
+
+### D1: Hardcoded checks ломают патч-цепочки
+
+1. Почему requirement_level и позиции сломаны? → патч-скрипты откатились (ROLLBACK)
+2. Почему ROLLBACK? → check `итого активных = N` не прошёл
+3. Почему check не прошёл? → предыдущий патч изменил количество активных
+4. Почему check был hardcoded? → значение вписали вручную при написании скрипта
+5. **Корень**: нет правила «checks не должны хранить абсолютный total, только дельту»
+
+### D2: Частичные скрипты без шага req_level
+
+1. Почему req_level не обновлялся в патч-скриптах? → шаг считался "уже сделанным" основным скриптом
+2. Почему не "уже сделан"? → основной скрипт тоже откатился
+3. Почему не заметили? → не было пост-apply верификационного SQL
+4. Почему не было? → нет обязательного чек-листа после apply
+5. **Корень**: нет стандарта верификации после apply
+
+---
+
+*Следующий шаг: курсы 140, 148, 155 — правка req_level + позиции.*  
+*До старта: оператор предоставляет фрагменты навигатора для 140 и 148 (материалы с иконками).*
