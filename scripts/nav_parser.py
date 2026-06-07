@@ -93,13 +93,17 @@ def _parse_url(href: str) -> tuple[str, str] | None:
 
 def _resolve_content_url(url: str, soup: BeautifulSoup) -> str | None:
     """Если страница навигатора (нет якорей) — вернуть URL контент-страницы."""
-    if soup.find(id="prostye") or soup.find(id="srednie") or soup.find(id="slozhnye"):
+    # Проверяем все известные якоря — страница контента, если хоть один нашёлся
+    if any(soup.find(id=anchor) for anchor in ANCHOR_DIFFICULTY):
         return None  # уже контент-страница
     # Ищем ссылки вида /zadanie-N-ege-.../#prostye
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if any(f"#{anchor}" in href for anchor in ANCHOR_DIFFICULTY):
-            return href.split("#")[0].rstrip("/") + "/"
+            # Проверяем, что href — не относительная ссылка на ту же страницу (/#xxx)
+            base = href.split("#")[0].rstrip("/")
+            if base:
+                return base + "/"
     return None
 
 
@@ -163,23 +167,34 @@ def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int,
         for t in tasks:
             source, task_id = t["source"], t["task_id"]
 
-            if source == "yandex":
-                # Yandex-задания импортированы через wp_nav, прямого uid нет
-                t["status"] = "wp_nav"
-                t["lms_course"] = None
-                t["lms_diff"] = None
-                continue
+            # Первичный поиск: по external_uid (kompege/polyakov/sdamgia в не-wp_nav формате)
+            if source != "yandex":
+                pattern = f".*{re.escape(source)}.*:{re.escape(task_id)}$"
+                cur.execute(
+                    "SELECT course_id, difficulty_id, is_active FROM tasks "
+                    "WHERE external_uid ~ %s AND external_uid NOT ILIKE 'wp_nav:%%' LIMIT 10",
+                    (pattern,),
+                )
+                rows = cur.fetchall()
+            else:
+                rows = []
 
-            # Ищем: external_uid оканчивается на :{task_id} и содержит source
-            pattern = f".*{re.escape(source)}.*:{re.escape(task_id)}$"
-            cur.execute(
-                "SELECT course_id, difficulty_id, is_active FROM tasks "
-                "WHERE external_uid ~ %s LIMIT 10",
-                (pattern,),
-            )
-            rows = cur.fetchall()
+            # Вторичный поиск: по task_content->>'source_task_id' (wp_nav-обёртка)
+            if not rows:
+                cur.execute(
+                    "SELECT course_id, difficulty_id, is_active FROM tasks "
+                    "WHERE external_uid ILIKE 'wp_nav:%%' "
+                    "  AND task_content->>'source_kind' = %s "
+                    "  AND task_content->>'source_task_id' = %s LIMIT 10",
+                    (source, task_id),
+                )
+                rows_wp = cur.fetchall()
+                if rows_wp:
+                    rows = rows_wp
+                    t["via_wp_nav"] = True
 
             in_course = [r for r in rows if r[0] == course_id]
+            via_wp = t.get("via_wp_nav", False)
 
             if not rows:
                 t["status"] = "missing"
@@ -189,7 +204,10 @@ def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int,
                 lms_diff = in_course[0][1]
                 t["lms_diff"] = lms_diff
                 t["lms_course"] = course_id
-                t["status"] = "ok" if lms_diff == diff_id else "wrong_diff"
+                if via_wp:
+                    t["status"] = "wp_ok" if lms_diff == diff_id else "wp_wrong"
+                else:
+                    t["status"] = "ok" if lms_diff == diff_id else "wrong_diff"
             else:
                 t["status"] = "other_course"
                 t["lms_course"] = rows[0][0]
@@ -203,11 +221,13 @@ def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int,
 def print_report(sections: dict[int, list[dict]], course_id: int, task_num: int) -> list[tuple]:
     diff_lms = {2: "Легко", 3: "Средняя", 4: "Сложная"}
     status_mark = {
-        "ok":          "[OK  ]",
-        "wrong_diff":  "[DIFF]",
-        "missing":     "[MISS]",
-        "other_course":"[OTHER]",
-        "wp_nav":      "[WPNAV]",
+        "ok":           "[OK    ]",
+        "wrong_diff":   "[DIFF  ]",
+        "missing":      "[MISS  ]",
+        "other_course": "[OTHER ]",
+        "wp_nav":       "[WPNAV ]",
+        "wp_ok":        "[WP_OK ]",
+        "wp_wrong":     "[WP_DIF]",
     }
 
     missing: list[tuple] = []  # (diff_id, task_dict)
@@ -224,15 +244,20 @@ def print_report(sections: dict[int, list[dict]], course_id: int, task_num: int)
             src = f"{t['source']}:{t['task_id']}"
             if s == "ok":
                 detail = f"diff={diff_lms[diff_id]}"
+            elif s == "wp_ok":
+                detail = f"в wp_nav, diff={diff_lms[diff_id]}"
             elif s == "wrong_diff":
                 detail = f"в LMS diff={t['lms_diff']} (нужно {diff_id}={diff_lms[diff_id]})"
+                wrong.append((diff_id, t))
+            elif s == "wp_wrong":
+                detail = f"в wp_nav diff={t['lms_diff']} (нужно {diff_id}={diff_lms[diff_id]})"
                 wrong.append((diff_id, t))
             elif s == "missing":
                 detail = "НЕТ В LMS"
                 missing.append((diff_id, t))
             elif s == "other_course":
                 detail = f"в курсе {t['lms_course']}, diff={t['lms_diff']}"
-            else:  # wp_nav
+            else:  # wp_nav (yandex без прямого uid)
                 detail = "в wp_nav (yandex)"
             print(f"    {mark} {src:<40} {detail}")
 

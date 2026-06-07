@@ -1,56 +1,8 @@
 # Реестр заданий навигатора, отсутствующих в LMS
 
+Обновлён 2026-06-07 после исправления nav_parser (теперь ищет по task_content->>'source_task_id').
+Все 78 предыдущих записей (курсы 140, 148, 138, 155) были ложными MISS:
+задания присутствуют в LMS в wp_nav-обёртке с известным source_kind + source_task_id.
+
 | Задание | course_id | Раздел | diff_id | Источник | task_id | URL | Добавлено |
 |---------|-----------|--------|---------|----------|---------|-----|----------|
-| 2 | 148 | Простые | 2 | kompege | 70 | https://kompege.ru/task?id=70 | 2026-06-07 |
-| 2 | 148 | Простые | 2 | kompege | 73 | https://kompege.ru/task?id=73 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 332 | https://kompege.ru/task?id=332 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 2408 | https://kompege.ru/task?id=2408 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 2695 | https://kompege.ru/task?id=2695 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 4314 | https://kompege.ru/task?id=4314 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 5424 | https://kompege.ru/task?id=5424 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 5741 | https://kompege.ru/task?id=5741 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 6283 | https://kompege.ru/task?id=6283 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | kompege | 7664 | https://kompege.ru/task?id=7664 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | polyakov | 7901 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7901 | 2026-06-07 |
-| 2 | 148 | Сложные | 4 | polyakov | 7902 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7902 | 2026-06-07 |
-| 1 | 140 | Простые | 2 | kompege | 25 | https://kompege.ru/task?id=25 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | polyakov | 5436 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=5436 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 6254 | https://kompege.ru/task?id=6254 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 4535 | https://kompege.ru/task?id=4535 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 4070 | https://kompege.ru/task?id=4070 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 3976 | https://kompege.ru/task?id=3976 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 3879 | https://kompege.ru/task?id=3879 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 3072 | https://kompege.ru/task?id=3072 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 2847 | https://kompege.ru/task?id=2847 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 2510 | https://kompege.ru/task?id=2510 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 2110 | https://kompege.ru/task?id=2110 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1885 | https://kompege.ru/task?id=1885 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1884 | https://kompege.ru/task?id=1884 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1882 | https://kompege.ru/task?id=1882 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1454 | https://kompege.ru/task?id=1454 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1334 | https://kompege.ru/task?id=1334 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1234 | https://kompege.ru/task?id=1234 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 1043 | https://kompege.ru/task?id=1043 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 815 | https://kompege.ru/task?id=815 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 484 | https://kompege.ru/task?id=484 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 453 | https://kompege.ru/task?id=453 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 331 | https://kompege.ru/task?id=331 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 325 | https://kompege.ru/task?id=325 | 2026-06-07 |
-| 1 | 140 | Сложные | 4 | kompege | 44 | https://kompege.ru/task?id=44 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 5749 | https://kompege.ru/task?id=5749 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 4536 | https://kompege.ru/task?id=4536 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2512 | https://kompege.ru/task?id=2512 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2206 | https://kompege.ru/task?id=2206 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2146 | https://kompege.ru/task?id=2146 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2145 | https://kompege.ru/task?id=2145 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2144 | https://kompege.ru/task?id=2144 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2143 | https://kompege.ru/task?id=2143 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2142 | https://kompege.ru/task?id=2142 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2141 | https://kompege.ru/task?id=2141 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2140 | https://kompege.ru/task?id=2140 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | kompege | 2139 | https://kompege.ru/task?id=2139 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | polyakov | 7614 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7614 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | polyakov | 7615 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7615 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | polyakov | 7616 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7616 | 2026-06-07 |
-| 3 | 138 | Сложные | 4 | polyakov | 7617 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=7617 | 2026-06-07 |
