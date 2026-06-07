@@ -188,6 +188,7 @@ GROUP BY difficulty_id ORDER BY difficulty_id;
 | 157 | 6 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит a164dcc) |
 | 158 | 7 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит bb5174d) |
 | 159 | 8 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит 45208b5 + follow-up `2026-06-07-c159-materials-icons.py`) |
+| 160 | 9 | ✓ | ✓ | ✓ | ✓ | **DONE** (`2026-06-07-c160-normalization.py`) |
 
 ---
 

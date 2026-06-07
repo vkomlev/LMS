@@ -222,7 +222,15 @@ def fetch_materials(nav_soup: BeautifulSoup, nav_url: str) -> list[dict]:
         if not any(e in heading_text[:5] for e in MATERIAL_HEADING_EMOJIS):
             continue
 
+        list_items = []
         for li in ul.find_all("li", recursive=False):
+            nested_ul = li.find("ul")
+            if nested_ul:
+                list_items.extend(nested_ul.find_all("li", recursive=False))
+            else:
+                list_items.append(li)
+
+        for li in list_items:
             link = li.find("a")
             if not link:
                 continue
