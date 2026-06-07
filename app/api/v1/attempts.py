@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+import mimetypes
+import os
+import re
 
-from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Body, File, HTTPException, status, Query, UploadFile
+from starlette.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -20,6 +25,7 @@ from app.schemas.attempts import (
     AttemptAnswersRequest,
     AttemptAnswersResponse,
     AttemptAnswerResult,
+    AttemptAttachmentRead,
     AttemptFinishResponse,
     AttemptCancelRequest,
     AttemptCancelResponse,
@@ -36,6 +42,7 @@ from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
+from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
 
@@ -43,12 +50,37 @@ import logging
 
 router = APIRouter(tags=["attempts"])
 logger = logging.getLogger("api.attempts")
+settings = Settings()
+SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+ATTEMPT_ATTACHMENT_ID_RE = re.compile(r"^(?P<attempt_id>\d+)_[a-f0-9]{32}_[A-Za-z0-9._-]+$")
 
 attempts_service = AttemptsService()
 task_results_service = TaskResultsService()
 tasks_service = TasksService()
 checking_service = CheckingService()
 learning_engine_service = LearningEngineService()
+
+
+def _safe_upload_filename(filename: str | None) -> str:
+    base = os.path.basename(filename or "attachment")
+    safe = SAFE_FILENAME_RE.sub("_", base).strip("._")
+    return safe or "attachment"
+
+
+def _attempt_attachment_files(attempt_id: int) -> list[os.PathLike]:
+    prefix = f"{attempt_id}_"
+    upload_dir = settings.attempt_attachments_upload_dir
+    if not upload_dir.exists():
+        return []
+    return sorted(path for path in upload_dir.iterdir() if path.is_file() and path.name.startswith(prefix))
+
+
+def _validate_attempt_attachment_id(attempt_id: int, attachment_id: str) -> str:
+    safe_id = _safe_upload_filename(attachment_id)
+    match = ATTEMPT_ATTACHMENT_ID_RE.fullmatch(attachment_id)
+    if safe_id != attachment_id or match is None or int(match.group("attempt_id")) != attempt_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    return safe_id
 
 
 # ---------- Внутренний helper для сборки AttemptWithResults ----------
@@ -392,6 +424,125 @@ async def submit_attempt_answers(
         results=results,
         total_score_delta=total_score_delta,
         total_max_score_delta=total_max_score_delta,
+    )
+
+
+@router.post(
+    "/attempts/{attempt_id}/attachments",
+    response_model=AttemptAttachmentRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Загрузить файл к ответу в рамках попытки",
+)
+async def upload_attempt_attachment(
+    attempt_id: int,
+    file: UploadFile = File(..., description="Файл для прикрепления к ответу"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> AttemptAttachmentRead:
+    """
+    Загружает файл в контексте попытки.
+
+    Клиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.
+    Это не меняет scoring: вложение только хранится рядом с `answer_json`.
+    В рамках одной попытки хранится одно актуальное вложение; повторная успешная загрузка
+    заменяет предыдущий файл. Загрузка разрешена только для активной попытки.
+    """
+    attempt = await attempts_service.get_by_id(db, attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if not current_user.is_service and current_user.id != attempt.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    if attempt.finished_at is not None or attempt.cancelled_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Загружать вложения можно только для активной попытки.",
+        )
+
+    settings.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_files = _attempt_attachment_files(attempt_id)
+    original_name = _safe_upload_filename(file.filename)
+    attachment_id = f"{attempt_id}_{uuid4().hex}_{original_name}"
+    file_path = settings.attempt_attachments_upload_dir / attachment_id
+
+    total = 0
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(settings.attachment_chunk_size)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > settings.max_attachment_size_bytes:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        try:
+            if file_path.exists():
+                file_path.unlink()
+        except Exception:
+            pass
+        raise
+
+    for old_file in existing_files:
+        if old_file != file_path:
+            try:
+                os.remove(old_file)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                logger.warning(
+                    "Не удалось удалить старое вложение attempt_id=%s path=%s",
+                    attempt_id,
+                    old_file,
+                    exc_info=True,
+                )
+
+    attachment_url = f"/api/v1/attempts/{attempt_id}/attachments/{attachment_id}"
+    logger.info(
+        "POST /attempts/%s/attachments: файл загружен filename=%s size=%s",
+        attempt_id,
+        original_name,
+        total,
+    )
+    return AttemptAttachmentRead(
+        attachment_id=attachment_id,
+        attachment_url=attachment_url,
+        filename=original_name,
+        content_type=file.content_type or "application/octet-stream",
+        size_bytes=total,
+    )
+
+
+@router.get(
+    "/attempts/{attempt_id}/attachments/{attachment_id}",
+    summary="Скачать вложение ответа в рамках попытки",
+)
+async def download_attempt_attachment(
+    attempt_id: int,
+    attachment_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+):
+    attempt = await attempts_service.get_by_id(db, attempt_id)
+    if attempt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+    if not current_user.is_service and current_user.id != attempt.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    safe_attachment_id = _validate_attempt_attachment_id(attempt_id, attachment_id)
+    file_path = settings.attempt_attachments_upload_dir / safe_attachment_id
+    if not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment file missing on server")
+
+    media_type = mimetypes.guess_type(safe_attachment_id)[0] or "application/octet-stream"
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=os.path.basename(safe_attachment_id),
     )
 
 

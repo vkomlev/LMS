@@ -32,6 +32,12 @@ class Settings:
         )
         self.messages_upload_dir.mkdir(parents=True, exist_ok=True)
 
+        # Вложения к ответам учеников в stateful attempts.
+        self.attempt_attachments_upload_dir: Path = Path(
+            os.getenv("ATTEMPT_ATTACHMENTS_UPLOAD_DIR", "uploads/attempts")
+        )
+        self.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
+
         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
         self.materials_upload_dir: Path = Path(
             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")

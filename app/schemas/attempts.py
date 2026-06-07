@@ -268,6 +268,16 @@ class AttemptAnswersResponse(BaseModel):
     )
 
 
+class AttemptAttachmentRead(BaseModel):
+    """Метаданные файла, загруженного учеником в контексте попытки."""
+
+    attachment_id: str = Field(..., description="Серверный идентификатор файла")
+    attachment_url: str = Field(..., description="Относительный URL скачивания")
+    filename: str = Field(..., description="Исходное имя файла")
+    content_type: str = Field(..., description="MIME-тип файла")
+    size_bytes: int = Field(..., ge=0, description="Размер файла в байтах")
+
+
 class AttemptFinishResponse(AttemptWithResults):
     """
     Ответ для POST /attempts/{id}/finish.
