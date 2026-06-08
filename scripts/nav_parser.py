@@ -111,6 +111,12 @@ def _slug_from_url(url: str) -> str:
     return path.split("/")[-1] if "/" in path else path
 
 
+def _task_num_from_slug(slug: str) -> int | None:
+    """Номер задания из slug навигатора/контент-страницы, если он есть."""
+    m = re.search(r"(?:navigator-po-zadaniyu|zadanie)-(\d+)-ege", slug)
+    return int(m.group(1)) if m else None
+
+
 def _norm_title(title: str | None) -> str:
     return re.sub(r"\s+", " ", title or "").strip().casefold()
 
@@ -202,6 +208,7 @@ def fetch_materials(nav_soup: BeautifulSoup, nav_url: str) -> list[dict]:
     """
     result: list[dict] = []
     nav_slug = _slug_from_url(nav_url)
+    current_task_num = _task_num_from_slug(nav_slug)
 
     entry = (
         nav_soup.find("div", class_="entry-content")
@@ -248,6 +255,13 @@ def fetch_materials(nav_soup: BeautifulSoup, nav_url: str) -> list[dict]:
             if "victor-komlev.ru" in href:
                 # Текстовый материал: slug страницы (отрезаем anchor #...)
                 mat_slug = _slug_from_url(href.split("#")[0])
+                material_task_num = _task_num_from_slug(mat_slug)
+                if (
+                    current_task_num is not None
+                    and material_task_num is not None
+                    and material_task_num != current_task_num
+                ):
+                    continue
             else:
                 # Внешняя ссылка (VK, YouTube) — видео на странице навигатора
                 mat_slug = nav_slug
