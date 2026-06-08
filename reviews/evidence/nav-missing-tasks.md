@@ -30,6 +30,7 @@
 | 17 | 145 | Средние | 3 | yandex | c01534c6-0b3e-4da7-9d99-6c8d759babaf:17 | https://education.yandex.ru/ege/variants/c01534c6-0b3e-4da7-9d99-6c8d759babaf/task/17 | 2026-06-08 |
 
 | 19 | 147 | Средние | 3 | yandex | 31d08c52-c86e-4487-b7e4-6f7435f63344:19 | https://education.yandex.ru/ege/variants/31d08c52-c86e-4487-b7e4-6f7435f63344/task/19 | 2026-06-08 |
+| 23 | 150 | Средние | 3 | yandex | 31d08c52-c86e-4487-b7e4-6f7435f63344:23 | https://education.yandex.ru/ege/variants/31d08c52-c86e-4487-b7e4-6f7435f63344/task/23 | 2026-06-08 |
 ## Найдено в другом курсе, отсутствует в текущем курсе
 
 Эти задания есть в LMS, но не в том курсе, где они указаны навигатором. Не считаем их
