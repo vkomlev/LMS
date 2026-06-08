@@ -32,6 +32,67 @@
 | 19 | 147 | Средние | 3 | yandex | 31d08c52-c86e-4487-b7e4-6f7435f63344:19 | https://education.yandex.ru/ege/variants/31d08c52-c86e-4487-b7e4-6f7435f63344/task/19 | 2026-06-08 |
 | 23 | 150 | Средние | 3 | yandex | 31d08c52-c86e-4487-b7e4-6f7435f63344:23 | https://education.yandex.ru/ege/variants/31d08c52-c86e-4487-b7e4-6f7435f63344/task/23 | 2026-06-08 |
 | 25 | 152 | Средние | 3 | yandex | c01534c6-0b3e-4da7-9d99-6c8d759babaf:25 | https://education.yandex.ru/ege/variants/c01534c6-0b3e-4da7-9d99-6c8d759babaf/task/25 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 2653 | https://kompege.ru/task?id=2653 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 2580 | https://kompege.ru/task?id=2580 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 23570 | https://kompege.ru/task?id=23570 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 22567 | https://kompege.ru/task?id=22567 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 21588 | https://kompege.ru/task?id=21588 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 18228 | https://kompege.ru/task?id=18228 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 14733 | https://kompege.ru/task?id=14733 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 11940 | https://kompege.ru/task?id=11940 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 10072 | https://kompege.ru/task?id=10072 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 9847 | https://kompege.ru/task?id=9847 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 9554 | https://kompege.ru/task?id=9554 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 9171 | https://kompege.ru/task?id=9171 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 8616 | https://kompege.ru/task?id=8616 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 8569 | https://kompege.ru/task?id=8569 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 8279 | https://kompege.ru/task?id=8279 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 8168 | https://kompege.ru/task?id=8168 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 7986 | https://kompege.ru/task?id=7986 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 7756 | https://kompege.ru/task?id=7756 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 7690 | https://kompege.ru/task?id=7690 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 6277 | https://kompege.ru/task?id=6277 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 6071 | https://kompege.ru/task?id=6071 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 5988 | https://kompege.ru/task?id=5988 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 5890 | https://kompege.ru/task?id=5890 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 5245 | https://kompege.ru/task?id=5245 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 4938 | https://kompege.ru/task?id=4938 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 3902 | https://kompege.ru/task?id=3902 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 3745 | https://kompege.ru/task?id=3745 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 3377 | https://kompege.ru/task?id=3377 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 3096 | https://kompege.ru/task?id=3096 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 3088 | https://kompege.ru/task?id=3088 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 2132 | https://kompege.ru/task?id=2132 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 1763 | https://kompege.ru/task?id=1763 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 1379 | https://kompege.ru/task?id=1379 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 1354 | https://kompege.ru/task?id=1354 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 1066 | https://kompege.ru/task?id=1066 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 936 | https://kompege.ru/task?id=936 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 889 | https://kompege.ru/task?id=889 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 838 | https://kompege.ru/task?id=838 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 813 | https://kompege.ru/task?id=813 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 441 | https://kompege.ru/task?id=441 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | kompege | 316 | https://kompege.ru/task?id=316 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8200 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8200 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8117 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8117 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8116 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8116 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8106 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8106 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8105 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8105 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8104 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8104 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8103 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8103 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8102 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8102 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 8073 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=8073 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 6793 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=6793 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | polyakov | 6167 | https://kpolyakov.spb.ru/school/ege/gen.php?action=viewTopic&topicId=6167 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | 2be758c4-f82d-4eaa-a128-1f87e21fe349 | https://education.yandex.ru/ege/inf/task/2be758c4-f82d-4eaa-a128-1f87e21fe349 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | 2fde956d-cb4f-40b7-8699-5a1fdfbbe9a8 | https://education.yandex.ru/ege/inf/task/2fde956d-cb4f-40b7-8699-5a1fdfbbe9a8 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | 3de03ee8-893c-4125-81f6-165fac65e9d5 | https://education.yandex.ru/ege/inf/task/3de03ee8-893c-4125-81f6-165fac65e9d5 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | ac96584e-64cf-4491-acfb-fb19cd19ec3e | https://education.yandex.ru/ege/inf/task/ac96584e-64cf-4491-acfb-fb19cd19ec3e | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | ce678701-0e62-409b-82b7-a5e1946f31c2 | https://education.yandex.ru/ege/inf/task/ce678701-0e62-409b-82b7-a5e1946f31c2 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | c5c6b768-42bb-4590-8b90-2317266cc1f2 | https://education.yandex.ru/ege/inf/task/c5c6b768-42bb-4590-8b90-2317266cc1f2 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | 136654a3-23d8-4dd7-8f6f-3134292c33b3 | https://education.yandex.ru/ege/inf/task/136654a3-23d8-4dd7-8f6f-3134292c33b3 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | d8ad24ec-8e40-4a31-a8a2-2a25640339a3 | https://education.yandex.ru/ege/inf/task/d8ad24ec-8e40-4a31-a8a2-2a25640339a3 | 2026-06-08 |
+| 26 | 153 | Сложные | 4 | yandex | 15e49bb8-3179-465b-baaa-e11efdd21bf0 | https://education.yandex.ru/ege/inf/task/15e49bb8-3179-465b-baaa-e11efdd21bf0 | 2026-06-08 |
 ## Найдено в другом курсе, отсутствует в текущем курсе
 
 Эти задания есть в LMS, но не в том курсе, где они указаны навигатором. Не считаем их
@@ -62,6 +123,7 @@
 | 16 | 144 | Задания для подготовки | задачи перенесены в `tasks`; `materials.id=586` — дубль видео id=585 | `materials.id=386`, inactive |
 | 17 | 145 | Задания для подготовки | `lms:c145:vvod:01-07`; `materials.id=592` — дубль видео id=590 | `materials.id=388`, inactive |
 | 18 | 146 | Задания для подготовки | задачи перенесены в `tasks`; `materials.id=595` — дубль видео id=594 | `materials.id=390`, inactive |
+| 26 | 153 | Задания для тренировки | задачи перенесены в `tasks`; отсутствующие сложные задачи зафиксированы в основном реестре | `materials.id=411`, inactive |
 
 ## Исключения материалов навигатора
 
