@@ -93,6 +93,14 @@
 | 26 | 153 | Сложные | 4 | yandex | 136654a3-23d8-4dd7-8f6f-3134292c33b3 | https://education.yandex.ru/ege/inf/task/136654a3-23d8-4dd7-8f6f-3134292c33b3 | 2026-06-08 |
 | 26 | 153 | Сложные | 4 | yandex | d8ad24ec-8e40-4a31-a8a2-2a25640339a3 | https://education.yandex.ru/ege/inf/task/d8ad24ec-8e40-4a31-a8a2-2a25640339a3 | 2026-06-08 |
 | 26 | 153 | Сложные | 4 | yandex | 15e49bb8-3179-465b-baaa-e11efdd21bf0 | https://education.yandex.ru/ege/inf/task/15e49bb8-3179-465b-baaa-e11efdd21bf0 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18678 | https://kompege.ru/task?id=18678 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18677 | https://kompege.ru/task?id=18677 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18630 | https://kompege.ru/task?id=18630 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18626 | https://kompege.ru/task?id=18626 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18625 | https://kompege.ru/task?id=18625 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | kompege | 18056 | https://kompege.ru/task?id=18056 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | yandex | 58789e4e-c990-4418-a7e5-0779a6888462 | https://education.yandex.ru/ege/inf/task/58789e4e-c990-4418-a7e5-0779a6888462 | 2026-06-08 |
+| 27 | 154 | Сложные | 4 | yandex | 3160a035-291f-455d-8afb-9def7e93cc10 | https://education.yandex.ru/ege/inf/task/3160a035-291f-455d-8afb-9def7e93cc10 | 2026-06-08 |
 ## Найдено в другом курсе, отсутствует в текущем курсе
 
 Эти задания есть в LMS, но не в том курсе, где они указаны навигатором. Не считаем их
@@ -124,6 +132,7 @@
 | 17 | 145 | Задания для подготовки | `lms:c145:vvod:01-07`; `materials.id=592` — дубль видео id=590 | `materials.id=388`, inactive |
 | 18 | 146 | Задания для подготовки | задачи перенесены в `tasks`; `materials.id=595` — дубль видео id=594 | `materials.id=390`, inactive |
 | 26 | 153 | Задания для тренировки | задачи перенесены в `tasks`; отсутствующие сложные задачи зафиксированы в основном реестре | `materials.id=411`, inactive |
+| 27 | 154 | Задания для тренировки | задачи перенесены в `tasks`; отсутствующие сложные задачи зафиксированы в основном реестре | `materials.id=414`, inactive |
 
 ## Исключения материалов навигатора
 
