@@ -192,6 +192,7 @@ GROUP BY difficulty_id ORDER BY difficulty_id;
 | 158 | 7 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит bb5174d) |
 | 159 | 8 | ✓ | ✓ | ✓ | ✓ | **DONE** (коммит 45208b5 + follow-up `2026-06-07-c159-materials-icons.py`) |
 | 160 | 9 | ✓ | ✓ | ✓ | ✓ | **DONE** (`2026-06-07-c160-normalization.py`) |
+| 162 | 11 | ✓ | ✓ | ✓ | ✓ | **DONE** (`2026-06-08-c162-normalization.py`; вводные `lms:c162:vvod:01-20` перенесены на позиции 1-20; материалы id=371/372 погашены как покрытые вводными, id=546 погашен как дубль видео) |
 
 ---
 
@@ -225,4 +226,4 @@ GROUP BY difficulty_id ORDER BY difficulty_id;
 
 ---
 
-*Следующий шаг: задание 11.*
+*Следующий шаг: задание 12.*

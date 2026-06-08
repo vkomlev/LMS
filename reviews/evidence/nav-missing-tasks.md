@@ -20,3 +20,5 @@
 | 4 | 155 | Вопросы по разделу 1-5 | `lms:tsk109:c155:01-05` | `materials.id=419`, inactive |
 | 4 | 155 | Мини практика 6-10 | `lms:tsk109:c155:06-10` | `materials.id=807`, inactive |
 | 4 | 155 | Мини практика после заданий | `lms:tsk109:c155:01-10` | `materials.id=418`, inactive |
+| 11 | 162 | Вопросы | `lms:c162:vvod:01-10` | `materials.id=371`, inactive |
+| 11 | 162 | Мини-задания | `lms:c162:vvod:11-20` | `materials.id=372`, inactive |
