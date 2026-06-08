@@ -113,7 +113,7 @@ def _slug_from_url(url: str) -> str:
 
 def _task_num_from_slug(slug: str) -> int | None:
     """Номер задания из slug навигатора/контент-страницы, если он есть."""
-    m = re.search(r"(?:navigator-po-zadaniyu|zadanie)-(\d+)-ege", slug)
+    m = re.search(r"(?:navigator-po-zadaniyu|zadanie|reshenie-zadanij)-(\d+)-ege", slug)
     return int(m.group(1)) if m else None
 
 
@@ -148,11 +148,47 @@ def _section_task_links(section_el) -> list[str]:
     return links
 
 
+def _diff_from_heading_text(text: str) -> int | None:
+    norm = text.casefold().replace("ё", "е")
+    if "уровень" not in norm:
+        return None
+    if "прост" in norm:
+        return 2
+    if "сред" in norm:
+        return 3
+    if "слож" in norm:
+        return 4
+    return None
+
+
+def _fetch_heading_based_sections(content_soup: BeautifulSoup) -> dict[int, list[dict]]:
+    """Fallback для страниц, где уровни заданы текстовыми подзаголовками."""
+    result: dict[int, list[dict]] = {2: [], 3: [], 4: []}
+    for heading in content_soup.find_all(("h2", "h3", "h4", "p", "strong")):
+        diff_id = _diff_from_heading_text(heading.get_text(" ", strip=True))
+        if diff_id is None:
+            continue
+        current = heading.find_next_sibling()
+        while current:
+            if current.name in ("h1", "h2", "h3", "h4"):
+                break
+            if current.name in ("ul", "ol", "p"):
+                for a in current.find_all("a", href=True):
+                    href = a.get("href", "")
+                    parsed = _parse_url(href)
+                    if parsed:
+                        source, task_id = parsed
+                        result[diff_id].append({"url": href, "source": source, "task_id": task_id})
+            current = current.find_next_sibling()
+    return result
+
+
 def _resolve_content_url(url: str, soup: BeautifulSoup) -> str | None:
     """Если страница навигатора (нет якорей) — вернуть URL контент-страницы."""
     # Проверяем все известные якоря — страница контента, если хоть один нашёлся
     if any(soup.find(id=anchor) for anchor in ANCHOR_DIFFICULTY):
         return None  # уже контент-страница
+    current_task_num = _task_num_from_slug(_slug_from_url(url))
     # Ищем ссылки вида /zadanie-N-ege-.../#prostye
     for a in soup.find_all("a", href=True):
         href = a["href"]
@@ -161,6 +197,18 @@ def _resolve_content_url(url: str, soup: BeautifulSoup) -> str | None:
             base = href.split("#")[0].rstrip("/")
             if base:
                 return base + "/"
+    # Fallback: страница навигатора может ссылаться на контент-страницу без
+    # якорей сложности, а уровни лежат внутри текстового блока.
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "victor-komlev.ru" not in href:
+            continue
+        base = href.split("#")[0].rstrip("/")
+        slug = _slug_from_url(base)
+        if slug.startswith("navigator-po-zadaniyu"):
+            continue
+        if current_task_num is not None and _task_num_from_slug(slug) == current_task_num:
+            return base + "/"
     return None
 
 
@@ -191,6 +239,9 @@ def fetch_sections(start_url: str) -> tuple[dict[int, list[dict]], BeautifulSoup
             if parsed:
                 source, task_id = parsed
                 result[diff_id].append({"url": href, "source": source, "task_id": task_id})
+
+    if not any(result.values()):
+        result = _fetch_heading_based_sections(content_soup)
 
     return result, nav_soup
 
@@ -411,17 +462,14 @@ def check_lms(sections: dict[int, list[dict]], course_id: int, cur) -> dict[int,
             if len(nav_diffs) > 1:
                 t["duplicate_nav_diffs"] = sorted(nav_diffs)
 
-            # Первичный поиск: по external_uid (kompege/polyakov/sdamgia в не-wp_nav формате)
-            if source != "yandex":
-                pattern = f".*{re.escape(source)}.*:{re.escape(task_id)}$"
-                cur.execute(
-                    "SELECT course_id, difficulty_id, is_active FROM tasks "
-                    "WHERE external_uid ~ %s AND external_uid NOT ILIKE 'wp_nav:%%' LIMIT 10",
-                    (pattern,),
-                )
-                rows = cur.fetchall()
-            else:
-                rows = []
+            # Первичный поиск: по external_uid (ext:d4/ext:calib/pdf и т.п.)
+            pattern = f".*{re.escape(source)}.*:{re.escape(task_id)}$"
+            cur.execute(
+                "SELECT course_id, difficulty_id, is_active FROM tasks "
+                "WHERE external_uid ~ %s AND external_uid NOT ILIKE 'wp_nav:%%' LIMIT 10",
+                (pattern,),
+            )
+            rows = cur.fetchall()
 
             # Вторичный поиск: по task_content->>'source_task_id' (wp_nav-обёртка)
             if not rows:
@@ -555,9 +603,8 @@ def update_registry(missing: list, course_id: int, task_num: int) -> None:
         print("\n  Реестр: новых записей нет (все уже зафиксированы).")
         return
 
-    header_needed = not os.path.exists(REGISTRY_PATH)
-    with open(REGISTRY_PATH, "a", encoding="utf-8") as fh:
-        if header_needed:
+    if not os.path.exists(REGISTRY_PATH):
+        with open(REGISTRY_PATH, "w", encoding="utf-8") as fh:
             fh.write("# Реестр заданий навигатора, отсутствующих в LMS\n\n")
             fh.write(
                 "| Задание | course_id | Раздел | diff_id | Источник | task_id | URL | Добавлено |\n"
@@ -565,8 +612,18 @@ def update_registry(missing: list, course_id: int, task_num: int) -> None:
             fh.write(
                 "|---------|-----------|--------|---------|----------|---------|-----|----------|\n"
             )
-        for line in new_lines:
-            fh.write(line)
+            fh.writelines(new_lines)
+    else:
+        with open(REGISTRY_PATH, encoding="utf-8") as fh:
+            content = fh.readlines()
+        insert_at = len(content)
+        for idx, line in enumerate(content):
+            if idx > 0 and line.startswith("## "):
+                insert_at = idx
+                break
+        content[insert_at:insert_at] = new_lines
+        with open(REGISTRY_PATH, "w", encoding="utf-8") as fh:
+            fh.writelines(content)
 
     print(f"\n  Реестр обновлён: {REGISTRY_PATH} (+{len(new_lines)} строк)")
 
