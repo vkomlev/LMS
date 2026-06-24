@@ -23,16 +23,23 @@ logger = logging.getLogger("api.teacher_assignments")
 
 router = APIRouter(tags=["teacher_assignments"])
 
-# Роли, которым разрешено ручное назначение курсов.
-_ALLOWED_ROLES = {"teacher", "преподаватель", "methodist", "методист", "admin"}
+# Роли с полным доступом (могут назначать курс любому ученику).
+_ELEVATED_ROLES = {"admin", "methodist", "методист"}
+# Преподавательские роли (доступ ограничен своими учениками).
+_TEACHER_ROLES = {"teacher", "преподаватель"}
 
 
-async def _ensure_can_assign(db: AsyncSession, current_user: CurrentUser) -> None:
+async def _ensure_can_assign(
+    db: AsyncSession, current_user: CurrentUser, student_id: int
+) -> None:
     """
-    Проверить право на ручное назначение.
+    Проверить право на ручное назначение курса данному ученику.
 
-    Сервисный токен (бот/админ-интеграция) — разрешено. Реальный пользователь —
-    только при наличии преподавательской/методической/админ-роли.
+    Иерархия доступа:
+    - сервисный токен (бот/админ-интеграция) — полный доступ;
+    - роль admin/methodist — полный доступ (любой ученик);
+    - роль teacher — только к своим ученикам (связь ``student_teacher_links``);
+    - иначе — 403.
     """
     if current_user.is_service:
         return
@@ -46,11 +53,31 @@ async def _ensure_can_assign(db: AsyncSession, current_user: CurrentUser) -> Non
         .where(t_user_roles.c.user_id == current_user.id)
     )
     roles = {str(row[0]).lower().strip() for row in (await db.execute(stmt)).fetchall()}
-    if roles.isdisjoint(_ALLOWED_ROLES):
+
+    if roles & _ELEVATED_ROLES:
+        return
+
+    if roles & _TEACHER_ROLES:
+        linked = (
+            await db.execute(
+                text(
+                    "SELECT 1 FROM student_teacher_links "
+                    "WHERE student_id = :sid AND teacher_id = :tid"
+                ),
+                {"sid": student_id, "tid": current_user.id},
+            )
+        ).fetchone()
+        if linked is not None:
+            return
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
-            "Назначать курсы может только преподаватель/методист/админ",
+            "Преподаватель может назначать курсы только своим ученикам",
         )
+
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "Назначать курсы может только преподаватель/методист/админ",
+    )
 
 
 @router.post(
@@ -63,7 +90,8 @@ async def _ensure_can_assign(db: AsyncSession, current_user: CurrentUser) -> Non
         "- Указывается ровно один из `course_id` / `course_uid` "
         "(`course_uid` совпадает с кодом публикатора, например `wp:vvodnyy-python`).\n"
         "- Повторный вызов не создаёт дубль: вернётся `already_enrolled=true`.\n"
-        "- Доступно роли teacher/methodist/admin или сервисному токену."
+        "- Доступ: admin/methodist или сервисный токен — любому ученику; "
+        "teacher — только своим ученикам (связь student_teacher_links)."
     ),
     responses={
         200: {"description": "Курс назначен (или уже был назначен)"},
@@ -78,7 +106,7 @@ async def assign_course_to_student_endpoint(
     db: AsyncSession = Depends(get_bare_db),
 ) -> ManualAssignResponse:
     """Назначить курс ученику вручную (teacher-only, идемпотентно)."""
-    await _ensure_can_assign(db, current_user)
+    await _ensure_can_assign(db, current_user, student_id)
 
     # Проверка существования ученика — явный 404 вместо ошибки FK.
     student_row = (

@@ -13616,7 +13616,7 @@
           "teacher_assignments"
         ],
         "summary": "Назначить курс ученику (учитель, в один клик)",
-        "description": "Идемпотентно привязать курс к ученику от лица преподавателя.\n\n- Указывается ровно один из `course_id` / `course_uid` (`course_uid` совпадает с кодом публикатора, например `wp:vvodnyy-python`).\n- Повторный вызов не создаёт дубль: вернётся `already_enrolled=true`.\n- Доступно роли teacher/methodist/admin или сервисному токену.",
+        "description": "Идемпотентно привязать курс к ученику от лица преподавателя.\n\n- Указывается ровно один из `course_id` / `course_uid` (`course_uid` совпадает с кодом публикатора, например `wp:vvodnyy-python`).\n- Повторный вызов не создаёт дубль: вернётся `already_enrolled=true`.\n- Доступ: admin/methodist или сервисный токен — любому ученику; teacher — только своим ученикам (связь student_teacher_links).",
         "operationId": "assign_course_to_student_endpoint_api_v1_teacher_students__student_id__assignments_post",
         "security": [
           {

@@ -51,4 +51,13 @@ LMS не умела автоматически назначать ученику
   поверх `learning_events` (зафиксировано в ADR).
 - **Следующий шаг:** UI-кнопка в SPW / teacher API; админка правил; `course_failed`
   по накопленной истории, а не только в рамках одной попытки.
+
+## Post-review fixes (2026-06-24)
+
+- **S2 (soft-fail session recovery):** добавлен best-effort `db.rollback()` в `except`
+  обоих хуков движка — сбой оценки правил больше не оставляет aborted-транзакцию,
+  которая могла сломать запись следующего `task_result`.
+- **S3 (ACL ручного назначения):** `_ensure_can_assign` ужесточён — роль `teacher`
+  может назначать курсы только своим ученикам (`student_teacher_links`);
+  `admin`/`methodist`/сервисный токен — полный доступ. +5 тестов ACL.
 - **Cross-project:** обновлены `contracts/lms-api.md`, `lms-db-schema.md`, `CHANGELOG.md` в ContentBackbone.

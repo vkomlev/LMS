@@ -18,6 +18,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
+from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.schemas.checking import CheckResult, StudentAnswer, StudentResponse
 from app.services import assignment_rules_service as ars
@@ -232,4 +233,108 @@ async def test_manual_assign_validation_both_refs(client, db):
         )
         assert resp.status_code == 422
     finally:
+        await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+# --- ACL ручного назначения (S3 fix) ---
+
+
+async def _grant_role(db, user_id: int, role_name: str) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO user_roles (user_id, role_id) "
+            "SELECT :u, id FROM roles WHERE name = :n "
+            "ON CONFLICT DO NOTHING"
+        ),
+        {"u": user_id, "n": role_name},
+    )
+    await db.commit()
+
+
+async def _link_student_teacher(db, student_id: int, teacher_id: int) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO student_teacher_links (student_id, teacher_id) "
+            "VALUES (:s, :t) ON CONFLICT DO NOTHING"
+        ),
+        {"s": student_id, "t": teacher_id},
+    )
+    await db.commit()
+
+
+async def test_acl_teacher_unlinked_denied(db):
+    """Преподаватель не может назначить курс чужому (несвязанному) ученику → 403."""
+    from fastapi import HTTPException
+    from app.api.v1.teacher_assignments import _ensure_can_assign
+
+    teacher_id = await _make_student(db)
+    student_id = await _make_student(db)
+    await _grant_role(db, teacher_id, "teacher")
+    cu = CurrentUser(id=teacher_id, is_service=False)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await _ensure_can_assign(db, cu, student_id)
+        assert exc.value.status_code == 403
+    finally:
+        await _cleanup(db, course_ids=[], student_id=teacher_id)
+        await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+async def test_acl_teacher_linked_allowed(db):
+    """Преподаватель может назначить курс своему (связанному) ученику."""
+    from app.api.v1.teacher_assignments import _ensure_can_assign
+
+    teacher_id = await _make_student(db)
+    student_id = await _make_student(db)
+    await _grant_role(db, teacher_id, "teacher")
+    await _link_student_teacher(db, student_id, teacher_id)
+    cu = CurrentUser(id=teacher_id, is_service=False)
+    try:
+        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
+    finally:
+        await _cleanup(db, course_ids=[], student_id=teacher_id)
+        await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+async def test_acl_methodist_bypass(db):
+    """Методист имеет полный доступ — связь с учеником не требуется."""
+    from app.api.v1.teacher_assignments import _ensure_can_assign
+
+    methodist_id = await _make_student(db)
+    student_id = await _make_student(db)
+    await _grant_role(db, methodist_id, "methodist")
+    cu = CurrentUser(id=methodist_id, is_service=False)
+    try:
+        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
+    finally:
+        await _cleanup(db, course_ids=[], student_id=methodist_id)
+        await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+async def test_acl_service_bypass(db):
+    """Сервисный токен имеет полный доступ."""
+    from app.api.v1.teacher_assignments import _ensure_can_assign
+
+    student_id = await _make_student(db)
+    cu = CurrentUser(id=0, is_service=True)
+    try:
+        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
+    finally:
+        await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+async def test_acl_no_role_denied(db):
+    """Пользователь без подходящей роли не может назначать курсы → 403."""
+    from fastapi import HTTPException
+    from app.api.v1.teacher_assignments import _ensure_can_assign
+
+    user_id = await _make_student(db)
+    student_id = await _make_student(db)
+    cu = CurrentUser(id=user_id, is_service=False)
+    try:
+        with pytest.raises(HTTPException) as exc:
+            await _ensure_can_assign(db, cu, student_id)
+        assert exc.value.status_code == 403
+    finally:
+        await _cleanup(db, course_ids=[], student_id=user_id)
         await _cleanup(db, course_ids=[], student_id=student_id)

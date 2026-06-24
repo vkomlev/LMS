@@ -116,11 +116,16 @@ LMS умеет привязывать курсы ученику (`user_courses`)
 
 ### 5. Ручное назначение учителем
 
-`POST /api/v1/teacher/students/{student_id}/assignments` — teacher-only
-(роль `teacher`/`методист`/`admin` или сервисный токен; паттерн из `user_courses_extra._user_has_teacher_role`).
+`POST /api/v1/teacher/students/{student_id}/assignments` — teacher-only.
 Тело: `{course_id?: int, course_uid?: str, reason?: str}` (одно из id/uid обязательно).
 Идемпотентно: повторный вызов не ошибается, возвращает `already_enrolled=true`.
 `source='manual_teacher'`, `assigned_by` = id учителя.
+
+**Иерархия доступа** (`_ensure_can_assign`):
+- сервисный токен (бот/интеграция) — полный доступ;
+- роль `admin`/`methodist` — полный доступ (любой ученик);
+- роль `teacher` — только к своим ученикам (связь `student_teacher_links`); иначе 403;
+- без подходящей роли — 403.
 
 ## Альтернативы (отклонены)
 

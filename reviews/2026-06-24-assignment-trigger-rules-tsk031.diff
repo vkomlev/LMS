@@ -93,10 +93,10 @@ index 64f6f0a..8870b24 100644
      await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
 diff --git a/app/api/v1/teacher_assignments.py b/app/api/v1/teacher_assignments.py
 new file mode 100644
-index 0000000..e39a7d3
+index 0000000..3b6d0fd
 --- /dev/null
 +++ b/app/api/v1/teacher_assignments.py
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,146 @@
 +"""
 +Ручное назначение курса ученику учителем в один клик (tsk-031).
 +
@@ -122,16 +122,23 @@ index 0000000..e39a7d3
 +
 +router = APIRouter(tags=["teacher_assignments"])
 +
-+# Роли, которым разрешено ручное назначение курсов.
-+_ALLOWED_ROLES = {"teacher", "преподаватель", "methodist", "методист", "admin"}
++# Роли с полным доступом (могут назначать курс любому ученику).
++_ELEVATED_ROLES = {"admin", "methodist", "методист"}
++# Преподавательские роли (доступ ограничен своими учениками).
++_TEACHER_ROLES = {"teacher", "преподаватель"}
 +
 +
-+async def _ensure_can_assign(db: AsyncSession, current_user: CurrentUser) -> None:
++async def _ensure_can_assign(
++    db: AsyncSession, current_user: CurrentUser, student_id: int
++) -> None:
 +    """
-+    Проверить право на ручное назначение.
++    Проверить право на ручное назначение курса данному ученику.
 +
-+    Сервисный токен (бот/админ-интеграция) — разрешено. Реальный пользователь —
-+    только при наличии преподавательской/методической/админ-роли.
++    Иерархия доступа:
++    - сервисный токен (бот/админ-интеграция) — полный доступ;
++    - роль admin/methodist — полный доступ (любой ученик);
++    - роль teacher — только к своим ученикам (связь ``student_teacher_links``);
++    - иначе — 403.
 +    """
 +    if current_user.is_service:
 +        return
@@ -145,11 +152,31 @@ index 0000000..e39a7d3
 +        .where(t_user_roles.c.user_id == current_user.id)
 +    )
 +    roles = {str(row[0]).lower().strip() for row in (await db.execute(stmt)).fetchall()}
-+    if roles.isdisjoint(_ALLOWED_ROLES):
++
++    if roles & _ELEVATED_ROLES:
++        return
++
++    if roles & _TEACHER_ROLES:
++        linked = (
++            await db.execute(
++                text(
++                    "SELECT 1 FROM student_teacher_links "
++                    "WHERE student_id = :sid AND teacher_id = :tid"
++                ),
++                {"sid": student_id, "tid": current_user.id},
++            )
++        ).fetchone()
++        if linked is not None:
++            return
 +        raise HTTPException(
 +            status.HTTP_403_FORBIDDEN,
-+            "Назначать курсы может только преподаватель/методист/админ",
++            "Преподаватель может назначать курсы только своим ученикам",
 +        )
++
++    raise HTTPException(
++        status.HTTP_403_FORBIDDEN,
++        "Назначать курсы может только преподаватель/методист/админ",
++    )
 +
 +
 +@router.post(
@@ -177,7 +204,7 @@ index 0000000..e39a7d3
 +    db: AsyncSession = Depends(get_bare_db),
 +) -> ManualAssignResponse:
 +    """Назначить курс ученику вручную (teacher-only, идемпотентно)."""
-+    await _ensure_can_assign(db, current_user)
++    await _ensure_can_assign(db, current_user, student_id)
 +
 +    # Проверка существования ученика — явный 404 вместо ошибки FK.
 +    student_row = (
@@ -1112,10 +1139,10 @@ index 0000000..14314ec
 +    return fired
 diff --git a/docs/ai/adr/0002-course-assignment-trigger-rules.md b/docs/ai/adr/0002-course-assignment-trigger-rules.md
 new file mode 100644
-index 0000000..9facbf1
+index 0000000..8dffc6a
 --- /dev/null
 +++ b/docs/ai/adr/0002-course-assignment-trigger-rules.md
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,142 @@
 +# ADR-0002 — Триггеры автоматического назначения курсов (assignment trigger rules)
 +
 +- **Статус:** Accepted (фундамент), полная автоматизация — следующий шаг
@@ -1234,11 +1261,16 @@ index 0000000..9facbf1
 +
 +### 5. Ручное назначение учителем
 +
-+`POST /api/v1/teacher/students/{student_id}/assignments` — teacher-only
-+(роль `teacher`/`методист`/`admin` или сервисный токен; паттерн из `user_courses_extra._user_has_teacher_role`).
++`POST /api/v1/teacher/students/{student_id}/assignments` — teacher-only.
 +Тело: `{course_id?: int, course_uid?: str, reason?: str}` (одно из id/uid обязательно).
 +Идемпотентно: повторный вызов не ошибается, возвращает `already_enrolled=true`.
 +`source='manual_teacher'`, `assigned_by` = id учителя.
++
++**Иерархия доступа** (`_ensure_can_assign`):
++- сервисный токен (бот/интеграция) — полный доступ;
++- роль `admin`/`methodist` — полный доступ (любой ученик);
++- роль `teacher` — только к своим ученикам (связь `student_teacher_links`); иначе 403;
++- без подходящей роли — 403.
 +
 +## Альтернативы (отклонены)
 +
@@ -1255,10 +1287,10 @@ index 0000000..9facbf1
 +- **Follow-up:** UI-кнопка в SPW/teacher API; админка правил; перенос оценки в асинхронный воркер; правило `course_failed` по накопленной истории (не только в рамках одной попытки).
 diff --git a/tests/test_assignment_rules_tsk031.py b/tests/test_assignment_rules_tsk031.py
 new file mode 100644
-index 0000000..826f59f
+index 0000000..48ea069
 --- /dev/null
 +++ b/tests/test_assignment_rules_tsk031.py
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,340 @@
 +"""
 +Тесты фундамента триггеров назначения курсов (tsk-031).
 +
@@ -1279,6 +1311,7 @@ index 0000000..826f59f
 +import pytest
 +from sqlalchemy import text
 +
++from app.auth.current_user import CurrentUser
 +from app.core.config import Settings
 +from app.schemas.checking import CheckResult, StudentAnswer, StudentResponse
 +from app.services import assignment_rules_service as ars
@@ -1493,4 +1526,108 @@ index 0000000..826f59f
 +        )
 +        assert resp.status_code == 422
 +    finally:
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++# --- ACL ручного назначения (S3 fix) ---
++
++
++async def _grant_role(db, user_id: int, role_name: str) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, id FROM roles WHERE name = :n "
++            "ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "n": role_name},
++    )
++    await db.commit()
++
++
++async def _link_student_teacher(db, student_id: int, teacher_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_teacher_links (student_id, teacher_id) "
++            "VALUES (:s, :t) ON CONFLICT DO NOTHING"
++        ),
++        {"s": student_id, "t": teacher_id},
++    )
++    await db.commit()
++
++
++async def test_acl_teacher_unlinked_denied(db):
++    """Преподаватель не может назначить курс чужому (несвязанному) ученику → 403."""
++    from fastapi import HTTPException
++    from app.api.v1.teacher_assignments import _ensure_can_assign
++
++    teacher_id = await _make_student(db)
++    student_id = await _make_student(db)
++    await _grant_role(db, teacher_id, "teacher")
++    cu = CurrentUser(id=teacher_id, is_service=False)
++    try:
++        with pytest.raises(HTTPException) as exc:
++            await _ensure_can_assign(db, cu, student_id)
++        assert exc.value.status_code == 403
++    finally:
++        await _cleanup(db, course_ids=[], student_id=teacher_id)
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++async def test_acl_teacher_linked_allowed(db):
++    """Преподаватель может назначить курс своему (связанному) ученику."""
++    from app.api.v1.teacher_assignments import _ensure_can_assign
++
++    teacher_id = await _make_student(db)
++    student_id = await _make_student(db)
++    await _grant_role(db, teacher_id, "teacher")
++    await _link_student_teacher(db, student_id, teacher_id)
++    cu = CurrentUser(id=teacher_id, is_service=False)
++    try:
++        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
++    finally:
++        await _cleanup(db, course_ids=[], student_id=teacher_id)
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++async def test_acl_methodist_bypass(db):
++    """Методист имеет полный доступ — связь с учеником не требуется."""
++    from app.api.v1.teacher_assignments import _ensure_can_assign
++
++    methodist_id = await _make_student(db)
++    student_id = await _make_student(db)
++    await _grant_role(db, methodist_id, "methodist")
++    cu = CurrentUser(id=methodist_id, is_service=False)
++    try:
++        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
++    finally:
++        await _cleanup(db, course_ids=[], student_id=methodist_id)
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++async def test_acl_service_bypass(db):
++    """Сервисный токен имеет полный доступ."""
++    from app.api.v1.teacher_assignments import _ensure_can_assign
++
++    student_id = await _make_student(db)
++    cu = CurrentUser(id=0, is_service=True)
++    try:
++        await _ensure_can_assign(db, cu, student_id)  # не должно бросить
++    finally:
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++async def test_acl_no_role_denied(db):
++    """Пользователь без подходящей роли не может назначать курсы → 403."""
++    from fastapi import HTTPException
++    from app.api.v1.teacher_assignments import _ensure_can_assign
++
++    user_id = await _make_student(db)
++    student_id = await _make_student(db)
++    cu = CurrentUser(id=user_id, is_service=False)
++    try:
++        with pytest.raises(HTTPException) as exc:
++            await _ensure_can_assign(db, cu, student_id)
++        assert exc.value.status_code == 403
++    finally:
++        await _cleanup(db, course_ids=[], student_id=user_id)
 +        await _cleanup(db, course_ids=[], student_id=student_id)
