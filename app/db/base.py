@@ -31,4 +31,6 @@ import app.models.magic_link
 import app.models.audit_event
 import app.models.guest_session
 import app.models.guest_attempt
+import app.models.assignment_rule
+import app.models.assignment_event
 

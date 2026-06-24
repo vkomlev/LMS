@@ -326,6 +326,10 @@ app.include_router(teacher_workload_router, prefix=API_PREFIX)
 app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
 app.include_router(teacher_reviews_router, prefix=API_PREFIX)
 
+# Назначение курсов ученику учителем (tsk-031)
+from app.api.v1.teacher_assignments import router as teacher_assignments_router
+app.include_router(teacher_assignments_router, prefix=API_PREFIX)
+
 # SPW auth — Phase Y-1
 from app.api.v1.auth.magic_link import router as magic_link_router
 from app.api.v1.auth.tg import router as tg_router

@@ -42,6 +42,7 @@ from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
+from app.services import assignment_rules_service
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
@@ -399,7 +400,7 @@ async def submit_attempt_answers(
             )
 
         # 2.4 Записываем в task_results
-        await task_results_service.create_from_check_result(
+        task_result = await task_results_service.create_from_check_result(
             db=db,
             attempt_id=attempt.id,
             task_id=task.id,
@@ -408,6 +409,30 @@ async def submit_attempt_answers(
             check_result=check_result,
             source_system=attempt.source_system,
         )
+
+        # 2.4b tsk-031: оценка правил назначения по ответу (answer_value / task_failed).
+        # Soft-fail: движок назначения никогда не ломает учебный поток.
+        try:
+            await assignment_rules_service.evaluate_rules_for_answer(
+                db,
+                student_id=attempt.user_id,
+                task_id=task.id,
+                answer=answer,
+                check_result=check_result,
+                attempt_id=attempt.id,
+                task_result_id=getattr(task_result, "id", None),
+            )
+        except Exception:
+            logger.warning(
+                "assignment rules (answer) failed: attempt=%s task=%s",
+                attempt.id, task.id, exc_info=True,
+            )
+            # Восстановить сессию: иначе aborted-транзакция сломает запись
+            # следующего task_result в этом же цикле.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
 
         # 2.5 Накопление для ответа
         results.append(
@@ -620,6 +645,25 @@ async def finish_attempt(
         attempt = await attempts_service.finish_attempt(db, attempt_id, time_expired=time_expired)
         if attempt is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+
+    # tsk-031: оценка правил назначения по завершённой попытке (course_failed).
+    # Soft-fail: движок назначения не ломает завершение попытки.
+    try:
+        await assignment_rules_service.evaluate_rules_for_attempt(
+            db,
+            student_id=attempt.user_id,
+            attempt_id=attempt.id,
+        )
+    except Exception:
+        logger.warning(
+            "assignment rules (attempt finish) failed: attempt=%s",
+            attempt.id, exc_info=True,
+        )
+        # Восстановить сессию перед сборкой ответа по результатам попытки.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
     attempt_with_results = await _build_attempt_with_results(db, attempt)
     # Learning Engine V1: attempts_used, attempts_limit_effective, last_based_status

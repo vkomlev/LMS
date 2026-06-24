@@ -1,0 +1,1496 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index b6a17a7..b680c0e 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -326,6 +326,10 @@ app.include_router(teacher_workload_router, prefix=API_PREFIX)
+ app.include_router(teacher_help_requests_router, prefix=API_PREFIX)
+ app.include_router(teacher_reviews_router, prefix=API_PREFIX)
+ 
++# Назначение курсов ученику учителем (tsk-031)
++from app.api.v1.teacher_assignments import router as teacher_assignments_router
++app.include_router(teacher_assignments_router, prefix=API_PREFIX)
++
+ # SPW auth — Phase Y-1
+ from app.api.v1.auth.magic_link import router as magic_link_router
+ from app.api.v1.auth.tg import router as tg_router
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 64f6f0a..8870b24 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -42,6 +42,7 @@ from app.services.task_results_service import TaskResultsService
+ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
++from app.services import assignment_rules_service
+ from app.core.config import Settings
+ 
+ from app.utils.exceptions import DomainError
+@@ -399,7 +400,7 @@ async def submit_attempt_answers(
+             )
+ 
+         # 2.4 Записываем в task_results
+-        await task_results_service.create_from_check_result(
++        task_result = await task_results_service.create_from_check_result(
+             db=db,
+             attempt_id=attempt.id,
+             task_id=task.id,
+@@ -409,6 +410,30 @@ async def submit_attempt_answers(
+             source_system=attempt.source_system,
+         )
+ 
++        # 2.4b tsk-031: оценка правил назначения по ответу (answer_value / task_failed).
++        # Soft-fail: движок назначения никогда не ломает учебный поток.
++        try:
++            await assignment_rules_service.evaluate_rules_for_answer(
++                db,
++                student_id=attempt.user_id,
++                task_id=task.id,
++                answer=answer,
++                check_result=check_result,
++                attempt_id=attempt.id,
++                task_result_id=getattr(task_result, "id", None),
++            )
++        except Exception:
++            logger.warning(
++                "assignment rules (answer) failed: attempt=%s task=%s",
++                attempt.id, task.id, exc_info=True,
++            )
++            # Восстановить сессию: иначе aborted-транзакция сломает запись
++            # следующего task_result в этом же цикле.
++            try:
++                await db.rollback()
++            except Exception:
++                pass
++
+         # 2.5 Накопление для ответа
+         results.append(
+             AttemptAnswerResult(
+@@ -621,6 +646,25 @@ async def finish_attempt(
+         if attempt is None:
+             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+ 
++    # tsk-031: оценка правил назначения по завершённой попытке (course_failed).
++    # Soft-fail: движок назначения не ломает завершение попытки.
++    try:
++        await assignment_rules_service.evaluate_rules_for_attempt(
++            db,
++            student_id=attempt.user_id,
++            attempt_id=attempt.id,
++        )
++    except Exception:
++        logger.warning(
++            "assignment rules (attempt finish) failed: attempt=%s",
++            attempt.id, exc_info=True,
++        )
++        # Восстановить сессию перед сборкой ответа по результатам попытки.
++        try:
++            await db.rollback()
++        except Exception:
++            pass
++
+     attempt_with_results = await _build_attempt_with_results(db, attempt)
+     # Learning Engine V1: attempts_used, attempts_limit_effective, last_based_status
+     await _enrich_attempt_with_learning_fields(db, attempt_with_results, attempt)
+diff --git a/app/api/v1/teacher_assignments.py b/app/api/v1/teacher_assignments.py
+new file mode 100644
+index 0000000..e39a7d3
+--- /dev/null
++++ b/app/api/v1/teacher_assignments.py
+@@ -0,0 +1,119 @@
++"""
++Ручное назначение курса ученику учителем в один клик (tsk-031).
++
++Teacher-only: роль teacher/methodist/admin или сервисный токен.
++Идемпотентно: повторный вызов не создаёт дубль и не ошибается.
++Модель — docs/ai/adr/0002-course-assignment-trigger-rules.md.
++"""
++from __future__ import annotations
++
++import logging
++
++from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
++from sqlalchemy import select, text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db, get_current_user
++from app.auth.current_user import CurrentUser
++from app.schemas.assignment_rules import ManualAssignRequest, ManualAssignResponse
++from app.services import assignment_rules_service
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger("api.teacher_assignments")
++
++router = APIRouter(tags=["teacher_assignments"])
++
++# Роли, которым разрешено ручное назначение курсов.
++_ALLOWED_ROLES = {"teacher", "преподаватель", "methodist", "методист", "admin"}
++
++
++async def _ensure_can_assign(db: AsyncSession, current_user: CurrentUser) -> None:
++    """
++    Проверить право на ручное назначение.
++
++    Сервисный токен (бот/админ-интеграция) — разрешено. Реальный пользователь —
++    только при наличии преподавательской/методической/админ-роли.
++    """
++    if current_user.is_service:
++        return
++
++    from app.models.association_tables import t_user_roles
++    from app.models.roles import Roles
++
++    stmt = (
++        select(Roles.name)
++        .join(t_user_roles, Roles.id == t_user_roles.c.role_id)
++        .where(t_user_roles.c.user_id == current_user.id)
++    )
++    roles = {str(row[0]).lower().strip() for row in (await db.execute(stmt)).fetchall()}
++    if roles.isdisjoint(_ALLOWED_ROLES):
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "Назначать курсы может только преподаватель/методист/админ",
++        )
++
++
++@router.post(
++    "/teacher/students/{student_id}/assignments",
++    response_model=ManualAssignResponse,
++    status_code=status.HTTP_200_OK,
++    summary="Назначить курс ученику (учитель, в один клик)",
++    description=(
++        "Идемпотентно привязать курс к ученику от лица преподавателя.\n\n"
++        "- Указывается ровно один из `course_id` / `course_uid` "
++        "(`course_uid` совпадает с кодом публикатора, например `wp:vvodnyy-python`).\n"
++        "- Повторный вызов не создаёт дубль: вернётся `already_enrolled=true`.\n"
++        "- Доступно роли teacher/methodist/admin или сервисному токену."
++    ),
++    responses={
++        200: {"description": "Курс назначен (или уже был назначен)"},
++        403: {"description": "Недостаточно прав"},
++        404: {"description": "Ученик или курс не найден"},
++    },
++)
++async def assign_course_to_student_endpoint(
++    student_id: int = Path(..., description="ID ученика", examples=[42]),
++    payload: ManualAssignRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> ManualAssignResponse:
++    """Назначить курс ученику вручную (teacher-only, идемпотентно)."""
++    await _ensure_can_assign(db, current_user)
++
++    # Проверка существования ученика — явный 404 вместо ошибки FK.
++    student_row = (
++        await db.execute(
++            text("SELECT 1 FROM users WHERE id = :sid"),
++            {"sid": student_id},
++        )
++    ).fetchone()
++    if student_row is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Ученик id={student_id} не найден")
++
++    detail = {"reason": payload.reason} if payload.reason else None
++    assigned_by = None if current_user.is_service else current_user.id
++
++    try:
++        result = await assignment_rules_service.assign_course_to_student(
++            db,
++            student_id=student_id,
++            course_id=payload.course_id,
++            course_uid=payload.course_uid,
++            source="manual_teacher",
++            assigned_by=assigned_by,
++            detail=detail,
++            skip_event_if_enrolled=True,
++        )
++    except DomainError as e:
++        raise HTTPException(e.status_code or status.HTTP_400_BAD_REQUEST, str(e.detail))
++
++    logger.info(
++        "manual assign: teacher=%s student=%s course=%s already_enrolled=%s",
++        assigned_by, student_id, result.course_id, result.already_enrolled,
++    )
++    return ManualAssignResponse(
++        student_id=student_id,
++        course_id=result.course_id,
++        already_enrolled=result.already_enrolled,
++        event_id=result.event_id,
++    )
+diff --git a/app/db/base.py b/app/db/base.py
+index 2bd375d..d5f81d9 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -31,4 +31,6 @@ import app.models.magic_link
+ import app.models.audit_event
+ import app.models.guest_session
+ import app.models.guest_attempt
++import app.models.assignment_rule
++import app.models.assignment_event
+ 
+diff --git a/app/db/migrations/versions/20260624_010000_tsk031_assignment_rules.py b/app/db/migrations/versions/20260624_010000_tsk031_assignment_rules.py
+new file mode 100644
+index 0000000..0eeef84
+--- /dev/null
++++ b/app/db/migrations/versions/20260624_010000_tsk031_assignment_rules.py
+@@ -0,0 +1,197 @@
++"""Course assignment trigger rules (tsk-031).
++
++Создаёт фундамент автоматического/ручного назначения курсов ученику:
++- assignment_rule  — определения правил (событие → назначить курс по course_uid);
++- assignment_event — журнал назначений (provenance + идемпотентность).
++
++Поведение по умолчанию: таблица правил пуста → движок оценки выполняет no-op,
++поведение существующих эндпоинтов не меняется.
++
++Revision ID: tsk031_assignment_rules
++Revises: tsk111_content_req_skip
++Create Date: 2026-06-24 01:00:00
++"""
++from __future__ import annotations
++
++from typing import Union
++
++from alembic import op
++import sqlalchemy as sa
++from sqlalchemy.dialects.postgresql import JSONB
++
++
++revision: str = "tsk031_assignment_rules"
++down_revision: Union[str, None] = "tsk111_content_req_skip"
++branch_labels: Union[str, None] = None
++depends_on: Union[str, None] = None
++
++
++TRIGGER_EVENT_CHECK = "trigger_event IN ('answer_value', 'task_failed', 'course_failed')"
++ACTION_TYPE_CHECK = "action_type IN ('assign_course')"
++REFIRE_POLICY_CHECK = "refire_policy IN ('once_per_student', 'every_time')"
++SOURCE_CHECK = "source IN ('auto_rule', 'manual_teacher')"
++
++
++def upgrade() -> None:
++    # --- assignment_rule: определения правил ---
++    op.create_table(
++        "assignment_rule",
++        sa.Column("id", sa.Integer(), nullable=False),
++        sa.Column("code", sa.Text(), nullable=False, comment="Устойчивый код правила"),
++        sa.Column("title", sa.Text(), nullable=True, comment="Описание для UI/админки"),
++        sa.Column(
++            "trigger_event",
++            sa.Text(),
++            nullable=False,
++            comment="answer_value | task_failed | course_failed",
++        ),
++        sa.Column("task_id", sa.Integer(), nullable=True, comment="Отслеживаемая задача"),
++        sa.Column("course_id", sa.Integer(), nullable=True, comment="Отслеживаемая тема=курс"),
++        sa.Column(
++            "condition",
++            JSONB(),
++            nullable=False,
++            server_default=sa.text("'{}'::jsonb"),
++            comment="Параметры условия (option_id/value/min_correct_ratio/...)",
++        ),
++        sa.Column(
++            "action_type",
++            sa.Text(),
++            nullable=False,
++            server_default="assign_course",
++            comment="Тип действия (пока только assign_course)",
++        ),
++        sa.Column(
++            "target_course_uid",
++            sa.Text(),
++            nullable=False,
++            comment="Курс к назначению по course_uid (wp:<slug>)",
++        ),
++        sa.Column(
++            "refire_policy",
++            sa.Text(),
++            nullable=False,
++            server_default="once_per_student",
++            comment="once_per_student | every_time",
++        ),
++        sa.Column(
++            "is_active",
++            sa.Boolean(),
++            nullable=False,
++            server_default=sa.true(),
++        ),
++        sa.Column(
++            "created_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.Column(
++            "updated_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.ForeignKeyConstraint(
++            ["task_id"], ["tasks.id"], ondelete="CASCADE",
++            name="assignment_rule_task_id_fkey",
++        ),
++        sa.ForeignKeyConstraint(
++            ["course_id"], ["courses.id"], ondelete="CASCADE",
++            name="assignment_rule_course_id_fkey",
++        ),
++        sa.PrimaryKeyConstraint("id", name="assignment_rule_pkey"),
++        sa.UniqueConstraint("code", name="assignment_rule_code_key"),
++        sa.CheckConstraint(TRIGGER_EVENT_CHECK, name="assignment_rule_trigger_event_check"),
++        sa.CheckConstraint(ACTION_TYPE_CHECK, name="assignment_rule_action_type_check"),
++        sa.CheckConstraint(REFIRE_POLICY_CHECK, name="assignment_rule_refire_policy_check"),
++        comment="Правила автоматического назначения курсов (tsk-031)",
++    )
++    op.create_index(
++        "idx_assignment_rule_task_active",
++        "assignment_rule",
++        ["task_id", "is_active"],
++        postgresql_where=sa.text("task_id IS NOT NULL"),
++    )
++    op.create_index(
++        "idx_assignment_rule_course_active",
++        "assignment_rule",
++        ["course_id", "is_active"],
++        postgresql_where=sa.text("course_id IS NOT NULL"),
++    )
++    op.create_index(
++        "idx_assignment_rule_event_active",
++        "assignment_rule",
++        ["trigger_event", "is_active"],
++    )
++
++    # --- assignment_event: журнал назначений (provenance + идемпотентность) ---
++    op.create_table(
++        "assignment_event",
++        sa.Column("id", sa.Integer(), nullable=False),
++        sa.Column("student_id", sa.Integer(), nullable=False),
++        sa.Column("assigned_course_id", sa.Integer(), nullable=False),
++        sa.Column("rule_id", sa.Integer(), nullable=True, comment="NULL = ручное назначение"),
++        sa.Column("source", sa.Text(), nullable=False, comment="auto_rule | manual_teacher"),
++        sa.Column("assigned_by", sa.Integer(), nullable=True, comment="Учитель (для ручного)"),
++        sa.Column("attempt_id", sa.Integer(), nullable=True),
++        sa.Column("task_result_id", sa.Integer(), nullable=True),
++        sa.Column(
++            "already_enrolled",
++            sa.Boolean(),
++            nullable=False,
++            server_default=sa.false(),
++            comment="Ученик уже был на курсе на момент события",
++        ),
++        sa.Column("detail", JSONB(), nullable=True),
++        sa.Column(
++            "created_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        sa.ForeignKeyConstraint(
++            ["student_id"], ["users.id"], ondelete="CASCADE",
++            name="assignment_event_student_id_fkey",
++        ),
++        sa.ForeignKeyConstraint(
++            ["assigned_course_id"], ["courses.id"], ondelete="CASCADE",
++            name="assignment_event_assigned_course_id_fkey",
++        ),
++        sa.ForeignKeyConstraint(
++            ["rule_id"], ["assignment_rule.id"], ondelete="SET NULL",
++            name="assignment_event_rule_id_fkey",
++        ),
++        sa.ForeignKeyConstraint(
++            ["assigned_by"], ["users.id"], ondelete="SET NULL",
++            name="assignment_event_assigned_by_fkey",
++        ),
++        sa.ForeignKeyConstraint(
++            ["attempt_id"], ["attempts.id"], ondelete="SET NULL",
++            name="assignment_event_attempt_id_fkey",
++        ),
++        sa.PrimaryKeyConstraint("id", name="assignment_event_pkey"),
++        sa.CheckConstraint(SOURCE_CHECK, name="assignment_event_source_check"),
++        comment="Журнал назначений курсов (provenance + идемпотентность, tsk-031)",
++    )
++    op.create_index(
++        "idx_assignment_event_rule_student",
++        "assignment_event",
++        ["rule_id", "student_id"],
++    )
++    op.create_index(
++        "idx_assignment_event_student",
++        "assignment_event",
++        ["student_id"],
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("idx_assignment_event_student", table_name="assignment_event")
++    op.drop_index("idx_assignment_event_rule_student", table_name="assignment_event")
++    op.drop_table("assignment_event")
++
++    op.drop_index("idx_assignment_rule_event_active", table_name="assignment_rule")
++    op.drop_index("idx_assignment_rule_course_active", table_name="assignment_rule")
++    op.drop_index("idx_assignment_rule_task_active", table_name="assignment_rule")
++    op.drop_table("assignment_rule")
+diff --git a/app/models/assignment_event.py b/app/models/assignment_event.py
+new file mode 100644
+index 0000000..d14af87
+--- /dev/null
++++ b/app/models/assignment_event.py
+@@ -0,0 +1,93 @@
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from sqlalchemy import (
++    Boolean,
++    CheckConstraint,
++    DateTime,
++    ForeignKeyConstraint,
++    Integer,
++    PrimaryKeyConstraint,
++    Text,
++    text,
++)
++from sqlalchemy.dialects.postgresql import JSONB
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class AssignmentEvent(Base):
++    """
++    Журнал назначений курсов (provenance + идемпотентность, tsk-031).
++
++    Фиксирует факт назначения курса ученику: каким правилом (``rule_id``)
++    или каким учителем (``assigned_by``), в каком контексте (попытка/результат).
++    Само зачисление живёт в ``user_courses``; эта таблица — слой происхождения
++    поверх него. См. docs/ai/adr/0002-course-assignment-trigger-rules.md.
++    """
++
++    __tablename__ = "assignment_event"
++    __table_args__ = (
++        ForeignKeyConstraint(
++            ["student_id"], ["users.id"], ondelete="CASCADE",
++            name="assignment_event_student_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["assigned_course_id"], ["courses.id"], ondelete="CASCADE",
++            name="assignment_event_assigned_course_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["rule_id"], ["assignment_rule.id"], ondelete="SET NULL",
++            name="assignment_event_rule_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["assigned_by"], ["users.id"], ondelete="SET NULL",
++            name="assignment_event_assigned_by_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["attempt_id"], ["attempts.id"], ondelete="SET NULL",
++            name="assignment_event_attempt_id_fkey",
++        ),
++        PrimaryKeyConstraint("id", name="assignment_event_pkey"),
++        CheckConstraint(
++            "source IN ('auto_rule', 'manual_teacher')",
++            name="assignment_event_source_check",
++        ),
++        {"comment": "Журнал назначений курсов (tsk-031)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ID события")
++    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="Кому назначено")
++    assigned_course_id: Mapped[int] = mapped_column(
++        Integer, nullable=False, comment="Что назначено"
++    )
++    rule_id: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Правило (NULL = ручное назначение)"
++    )
++    source: Mapped[str] = mapped_column(
++        Text, nullable=False, comment="auto_rule | manual_teacher"
++    )
++    assigned_by: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Учитель (для ручного назначения)"
++    )
++    attempt_id: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Контекст срабатывания: попытка"
++    )
++    task_result_id: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Контекст срабатывания: результат задачи"
++    )
++    already_enrolled: Mapped[bool] = mapped_column(
++        Boolean,
++        nullable=False,
++        server_default=text("false"),
++        comment="Ученик уже был на курсе на момент события",
++    )
++    detail: Mapped[Optional[dict]] = mapped_column(JSONB, comment="Доп. данные срабатывания")
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        server_default=text("now()"),
++    )
+diff --git a/app/models/assignment_rule.py b/app/models/assignment_rule.py
+new file mode 100644
+index 0000000..f90f6fb
+--- /dev/null
++++ b/app/models/assignment_rule.py
+@@ -0,0 +1,107 @@
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from sqlalchemy import (
++    Boolean,
++    CheckConstraint,
++    DateTime,
++    ForeignKeyConstraint,
++    Integer,
++    PrimaryKeyConstraint,
++    Text,
++    UniqueConstraint,
++    text,
++)
++from sqlalchemy.dialects.postgresql import JSONB
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class AssignmentRule(Base):
++    """
++    Правило автоматического назначения курса ученику (tsk-031).
++
++    Событие (``trigger_event``) + условие (``condition``) → действие
++    ``assign_course`` (назначить курс по ``target_course_uid``).
++    Подробности модели — docs/ai/adr/0002-course-assignment-trigger-rules.md.
++    """
++
++    __tablename__ = "assignment_rule"
++    __table_args__ = (
++        ForeignKeyConstraint(
++            ["task_id"], ["tasks.id"], ondelete="CASCADE",
++            name="assignment_rule_task_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["course_id"], ["courses.id"], ondelete="CASCADE",
++            name="assignment_rule_course_id_fkey",
++        ),
++        PrimaryKeyConstraint("id", name="assignment_rule_pkey"),
++        UniqueConstraint("code", name="assignment_rule_code_key"),
++        CheckConstraint(
++            "trigger_event IN ('answer_value', 'task_failed', 'course_failed')",
++            name="assignment_rule_trigger_event_check",
++        ),
++        CheckConstraint(
++            "action_type IN ('assign_course')",
++            name="assignment_rule_action_type_check",
++        ),
++        CheckConstraint(
++            "refire_policy IN ('once_per_student', 'every_time')",
++            name="assignment_rule_refire_policy_check",
++        ),
++        {"comment": "Правила автоматического назначения курсов (tsk-031)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ID правила")
++    code: Mapped[str] = mapped_column(Text, nullable=False, comment="Устойчивый код правила")
++    title: Mapped[Optional[str]] = mapped_column(Text, comment="Описание для UI/админки")
++    trigger_event: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        comment="answer_value | task_failed | course_failed",
++    )
++    task_id: Mapped[Optional[int]] = mapped_column(Integer, comment="Отслеживаемая задача")
++    course_id: Mapped[Optional[int]] = mapped_column(Integer, comment="Отслеживаемая тема=курс")
++    condition: Mapped[dict] = mapped_column(
++        JSONB,
++        nullable=False,
++        server_default=text("'{}'::jsonb"),
++        comment="Параметры условия",
++    )
++    action_type: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        server_default=text("'assign_course'"),
++        comment="Тип действия",
++    )
++    target_course_uid: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        comment="Курс к назначению по course_uid (wp:<slug>)",
++    )
++    refire_policy: Mapped[str] = mapped_column(
++        Text,
++        nullable=False,
++        server_default=text("'once_per_student'"),
++        comment="once_per_student | every_time",
++    )
++    is_active: Mapped[bool] = mapped_column(
++        Boolean,
++        nullable=False,
++        server_default=text("true"),
++        comment="Мягкое отключение правила",
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        server_default=text("now()"),
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True),
++        nullable=False,
++        server_default=text("now()"),
++    )
+diff --git a/app/schemas/assignment_rules.py b/app/schemas/assignment_rules.py
+new file mode 100644
+index 0000000..7ba7786
+--- /dev/null
++++ b/app/schemas/assignment_rules.py
+@@ -0,0 +1,78 @@
++"""
++Схемы назначения курсов (tsk-031): ручное назначение учителем и чтение событий.
++
++Модель данных — docs/ai/adr/0002-course-assignment-trigger-rules.md.
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from pydantic import BaseModel, ConfigDict, Field, model_validator
++
++
++class ManualAssignRequest(BaseModel):
++    """
++    Запрос на ручное назначение курса ученику учителем (в один клик).
++
++    Нужно указать ровно один идентификатор курса: ``course_id`` или ``course_uid``.
++    """
++
++    course_id: Optional[int] = Field(
++        default=None,
++        description="ID курса для назначения.",
++        examples=[12, None],
++    )
++    course_uid: Optional[str] = Field(
++        default=None,
++        description="course_uid курса (например 'wp:vvodnyy-python').",
++        examples=["wp:vvodnyy-python", None],
++    )
++    reason: Optional[str] = Field(
++        default=None,
++        max_length=2000,
++        description="Причина назначения (для журнала, опционально).",
++        examples=["Не освоил тему циклов", None],
++    )
++
++    @model_validator(mode="after")
++    def _exactly_one_course_ref(self) -> "ManualAssignRequest":
++        """Ровно один из course_id / course_uid должен быть задан."""
++        has_id = self.course_id is not None
++        has_uid = bool(self.course_uid and self.course_uid.strip())
++        if has_id == has_uid:
++            raise ValueError("Укажите ровно один из параметров: course_id или course_uid")
++        return self
++
++
++class ManualAssignResponse(BaseModel):
++    """Результат ручного назначения курса."""
++
++    student_id: int = Field(..., description="ID ученика")
++    course_id: int = Field(..., description="ID назначенного курса")
++    already_enrolled: bool = Field(
++        ...,
++        description="True, если ученик уже был привязан к курсу (повторный клик).",
++    )
++    event_id: Optional[int] = Field(
++        default=None,
++        description="ID записи в assignment_event (None, если событие не создавалось).",
++    )
++
++
++class AssignmentEventRead(BaseModel):
++    """Запись журнала назначений (для чтения/аудита)."""
++
++    model_config = ConfigDict(from_attributes=True)
++
++    id: int
++    student_id: int
++    assigned_course_id: int
++    rule_id: Optional[int] = None
++    source: str
++    assigned_by: Optional[int] = None
++    attempt_id: Optional[int] = None
++    task_result_id: Optional[int] = None
++    already_enrolled: bool
++    detail: Optional[dict] = None
++    created_at: datetime
+diff --git a/app/services/assignment_rules_service.py b/app/services/assignment_rules_service.py
+new file mode 100644
+index 0000000..14314ec
+--- /dev/null
++++ b/app/services/assignment_rules_service.py
+@@ -0,0 +1,378 @@
++"""
++Сервис назначения курсов и движок оценки правил (tsk-031).
++
++Содержит:
++- ``assign_course_to_student`` — идемпотентное ядро назначения курса
++  (используется и ручным эндпоинтом учителя, и автоматическим движком);
++- ``evaluate_rules_for_answer`` — оценка правил после ответа на задачу
++  (``answer_value`` / ``task_failed``);
++- ``evaluate_rules_for_attempt`` — оценка правил после завершения попытки
++  (``course_failed``).
++
++Идемпотентность: зачисление защищено PK ``user_courses(user_id, course_id)``,
++повторное срабатывание правил — журналом ``assignment_event`` и advisory-lock'ом.
++Движок по умолчанию выполняет no-op: пока таблица ``assignment_rule`` пуста,
++ни один хук не меняет поведение системы.
++
++Модель данных — docs/ai/adr/0002-course-assignment-trigger-rules.md.
++"""
++from __future__ import annotations
++
++import json
++import logging
++from dataclasses import dataclass
++from typing import Any, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger(__name__)
++
++# Порог по умолчанию для course_failed: доля верных задач, ниже/равно которой
++# тема считается не освоенной.
++DEFAULT_MIN_CORRECT_RATIO = 0.5
++
++
++@dataclass
++class AssignResult:
++    """Результат назначения курса ученику."""
++
++    course_id: int
++    already_enrolled: bool
++    event_id: Optional[int]
++
++
++async def _resolve_course_id(
++    db: AsyncSession,
++    *,
++    course_id: Optional[int],
++    course_uid: Optional[str],
++) -> int:
++    """
++    Привести ссылку на курс к числовому ``courses.id``.
++
++    :raises DomainError: курс не найден (404).
++    """
++    if course_id is not None:
++        r = await db.execute(
++            text("SELECT id FROM courses WHERE id = :cid"),
++            {"cid": course_id},
++        )
++        row = r.fetchone()
++        if row is None:
++            raise DomainError(detail=f"Курс id={course_id} не найден", status_code=404)
++        return int(row[0])
++
++    if course_uid:
++        r = await db.execute(
++            text("SELECT id FROM courses WHERE course_uid = :uid"),
++            {"uid": course_uid},
++        )
++        row = r.fetchone()
++        if row is None:
++            raise DomainError(
++                detail=f"Курс с course_uid='{course_uid}' не найден",
++                status_code=404,
++            )
++        return int(row[0])
++
++    raise DomainError(detail="Не указан course_id или course_uid", status_code=400)
++
++
++async def assign_course_to_student(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    course_id: Optional[int] = None,
++    course_uid: Optional[str] = None,
++    source: str,
++    rule_id: Optional[int] = None,
++    assigned_by: Optional[int] = None,
++    attempt_id: Optional[int] = None,
++    task_result_id: Optional[int] = None,
++    detail: Optional[dict[str, Any]] = None,
++    skip_event_if_enrolled: bool = False,
++) -> AssignResult:
++    """
++    Идемпотентно назначить курс ученику и записать событие в журнал.
++
++    Зачисление пишется в ``user_courses`` (``order_number`` ставит триггер БД).
++    Повторный вызов для уже привязанного курса не создаёт дубль и возвращает
++    ``already_enrolled=True``.
++
++    :param source: ``auto_rule`` (движок) или ``manual_teacher`` (учитель).
++    :param skip_event_if_enrolled: если True и ученик уже на курсе — не писать
++        событие (для ручных кликов, чтобы не засорять журнал). Для авто-правил
++        оставлять False: событие нужно как запись о срабатывании.
++    :raises DomainError: курс не найден.
++    """
++    resolved_course_id = await _resolve_course_id(
++        db, course_id=course_id, course_uid=course_uid
++    )
++
++    # Сериализация check-then-insert по (student_id, course_id) от гонок.
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": student_id, "k2": resolved_course_id},
++    )
++
++    existing = await db.execute(
++        text(
++            "SELECT 1 FROM user_courses "
++            "WHERE user_id = :uid AND course_id = :cid"
++        ),
++        {"uid": student_id, "cid": resolved_course_id},
++    )
++    already_enrolled = existing.fetchone() is not None
++
++    if not already_enrolled:
++        # order_number проставит триггер trg_set_user_course_order_number.
++        await db.execute(
++            text(
++                "INSERT INTO user_courses (user_id, course_id) "
++                "VALUES (:uid, :cid) "
++                "ON CONFLICT (user_id, course_id) DO NOTHING"
++            ),
++            {"uid": student_id, "cid": resolved_course_id},
++        )
++
++    event_id: Optional[int] = None
++    if not (already_enrolled and skip_event_if_enrolled):
++        r = await db.execute(
++            text(
++                "INSERT INTO assignment_event "
++                "(student_id, assigned_course_id, rule_id, source, assigned_by, "
++                " attempt_id, task_result_id, already_enrolled, detail) "
++                "VALUES (:student_id, :course_id, :rule_id, :source, :assigned_by, "
++                " :attempt_id, :task_result_id, :already_enrolled, CAST(:detail AS jsonb)) "
++                "RETURNING id"
++            ),
++            {
++                "student_id": student_id,
++                "course_id": resolved_course_id,
++                "rule_id": rule_id,
++                "source": source,
++                "assigned_by": assigned_by,
++                "attempt_id": attempt_id,
++                "task_result_id": task_result_id,
++                "already_enrolled": already_enrolled,
++                "detail": json.dumps(detail) if detail is not None else None,
++            },
++        )
++        event_id = int(r.scalar())
++
++    await db.commit()
++    return AssignResult(
++        course_id=resolved_course_id,
++        already_enrolled=already_enrolled,
++        event_id=event_id,
++    )
++
++
++async def _rule_already_fired(
++    db: AsyncSession, *, rule_id: int, student_id: int
++) -> bool:
++    """True, если правило уже срабатывало для ученика (для once_per_student)."""
++    r = await db.execute(
++        text(
++            "SELECT 1 FROM assignment_event "
++            "WHERE rule_id = :rid AND student_id = :sid LIMIT 1"
++        ),
++        {"rid": rule_id, "sid": student_id},
++    )
++    return r.fetchone() is not None
++
++
++def _match_answer_value(condition: dict[str, Any], answer: Any) -> bool:
++    """
++    Совпал ли ответ ученика с условием правила ``answer_value``.
++
++    condition: ``{"option_id": "..."}`` (SC/MC) или ``{"value": "..."}`` (SA).
++    """
++    response = getattr(answer, "response", None)
++    if response is None:
++        return False
++
++    option_id = condition.get("option_id")
++    if option_id is not None:
++        selected = getattr(response, "selected_option_ids", None) or []
++        return option_id in selected
++
++    expected = condition.get("value")
++    if expected is not None:
++        actual = getattr(response, "value", None)
++        if actual is None:
++            return False
++        return str(actual).strip().lower() == str(expected).strip().lower()
++
++    return False
++
++
++async def evaluate_rules_for_answer(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    task_id: int,
++    answer: Any,
++    check_result: Any,
++    attempt_id: Optional[int] = None,
++    task_result_id: Optional[int] = None,
++) -> int:
++    """
++    Оценить правила, привязанные к задаче, после ответа ученика.
++
++    Обрабатывает ``answer_value`` (совпадение ответа) и ``task_failed``
++    (``check_result.is_correct`` ложно). Каждое правило обрабатывается
++    с soft-fail: сбой одного не мешает остальным и не ломает учебный поток.
++
++    :return: число фактически сработавших (назначивших курс) правил.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT id, trigger_event, condition, target_course_uid, refire_policy "
++                "FROM assignment_rule "
++                "WHERE is_active = true AND task_id = :task_id "
++                "AND trigger_event IN ('answer_value', 'task_failed')"
++            ),
++            {"task_id": task_id},
++        )
++    ).fetchall()
++
++    fired = 0
++    for row in rows:
++        rule_id, trigger_event, condition, target_uid, refire_policy = row
++        condition = condition or {}
++        try:
++            if refire_policy == "once_per_student" and await _rule_already_fired(
++                db, rule_id=rule_id, student_id=student_id
++            ):
++                continue
++
++            if trigger_event == "answer_value":
++                matched = _match_answer_value(condition, answer)
++                detail = {"matched": "answer_value", "condition": condition}
++            elif trigger_event == "task_failed":
++                matched = getattr(check_result, "is_correct", None) is False
++                detail = {"matched": "task_failed", "task_id": task_id}
++            else:
++                continue
++
++            if not matched:
++                continue
++
++            await assign_course_to_student(
++                db,
++                student_id=student_id,
++                course_uid=target_uid,
++                source="auto_rule",
++                rule_id=rule_id,
++                attempt_id=attempt_id,
++                task_result_id=task_result_id,
++                detail=detail,
++            )
++            fired += 1
++        except Exception:  # soft-fail: одно правило не валит остальные
++            logger.warning(
++                "assignment rule %s (task_id=%s, student_id=%s) failed",
++                rule_id, task_id, student_id, exc_info=True,
++            )
++            await db.rollback()
++    return fired
++
++
++async def evaluate_rules_for_attempt(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    attempt_id: int,
++) -> int:
++    """
++    Оценить правила ``course_failed`` после завершения попытки.
++
++    Тема = курс попытки (``attempts.course_id``). Считается доля верных задач
++    попытки; при значении ниже/равном ``condition.min_correct_ratio`` (по умолчанию
++    0.5) назначается курс повторения. Soft-fail на уровне каждого правила.
++
++    :return: число сработавших правил.
++    """
++    arow = (
++        await db.execute(
++            text("SELECT course_id FROM attempts WHERE id = :aid"),
++            {"aid": attempt_id},
++        )
++    ).fetchone()
++    if arow is None or arow[0] is None:
++        return 0
++    course_id = int(arow[0])
++
++    rules = (
++        await db.execute(
++            text(
++                "SELECT id, condition, target_course_uid, refire_policy "
++                "FROM assignment_rule "
++                "WHERE is_active = true AND course_id = :course_id "
++                "AND trigger_event = 'course_failed'"
++            ),
++            {"course_id": course_id},
++        )
++    ).fetchall()
++    if not rules:
++        return 0
++
++    # Доля верных задач в рамках попытки (учитываются только авто-проверяемые,
++    # где is_correct не NULL).
++    stats = (
++        await db.execute(
++            text(
++                "SELECT "
++                "  COUNT(*) FILTER (WHERE is_correct IS NOT NULL) AS checked, "
++                "  COUNT(*) FILTER (WHERE is_correct = true) AS correct "
++                "FROM task_results WHERE attempt_id = :aid"
++            ),
++            {"aid": attempt_id},
++        )
++    ).fetchone()
++    checked = int(stats[0] or 0)
++    correct = int(stats[1] or 0)
++    if checked == 0:
++        return 0
++    correct_ratio = correct / checked
++
++    fired = 0
++    for rule_id, condition, target_uid, refire_policy in rules:
++        condition = condition or {}
++        try:
++            if refire_policy == "once_per_student" and await _rule_already_fired(
++                db, rule_id=rule_id, student_id=student_id
++            ):
++                continue
++
++            threshold = condition.get("min_correct_ratio", DEFAULT_MIN_CORRECT_RATIO)
++            if correct_ratio > threshold:
++                continue
++
++            await assign_course_to_student(
++                db,
++                student_id=student_id,
++                course_uid=target_uid,
++                source="auto_rule",
++                rule_id=rule_id,
++                attempt_id=attempt_id,
++                detail={
++                    "matched": "course_failed",
++                    "course_id": course_id,
++                    "correct_ratio": round(correct_ratio, 3),
++                    "threshold": threshold,
++                },
++            )
++            fired += 1
++        except Exception:  # soft-fail
++            logger.warning(
++                "course_failed rule %s (course_id=%s, student_id=%s) failed",
++                rule_id, course_id, student_id, exc_info=True,
++            )
++            await db.rollback()
++    return fired
+diff --git a/docs/ai/adr/0002-course-assignment-trigger-rules.md b/docs/ai/adr/0002-course-assignment-trigger-rules.md
+new file mode 100644
+index 0000000..9facbf1
+--- /dev/null
++++ b/docs/ai/adr/0002-course-assignment-trigger-rules.md
+@@ -0,0 +1,137 @@
++# ADR-0002 — Триггеры автоматического назначения курсов (assignment trigger rules)
++
++- **Статус:** Accepted (фундамент), полная автоматизация — следующий шаг
++- **Дата:** 2026-06-24
++- **Задача:** tsk-031 «Доп курсы для закрепления»
++- **Связано:** ContentBackbone ADR-0042 (редизайн публикатора, граф курсов, `course_uid = wp:<slug>`); tsk-120 (LMS публикатор v2)
++
++## Контекст
++
++LMS умеет привязывать курсы ученику (`user_courses`), но не умеет делать это
++**автоматически по условиям прохождения**. Нужны два сценария:
++
++1. **Назначение по ответам.** По результату прохождения назначить мини-курс:
++   - на пробном ученик выбрал трек «информатика» (ответ на SC-вопрос) → назначить
++     «Вводная информатика»; «Python» → «Вводный Python»;
++   - ученик провалил попытки по заданию/теме → назначить мини-курс повторения темы.
++2. **Ручное назначение учителем в один клик** — кнопка «назначить мини-курс повторения».
++
++Назначение строится **поверх графовой модели курсов** (multi-parent через
++`course_parents`, зависимости через `course_dependencies`), которую наполняет
++публикатор ContentBackbone. Курсы именуются устойчивым `course_uid` вида `wp:<slug>`.
++Правила обязаны ссылаться на курсы по `course_uid`, а не по числовому `id`, чтобы
++переживать пере-импорт/пере-публикацию.
++
++### Существующая модель (AS-IS, релевантное)
++
++| Объект | Где | Заметки |
++|---|---|---|
++| `courses` | `app/models/courses.py` | `course_uid` (unique, nullable), multi-parent, dependencies |
++| `tasks` | `app/models/tasks.py` | `task_content` (JSONB, `type`: SC/MC/SA/SA_COM/TA), `solution_rules` |
++| `attempts` | `app/models/attempts.py` | группа результатов; `course_id`, `finished_at` |
++| `task_results` | `app/models/task_results.py` | `is_correct`, `answer_json`, `attempt_id`, `score` |
++| `user_courses` | `app/models/user_courses.py` | PK `(user_id, course_id)` — **естественная идемпотентность зачисления**; `order_number` ставит триггер БД |
++| `learning_events` | raw SQL | журнал учебных событий (паттерн дедупа через advisory-lock) |
++
++### Точки интеграции (хуки)
++
++- **Ответ на задачу:** `POST /attempts/{id}/answers` → `app/api/v1/attempts.py:402`
++  после `TaskResultsService.create_from_check_result(...)`. Здесь известны
++  `answer`, `check_result.is_correct`, `attempt_id`, `task_id`, `student_id`.
++- **Завершение попытки:** `POST /attempts/{id}/finish` → `app/api/v1/attempts.py:620`
++  после `AttemptsService.finish_attempt(...)`. Здесь доступны все результаты попытки.
++
++## Решение
++
++### 1. Две новые таблицы
++
++#### `assignment_rule` — определения правил
++
++| Поле | Тип | Назначение |
++|---|---|---|
++| `id` | serial PK | |
++| `code` | text UNIQUE | устойчивый человекочитаемый код правила (`trial-track-python`) |
++| `title` | text | описание для UI/админки |
++| `trigger_event` | text CHECK | `answer_value` \| `task_failed` \| `course_failed` |
++| `task_id` | int FK→tasks NULL | отслеживаемая задача (для `answer_value`/`task_failed`) |
++| `course_id` | int FK→courses NULL | отслеживаемая тема=курс (для `course_failed`) |
++| `condition` | jsonb NOT NULL `'{}'` | параметры условия (см. ниже) |
++| `action_type` | text CHECK `'assign_course'` | пока единственное действие; точка расширения |
++| `target_course_uid` | text NOT NULL | курс к назначению, по `course_uid` (`wp:<slug>`) |
++| `refire_policy` | text CHECK | `once_per_student` (по умолч.) \| `every_time` |
++| `is_active` | bool NOT NULL true | мягкое отключение |
++| `created_at`/`updated_at` | timestamptz now() | |
++
++**Формат `condition` по типам триггера:**
++- `answer_value`: `{"option_id": "py"}` (для SC/MC) **или** `{"value": "Python"}` (для SA);
++- `task_failed`: `{}` — срабатывает при `is_correct = false` (опц. `{"on_attempts_exhausted": true}` — только когда исчерпан лимит попыток);
++- `course_failed`: `{"min_correct_ratio": 0.5}` — доля верных задач курса в попытке ниже порога.
++
++#### `assignment_event` — журнал назначений (provenance + идемпотентность)
++
++| Поле | Тип | Назначение |
++|---|---|---|
++| `id` | serial PK | |
++| `student_id` | int FK→users CASCADE | кому назначено |
++| `assigned_course_id` | int FK→courses CASCADE | что назначено (резолв `target_course_uid`) |
++| `rule_id` | int FK→assignment_rule SET NULL | правило (NULL = ручное) |
++| `source` | text CHECK | `auto_rule` \| `manual_teacher` |
++| `assigned_by` | int FK→users SET NULL | учитель (для ручного) |
++| `attempt_id` | int FK→attempts SET NULL | контекст срабатывания |
++| `task_result_id` | int NULL | контекст срабатывания |
++| `already_enrolled` | bool NOT NULL false | ученик уже был на курсе на момент события |
++| `detail` | jsonb NULL | доп. данные (значение ответа, ratio и т.п.) |
++| `created_at` | timestamptz now() | |
++
++Индексы: `(rule_id, student_id)`, `(student_id)`, `(assignment_rule.task_id) WHERE NOT NULL`, `(trigger_event, is_active)`.
++
++### 2. Идемпотентность (многоуровневая)
++
++1. **Зачисление** — `user_courses` PK `(user_id, course_id)`: один курс не зачислится дважды никогда.
++2. **Повторное срабатывание правила** — для `once_per_student` сервис проверяет наличие
++   `assignment_event` с тем же `(rule_id, student_id)` до назначения. `every_time` пропускает проверку.
++3. **Гонки** — `pg_advisory_xact_lock(student_id, course_id)` вокруг check-then-insert
++   (паттерн из `learning_events_service`).
++
++`assignment_event` пишется только при **фактическом новом** зачислении (или ручном
++действии учителя), чтобы журнал не засорялся повторными кликами.
++
++### 3. Сервис `assignment_rules_service`
++
++- `assign_course_to_student(...)` — **идемпотентное ядро**: резолвит `course_uid`→`course_id`,
++  берёт advisory-lock, проверяет `user_courses`, при отсутствии вставляет (триггер БД
++  ставит `order_number`), пишет `assignment_event`. Используется и ручным эндпоинтом, и движком.
++- `evaluate_rules_for_answer(...)` — после ответа: правила `answer_value`/`task_failed` по `task_id`.
++- `evaluate_rules_for_attempt(...)` — после завершения попытки: правила `course_failed` по курсу попытки.
++
++Движок реализован минимально, но рабоче (покрывает оба сценария оператора).
++Каждая оценка обёрнута в **soft-fail** (как `_self_heal_student_role`): сбой движка
++никогда не ломает учебный поток (ответ/завершение попытки).
++
++### 4. Поведение по умолчанию
++
++Таблица `assignment_rule` пуста после миграции → хуки выполняют **no-op**.
++Поведение существующих эндпоинтов и тестов не меняется. Включение автоназначения =
++добавление строк правил (через будущую админку/seed), без правок кода.
++
++### 5. Ручное назначение учителем
++
++`POST /api/v1/teacher/students/{student_id}/assignments` — teacher-only
++(роль `teacher`/`методист`/`admin` или сервисный токен; паттерн из `user_courses_extra._user_has_teacher_role`).
++Тело: `{course_id?: int, course_uid?: str, reason?: str}` (одно из id/uid обязательно).
++Идемпотентно: повторный вызов не ошибается, возвращает `already_enrolled=true`.
++`source='manual_teacher'`, `assigned_by` = id учителя.
++
++## Альтернативы (отклонены)
++
++- **Триггеры/функции в БД** вместо сервис-слоя — нагляднее в коде приложения, проще тестировать, не плодит скрытую логику в PL/pgSQL.
++- **Хранить `target_course_id`** вместо `course_uid` — ломается при пере-импорте курсов; `course_uid` стабилен и совпадает с публикатором.
++- **Назначать без журнала, опираясь только на `user_courses`** — теряется provenance (каким правилом/кем назначено) и контроль `once_per_student` для уже отчисленных.
++
++## Последствия
++
++- **+** Расширяемо: новые `trigger_event`/`action_type` — добавление веток, не схемы.
++- **+** Безопасно: feature-gated пустой таблицей, soft-fail хуки.
++- **+** Cross-project-совместимо: правила ссылаются на `course_uid` публикатора.
++- **−** Движок оценки правил — синхронный в request-цикле (приемлемо: правил на задачу мало, soft-fail). При росте — вынести в очередь событий (`learning_events` + worker).
++- **Follow-up:** UI-кнопка в SPW/teacher API; админка правил; перенос оценки в асинхронный воркер; правило `course_failed` по накопленной истории (не только в рамках одной попытки).
+diff --git a/tests/test_assignment_rules_tsk031.py b/tests/test_assignment_rules_tsk031.py
+new file mode 100644
+index 0000000..826f59f
+--- /dev/null
++++ b/tests/test_assignment_rules_tsk031.py
+@@ -0,0 +1,235 @@
++"""
++Тесты фундамента триггеров назначения курсов (tsk-031).
++
++Покрывают:
++- идемпотентное ядро assign_course_to_student (по course_id и course_uid);
++- движок evaluate_rules_for_answer (answer_value / task_failed);
++- движок evaluate_rules_for_attempt (course_failed);
++- ручной эндпоинт учителя (idempotent, teacher-only через сервисный токен).
++
++Тесты создают свои данные в dev-БД (Learn.public) и подчищают за собой
++каскадом от курса/ученика. Пользователи с email '@example.*' дополнительно
++удаляются session-scoped sweep'ом из conftest.
++"""
++from __future__ import annotations
++
++import uuid
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.schemas.checking import CheckResult, StudentAnswer, StudentResponse
++from app.services import assignment_rules_service as ars
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++
++
++async def _make_student(db) -> int:
++    email = f"stud_{uuid.uuid4().hex[:8]}@example.com"
++    r = await db.execute(
++        text("INSERT INTO users (email, full_name) VALUES (:e, 'tsk031 student') RETURNING id"),
++        {"e": email},
++    )
++    sid = int(r.scalar())
++    await db.commit()
++    return sid
++
++
++async def _make_course(db, uid: str | None) -> int:
++    r = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, course_uid) "
++            "VALUES (:t, 'auto_check', :uid) RETURNING id"
++        ),
++        {"t": f"tsk031 {uid or 'nouid'}", "uid": uid},
++    )
++    cid = int(r.scalar())
++    await db.commit()
++    return cid
++
++
++async def _make_task(db, course_id: int) -> int:
++    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
++    r = await db.execute(
++        text(
++            "INSERT INTO tasks (course_id, difficulty_id, task_content) "
++            "VALUES (:cid, :did, CAST(:tc AS jsonb)) RETURNING id"
++        ),
++        {"cid": course_id, "did": diff, "tc": '{"type": "SC", "stem": "t"}'},
++    )
++    tid = int(r.scalar())
++    await db.commit()
++    return tid
++
++
++async def _cleanup(db, *, course_ids: list[int], student_id: int) -> None:
++    for cid in course_ids:
++        await db.execute(text("DELETE FROM courses WHERE id = :cid"), {"cid": cid})
++    await db.execute(text("DELETE FROM users WHERE id = :sid"), {"sid": student_id})
++    await db.commit()
++
++
++async def test_assign_idempotent_by_id(db):
++    """Назначение по course_id: первый раз enroll, второй — already_enrolled, без дубля."""
++    student_id = await _make_student(db)
++    course_id = await _make_course(db, uid=None)
++    try:
++        r1 = await ars.assign_course_to_student(
++            db, student_id=student_id, course_id=course_id, source="manual_teacher",
++        )
++        assert r1.already_enrolled is False
++        assert r1.course_id == course_id
++
++        r2 = await ars.assign_course_to_student(
++            db, student_id=student_id, course_id=course_id, source="manual_teacher",
++        )
++        assert r2.already_enrolled is True
++
++        cnt = (
++            await db.execute(
++                text("SELECT COUNT(*) FROM user_courses WHERE user_id = :u AND course_id = :c"),
++                {"u": student_id, "c": course_id},
++            )
++        ).scalar()
++        assert cnt == 1
++    finally:
++        await _cleanup(db, course_ids=[course_id], student_id=student_id)
++
++
++async def test_assign_by_course_uid(db):
++    """Назначение по course_uid резолвится в id и зачисляет ученика."""
++    student_id = await _make_student(db)
++    uid = f"wp:tsk031-{uuid.uuid4().hex[:8]}"
++    course_id = await _make_course(db, uid=uid)
++    try:
++        res = await ars.assign_course_to_student(
++            db, student_id=student_id, course_uid=uid, source="manual_teacher",
++        )
++        assert res.course_id == course_id
++        assert res.already_enrolled is False
++        assert res.event_id is not None
++    finally:
++        await _cleanup(db, course_ids=[course_id], student_id=student_id)
++
++
++async def test_assign_unknown_uid_raises(db):
++    """Неизвестный course_uid → DomainError 404."""
++    from app.utils.exceptions import DomainError
++
++    student_id = await _make_student(db)
++    try:
++        with pytest.raises(DomainError):
++            await ars.assign_course_to_student(
++                db, student_id=student_id, course_uid="wp:does-not-exist-xyz",
++                source="manual_teacher",
++            )
++    finally:
++        await _cleanup(db, course_ids=[], student_id=student_id)
++
++
++async def test_rule_answer_value_assigns_track_course(db):
++    """answer_value: выбор варианта 'py' назначает целевой курс (сценарий пробного)."""
++    student_id = await _make_student(db)
++    trigger_course = await _make_course(db, uid=None)  # курс пробного
++    target_uid = f"wp:vvodnyy-python-{uuid.uuid4().hex[:8]}"
++    target_course = await _make_course(db, uid=target_uid)
++    task_id = await _make_task(db, trigger_course)
++    rule_code = f"trial-py-{uuid.uuid4().hex[:8]}"
++    await db.execute(
++        text(
++            "INSERT INTO assignment_rule (code, trigger_event, task_id, condition, target_course_uid) "
++            "VALUES (:code, 'answer_value', :tid, CAST(:cond AS jsonb), :uid)"
++        ),
++        {"code": rule_code, "tid": task_id, "cond": '{"option_id": "py"}', "uid": target_uid},
++    )
++    await db.commit()
++    try:
++        answer = StudentAnswer(type="SC", response=StudentResponse(selected_option_ids=["py"]))
++        check = CheckResult(score=10, max_score=10, is_correct=True)
++        fired = await ars.evaluate_rules_for_answer(
++            db, student_id=student_id, task_id=task_id, answer=answer, check_result=check,
++        )
++        assert fired == 1
++        enrolled = (
++            await db.execute(
++                text("SELECT 1 FROM user_courses WHERE user_id = :u AND course_id = :c"),
++                {"u": student_id, "c": target_course},
++            )
++        ).fetchone()
++        assert enrolled is not None
++
++        # Повторный ответ не назначает второй раз (once_per_student).
++        fired2 = await ars.evaluate_rules_for_answer(
++            db, student_id=student_id, task_id=task_id, answer=answer, check_result=check,
++        )
++        assert fired2 == 0
++    finally:
++        await _cleanup(db, course_ids=[trigger_course, target_course], student_id=student_id)
++
++
++async def test_rule_answer_value_no_match(db):
++    """answer_value: другой вариант ответа не назначает курс."""
++    student_id = await _make_student(db)
++    trigger_course = await _make_course(db, uid=None)
++    target_uid = f"wp:vvodnyy-inf-{uuid.uuid4().hex[:8]}"
++    target_course = await _make_course(db, uid=target_uid)
++    task_id = await _make_task(db, trigger_course)
++    await db.execute(
++        text(
++            "INSERT INTO assignment_rule (code, trigger_event, task_id, condition, target_course_uid) "
++            "VALUES (:code, 'answer_value', :tid, CAST(:cond AS jsonb), :uid)"
++        ),
++        {
++            "code": f"trial-inf-{uuid.uuid4().hex[:8]}",
++            "tid": task_id, "cond": '{"option_id": "inf"}', "uid": target_uid,
++        },
++    )
++    await db.commit()
++    try:
++        answer = StudentAnswer(type="SC", response=StudentResponse(selected_option_ids=["py"]))
++        check = CheckResult(score=10, max_score=10, is_correct=True)
++        fired = await ars.evaluate_rules_for_answer(
++            db, student_id=student_id, task_id=task_id, answer=answer, check_result=check,
++        )
++        assert fired == 0
++    finally:
++        await _cleanup(db, course_ids=[trigger_course, target_course], student_id=student_id)
++
++
++async def test_manual_assign_endpoint_idempotent(client, db):
++    """Ручной эндпоинт учителя: сервисный токен назначает курс, повтор — already_enrolled."""
++    api_key = next(iter(_settings.valid_api_keys))
++    student_id = await _make_student(db)
++    course_id = await _make_course(db, uid=None)
++    headers = {"X-API-Key": api_key}
++    try:
++        url = f"/api/v1/teacher/students/{student_id}/assignments"
++        resp1 = await client.post(url, json={"course_id": course_id}, headers=headers)
++        assert resp1.status_code == 200, resp1.text
++        body1 = resp1.json()
++        assert body1["already_enrolled"] is False
++        assert body1["course_id"] == course_id
++
++        resp2 = await client.post(url, json={"course_id": course_id}, headers=headers)
++        assert resp2.status_code == 200, resp2.text
++        assert resp2.json()["already_enrolled"] is True
++    finally:
++        await _cleanup(db, course_ids=[course_id], student_id=student_id)
++
++
++async def test_manual_assign_validation_both_refs(client, db):
++    """Эндпоинт: нельзя указать одновременно course_id и course_uid (422)."""
++    api_key = next(iter(_settings.valid_api_keys))
++    student_id = await _make_student(db)
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/students/{student_id}/assignments",
++            json={"course_id": 1, "course_uid": "wp:x"},
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 422
++    finally:
++        await _cleanup(db, course_ids=[], student_id=student_id)

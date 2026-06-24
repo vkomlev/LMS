@@ -13610,6 +13610,126 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/assignments": {
+      "post": {
+        "tags": [
+          "teacher_assignments"
+        ],
+        "summary": "Назначить курс ученику (учитель, в один клик)",
+        "description": "Идемпотентно привязать курс к ученику от лица преподавателя.\n\n- Указывается ровно один из `course_id` / `course_uid` (`course_uid` совпадает с кодом публикатора, например `wp:vvodnyy-python`).\n- Повторный вызов не создаёт дубль: вернётся `already_enrolled=true`.\n- Доступно роли teacher/methodist/admin или сервисному токену.",
+        "operationId": "assign_course_to_student_endpoint_api_v1_teacher_students__student_id__assignments_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID ученика",
+              "examples": [
+                42
+              ],
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualAssignRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Курс назначен (или уже был назначен)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualAssignResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "404": {
+            "description": "Ученик или курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/magic-link/send": {
       "post": {
         "tags": [
@@ -20515,6 +20635,101 @@
           "token"
         ],
         "title": "MagicLinkVerifyRequest"
+      },
+      "ManualAssignRequest": {
+        "properties": {
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id",
+            "description": "ID курса для назначения.",
+            "examples": [
+              12,
+              null
+            ]
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "course_uid курса (например 'wp:vvodnyy-python').",
+            "examples": [
+              "wp:vvodnyy-python",
+              null
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Причина назначения (для журнала, опционально).",
+            "examples": [
+              "Не освоил тему циклов",
+              null
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ManualAssignRequest",
+        "description": "Запрос на ручное назначение курса ученику учителем (в один клик).\n\nНужно указать ровно один идентификатор курса: ``course_id`` или ``course_uid``."
+      },
+      "ManualAssignResponse": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "ID назначенного курса"
+          },
+          "already_enrolled": {
+            "type": "boolean",
+            "title": "Already Enrolled",
+            "description": "True, если ученик уже был привязан к курсу (повторный клик)."
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id",
+            "description": "ID записи в assignment_event (None, если событие не создавалось)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "course_id",
+          "already_enrolled"
+        ],
+        "title": "ManualAssignResponse",
+        "description": "Результат ручного назначения курса."
       },
       "MarkReadBySenderRequest": {
         "properties": {
