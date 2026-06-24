@@ -13730,6 +13730,53 @@
         }
       }
     },
+    "/api/v1/assignment-rules/bulk-upsert": {
+      "post": {
+        "tags": [
+          "assignment_rules"
+        ],
+        "summary": "Идемпотентный upsert правил назначения курсов (ключ — code)",
+        "description": "Создать/обновить правила назначения курсов пакетно.\n\n- Ключ идемпотентности — ``code``.\n- ``task_external_uid`` резолвится в ``task_id``, ``course_uid`` — в ``course_id``.\n- Устойчиво по элементам: ошибка одного правила не валит весь batch\n  (``results[].action = error`` с описанием).",
+        "operationId": "assignment_rules_bulk_upsert_api_v1_assignment_rules_bulk_upsert_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignmentRulesBulkUpsertRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssignmentRulesBulkUpsertResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "APIKeyQuery": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/magic-link/send": {
       "post": {
         "tags": [
@@ -16437,6 +16484,191 @@
         },
         "type": "object",
         "title": "AchievementUpdate"
+      },
+      "AssignmentRuleUpsertItem": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Устойчивый код правила (ключ идемпотентности)"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Описание для UI/админки"
+          },
+          "trigger_event": {
+            "type": "string",
+            "enum": [
+              "answer_value",
+              "task_failed",
+              "course_failed"
+            ],
+            "title": "Trigger Event"
+          },
+          "task_external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task External Uid",
+            "description": "Отслеживаемая задача по external_uid (резолвится в task_id)"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "Отслеживаемая задача по id (если известен)"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "Отслеживаемая тема=курс по course_uid (для course_failed)"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id",
+            "description": "Отслеживаемая тема=курс по id"
+          },
+          "condition": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Condition",
+            "description": "{option_id} | {value} | {min_correct_ratio}"
+          },
+          "target_course_uid": {
+            "type": "string",
+            "title": "Target Course Uid",
+            "description": "Курс к назначению (wp:<slug>)"
+          },
+          "refire_policy": {
+            "type": "string",
+            "enum": [
+              "once_per_student",
+              "every_time"
+            ],
+            "title": "Refire Policy",
+            "default": "once_per_student"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "trigger_event",
+          "target_course_uid"
+        ],
+        "title": "AssignmentRuleUpsertItem",
+        "description": "Одно правило назначения для пакетного upsert (ключ идемпотентности — ``code``)."
+      },
+      "AssignmentRuleUpsertResult": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "action": {
+            "type": "string",
+            "title": "Action",
+            "description": "created | updated | error"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "action"
+        ],
+        "title": "AssignmentRuleUpsertResult"
+      },
+      "AssignmentRulesBulkUpsertRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentRuleUpsertItem"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Правила для upsert"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "AssignmentRulesBulkUpsertRequest"
+      },
+      "AssignmentRulesBulkUpsertResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/AssignmentRuleUpsertResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "AssignmentRulesBulkUpsertResponse"
       },
       "AttemptAnswerItem": {
         "properties": {

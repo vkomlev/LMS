@@ -338,3 +338,57 @@ async def test_acl_no_role_denied(db):
     finally:
         await _cleanup(db, course_ids=[], student_id=user_id)
         await _cleanup(db, course_ids=[], student_id=student_id)
+
+
+async def test_bulk_upsert_rules_idempotent(db):
+    """Upsert правил по code: первый раз created, повтор — updated, без дубля (tsk-120)."""
+    from app.schemas.assignment_rules import AssignmentRuleUpsertItem
+
+    course_id = await _make_course(db, uid=None)
+    task_id = await _make_task(db, course_id)
+    code = f"test-rule-{uuid.uuid4().hex[:8]}"
+    item = AssignmentRuleUpsertItem(
+        code=code, trigger_event="answer_value", task_id=task_id,
+        condition={"option_id": "a"}, target_course_uid="wp:vvodnyy-python",
+    )
+    try:
+        r1 = await ars.bulk_upsert_rules(db, [item])
+        assert r1[0]["action"] == "created"
+        rid = r1[0]["id"]
+        assert isinstance(rid, int)
+
+        r2 = await ars.bulk_upsert_rules(db, [item])
+        assert r2[0]["action"] == "updated"
+        assert r2[0]["id"] == rid
+
+        cnt = (await db.execute(
+            text("SELECT COUNT(*) FROM assignment_rule WHERE code = :c"), {"c": code}
+        )).scalar()
+        assert cnt == 1
+
+        row = (await db.execute(
+            text("SELECT trigger_event, task_id, target_course_uid, condition "
+                 "FROM assignment_rule WHERE code = :c"), {"c": code}
+        )).first()
+        assert row[0] == "answer_value"
+        assert row[1] == task_id
+        assert row[2] == "wp:vvodnyy-python"
+        assert row[3] == {"option_id": "a"}
+    finally:
+        await db.execute(text("DELETE FROM assignment_rule WHERE code = :c"), {"c": code})
+        await db.execute(text("DELETE FROM courses WHERE id = :cid"), {"cid": course_id})
+        await db.commit()
+
+
+async def test_bulk_upsert_rules_unknown_task_uid_soft_error(db):
+    """Неизвестный task_external_uid → action=error по элементу, не падение всего batch."""
+    from app.schemas.assignment_rules import AssignmentRuleUpsertItem
+
+    item = AssignmentRuleUpsertItem(
+        code=f"test-rule-{uuid.uuid4().hex[:8]}", trigger_event="answer_value",
+        task_external_uid="нет-такой-задачи", condition={"option_id": "a"},
+        target_course_uid="wp:x",
+    )
+    res = await ars.bulk_upsert_rules(db, [item])
+    assert res[0]["action"] == "error"
+    assert "не найдена" in (res[0]["error"] or "")

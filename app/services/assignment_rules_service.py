@@ -376,3 +376,65 @@ async def evaluate_rules_for_attempt(
             )
             await db.rollback()
     return fired
+
+
+async def bulk_upsert_rules(
+    db: AsyncSession, items: list[Any]
+) -> list[dict[str, Any]]:
+    """Идемпотентный upsert правил назначения по ``code`` (для публикатора, tsk-120).
+
+    Резолвит ``task_external_uid`` → ``task_id`` и ``course_uid`` → ``course_id``
+    (отслеживаемые сущности). ``target_course_uid`` хранится как есть (резолвится
+    движком в момент срабатывания). Устойчиво по элементам: ошибка одного правила
+    не валит весь batch. ``action_type`` берётся из server_default (assign_course).
+    """
+    results: list[dict[str, Any]] = []
+    for it in items:
+        try:
+            task_id = it.task_id
+            if task_id is None and it.task_external_uid:
+                row = (await db.execute(
+                    text("SELECT id FROM tasks WHERE external_uid = :u"),
+                    {"u": it.task_external_uid},
+                )).first()
+                if row is None:
+                    results.append({"code": it.code, "id": None, "action": "error",
+                                    "error": f"задача не найдена: {it.task_external_uid}"})
+                    continue
+                task_id = int(row[0])
+
+            course_id = it.course_id
+            if course_id is None and it.course_uid:
+                course_id = await _resolve_course_id(db, course_uid=it.course_uid)
+
+            row = (await db.execute(text("""
+                INSERT INTO assignment_rule
+                  (code, title, trigger_event, task_id, course_id, condition,
+                   target_course_uid, refire_policy, is_active)
+                VALUES
+                  (:code, :title, :te, :tid, :cid, CAST(:cond AS jsonb),
+                   :target, :refire, :active)
+                ON CONFLICT (code) DO UPDATE SET
+                  title = EXCLUDED.title,
+                  trigger_event = EXCLUDED.trigger_event,
+                  task_id = EXCLUDED.task_id,
+                  course_id = EXCLUDED.course_id,
+                  condition = EXCLUDED.condition,
+                  target_course_uid = EXCLUDED.target_course_uid,
+                  refire_policy = EXCLUDED.refire_policy,
+                  is_active = EXCLUDED.is_active,
+                  updated_at = now()
+                RETURNING id, (xmax = 0) AS created
+            """), {
+                "code": it.code, "title": it.title, "te": it.trigger_event,
+                "tid": task_id, "cid": course_id,
+                "cond": json.dumps(it.condition or {}),
+                "target": it.target_course_uid, "refire": it.refire_policy,
+                "active": it.is_active,
+            })).first()
+            results.append({"code": it.code, "id": int(row[0]),
+                            "action": "created" if row[1] else "updated"})
+        except DomainError as e:
+            results.append({"code": it.code, "id": None, "action": "error", "error": str(e)})
+    await db.commit()
+    return results

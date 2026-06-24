@@ -330,6 +330,10 @@ app.include_router(teacher_reviews_router, prefix=API_PREFIX)
 from app.api.v1.teacher_assignments import router as teacher_assignments_router
 app.include_router(teacher_assignments_router, prefix=API_PREFIX)
 
+# Upsert правил назначения из публикатора (tsk-120, ADR-0042)
+from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
+app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)
+
 # SPW auth — Phase Y-1
 from app.api.v1.auth.magic_link import router as magic_link_router
 from app.api.v1.auth.tg import router as tg_router
