@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any, Sequence, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, DBAPIError
 from sqlalchemy.orm import selectinload
-from sqlalchemy import select
+from sqlalchemy import select, delete, update, func
 
 from app.models.courses import Courses
 from app.repos.courses_repo import CoursesRepository
@@ -277,6 +277,151 @@ class CoursesService(BaseService[Courses]):
                 ) from e
             # Пробрасываем другие ошибки как есть
             raise
+
+    async def count_relations(
+        self,
+        db: AsyncSession,
+        course_id: int,
+    ) -> Dict[str, int]:
+        """
+        Посчитать связанные с курсом сущности, которые делают удаление осознанным.
+
+        Учитываются: подкурсы (дети), материалы, задания, зависимости (в обе
+        стороны), соц-посты, привязанные преподаватели и студенты.
+
+        :param db: асинхронная сессия БД.
+        :param course_id: ID курса.
+        :return: словарь {имя_связи: количество}. Нулевые связи тоже включены.
+        """
+        from app.models.materials import Materials
+        from app.models.tasks import Tasks
+        from app.models.social_posts import SocialPosts
+        from app.models.user_courses import UserCourses
+        from app.models.association_tables import (
+            t_course_parents,
+            t_course_dependencies,
+            t_teacher_courses,
+        )
+
+        async def _count(stmt) -> int:
+            result = await db.execute(stmt)
+            return int(result.scalar_one() or 0)
+
+        children = await _count(
+            select(func.count())
+            .select_from(t_course_parents)
+            .where(t_course_parents.c.parent_course_id == course_id)
+        )
+        materials = await _count(
+            select(func.count()).select_from(Materials).where(Materials.course_id == course_id)
+        )
+        tasks = await _count(
+            select(func.count()).select_from(Tasks).where(Tasks.course_id == course_id)
+        )
+        dependencies = await _count(
+            select(func.count())
+            .select_from(t_course_dependencies)
+            .where(
+                (t_course_dependencies.c.course_id == course_id)
+                | (t_course_dependencies.c.required_course_id == course_id)
+            )
+        )
+        social_posts = await _count(
+            select(func.count()).select_from(SocialPosts).where(SocialPosts.course_id == course_id)
+        )
+        teachers = await _count(
+            select(func.count())
+            .select_from(t_teacher_courses)
+            .where(t_teacher_courses.c.course_id == course_id)
+        )
+        students = await _count(
+            select(func.count()).select_from(UserCourses).where(UserCourses.course_id == course_id)
+        )
+        return {
+            "children": children,
+            "materials": materials,
+            "tasks": tasks,
+            "dependencies": dependencies,
+            "social_posts": social_posts,
+            "teachers": teachers,
+            "students": students,
+        }
+
+    async def delete_course(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        *,
+        cascade: bool = False,
+    ) -> Dict[str, int]:
+        """
+        Удалить курс с контролем связей.
+
+        Без ``cascade`` — если у курса есть связи (подкурсы, материалы, задания,
+        зависимости, соц-посты, привязанные преподаватели/студенты), удаление
+        отклоняется с DomainError 409 и списком того, что мешает. Это защищает
+        от случайного удаления учебного курса с накопленным содержимым.
+
+        С ``cascade=True`` курс удаляется через Core DELETE. БД-каскад
+        (``ondelete=CASCADE``) убирает связи course_parents/course_dependencies,
+        материалы, задания, teacher_courses, user_courses, assignment_*,
+        student_course_state. Подкурсы при этом НЕ удаляются — они лишь
+        отвязываются (становятся корневыми). Соц-посты (FK ``NO ACTION``,
+        nullable) отвязываются установкой ``course_id = NULL``.
+
+        Удаление идёт Core-запросом намеренно: ORM ``db.delete()`` в async-режиме
+        тянет lazy-load relationships и упирается в FK ``social_posts`` → 500.
+        Core DELETE отдаёт всю работу по связям БД и её каскадам.
+
+        :param db: асинхронная сессия БД.
+        :param course_id: ID курса.
+        :param cascade: удалять ли курс вместе со связями.
+        :raises DomainError: 404 если курс не найден; 409 если есть связи и
+            ``cascade=False`` (или если БД отвергла удаление из-за связанных данных).
+        :return: словарь со счётчиками связей на момент удаления (для лога/ответа).
+        """
+        from app.models.social_posts import SocialPosts
+
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            raise DomainError(
+                detail="Курс не найден",
+                status_code=404,
+                payload={"course_id": course_id},
+            )
+
+        counts = await self.count_relations(db, course_id)
+        blocking = sum(counts.values())
+        if not cascade and blocking > 0:
+            raise DomainError(
+                detail=(
+                    "Нельзя удалить курс со связями. Сначала отвяжите/удалите "
+                    "подкурсы, материалы и задания или повторите запрос с ?cascade=true."
+                ),
+                status_code=409,
+                payload={"course_id": course_id, "relations": counts},
+            )
+
+        try:
+            # Соц-посты имеют FK NO ACTION → каскад БД их не тронет, отвязываем вручную.
+            await db.execute(
+                update(SocialPosts)
+                .where(SocialPosts.course_id == course_id)
+                .values(course_id=None)
+            )
+            # Сам курс: остальные связи убирает БД-каскад (ondelete=CASCADE).
+            await db.execute(delete(Courses).where(Courses.id == course_id))
+            await db.commit()
+        except (IntegrityError, DBAPIError) as e:
+            await db.rollback()
+            error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
+            raise DomainError(
+                detail="Не удалось удалить курс из-за связанных данных",
+                status_code=409,
+                payload={"course_id": course_id, "db_error": error_msg},
+            ) from e
+
+        return counts
 
     async def bulk_upsert(
         self,

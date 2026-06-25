@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Depends, Body, status, HTTPException, Query
+from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
@@ -453,6 +453,99 @@ async def update_course_parent_order_endpoint(
     # Перезагружаем курс с relationships
     updated_course = await courses_service.get_by_id(db, course_id)
     return CourseRead.model_validate(updated_course)
+
+
+@router.delete(
+    "/courses/{course_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить курс (с контролем связей)",
+    description=(
+        "Удалить курс по `course_id`.\n\n"
+        "**Поведение по умолчанию (без `cascade`):**\n"
+        "- Если у курса есть связи (подкурсы, материалы, задания, зависимости, "
+        "соц-посты, привязанные преподаватели/студенты) — запрос отклоняется с "
+        "`409 Conflict` и списком того, что мешает. Удаление учебного курса со "
+        "связями должно быть осознанным.\n\n"
+        "**С `?cascade=true`:**\n"
+        "- Курс удаляется. БД-каскад убирает связи, материалы, задания, привязки "
+        "преподавателей/студентов, зависимости.\n"
+        "- Подкурсы **не удаляются** — они лишь отвязываются (становятся корневыми).\n"
+        "- Соц-посты отвязываются (`course_id = null`).\n\n"
+        "Курс без связей удаляется одинаково в обоих режимах."
+    ),
+    responses={
+        204: {"description": "Курс удалён"},
+        404: {
+            "description": "Курс не найден",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Курс не найден",
+                        "payload": {"course_id": 683},
+                    }
+                }
+            },
+        },
+        409: {
+            "description": "У курса есть связи, удаление без cascade запрещено",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "error": "domain_error",
+                        "detail": (
+                            "Нельзя удалить курс со связями. Сначала отвяжите/удалите "
+                            "подкурсы, материалы и задания или повторите запрос с ?cascade=true."
+                        ),
+                        "payload": {
+                            "course_id": 683,
+                            "relations": {
+                                "children": 2,
+                                "materials": 1,
+                                "tasks": 0,
+                                "dependencies": 0,
+                                "social_posts": 0,
+                                "teachers": 0,
+                                "students": 0,
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def delete_course_endpoint(
+    course_id: int,
+    cascade: bool = Query(
+        False,
+        description=(
+            "Удалить курс вместе со связями. Подкурсы при этом отвязываются, "
+            "а не удаляются."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """
+    Удалить курс с контролем связей.
+
+    Без `cascade` — отказ 409, если у курса есть связи.
+    С `cascade=true` — удаление с опорой на БД-каскад (подкурсы отвязываются).
+
+    Статусы:
+    - 204 — курс удалён;
+    - 404 — курс не найден (DomainError);
+    - 409 — есть связи и cascade=false (DomainError).
+    """
+    counts = await courses_service.delete_course(db, course_id, cascade=cascade)
+    logging.getLogger("api.courses_extra").info(
+        "Курс %s удалён (cascade=%s), связи на момент удаления: %s",
+        course_id,
+        cascade,
+        counts,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

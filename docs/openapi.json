@@ -1462,6 +1462,99 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}": {
+      "delete": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Удалить курс (с контролем связей)",
+        "description": "Удалить курс по `course_id`.\n\n**Поведение по умолчанию (без `cascade`):**\n- Если у курса есть связи (подкурсы, материалы, задания, зависимости, соц-посты, привязанные преподаватели/студенты) — запрос отклоняется с `409 Conflict` и списком того, что мешает. Удаление учебного курса со связями должно быть осознанным.\n\n**С `?cascade=true`:**\n- Курс удаляется. БД-каскад убирает связи, материалы, задания, привязки преподавателей/студентов, зависимости.\n- Подкурсы **не удаляются** — они лишь отвязываются (становятся корневыми).\n- Соц-посты отвязываются (`course_id = null`).\n\nКурс без связей удаляется одинаково в обоих режимах.",
+        "operationId": "delete_course_endpoint_api_v1_courses__course_id__delete",
+        "security": [
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "cascade",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Удалить курс вместе со связями. Подкурсы при этом отвязываются, а не удаляются.",
+              "default": false,
+              "title": "Cascade"
+            },
+            "description": "Удалить курс вместе со связями. Подкурсы при этом отвязываются, а не удаляются."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Курс удалён"
+          },
+          "404": {
+            "description": "Курс не найден",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "domain_error",
+                  "detail": "Курс не найден",
+                  "payload": {
+                    "course_id": 683
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "У курса есть связи, удаление без cascade запрещено",
+            "content": {
+              "application/json": {
+                "example": {
+                  "error": "domain_error",
+                  "detail": "Нельзя удалить курс со связями. Сначала отвяжите/удалите подкурсы, материалы и задания или повторите запрос с ?cascade=true.",
+                  "payload": {
+                    "course_id": 683,
+                    "relations": {
+                      "children": 2,
+                      "materials": 1,
+                      "tasks": 0,
+                      "dependencies": 0,
+                      "social_posts": 0,
+                      "teachers": 0,
+                      "students": 0
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Invalid or missing API Key"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/courses/{course_id}/users": {
       "get": {
         "tags": [
@@ -1869,44 +1962,6 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "courses"
-        ],
-        "summary": "Delete Item",
-        "operationId": "delete_item_api_v1_courses__item_id__delete",
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "item_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Item Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",

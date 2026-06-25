@@ -93,7 +93,15 @@ def create_crud_router(
     read_schema: Type[BaseModel],
     update_schema: Type[BaseModel],
     pk_type: type = int,
+    include_delete: bool = True,
 ) -> APIRouter:
+    """
+    Генерирует CRUD-роутер.
+
+    :param include_delete: регистрировать ли generic DELETE /{item_id}.
+        Отключается, когда ресурс предоставляет собственный обработчик удаления
+        (например, courses — см. courses_extra.delete_course_endpoint, tsk-121).
+    """
     router = APIRouter(prefix=prefix, tags=tags)
 
     @router.post(
@@ -170,24 +178,25 @@ def create_crud_router(
             logger.error(f"[{prefix}] update id={item_id} failed: {e}", exc_info=True)
             raise
 
-    @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def delete_item(
-        item_id: pk_type,
-        db: AsyncSession = Depends(get_db),
-    ) -> Response:
-        logger.info(f"[{prefix}] delete id={item_id}")
-        db_obj = await service.get_by_id(db, item_id)
-        if not db_obj:
-            logger.warning(f"[{prefix}] delete id={item_id} not found")
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-        try:
-            await service.delete(db, db_obj)
-            logger.info(f"[{prefix}] delete id={item_id} success")
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-        except Exception as e:
-            logger.error(f"[{prefix}] delete id={item_id} failed: {e}", exc_info=True)
-            raise
-    
+    if include_delete:
+        @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+        async def delete_item(
+            item_id: pk_type,
+            db: AsyncSession = Depends(get_db),
+        ) -> Response:
+            logger.info(f"[{prefix}] delete id={item_id}")
+            db_obj = await service.get_by_id(db, item_id)
+            if not db_obj:
+                logger.warning(f"[{prefix}] delete id={item_id} not found")
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+            try:
+                await service.delete(db, db_obj)
+                logger.info(f"[{prefix}] delete id={item_id} success")
+                return Response(status_code=status.HTTP_204_NO_CONTENT)
+            except Exception as e:
+                logger.error(f"[{prefix}] delete id={item_id} failed: {e}", exc_info=True)
+                raise
+
 
     @router.patch("/{item_id}", response_model=read_schema)
     async def patch_item(

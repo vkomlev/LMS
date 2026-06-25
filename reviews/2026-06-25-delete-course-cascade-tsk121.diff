@@ -1,0 +1,356 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index cfaf5b9..8780d7e 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -205,6 +205,9 @@ app.include_router(
+         prefix="/courses", tags=["courses"],
+         service=CoursesService(),
+         create_schema=CourseCreate, read_schema=CourseRead, update_schema=CourseUpdate,
++        # DELETE курса обслуживает courses_extra.delete_course_endpoint (tsk-121):
++        # отказ 409 при наличии связей / каскад по ?cascade=true. Generic-delete отключён.
++        include_delete=False,
+     ),
+     prefix=API_PREFIX,
+ )
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index a5f27e6..eeab1a1 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -2,7 +2,7 @@ from __future__ import annotations
+ 
+ import logging
+ from typing import List, Optional, Dict, Any
+-from fastapi import APIRouter, Depends, Body, status, HTTPException, Query
++from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_db
+@@ -455,6 +455,99 @@ async def update_course_parent_order_endpoint(
+     return CourseRead.model_validate(updated_course)
+ 
+ 
++@router.delete(
++    "/courses/{course_id}",
++    status_code=status.HTTP_204_NO_CONTENT,
++    summary="Удалить курс (с контролем связей)",
++    description=(
++        "Удалить курс по `course_id`.\n\n"
++        "**Поведение по умолчанию (без `cascade`):**\n"
++        "- Если у курса есть связи (подкурсы, материалы, задания, зависимости, "
++        "соц-посты, привязанные преподаватели/студенты) — запрос отклоняется с "
++        "`409 Conflict` и списком того, что мешает. Удаление учебного курса со "
++        "связями должно быть осознанным.\n\n"
++        "**С `?cascade=true`:**\n"
++        "- Курс удаляется. БД-каскад убирает связи, материалы, задания, привязки "
++        "преподавателей/студентов, зависимости.\n"
++        "- Подкурсы **не удаляются** — они лишь отвязываются (становятся корневыми).\n"
++        "- Соц-посты отвязываются (`course_id = null`).\n\n"
++        "Курс без связей удаляется одинаково в обоих режимах."
++    ),
++    responses={
++        204: {"description": "Курс удалён"},
++        404: {
++            "description": "Курс не найден",
++            "content": {
++                "application/json": {
++                    "example": {
++                        "error": "domain_error",
++                        "detail": "Курс не найден",
++                        "payload": {"course_id": 683},
++                    }
++                }
++            },
++        },
++        409: {
++            "description": "У курса есть связи, удаление без cascade запрещено",
++            "content": {
++                "application/json": {
++                    "example": {
++                        "error": "domain_error",
++                        "detail": (
++                            "Нельзя удалить курс со связями. Сначала отвяжите/удалите "
++                            "подкурсы, материалы и задания или повторите запрос с ?cascade=true."
++                        ),
++                        "payload": {
++                            "course_id": 683,
++                            "relations": {
++                                "children": 2,
++                                "materials": 1,
++                                "tasks": 0,
++                                "dependencies": 0,
++                                "social_posts": 0,
++                                "teachers": 0,
++                                "students": 0,
++                            },
++                        },
++                    }
++                }
++            },
++        },
++        403: {"description": "Invalid or missing API Key"},
++    },
++)
++async def delete_course_endpoint(
++    course_id: int,
++    cascade: bool = Query(
++        False,
++        description=(
++            "Удалить курс вместе со связями. Подкурсы при этом отвязываются, "
++            "а не удаляются."
++        ),
++    ),
++    db: AsyncSession = Depends(get_db),
++) -> Response:
++    """
++    Удалить курс с контролем связей.
++
++    Без `cascade` — отказ 409, если у курса есть связи.
++    С `cascade=true` — удаление с опорой на БД-каскад (подкурсы отвязываются).
++
++    Статусы:
++    - 204 — курс удалён;
++    - 404 — курс не найден (DomainError);
++    - 409 — есть связи и cascade=false (DomainError).
++    """
++    counts = await courses_service.delete_course(db, course_id, cascade=cascade)
++    logging.getLogger("api.courses_extra").info(
++        "Курс %s удалён (cascade=%s), связи на момент удаления: %s",
++        course_id,
++        cascade,
++        counts,
++    )
++    return Response(status_code=status.HTTP_204_NO_CONTENT)
++
++
+ @router.get(
+     "/courses/{course_id}/users",
+     response_model=CourseUsersResponse,
+diff --git a/app/api/v1/crud.py b/app/api/v1/crud.py
+index 60afab1..dd33f14 100644
+--- a/app/api/v1/crud.py
++++ b/app/api/v1/crud.py
+@@ -93,7 +93,15 @@ def create_crud_router(
+     read_schema: Type[BaseModel],
+     update_schema: Type[BaseModel],
+     pk_type: type = int,
++    include_delete: bool = True,
+ ) -> APIRouter:
++    """
++    Генерирует CRUD-роутер.
++
++    :param include_delete: регистрировать ли generic DELETE /{item_id}.
++        Отключается, когда ресурс предоставляет собственный обработчик удаления
++        (например, courses — см. courses_extra.delete_course_endpoint, tsk-121).
++    """
+     router = APIRouter(prefix=prefix, tags=tags)
+ 
+     @router.post(
+@@ -170,24 +178,25 @@ def create_crud_router(
+             logger.error(f"[{prefix}] update id={item_id} failed: {e}", exc_info=True)
+             raise
+ 
+-    @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+-    async def delete_item(
+-        item_id: pk_type,
+-        db: AsyncSession = Depends(get_db),
+-    ) -> Response:
+-        logger.info(f"[{prefix}] delete id={item_id}")
+-        db_obj = await service.get_by_id(db, item_id)
+-        if not db_obj:
+-            logger.warning(f"[{prefix}] delete id={item_id} not found")
+-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+-        try:
+-            await service.delete(db, db_obj)
+-            logger.info(f"[{prefix}] delete id={item_id} success")
+-            return Response(status_code=status.HTTP_204_NO_CONTENT)
+-        except Exception as e:
+-            logger.error(f"[{prefix}] delete id={item_id} failed: {e}", exc_info=True)
+-            raise
+-    
++    if include_delete:
++        @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
++        async def delete_item(
++            item_id: pk_type,
++            db: AsyncSession = Depends(get_db),
++        ) -> Response:
++            logger.info(f"[{prefix}] delete id={item_id}")
++            db_obj = await service.get_by_id(db, item_id)
++            if not db_obj:
++                logger.warning(f"[{prefix}] delete id={item_id} not found")
++                raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
++            try:
++                await service.delete(db, db_obj)
++                logger.info(f"[{prefix}] delete id={item_id} success")
++                return Response(status_code=status.HTTP_204_NO_CONTENT)
++            except Exception as e:
++                logger.error(f"[{prefix}] delete id={item_id} failed: {e}", exc_info=True)
++                raise
++
+ 
+     @router.patch("/{item_id}", response_model=read_schema)
+     async def patch_item(
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index 5b4f7ec..85a8872 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any, Sequence, Tuple
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy.exc import IntegrityError, DBAPIError
+ from sqlalchemy.orm import selectinload
+-from sqlalchemy import select
++from sqlalchemy import select, delete, update, func
+ 
+ from app.models.courses import Courses
+ from app.repos.courses_repo import CoursesRepository
+@@ -278,6 +278,151 @@ class CoursesService(BaseService[Courses]):
+             # Пробрасываем другие ошибки как есть
+             raise
+ 
++    async def count_relations(
++        self,
++        db: AsyncSession,
++        course_id: int,
++    ) -> Dict[str, int]:
++        """
++        Посчитать связанные с курсом сущности, которые делают удаление осознанным.
++
++        Учитываются: подкурсы (дети), материалы, задания, зависимости (в обе
++        стороны), соц-посты, привязанные преподаватели и студенты.
++
++        :param db: асинхронная сессия БД.
++        :param course_id: ID курса.
++        :return: словарь {имя_связи: количество}. Нулевые связи тоже включены.
++        """
++        from app.models.materials import Materials
++        from app.models.tasks import Tasks
++        from app.models.social_posts import SocialPosts
++        from app.models.user_courses import UserCourses
++        from app.models.association_tables import (
++            t_course_parents,
++            t_course_dependencies,
++            t_teacher_courses,
++        )
++
++        async def _count(stmt) -> int:
++            result = await db.execute(stmt)
++            return int(result.scalar_one() or 0)
++
++        children = await _count(
++            select(func.count())
++            .select_from(t_course_parents)
++            .where(t_course_parents.c.parent_course_id == course_id)
++        )
++        materials = await _count(
++            select(func.count()).select_from(Materials).where(Materials.course_id == course_id)
++        )
++        tasks = await _count(
++            select(func.count()).select_from(Tasks).where(Tasks.course_id == course_id)
++        )
++        dependencies = await _count(
++            select(func.count())
++            .select_from(t_course_dependencies)
++            .where(
++                (t_course_dependencies.c.course_id == course_id)
++                | (t_course_dependencies.c.required_course_id == course_id)
++            )
++        )
++        social_posts = await _count(
++            select(func.count()).select_from(SocialPosts).where(SocialPosts.course_id == course_id)
++        )
++        teachers = await _count(
++            select(func.count())
++            .select_from(t_teacher_courses)
++            .where(t_teacher_courses.c.course_id == course_id)
++        )
++        students = await _count(
++            select(func.count()).select_from(UserCourses).where(UserCourses.course_id == course_id)
++        )
++        return {
++            "children": children,
++            "materials": materials,
++            "tasks": tasks,
++            "dependencies": dependencies,
++            "social_posts": social_posts,
++            "teachers": teachers,
++            "students": students,
++        }
++
++    async def delete_course(
++        self,
++        db: AsyncSession,
++        course_id: int,
++        *,
++        cascade: bool = False,
++    ) -> Dict[str, int]:
++        """
++        Удалить курс с контролем связей.
++
++        Без ``cascade`` — если у курса есть связи (подкурсы, материалы, задания,
++        зависимости, соц-посты, привязанные преподаватели/студенты), удаление
++        отклоняется с DomainError 409 и списком того, что мешает. Это защищает
++        от случайного удаления учебного курса с накопленным содержимым.
++
++        С ``cascade=True`` курс удаляется через Core DELETE. БД-каскад
++        (``ondelete=CASCADE``) убирает связи course_parents/course_dependencies,
++        материалы, задания, teacher_courses, user_courses, assignment_*,
++        student_course_state. Подкурсы при этом НЕ удаляются — они лишь
++        отвязываются (становятся корневыми). Соц-посты (FK ``NO ACTION``,
++        nullable) отвязываются установкой ``course_id = NULL``.
++
++        Удаление идёт Core-запросом намеренно: ORM ``db.delete()`` в async-режиме
++        тянет lazy-load relationships и упирается в FK ``social_posts`` → 500.
++        Core DELETE отдаёт всю работу по связям БД и её каскадам.
++
++        :param db: асинхронная сессия БД.
++        :param course_id: ID курса.
++        :param cascade: удалять ли курс вместе со связями.
++        :raises DomainError: 404 если курс не найден; 409 если есть связи и
++            ``cascade=False`` (или если БД отвергла удаление из-за связанных данных).
++        :return: словарь со счётчиками связей на момент удаления (для лога/ответа).
++        """
++        from app.models.social_posts import SocialPosts
++
++        course = await self.get_by_id(db, course_id)
++        if course is None:
++            raise DomainError(
++                detail="Курс не найден",
++                status_code=404,
++                payload={"course_id": course_id},
++            )
++
++        counts = await self.count_relations(db, course_id)
++        blocking = sum(counts.values())
++        if not cascade and blocking > 0:
++            raise DomainError(
++                detail=(
++                    "Нельзя удалить курс со связями. Сначала отвяжите/удалите "
++                    "подкурсы, материалы и задания или повторите запрос с ?cascade=true."
++                ),
++                status_code=409,
++                payload={"course_id": course_id, "relations": counts},
++            )
++
++        try:
++            # Соц-посты имеют FK NO ACTION → каскад БД их не тронет, отвязываем вручную.
++            await db.execute(
++                update(SocialPosts)
++                .where(SocialPosts.course_id == course_id)
++                .values(course_id=None)
++            )
++            # Сам курс: остальные связи убирает БД-каскад (ondelete=CASCADE).
++            await db.execute(delete(Courses).where(Courses.id == course_id))
++            await db.commit()
++        except (IntegrityError, DBAPIError) as e:
++            await db.rollback()
++            error_msg = str(e.orig) if hasattr(e, "orig") else str(e)
++            raise DomainError(
++                detail="Не удалось удалить курс из-за связанных данных",
++                status_code=409,
++                payload={"course_id": course_id, "db_error": error_msg},
++            ) from e
++
++        return counts
++
+     async def bulk_upsert(
+         self,
+         db: AsyncSession,

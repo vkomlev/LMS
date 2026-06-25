@@ -205,6 +205,9 @@ app.include_router(
         prefix="/courses", tags=["courses"],
         service=CoursesService(),
         create_schema=CourseCreate, read_schema=CourseRead, update_schema=CourseUpdate,
+        # DELETE курса обслуживает courses_extra.delete_course_endpoint (tsk-121):
+        # отказ 409 при наличии связей / каскад по ?cascade=true. Generic-delete отключён.
+        include_delete=False,
     ),
     prefix=API_PREFIX,
 )
