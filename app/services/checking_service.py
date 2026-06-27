@@ -294,8 +294,14 @@ class CheckingService:
         Подсчёт баллов по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122).
 
         Без «правильно/неверно»: суммирует вклад выбранных вариантов по шкалам
-        в ``scale_scores``. ``score`` не используется как pass/fail и остаётся 0,
-        ``is_correct`` = None. Для MC_Qw суммируются все выбранные варианты.
+        в ``scale_scores`` (сигнал маршрутизации, ADR-0003). ``is_correct`` = None.
+        Для MC_Qw суммируются все выбранные варианты.
+
+        ``score``: квиз — auto_check, отвеченный вопрос = выполненная задача.
+        При непустом ответе ``score = max_score`` (ratio 1.0 → PASSED в Learning
+        Engine: ``compute_task_state``/``compute_course_state`` гейтят прохождение
+        по ``score/max_score``, а не по ``is_correct``; иначе ученик зациклится на
+        вопросе-предпочтении, а курс не завершится). Пустой ответ → ``score = 0``.
 
         :raises DomainError: для SC_Qw выбрано больше одного варианта.
         """
@@ -323,9 +329,13 @@ class CheckingService:
 
         feedback = self._generate_feedback_quiz(task_content, user_set)
 
+        # Отвеченный квиз = выполненная задача (см. docstring): score=max_score.
+        answered = len(user_set) > 0
+        score = solution_rules.max_score if answered else 0
+
         return CheckResult(
             is_correct=None,
-            score=0,
+            score=score,
             max_score=solution_rules.max_score,
             details=CheckResultDetails(user_options=list(user_set) or None),
             feedback=feedback,

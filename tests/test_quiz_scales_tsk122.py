@@ -173,17 +173,19 @@ def test_sc_qw_scoring_single_choice():
     )
     assert res.scale_scores == {"информатика": 2, "python": 0}
     assert res.is_correct is None
-    assert res.score == 0
+    # Отвеченный квиз = выполненная задача: score=max_score (прогрессия Learning Engine).
+    assert res.score == 2
     assert res.max_score == 2
 
 
 def test_sc_qw_empty_answer_zero_scales():
-    """SC_Qw без выбора: все объявленные шкалы по нулям."""
+    """SC_Qw без выбора: все объявленные шкалы по нулям, задача не выполнена (score=0)."""
     tc, sr = _sc_qw_fixture()
     res = _cs.check_task(
         tc, sr, StudentAnswer(type="SC_Qw", response=StudentResponse(selected_option_ids=[]))
     )
     assert res.scale_scores == {"информатика": 0, "python": 0}
+    assert res.score == 0
 
 
 def test_sc_qw_two_selected_rejected():
@@ -320,7 +322,48 @@ async def test_quiz_answer_persists_scale_scores(client, db):
         ).first()
         assert row is not None
         assert row[0] == {"информатика": 2, "python": 0}
-        assert row[1] is None  # квиз не pass/fail
-        assert row[2] == 0
+        assert row[1] is None  # квиз не pass/fail (is_correct)
+        assert row[2] == 2     # отвеченный квиз = выполнен: score=max_score
+    finally:
+        await _cleanup(db, course_id=course_id, student_id=student_id)
+
+
+async def test_quiz_task_completes_course_progression(client, db):
+    """Прогрессия: отвеченный квиз → задача PASSED, курс COMPLETED (не зацикливается).
+
+    Регрессия на блокер ревью 2026-06-27: Learning Engine гейтит прохождение по
+    score/max_score; при score=0 квиз был бы вечно FAILED и курс не завершался.
+    """
+    from app.services.learning_engine_service import LearningEngineService
+
+    api_key = next(iter(_settings.valid_api_keys))
+    headers = {"X-API-Key": api_key}
+    le = LearningEngineService()
+    student_id = await _make_student(db)
+    course_id = await _make_course(db)
+    task_id = await _make_quiz_task(db, course_id)  # единственная required-задача курса
+    try:
+        resp = await client.post(
+            "/api/v1/attempts",
+            json={"user_id": student_id, "course_id": course_id, "source_system": "test"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        attempt_id = resp.json()["id"]
+
+        resp2 = await client.post(
+            f"/api/v1/attempts/{attempt_id}/answers",
+            json={"items": [{"task_id": task_id,
+                             "answer": {"type": "SC_Qw",
+                                        "response": {"selected_option_ids": ["a"]}}}]},
+            headers=headers,
+        )
+        assert resp2.status_code == 200, resp2.text
+
+        task_state = await le.compute_task_state(db, student_id, task_id)
+        assert task_state.state == "PASSED"
+
+        course_state = await le.compute_course_state(db, student_id, course_id, update_state_table=False)
+        assert course_state.state == "COMPLETED"
     finally:
         await _cleanup(db, course_id=course_id, student_id=student_id)
