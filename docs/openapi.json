@@ -16564,7 +16564,8 @@
             "enum": [
               "answer_value",
               "task_failed",
-              "course_failed"
+              "course_failed",
+              "quiz_scale"
             ],
             "title": "Trigger Event"
           },

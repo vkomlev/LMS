@@ -86,7 +86,7 @@ class AssignmentRuleUpsertItem(BaseModel):
 
     code: str = Field(..., description="Устойчивый код правила (ключ идемпотентности)")
     title: Optional[str] = Field(None, description="Описание для UI/админки")
-    trigger_event: Literal["answer_value", "task_failed", "course_failed"]
+    trigger_event: Literal["answer_value", "task_failed", "course_failed", "quiz_scale"]
     task_external_uid: Optional[str] = Field(
         None, description="Отслеживаемая задача по external_uid (резолвится в task_id)"
     )

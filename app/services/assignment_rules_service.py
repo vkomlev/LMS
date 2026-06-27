@@ -290,11 +290,19 @@ async def evaluate_rules_for_attempt(
     attempt_id: int,
 ) -> int:
     """
-    Оценить правила ``course_failed`` после завершения попытки.
+    Оценить правила ``course_failed`` и ``quiz_scale`` после завершения попытки.
 
-    Тема = курс попытки (``attempts.course_id``). Считается доля верных задач
-    попытки; при значении ниже/равном ``condition.min_correct_ratio`` (по умолчанию
-    0.5) назначается курс повторения. Soft-fail на уровне каждого правила.
+    Тема = курс попытки (``attempts.course_id``).
+
+    ``course_failed``: считается доля верных задач попытки; при значении ниже/равном
+    ``condition.min_correct_ratio`` (по умолчанию 0.5) назначается курс повторения.
+
+    ``quiz_scale`` (tsk-122): по всем квиз-задачам курса у ученика суммируются
+    ``scale_scores`` (накопление по курсу, ADR-0003), затем интерпретируются:
+    ``{"scale": S, "mode": "argmax"}`` — шкала S строго максимальна; либо
+    ``{"scale": S, "min_score": N}`` — накопленный балл S не ниже порога N.
+
+    Soft-fail на уровне каждого правила.
 
     :return: число сработавших правил.
     """
@@ -308,6 +316,24 @@ async def evaluate_rules_for_attempt(
         return 0
     course_id = int(arow[0])
 
+    fired = 0
+    fired += await _evaluate_course_failed(
+        db, student_id=student_id, attempt_id=attempt_id, course_id=course_id
+    )
+    fired += await _evaluate_quiz_scale(
+        db, student_id=student_id, attempt_id=attempt_id, course_id=course_id
+    )
+    return fired
+
+
+async def _evaluate_course_failed(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    attempt_id: int,
+    course_id: int,
+) -> int:
+    """Оценка правил ``course_failed`` по доле верных задач попытки."""
     rules = (
         await db.execute(
             text(
@@ -372,6 +398,130 @@ async def evaluate_rules_for_attempt(
         except Exception:  # soft-fail
             logger.warning(
                 "course_failed rule %s (course_id=%s, student_id=%s) failed",
+                rule_id, course_id, student_id, exc_info=True,
+            )
+            await db.rollback()
+    return fired
+
+
+async def _accumulate_course_scales(
+    db: AsyncSession, *, student_id: int, course_id: int
+) -> dict[str, int]:
+    """
+    Суммировать ``scale_scores`` по всем квиз-задачам курса у ученика (накопление по курсу).
+
+    Берётся последний результат по каждой задаче курса (по ``submitted_at``), чтобы
+    повторные попытки не задваивали баллы. Возвращает словарь ``{scale: points}``.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT ON (tr.task_id) tr.scale_scores "
+                "FROM task_results tr "
+                "JOIN tasks t ON t.id = tr.task_id "
+                "WHERE tr.user_id = :uid AND t.course_id = :cid "
+                "  AND tr.scale_scores IS NOT NULL "
+                "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
+            ),
+            {"uid": student_id, "cid": course_id},
+        )
+    ).fetchall()
+
+    totals: dict[str, int] = {}
+    for (scale_scores,) in rows:
+        if not isinstance(scale_scores, dict):
+            continue
+        for scale, points in scale_scores.items():
+            try:
+                totals[scale] = totals.get(scale, 0) + int(points)
+            except (TypeError, ValueError):
+                continue
+    return totals
+
+
+def _quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
+    """
+    Совпало ли правило ``quiz_scale`` с накопленными шкалами.
+
+    ``min_score`` имеет приоритет: ``totals[scale] >= min_score``. Иначе режим
+    ``argmax``: шкала строго максимальна (уникальный победитель, балл > 0). При
+    отсутствии накопленных шкал — не срабатывает.
+    """
+    scale = condition.get("scale")
+    if not scale or scale not in totals:
+        return False
+
+    if "min_score" in condition:
+        try:
+            return totals[scale] >= int(condition["min_score"])
+        except (TypeError, ValueError):
+            return False
+
+    # mode argmax (по умолчанию): строгий уникальный максимум, балл > 0.
+    target = totals[scale]
+    if target <= 0:
+        return False
+    return all(target > other for s, other in totals.items() if s != scale)
+
+
+async def _evaluate_quiz_scale(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    attempt_id: int,
+    course_id: int,
+) -> int:
+    """Оценка правил ``quiz_scale`` по накопленным шкалам курса (tsk-122)."""
+    rules = (
+        await db.execute(
+            text(
+                "SELECT id, condition, target_course_uid, refire_policy "
+                "FROM assignment_rule "
+                "WHERE is_active = true AND course_id = :course_id "
+                "AND trigger_event = 'quiz_scale'"
+            ),
+            {"course_id": course_id},
+        )
+    ).fetchall()
+    if not rules:
+        return 0
+
+    totals = await _accumulate_course_scales(
+        db, student_id=student_id, course_id=course_id
+    )
+    if not totals:
+        return 0
+
+    fired = 0
+    for rule_id, condition, target_uid, refire_policy in rules:
+        condition = condition or {}
+        try:
+            if refire_policy == "once_per_student" and await _rule_already_fired(
+                db, rule_id=rule_id, student_id=student_id
+            ):
+                continue
+
+            if not _quiz_scale_matched(condition, totals):
+                continue
+
+            await assign_course_to_student(
+                db,
+                student_id=student_id,
+                course_uid=target_uid,
+                source="auto_rule",
+                rule_id=rule_id,
+                attempt_id=attempt_id,
+                detail={
+                    "matched": "quiz_scale",
+                    "course_id": course_id,
+                    "scale": condition.get("scale"),
+                    "totals": totals,
+                },
+            )
+            fired += 1
+        except Exception:  # soft-fail
+            logger.warning(
+                "quiz_scale rule %s (course_id=%s, student_id=%s) failed",
                 rule_id, course_id, student_id, exc_info=True,
             )
             await db.rollback()
