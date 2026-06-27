@@ -21,6 +21,7 @@ class TaskResultCreate(BaseModel):
 
     attempt_id: Optional[int] = Field(None, description="ID попытки, если результат привязан к попытке", examples=[1, 5])
     answer_json: Optional[Any] = Field(None, description="Исходный ответ ученика (StudentAnswer)", examples=[{"type": "SC", "response": {"selected_option_ids": ["A"]}}])
+    scale_scores: Optional[dict] = Field(None, description="Баллы по шкалам для квиз-вопросов SC_Qw/MC_Qw (tsk-122)", examples=[{"информатика": 2, "python": 0}, None])
     max_score: Optional[int] = Field(None, description="Максимальный балл за задачу на момент проверки", ge=0, examples=[10, 20])
     is_correct: Optional[bool] = Field(None, description="Флаг правильности ответа (null для задач с ручной проверкой)", examples=[True, False, None])
     source_system: Optional[str] = Field("system", description="Источник системы, записавшей результат", examples=["web", "tg_bot", "system"])
@@ -76,6 +77,7 @@ class TaskResultRead(BaseModel):
 
     attempt_id: Optional[int] = Field(None, description="ID попытки, если результат привязан к попытке", examples=[1, 5, None])
     answer_json: Optional[Any] = Field(None, description="Исходный ответ ученика (StudentAnswer)", examples=[{"type": "SC", "response": {"selected_option_ids": ["A"]}}, None])
+    scale_scores: Optional[dict] = Field(None, description="Баллы по шкалам для квиз-вопросов SC_Qw/MC_Qw (tsk-122)", examples=[{"информатика": 2, "python": 0}, None])
     max_score: Optional[int] = Field(None, description="Максимальный балл за задачу на момент проверки", examples=[10, 20, None])
     is_correct: Optional[bool] = Field(None, description="Флаг правильности ответа (null для задач с ручной проверкой)", examples=[True, False, None])
     checked_at: Optional[datetime] = Field(None, description="Время проверки результата (null для непроверенных)", examples=["2026-02-16T12:00:05Z", None])

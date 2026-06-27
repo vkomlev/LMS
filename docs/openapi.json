@@ -17711,6 +17711,28 @@
               },
               null
             ]
+          },
+          "scale_scores": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Scores",
+            "description": "Баллы по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122). Ключи — имена шкал, значения — сумма баллов выбранных вариантов. None для обычных типов задач.",
+            "examples": [
+              {
+                "python": 0,
+                "информатика": 2
+              },
+              null
+            ]
           }
         },
         "type": "object",
@@ -23116,6 +23138,44 @@
         "title": "PendingCountResponse",
         "description": "Количество pending-заявок на проверку для преподавателя (без захвата)."
       },
+      "QuizRules": {
+        "properties": {
+          "scales": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scales",
+            "description": "Объявление шкал квиза (дублирует task_content.scales для самодостаточности правил проверки). Ключи scores вариантов валидируются против этого списка.",
+            "examples": [
+              [
+                "информатика",
+                "python"
+              ]
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "single",
+              "multiple"
+            ],
+            "title": "Mode",
+            "description": "Режим выбора: single (SC_Qw, ровно один вариант) | multiple (MC_Qw).",
+            "default": "single",
+            "examples": [
+              "single",
+              "multiple"
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "scales"
+        ],
+        "title": "QuizRules",
+        "description": "Правила квиз-вопросов со шкалами (SC_Qw/MC_Qw, tsk-122, ADR-0003).\n\nБез `correct_options`: вместо проверки «верно/неверно» движок считает вклад\nпо шкалам из выбранных вариантов и пишет `task_result.scale_scores`."
+      },
       "RefreshRequest": {
         "properties": {
           "refresh_token": {
@@ -24044,6 +24104,17 @@
             ],
             "description": "Настройки проверки развёрнутых ответов (TA)."
           },
+          "quiz": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizRules"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Правила квиз-вопросов со шкалами (SC_Qw/MC_Qw, tsk-122)."
+          },
           "penalties": {
             "$ref": "#/components/schemas/PenaltiesRules",
             "description": "Настройки штрафов за неверные/отсутствующие ответы."
@@ -24257,7 +24328,9 @@
                   "MC",
                   "SA",
                   "SA_COM",
-                  "TA"
+                  "TA",
+                  "SC_Qw",
+                  "MC_Qw"
                 ]
               },
               {
@@ -24738,16 +24811,20 @@
               "MC",
               "SA",
               "SA_COM",
-              "TA"
+              "TA",
+              "SC_Qw",
+              "MC_Qw"
             ],
             "title": "Type",
-            "description": "Тип задачи: SC | MC | SA | SA_COM | TA.",
+            "description": "Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw.",
             "examples": [
               "SC",
               "MC",
               "SA",
               "SA_COM",
-              "TA"
+              "TA",
+              "SC_Qw",
+              "MC_Qw"
             ]
           },
           "code": {
@@ -24875,6 +24952,28 @@
                   "is_active": true,
                   "text": "list(range(3))"
                 }
+              ],
+              null
+            ]
+          },
+          "scales": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scales",
+            "description": "Явное объявление шкал квиз-вопроса (SC_Qw/MC_Qw, tsk-122). Ключи scores у вариантов валидируются против этого списка: неизвестная шкала = ошибка. Обязательно для SC_Qw/MC_Qw, для остальных типов не используется.",
+            "examples": [
+              [
+                "информатика",
+                "python"
               ],
               null
             ]
@@ -25252,6 +25351,31 @@
               true,
               false
             ]
+          },
+          "scores": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scores",
+            "description": "Вклад варианта в баллы по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122). Ключи — имена шкал (должны входить в TaskContent.scales), значения — баллы. Для обычных SC/MC не используется.",
+            "examples": [
+              {
+                "информатика": 2
+              },
+              {
+                "python": 1,
+                "информатика": 1
+              },
+              null
+            ]
           }
         },
         "type": "object",
@@ -25554,6 +25678,26 @@
               }
             ]
           },
+          "scale_scores": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Scores",
+            "description": "Баллы по шкалам для квиз-вопросов SC_Qw/MC_Qw (tsk-122)",
+            "examples": [
+              {
+                "python": 0,
+                "информатика": 2
+              },
+              null
+            ]
+          },
           "max_score": {
             "anyOf": [
               {
@@ -25811,6 +25955,26 @@
                   ]
                 },
                 "type": "SC"
+              },
+              null
+            ]
+          },
+          "scale_scores": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scale Scores",
+            "description": "Баллы по шкалам для квиз-вопросов SC_Qw/MC_Qw (tsk-122)",
+            "examples": [
+              {
+                "python": 0,
+                "информатика": 2
               },
               null
             ]

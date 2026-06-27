@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from typing import List, Optional, Literal
+from typing import Dict, List, Optional, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA"]
+TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"]
+
+# Типы квиз-вопросов со шкалами (tsk-122, ADR-0003): без «правильного» варианта,
+# за каждый выбор начисляются баллы по шкалам.
+QUIZ_TASK_TYPES: tuple[str, ...] = ("SC_Qw", "MC_Qw")
 
 
 class TaskMedia(BaseModel):
@@ -60,6 +64,15 @@ class TaskOption(BaseModel):
         description="Флаг активности варианта. Можно использовать для временного скрытия варианта.",
         examples=[True, False],
     )
+    scores: Optional[Dict[str, int]] = Field(
+        default=None,
+        description=(
+            "Вклад варианта в баллы по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122). "
+            "Ключи — имена шкал (должны входить в TaskContent.scales), значения — баллы. "
+            "Для обычных SC/MC не используется."
+        ),
+        examples=[{"информатика": 2}, {"информатика": 1, "python": 1}, None],
+    )
 
 
 class TaskContent(BaseModel):
@@ -73,8 +86,8 @@ class TaskContent(BaseModel):
 
     type: TaskType = Field(
         ...,
-        description="Тип задачи: SC | MC | SA | SA_COM | TA.",
-        examples=["SC", "MC", "SA", "SA_COM", "TA"],
+        description="Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw.",
+        examples=["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"],
     )
     code: Optional[str] = Field(
         default=None,
@@ -127,6 +140,16 @@ class TaskContent(BaseModel):
             ],
             None,
         ],
+    )
+
+    scales: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Явное объявление шкал квиз-вопроса (SC_Qw/MC_Qw, tsk-122). Ключи scores "
+            "у вариантов валидируются против этого списка: неизвестная шкала = ошибка. "
+            "Обязательно для SC_Qw/MC_Qw, для остальных типов не используется."
+        ),
+        examples=[["информатика", "python"], None],
     )
 
     tags: Optional[List[str]] = Field(
@@ -185,6 +208,7 @@ class TaskContent(BaseModel):
         Базовая валидация структуры в зависимости от типа задачи.
 
         - SC/MC: должны быть как минимум 2 варианта;
+        - SC_Qw/MC_Qw: минимум 2 варианта + объявление scales + scores с ключами из scales;
         - SA/TA: options не обязательны.
         - Проверка уникальности options[].id.
         """
@@ -193,7 +217,28 @@ class TaskContent(BaseModel):
                 raise ValueError(
                     "Для задач типов SC/MC необходимо указать минимум два варианта ответа в поле 'options'."
                 )
-        
+
+        if self.type in QUIZ_TASK_TYPES:
+            if not self.options or len(self.options) < 2:
+                raise ValueError(
+                    "Для квиз-задач (SC_Qw/MC_Qw) необходимо указать минимум два варианта ответа в поле 'options'."
+                )
+            if not self.scales:
+                raise ValueError(
+                    "Для квиз-задач (SC_Qw/MC_Qw) необходимо явно объявить шкалы в поле 'scales'."
+                )
+            declared = set(self.scales)
+            for opt in self.options:
+                if not opt.scores:
+                    continue
+                unknown = set(opt.scores.keys()) - declared
+                if unknown:
+                    raise ValueError(
+                        f"Вариант '{opt.id}' ссылается на необъявленные шкалы: "
+                        f"{', '.join(sorted(unknown))}. Объявленные шкалы: "
+                        f"{', '.join(sorted(declared))}."
+                    )
+
         # Валидация уникальности options[].id
         if self.options:
             option_ids = [opt.id for opt in self.options]
@@ -203,5 +248,5 @@ class TaskContent(BaseModel):
                     f"ID вариантов ответа должны быть уникальными. "
                     f"Найдены дубликаты: {', '.join(set(duplicates))}"
                 )
-        
+
         return self

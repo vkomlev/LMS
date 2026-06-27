@@ -110,6 +110,11 @@ class TaskResults(Base):
         nullable=True,
         comment="Исходный ответ ученика (StudentAnswer/StudentResponse)",
     )
+    scale_scores: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Баллы по шкалам для квиз-вопросов SC_Qw/MC_Qw (tsk-122)",
+    )
     max_score: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,

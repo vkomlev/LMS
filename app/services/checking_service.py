@@ -65,6 +65,8 @@ class CheckingService:
             return self._check_single_choice(task_content, solution_rules, answer)
         if task_type == "MC":
             return self._check_multiple_choice(task_content, solution_rules, answer)
+        if task_type in ("SC_Qw", "MC_Qw"):
+            return self._check_quiz(task_content, solution_rules, answer)
         if task_type in ("SA", "SA_COM"):
             return self._check_short_answer(task_content, solution_rules, answer)
         if task_type == "TA":
@@ -278,6 +280,75 @@ class CheckingService:
             max_score=solution_rules.max_score,
             details=details,
             feedback=feedback,
+        )
+
+    # ---------- Проверка SC_Qw / MC_Qw (квиз со шкалами) ----------
+
+    def _check_quiz(
+        self,
+        task_content: TaskContent,
+        solution_rules: SolutionRules,
+        answer: StudentAnswer,
+    ) -> CheckResult:
+        """
+        Подсчёт баллов по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122).
+
+        Без «правильно/неверно»: суммирует вклад выбранных вариантов по шкалам
+        в ``scale_scores``. ``score`` не используется как pass/fail и остаётся 0,
+        ``is_correct`` = None. Для MC_Qw суммируются все выбранные варианты.
+
+        :raises DomainError: для SC_Qw выбрано больше одного варианта.
+        """
+        selected = answer.response.selected_option_ids or []
+
+        # Для SC_Qw допустим максимум один выбранный вариант (0 = пропуск).
+        if task_content.type == "SC_Qw" and len(selected) > 1:
+            raise DomainError(
+                detail="Для задач типа SC_Qw можно выбрать не более одного варианта.",
+                status_code=400,
+                payload={"selected_option_ids": selected},
+            )
+
+        # Объявленные шкалы инициализируем нулями, чтобы scale_scores был полным
+        # (упрощает argmax/threshold при накоплении по курсу на Stage 2).
+        declared_scales: List[str] = list(task_content.scales or [])
+        scale_scores: Dict[str, int] = {scale: 0 for scale in declared_scales}
+
+        user_set: Set[str] = set(selected)
+        if task_content.options:
+            for option in task_content.options:
+                if option.id in user_set and option.scores:
+                    for scale, points in option.scores.items():
+                        scale_scores[scale] = scale_scores.get(scale, 0) + int(points)
+
+        feedback = self._generate_feedback_quiz(task_content, user_set)
+
+        return CheckResult(
+            is_correct=None,
+            score=0,
+            max_score=solution_rules.max_score,
+            details=CheckResultDetails(user_options=list(user_set) or None),
+            feedback=feedback,
+            scale_scores=scale_scores,
+        )
+
+    def _generate_feedback_quiz(
+        self,
+        task_content: TaskContent,
+        user_set: Set[str],
+    ) -> Optional[CheckFeedback]:
+        """Обратная связь по квизу: пояснения к выбранным вариантам, без оценки правильности."""
+        if not task_content.options:
+            return CheckFeedback(general="Ответ учтён.", by_option=None)
+
+        by_option: Dict[str, str] = {}
+        for option in task_content.options:
+            if option.id in user_set and option.explanation:
+                by_option[option.id] = option.explanation
+
+        return CheckFeedback(
+            general="Ответ учтён.",
+            by_option=by_option or None,
         )
 
     @staticmethod

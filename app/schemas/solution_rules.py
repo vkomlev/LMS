@@ -153,6 +153,32 @@ class PenaltiesRules(BaseModel):
     )
 
 
+QuizMode = Literal["single", "multiple"]
+
+
+class QuizRules(BaseModel):
+    """
+    Правила квиз-вопросов со шкалами (SC_Qw/MC_Qw, tsk-122, ADR-0003).
+
+    Без `correct_options`: вместо проверки «верно/неверно» движок считает вклад
+    по шкалам из выбранных вариантов и пишет `task_result.scale_scores`.
+    """
+
+    scales: List[str] = Field(
+        ...,
+        description=(
+            "Объявление шкал квиза (дублирует task_content.scales для самодостаточности "
+            "правил проверки). Ключи scores вариантов валидируются против этого списка."
+        ),
+        examples=[["информатика", "python"]],
+    )
+    mode: QuizMode = Field(
+        default="single",
+        description="Режим выбора: single (SC_Qw, ровно один вариант) | multiple (MC_Qw).",
+        examples=["single", "multiple"],
+    )
+
+
 class SolutionRules(BaseModel):
     """
     Структура JSON-поля tasks.solution_rules.
@@ -203,6 +229,12 @@ class SolutionRules(BaseModel):
     text_answer: Optional[TextAnswerRules] = Field(
         default=None,
         description="Настройки проверки развёрнутых ответов (TA).",
+    )
+
+    # Для квиз-вопросов со шкалами (SC_Qw/MC_Qw)
+    quiz: Optional[QuizRules] = Field(
+        default=None,
+        description="Правила квиз-вопросов со шкалами (SC_Qw/MC_Qw, tsk-122).",
     )
 
     penalties: PenaltiesRules = Field(
@@ -263,8 +295,37 @@ class SolutionRules(BaseModel):
         Raises:
             ValueError: Если correct_options не соответствуют options[].id.
         """
-        from app.schemas.task_content import TaskContent
-        
+        from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
+
+        # Для квиз-задач (SC_Qw/MC_Qw) — без correct_options; сверяем объявление шкал.
+        if task_content.type in QUIZ_TASK_TYPES:
+            if not task_content.options:
+                raise ValueError(
+                    f"Для квиз-задач типа {task_content.type} необходимо указать варианты "
+                    f"ответа в task_content.options"
+                )
+            if self.quiz is None:
+                raise ValueError(
+                    f"Для квиз-задач типа {task_content.type} необходима секция 'quiz' "
+                    f"в solution_rules (scales, mode)."
+                )
+            content_scales = set(task_content.scales or [])
+            rule_scales = set(self.quiz.scales or [])
+            if not rule_scales:
+                raise ValueError("quiz.scales не может быть пустым для квиз-задач.")
+            if content_scales != rule_scales:
+                raise ValueError(
+                    f"Шкалы в solution_rules.quiz.scales ({', '.join(sorted(rule_scales))}) "
+                    f"не совпадают с task_content.scales ({', '.join(sorted(content_scales))})."
+                )
+            expected_mode = "single" if task_content.type == "SC_Qw" else "multiple"
+            if self.quiz.mode != expected_mode:
+                raise ValueError(
+                    f"Для типа {task_content.type} ожидается quiz.mode='{expected_mode}', "
+                    f"получено '{self.quiz.mode}'."
+                )
+            return
+
         # Для задач с выбором (SC/MC) проверяем соответствие
         if task_content.type in ("SC", "MC"):
             if not task_content.options:

@@ -24,7 +24,7 @@ def _normalize_answer_type(v: Any) -> TaskType:
             "Алиас будет удалён в будущей версии."
         )
         return "SA_COM"
-    if v not in ("SC", "MC", "SA", "SA_COM", "TA"):
+    if v not in ("SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"):
         raise ValueError(f"Недопустимый тип ответа: {v!r}")
     return v
 
@@ -192,6 +192,15 @@ class CheckResult(BaseModel):
         default=None,
         description="Текстовая обратная связь для ученика.",
         examples=[{"general": "Правильно!"}, None],
+    )
+    scale_scores: Optional[Dict[str, int]] = Field(
+        default=None,
+        description=(
+            "Баллы по шкалам для квиз-вопросов (SC_Qw/MC_Qw, tsk-122). "
+            "Ключи — имена шкал, значения — сумма баллов выбранных вариантов. "
+            "None для обычных типов задач."
+        ),
+        examples=[{"информатика": 2, "python": 0}, None],
     )
 
 

@@ -62,6 +62,7 @@ class TaskResultsService(BaseService[TaskResults]):
             count_retry=count_retry,
             attempt_id=attempt_id,
             answer_json=answer.model_dump(),
+            scale_scores=check_result.scale_scores,
             max_score=check_result.max_score,
             is_correct=check_result.is_correct,
             source_system=source_system,
