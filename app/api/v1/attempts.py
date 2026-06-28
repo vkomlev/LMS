@@ -10,7 +10,7 @@ import re
 from fastapi import APIRouter, Depends, Body, File, HTTPException, status, Query, UploadFile
 from starlette.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
@@ -34,7 +34,7 @@ from app.schemas.checking import (
     StudentAnswer,
     CheckResult,
 )
-from app.schemas.task_content import TaskContent
+from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
 from app.schemas.solution_rules import SolutionRules
 
 from app.services.attempts_service import AttemptsService
@@ -239,6 +239,16 @@ async def create_attempt(
         404: {
             "description": "Попытка не найдена",
         },
+        409: {
+            "description": "Повторный ответ на квиз-вопрос (SC_Qw/MC_Qw): допускается только одна попытка",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Квиз-вопрос допускает только одну попытку. Ответ уже принят."
+                    }
+                }
+            },
+        },
         422: {
             "description": "Ошибка валидации запроса (неверный формат JSON)",
         },
@@ -358,6 +368,31 @@ async def submit_attempt_answers(
                     f"({task_content.type})."
                 ),
             )
+
+        # 2.3a Квиз (SC_Qw/MC_Qw, tsk-124): ровно одна попытка. Если по задаче уже
+        # есть ответ в неотменённой попытке — повтор запрещён (иначе задвоится
+        # накопление scale_scores и сломается интерпретация шкал). Сервер —
+        # источник истины, не полагаемся только на лимит во фронте.
+        if task_content.type in QUIZ_TASK_TYPES:
+            existing = await db.execute(
+                text("""
+                    SELECT 1
+                    FROM task_results tr
+                    INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+                    WHERE tr.user_id = :user_id AND tr.task_id = :task_id
+                    LIMIT 1
+                """),
+                {"user_id": attempt.user_id, "task_id": task.id},
+            )
+            if existing.first() is not None:
+                logger.info(
+                    "POST /attempts/%s/answers: повторный ответ на квиз task_id=%s отклонён (одна попытка)",
+                    attempt_id, task.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Квиз-вопрос допускает только одну попытку. Ответ уже принят.",
+                )
 
         check_result: CheckResult = checking_service.check_task(
             task_content=task_content,

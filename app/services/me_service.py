@@ -496,7 +496,8 @@ LIMIT :limit OFFSET :offset
 #
 # attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts —
 # парность с learning_engine_service.compute_task_state (Y-5.3 fix).
-# attempts_limit_effective: override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
+# attempts_limit_effective: квиз (SC_Qw/MC_Qw) → 1 (tsk-124, перебивает всё);
+# иначе override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
 _SYLLABUS_TASKS_SQL = """
 WITH last_per_task AS (
     SELECT DISTINCT ON (tr.task_id)
@@ -554,7 +555,10 @@ SELECT
     lp.max_score AS last_max_score,
     lp.submitted_at AS last_submitted_at,
     COALESCE(ap.used, 0) AS attempts_used,
-    COALESCE(op.lim, t.max_attempts, :default_max) AS attempts_limit_effective,
+    CASE
+        WHEN t.task_content->>'type' IN ('SC_Qw', 'MC_Qw') THEN 1
+        ELSE COALESCE(op.lim, t.max_attempts, :default_max)
+    END AS attempts_limit_effective,
     EXISTS (
         SELECT 1 FROM open_course_attempt oc WHERE oc.course_id = t.course_id
     ) AS has_open_attempt

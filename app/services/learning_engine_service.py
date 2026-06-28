@@ -30,11 +30,15 @@ from app.schemas.learning_engine import (
 from app.repos.user_courses_repo import UserCoursesRepository
 from app.repos.courses_repo import CoursesRepository
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
+from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_ATTEMPTS = 3
+# Квиз-вопросы (SC_Qw/MC_Qw, tsk-124): ровно одна попытка — измеряют шкалы,
+# у них нет «верно/неверно», повтор бессмысленен и задваивает scale_scores.
+QUIZ_MAX_ATTEMPTS = 1
 PASS_THRESHOLD_RATIO = 0.5
 
 
@@ -55,7 +59,10 @@ class LearningEngineService:
         task_id: int,
     ) -> int:
         """
-        Лимит попыток по приоритету: override -> task.max_attempts -> 3.
+        Лимит попыток по приоритету: квиз -> override -> task.max_attempts -> 3.
+
+        Квиз-вопросы (SC_Qw/MC_Qw, tsk-124) всегда ограничены одной попыткой и
+        перебивают override/max_attempts: повтор задвоил бы баллы по шкалам.
 
         Args:
             db: Сессия БД.
@@ -65,6 +72,15 @@ class LearningEngineService:
         Returns:
             Эффективный лимит попыток (>= 1).
         """
+        # 0) Квиз-вопросы — всегда ровно одна попытка (выше override и max_attempts).
+        r = await db.execute(
+            text("SELECT task_content->>'type' FROM tasks WHERE id = :task_id"),
+            {"task_id": task_id},
+        )
+        type_row = r.fetchone()
+        if type_row is not None and type_row[0] in QUIZ_TASK_TYPES:
+            return QUIZ_MAX_ATTEMPTS
+
         # 1) Override
         r = await db.execute(
             text("""
