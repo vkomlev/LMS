@@ -65,6 +65,11 @@ users_service = UsersService()
 )
 async def get_next_item(
     student_id: int = Query(..., description="ID студента"),
+    root_course_id: int | None = Query(
+        None,
+        description="Необязательный фильтр: ограничить обход деревом этого корневого "
+        "курса. Если не задан — обход всех активных курсов (tsk-127).",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
 ) -> NextItemResponse:
@@ -73,7 +78,9 @@ async def get_next_item(
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
-    result = await learning_service.resolve_next_item(db, student_id)
+    result = await learning_service.resolve_next_item(
+        db, student_id, root_course_id=root_course_id
+    )
     if result.type == "blocked_limit" and result.task_id is not None:
         state = await learning_service.compute_task_state(db, student_id, result.task_id)
         await get_or_create_blocked_limit_help_request(
@@ -100,6 +107,7 @@ async def get_next_item(
     return NextItemResponse(
         type=result.type,
         course_id=result.course_id,
+        root_course_id=result.root_course_id,
         material_id=result.material_id,
         task_id=result.task_id,
         reason=result.reason,

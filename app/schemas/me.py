@@ -51,6 +51,11 @@ class LastPositionRead(BaseModel):
     course_id: int
     course_uid: str | None
     course_title: str
+    # Корневой курс дерева (root) для построения навигации в SPW. Отличается от
+    # course_id, когда элемент в листовом подкурсе. Если корень не определён —
+    # совпадает с листовым course_id/course_uid (tsk-127).
+    root_course_id: int | None = None
+    root_course_uid: str | None = None
     type: Literal["task", "material", "course_completed", "none"]
     task_id: int | None = None
     external_uid: str | None = None

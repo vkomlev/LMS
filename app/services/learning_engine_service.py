@@ -363,6 +363,7 @@ class LearningEngineService:
         self,
         db: AsyncSession,
         student_id: int,
+        root_course_id: Optional[int] = None,
     ) -> NextItemResult:
         """
         Следующий шаг для студента: material | task | none | blocked_dependency | blocked_limit.
@@ -371,19 +372,37 @@ class LearningEngineService:
         проверка зависимостей (required курс должен быть COMPLETED);
         обход дерева курса: материалы (order_position), затем задания (id);
         приоритет material над task; блокировка по лимиту попыток.
+
+        Args:
+            db: Сессия БД.
+            student_id: ID студента.
+            root_course_id: если задан — обход ограничен деревом этого корня
+                (active фильтруется по uc.course_id); если None — прежнее
+                поведение (обход всех активных курсов по order_number,
+                обратная совместимость, tsk-127).
+
+        Returns:
+            NextItemResult с листовым course_id и корневым root_course_id
+            дерева, в котором найден элемент.
         """
         # Активные курсы пользователя по порядку
         user_courses = await self._user_courses_repo.get_user_courses(db, student_id, order_by_order=True)
         active = [uc for uc in user_courses if uc.is_active]
+        # tsk-127: ограничить обход деревом одного корня, если задан фильтр.
+        if root_course_id is not None:
+            active = [uc for uc in active if uc.course_id == root_course_id]
         if not active:
-            logger.info("resolve_next_item: student_id=%s нет активных курсов", student_id)
+            logger.info(
+                "resolve_next_item: student_id=%s нет активных курсов (root_course_id=%s)",
+                student_id, root_course_id,
+            )
             return NextItemResult(type="none", reason="Нет активных курсов в плане")
 
         for uc in active:
-            root_course_id = uc.course_id
+            current_root_id = uc.course_id
 
             # Зависимости: все required должны быть COMPLETED
-            deps = await self._deps_repo.list_dependencies(db, root_course_id)
+            deps = await self._deps_repo.list_dependencies(db, current_root_id)
             for req_course in deps:
                 course_state = await self.compute_course_state(
                     db, student_id, req_course.id, update_state_table=True
@@ -391,35 +410,37 @@ class LearningEngineService:
                 if course_state.state != "COMPLETED":
                     logger.info(
                         "resolve_next_item: student_id=%s root=%s blocked_dependency required=%s",
-                        student_id, root_course_id, req_course.id,
+                        student_id, current_root_id, req_course.id,
                     )
                     return NextItemResult(
                         type="blocked_dependency",
-                        course_id=root_course_id,
+                        course_id=current_root_id,
+                        root_course_id=current_root_id,
                         reason="Требуется завершить курс",
                         dependency_course_id=req_course.id,
                     )
 
             # Обход дерева: root + дети по order_number
-            flat_courses = await self._collect_courses_in_order(db, root_course_id)
+            flat_courses = await self._collect_courses_in_order(db, current_root_id)
             for cid in flat_courses:
                 # Первый незавершённый материал
                 mat = await self._first_incomplete_material(db, student_id, cid)
                 if mat is not None:
                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
-                    return NextItemResult(type="material", course_id=cid, material_id=mat, reason="Следующий материал")
+                    return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
                 # Первое задание не PASSED и не BLOCKED_LIMIT
                 task_id, blocked = await self._first_incomplete_task(db, student_id, cid)
                 if blocked is not None:
                     return NextItemResult(
                         type="blocked_limit",
                         course_id=cid,
+                        root_course_id=current_root_id,
                         task_id=blocked,
                         reason="Исчерпан лимит попыток",
                     )
                 if task_id is not None:
                     logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, cid, task_id)
-                    return NextItemResult(type="task", course_id=cid, task_id=task_id, reason="Следующее задание")
+                    return NextItemResult(type="task", course_id=cid, root_course_id=current_root_id, task_id=task_id, reason="Следующее задание")
 
         return NextItemResult(type="none", reason="Все элементы пройдены или заблокированы")
 
