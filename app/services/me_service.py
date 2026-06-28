@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity_link import IdentityLink
+from app.schemas.task_content import QUIZ_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
 
@@ -547,6 +548,7 @@ SELECT
     t.course_id,
     t.is_active,
     t.requirement_level,
+    t.task_content->>'type' AS task_type,
     stp.status AS progress_status,
     stp.skipped_at,
     lp.is_correct AS last_is_correct,
@@ -614,13 +616,21 @@ def _compute_syllabus_task_status(row: dict) -> str:
     """Маппинг last task_result + attempts → public-status строка.
 
     Правила (см. tech-spec syllabus-states):
-    - passed         — last is_correct=TRUE, checked_at NOT NULL
+    - passed         — last is_correct=TRUE, checked_at NOT NULL;
+                       также квиз (SC_Qw/MC_Qw) с is_correct=NULL и score-ratio >= порога
     - pending_review — last is_correct=TRUE, checked_at IS NULL (Y-6 optimistic);
-                       также legacy IS NULL pending (pre-Y-6 SA_COM/TA)
-    - failed         — last is_correct=FALSE и attempts_used < limit
-    - blocked_limit  — last is_correct=FALSE и attempts_used >= limit
+                       также legacy IS NULL pending для не-квизов (pre-Y-6 SA_COM/TA)
+    - failed         — last is_correct=FALSE и attempts_used < limit;
+                       также квиз с is_correct=NULL, score-ratio < порога, attempts_used < limit
+    - blocked_limit  — is_correct=FALSE/квиз с недобором баллов и attempts_used >= limit
     - in_progress    — нет task_result, но есть открытый course-level attempt
     - not_started    — нет task_result и нет открытого attempt
+
+    Квиз-вопросы (SC_Qw/MC_Qw, ADR-0003) авто-проверяемые: checking_service пишет
+    is_correct=NULL и score=max_score при ответе. Статус считаем по score-ratio —
+    паритет с learning_engine_service.compute_task_state (тот же PASS_THRESHOLD_RATIO),
+    чтобы syllabus и движок не расходились (tsk-125). Серверный passed снимает
+    необходимость клиентской нормализации pending_review→passed на стороне SPW.
     """
     last_submitted = row["last_submitted_at"]
     is_correct = row["last_is_correct"]
@@ -637,6 +647,15 @@ def _compute_syllabus_task_status(row: dict) -> str:
     if is_correct is True:
         return "passed" if checked_at is not None else "pending_review"
     if is_correct is None:
+        if (row.get("task_type") or "") in QUIZ_TASK_TYPES:
+            # Квиз: статус по score-ratio (паритет с compute_task_state), tsk-125.
+            max_score = int(row["last_max_score"] or 0)
+            score = int(row["last_score"] or 0)
+            if max_score > 0 and (score / max_score) >= PASS_THRESHOLD_RATIO:
+                return "passed"
+            if limit_eff > 0 and attempts_used >= limit_eff:
+                return "blocked_limit"
+            return "failed"
         # legacy pre-Y-6 pending state (TA/SA_COM до optimistic-PASSED backfill)
         return "pending_review"
     # is_correct is False
