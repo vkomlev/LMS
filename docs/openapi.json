@@ -1014,9 +1014,12 @@
           "courses"
         ],
         "summary": "Получить курс по его коду (course_uid)",
-        "description": "Вернуть курс по его внешнему коду (course_uid).\n\nСтатусы:\n- 200 — если курс найден;\n- 404 — если курс не найден (DomainError обрабатывается глобальным хэндлером).",
+        "description": "Вернуть курс по его внешнему коду (course_uid).\n\nДоступ: любой аутентифицированный пользователь (cookie ученика ИЛИ сервисный\nключ). tsk-127: SPW self-heal `CourseNotFoundResolver` зовёт этот эндпоинт со\nстуденческой cookie для резолва листового uid → id; раньше он висел на `get_db`\n(требует legacy api-key) и отдавал 403 ученику — отсюда «Курс не найден».\n\nСтатусы:\n- 200 — если курс найден;\n- 401 — если запрос не аутентифицирован;\n- 404 — если курс не найден (DomainError обрабатывается глобальным хэндлером).",
         "operationId": "get_course_by_code_endpoint_api_v1_courses_by_code__code__get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -1029,6 +1032,54 @@
             "schema": {
               "type": "string",
               "title": "Code"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -1066,8 +1117,8 @@
               }
             }
           },
-          "403": {
-            "description": "Invalid or missing API Key"
+          "401": {
+            "description": "Не аутентифицирован"
           },
           "422": {
             "description": "Validation Error",

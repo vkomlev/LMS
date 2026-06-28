@@ -5,7 +5,8 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.schemas.courses import (
     CourseRead,
     CourseWithOrderNumber,
@@ -122,18 +123,25 @@ async def search_courses_endpoint(
                 }
             },
         },
-        403: {"description": "Invalid or missing API Key"},
+        401: {"description": "Не аутентифицирован"},
     },
 )
 async def get_course_by_code_endpoint(
     code: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    _: CurrentUser = Depends(get_current_user),
 ) -> CourseRead:
     """
     Вернуть курс по его внешнему коду (course_uid).
 
+    Доступ: любой аутентифицированный пользователь (cookie ученика ИЛИ сервисный
+    ключ). tsk-127: SPW self-heal `CourseNotFoundResolver` зовёт этот эндпоинт со
+    студенческой cookie для резолва листового uid → id; раньше он висел на `get_db`
+    (требует legacy api-key) и отдавал 403 ученику — отсюда «Курс не найден».
+
     Статусы:
     - 200 — если курс найден;
+    - 401 — если запрос не аутентифицирован;
     - 404 — если курс не найден (DomainError обрабатывается глобальным хэндлером).
     """
     course = await courses_service.get_by_course_uid(db, course_uid=code)
