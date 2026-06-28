@@ -22,6 +22,11 @@ NextItemType = Literal[
 class NextItemResponse(BaseModel):
     type: NextItemType
     course_id: Optional[int] = None
+    root_course_id: Optional[int] = Field(
+        None,
+        description="Корневой курс дерева элемента (root). Отличается от course_id, "
+        "если элемент в листовом подкурсе. SPW строит навигацию по корням (tsk-127).",
+    )
     material_id: Optional[int] = None
     task_id: Optional[int] = None
     reason: Optional[str] = None

@@ -25,6 +25,10 @@ class NextItemResult:
 
     type: NextItemType
     course_id: Optional[int] = None
+    # Корневой курс дерева, в котором лежит элемент (root). Отличается от
+    # course_id, когда элемент находится в листовом подкурсе. Нужен SPW для
+    # построения навигации по корневым курсам (tsk-127).
+    root_course_id: Optional[int] = None
     material_id: Optional[int] = None
     task_id: Optional[int] = None
     reason: Optional[str] = None

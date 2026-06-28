@@ -274,6 +274,64 @@ LIMIT 1
 """
 
 
+# Корень дерева активных курсов студента, содержащего листовой course_id.
+# Идёт ВВЕРХ от листа через course_parents (тот же граф, что _COURSES_PROGRESS_SQL
+# обходит вниз) и матчит на один из активных user_courses (root). tsk-127.
+_ROOT_OF_LEAF_SQL = """
+WITH RECURSIVE active_uc AS (
+    SELECT course_id
+    FROM user_courses
+    WHERE user_id = :user_id AND is_active = true
+),
+course_trees AS (
+    SELECT root.course_id AS root_course_id,
+           root.course_id AS member_course_id
+    FROM active_uc root
+    UNION ALL
+    SELECT ct.root_course_id, cp.course_id
+    FROM course_trees ct
+    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
+)
+SELECT c.id AS root_course_id, c.course_uid AS root_course_uid
+FROM course_trees ct
+JOIN courses c ON c.id = ct.root_course_id
+WHERE ct.member_course_id = :leaf_course_id
+LIMIT 1
+"""
+
+
+async def _resolve_root_course(
+    db: AsyncSession, user_id: int, leaf_course_id: int
+) -> tuple[int, str | None]:
+    """Корневой курс дерева активных курсов студента, содержащего leaf_course_id.
+
+    Args:
+        db: async session.
+        user_id: ID студента.
+        leaf_course_id: ID листового (или любого) курса дерева.
+
+    Returns:
+        (root_course_id, root_course_uid). Если лист не входит ни в одно
+        активное дерево — лист считается сам себе корнем (fallback).
+    """
+    row = (
+        await db.execute(
+            text(_ROOT_OF_LEAF_SQL),
+            {"user_id": user_id, "leaf_course_id": leaf_course_id},
+        )
+    ).mappings().first()
+    if row is not None:
+        return int(row["root_course_id"]), row["root_course_uid"]
+    # Fallback: лист вне активных деревьев — берём его собственный uid.
+    own = (
+        await db.execute(
+            text("SELECT course_uid FROM courses WHERE id = :cid"),
+            {"cid": leaf_course_id},
+        )
+    ).mappings().first()
+    return leaf_course_id, (own["course_uid"] if own else None)
+
+
 async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
     """Последняя активность пользователя + резолв next-item (CB §5.3, LMS spec §5.3).
 
@@ -317,10 +375,13 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
         return None
 
     if course_row["state"] == "COMPLETED":
+        root_id, root_uid = await _resolve_root_course(db, user_id, last_active_course_id)
         return {
             "course_id": last_active_course_id,
             "course_uid": course_row["course_uid"],
             "course_title": course_row["title"],
+            "root_course_id": root_id,
+            "root_course_uid": root_uid,
             "type": "course_completed",
             "last_active_at": last_ts,
         }
@@ -332,6 +393,20 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
     engine = LearningEngineService()
     next_item = await engine.resolve_next_item(db, student_id=user_id)
     next_course_id = next_item.course_id or last_active_course_id
+
+    # Корень дерева next-item (tsk-127): движок уже знает root_course_id —
+    # берём его как авторитетный, uid догружаем; иначе резолвим по листу.
+    if next_item.root_course_id is not None:
+        root_id = next_item.root_course_id
+        root_uid_row = (
+            await db.execute(
+                text("SELECT course_uid FROM courses WHERE id = :cid"),
+                {"cid": root_id},
+            )
+        ).mappings().first()
+        root_uid = root_uid_row["course_uid"] if root_uid_row else None
+    else:
+        root_id, root_uid = await _resolve_root_course(db, user_id, next_course_id)
 
     # Если NEXT в другом курсе — обновим course_uid/title под него
     if next_course_id != last_active_course_id:
@@ -349,6 +424,8 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
             "course_id": next_course_id,
             "course_uid": course_row["course_uid"],
             "course_title": course_row["title"],
+            "root_course_id": root_id,
+            "root_course_uid": root_uid,
             "type": "material",
             "material_id": next_item.material_id,
             "last_active_at": last_ts,
@@ -366,6 +443,8 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
             "course_id": next_course_id,
             "course_uid": course_row["course_uid"],
             "course_title": course_row["title"],
+            "root_course_id": root_id,
+            "root_course_uid": root_uid,
             "type": "task",
             "task_id": next_item.task_id,
             "external_uid": ext_row["external_uid"] if ext_row else None,
@@ -375,10 +454,15 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
     # next_item.type ∈ {'none', 'blocked_dependency', 'blocked_limit'}:
     # все active курсы пройдены или заблокированы. Трактуем как course_completed
     # (last-active course — курс к которому виджет «Продолжить» отправит без действия).
+    fallback_root_id, fallback_root_uid = await _resolve_root_course(
+        db, user_id, last_active_course_id
+    )
     return {
         "course_id": last_active_course_id,
         "course_uid": course_row["course_uid"],
         "course_title": course_row["title"],
+        "root_course_id": fallback_root_id,
+        "root_course_uid": fallback_root_uid,
         "type": "course_completed",
         "last_active_at": last_ts,
     }

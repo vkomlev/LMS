@@ -11776,6 +11776,24 @@
             "description": "ID студента"
           },
           {
+            "name": "root_course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Необязательный фильтр: ограничить обход деревом этого корневого курса. Если не задан — обход всех активных курсов (tsk-127).",
+              "title": "Root Course Id"
+            },
+            "description": "Необязательный фильтр: ограничить обход деревом этого корневого курса. Если не задан — обход всех активных курсов (tsk-127)."
+          },
+          {
             "name": "token",
             "in": "query",
             "required": false,
@@ -20716,6 +20734,28 @@
             "type": "string",
             "title": "Course Title"
           },
+          "root_course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Course Id"
+          },
+          "root_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Course Uid"
+          },
           "type": {
             "type": "string",
             "enum": [
@@ -22598,6 +22638,18 @@
               }
             ],
             "title": "Course Id"
+          },
+          "root_course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Course Id",
+            "description": "Корневой курс дерева элемента (root). Отличается от course_id, если элемент в листовом подкурсе. SPW строит навигацию по корням (tsk-127)."
           },
           "material_id": {
             "anyOf": [

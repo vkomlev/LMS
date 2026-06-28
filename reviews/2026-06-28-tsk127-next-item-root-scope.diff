@@ -1,0 +1,393 @@
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 66e25af..822c17d 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -65,6 +65,11 @@ users_service = UsersService()
+ )
+ async def get_next_item(
+     student_id: int = Query(..., description="ID студента"),
++    root_course_id: int | None = Query(
++        None,
++        description="Необязательный фильтр: ограничить обход деревом этого корневого "
++        "курса. Если не задан — обход всех активных курсов (tsk-127).",
++    ),
+     current_user: CurrentUser = Depends(get_current_user),
+     db: AsyncSession = Depends(get_bare_db),
+ ) -> NextItemResponse:
+@@ -73,7 +78,9 @@ async def get_next_item(
+     user = await users_service.get_by_id(db, student_id)
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+-    result = await learning_service.resolve_next_item(db, student_id)
++    result = await learning_service.resolve_next_item(
++        db, student_id, root_course_id=root_course_id
++    )
+     if result.type == "blocked_limit" and result.task_id is not None:
+         state = await learning_service.compute_task_state(db, student_id, result.task_id)
+         await get_or_create_blocked_limit_help_request(
+@@ -100,6 +107,7 @@ async def get_next_item(
+     return NextItemResponse(
+         type=result.type,
+         course_id=result.course_id,
++        root_course_id=result.root_course_id,
+         material_id=result.material_id,
+         task_id=result.task_id,
+         reason=result.reason,
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index cde9604..40980a3 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -22,6 +22,11 @@ NextItemType = Literal[
+ class NextItemResponse(BaseModel):
+     type: NextItemType
+     course_id: Optional[int] = None
++    root_course_id: Optional[int] = Field(
++        None,
++        description="Корневой курс дерева элемента (root). Отличается от course_id, "
++        "если элемент в листовом подкурсе. SPW строит навигацию по корням (tsk-127).",
++    )
+     material_id: Optional[int] = None
+     task_id: Optional[int] = None
+     reason: Optional[str] = None
+diff --git a/app/schemas/learning_engine.py b/app/schemas/learning_engine.py
+index b8bbc47..154e2ee 100644
+--- a/app/schemas/learning_engine.py
++++ b/app/schemas/learning_engine.py
+@@ -25,6 +25,10 @@ class NextItemResult:
+ 
+     type: NextItemType
+     course_id: Optional[int] = None
++    # Корневой курс дерева, в котором лежит элемент (root). Отличается от
++    # course_id, когда элемент находится в листовом подкурсе. Нужен SPW для
++    # построения навигации по корневым курсам (tsk-127).
++    root_course_id: Optional[int] = None
+     material_id: Optional[int] = None
+     task_id: Optional[int] = None
+     reason: Optional[str] = None
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 2ef2e43..daa2c71 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -51,6 +51,11 @@ class LastPositionRead(BaseModel):
+     course_id: int
+     course_uid: str | None
+     course_title: str
++    # Корневой курс дерева (root) для построения навигации в SPW. Отличается от
++    # course_id, когда элемент в листовом подкурсе. Если корень не определён —
++    # совпадает с листовым course_id/course_uid (tsk-127).
++    root_course_id: int | None = None
++    root_course_uid: str | None = None
+     type: Literal["task", "material", "course_completed", "none"]
+     task_id: int | None = None
+     external_uid: str | None = None
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 42be6a4..918de43 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -363,6 +363,7 @@ class LearningEngineService:
+         self,
+         db: AsyncSession,
+         student_id: int,
++        root_course_id: Optional[int] = None,
+     ) -> NextItemResult:
+         """
+         Следующий шаг для студента: material | task | none | blocked_dependency | blocked_limit.
+@@ -371,19 +372,37 @@ class LearningEngineService:
+         проверка зависимостей (required курс должен быть COMPLETED);
+         обход дерева курса: материалы (order_position), затем задания (id);
+         приоритет material над task; блокировка по лимиту попыток.
++
++        Args:
++            db: Сессия БД.
++            student_id: ID студента.
++            root_course_id: если задан — обход ограничен деревом этого корня
++                (active фильтруется по uc.course_id); если None — прежнее
++                поведение (обход всех активных курсов по order_number,
++                обратная совместимость, tsk-127).
++
++        Returns:
++            NextItemResult с листовым course_id и корневым root_course_id
++            дерева, в котором найден элемент.
+         """
+         # Активные курсы пользователя по порядку
+         user_courses = await self._user_courses_repo.get_user_courses(db, student_id, order_by_order=True)
+         active = [uc for uc in user_courses if uc.is_active]
++        # tsk-127: ограничить обход деревом одного корня, если задан фильтр.
++        if root_course_id is not None:
++            active = [uc for uc in active if uc.course_id == root_course_id]
+         if not active:
+-            logger.info("resolve_next_item: student_id=%s нет активных курсов", student_id)
++            logger.info(
++                "resolve_next_item: student_id=%s нет активных курсов (root_course_id=%s)",
++                student_id, root_course_id,
++            )
+             return NextItemResult(type="none", reason="Нет активных курсов в плане")
+ 
+         for uc in active:
+-            root_course_id = uc.course_id
++            current_root_id = uc.course_id
+ 
+             # Зависимости: все required должны быть COMPLETED
+-            deps = await self._deps_repo.list_dependencies(db, root_course_id)
++            deps = await self._deps_repo.list_dependencies(db, current_root_id)
+             for req_course in deps:
+                 course_state = await self.compute_course_state(
+                     db, student_id, req_course.id, update_state_table=True
+@@ -391,35 +410,37 @@ class LearningEngineService:
+                 if course_state.state != "COMPLETED":
+                     logger.info(
+                         "resolve_next_item: student_id=%s root=%s blocked_dependency required=%s",
+-                        student_id, root_course_id, req_course.id,
++                        student_id, current_root_id, req_course.id,
+                     )
+                     return NextItemResult(
+                         type="blocked_dependency",
+-                        course_id=root_course_id,
++                        course_id=current_root_id,
++                        root_course_id=current_root_id,
+                         reason="Требуется завершить курс",
+                         dependency_course_id=req_course.id,
+                     )
+ 
+             # Обход дерева: root + дети по order_number
+-            flat_courses = await self._collect_courses_in_order(db, root_course_id)
++            flat_courses = await self._collect_courses_in_order(db, current_root_id)
+             for cid in flat_courses:
+                 # Первый незавершённый материал
+                 mat = await self._first_incomplete_material(db, student_id, cid)
+                 if mat is not None:
+                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
+-                    return NextItemResult(type="material", course_id=cid, material_id=mat, reason="Следующий материал")
++                    return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
+                 # Первое задание не PASSED и не BLOCKED_LIMIT
+                 task_id, blocked = await self._first_incomplete_task(db, student_id, cid)
+                 if blocked is not None:
+                     return NextItemResult(
+                         type="blocked_limit",
+                         course_id=cid,
++                        root_course_id=current_root_id,
+                         task_id=blocked,
+                         reason="Исчерпан лимит попыток",
+                     )
+                 if task_id is not None:
+                     logger.info("resolve_next_item: student_id=%s next=task course_id=%s task_id=%s", student_id, cid, task_id)
+-                    return NextItemResult(type="task", course_id=cid, task_id=task_id, reason="Следующее задание")
++                    return NextItemResult(type="task", course_id=cid, root_course_id=current_root_id, task_id=task_id, reason="Следующее задание")
+ 
+         return NextItemResult(type="none", reason="Все элементы пройдены или заблокированы")
+ 
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index dbf480a..2097057 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -274,6 +274,64 @@ LIMIT 1
+ """
+ 
+ 
++# Корень дерева активных курсов студента, содержащего листовой course_id.
++# Идёт ВВЕРХ от листа через course_parents (тот же граф, что _COURSES_PROGRESS_SQL
++# обходит вниз) и матчит на один из активных user_courses (root). tsk-127.
++_ROOT_OF_LEAF_SQL = """
++WITH RECURSIVE active_uc AS (
++    SELECT course_id
++    FROM user_courses
++    WHERE user_id = :user_id AND is_active = true
++),
++course_trees AS (
++    SELECT root.course_id AS root_course_id,
++           root.course_id AS member_course_id
++    FROM active_uc root
++    UNION ALL
++    SELECT ct.root_course_id, cp.course_id
++    FROM course_trees ct
++    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
++)
++SELECT c.id AS root_course_id, c.course_uid AS root_course_uid
++FROM course_trees ct
++JOIN courses c ON c.id = ct.root_course_id
++WHERE ct.member_course_id = :leaf_course_id
++LIMIT 1
++"""
++
++
++async def _resolve_root_course(
++    db: AsyncSession, user_id: int, leaf_course_id: int
++) -> tuple[int, str | None]:
++    """Корневой курс дерева активных курсов студента, содержащего leaf_course_id.
++
++    Args:
++        db: async session.
++        user_id: ID студента.
++        leaf_course_id: ID листового (или любого) курса дерева.
++
++    Returns:
++        (root_course_id, root_course_uid). Если лист не входит ни в одно
++        активное дерево — лист считается сам себе корнем (fallback).
++    """
++    row = (
++        await db.execute(
++            text(_ROOT_OF_LEAF_SQL),
++            {"user_id": user_id, "leaf_course_id": leaf_course_id},
++        )
++    ).mappings().first()
++    if row is not None:
++        return int(row["root_course_id"]), row["root_course_uid"]
++    # Fallback: лист вне активных деревьев — берём его собственный uid.
++    own = (
++        await db.execute(
++            text("SELECT course_uid FROM courses WHERE id = :cid"),
++            {"cid": leaf_course_id},
++        )
++    ).mappings().first()
++    return leaf_course_id, (own["course_uid"] if own else None)
++
++
+ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+     """Последняя активность пользователя + резолв next-item (CB §5.3, LMS spec §5.3).
+ 
+@@ -317,10 +375,13 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+         return None
+ 
+     if course_row["state"] == "COMPLETED":
++        root_id, root_uid = await _resolve_root_course(db, user_id, last_active_course_id)
+         return {
+             "course_id": last_active_course_id,
+             "course_uid": course_row["course_uid"],
+             "course_title": course_row["title"],
++            "root_course_id": root_id,
++            "root_course_uid": root_uid,
+             "type": "course_completed",
+             "last_active_at": last_ts,
+         }
+@@ -333,6 +394,20 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+     next_item = await engine.resolve_next_item(db, student_id=user_id)
+     next_course_id = next_item.course_id or last_active_course_id
+ 
++    # Корень дерева next-item (tsk-127): движок уже знает root_course_id —
++    # берём его как авторитетный, uid догружаем; иначе резолвим по листу.
++    if next_item.root_course_id is not None:
++        root_id = next_item.root_course_id
++        root_uid_row = (
++            await db.execute(
++                text("SELECT course_uid FROM courses WHERE id = :cid"),
++                {"cid": root_id},
++            )
++        ).mappings().first()
++        root_uid = root_uid_row["course_uid"] if root_uid_row else None
++    else:
++        root_id, root_uid = await _resolve_root_course(db, user_id, next_course_id)
++
+     # Если NEXT в другом курсе — обновим course_uid/title под него
+     if next_course_id != last_active_course_id:
+         next_course_row = (
+@@ -349,6 +424,8 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+             "course_id": next_course_id,
+             "course_uid": course_row["course_uid"],
+             "course_title": course_row["title"],
++            "root_course_id": root_id,
++            "root_course_uid": root_uid,
+             "type": "material",
+             "material_id": next_item.material_id,
+             "last_active_at": last_ts,
+@@ -366,6 +443,8 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+             "course_id": next_course_id,
+             "course_uid": course_row["course_uid"],
+             "course_title": course_row["title"],
++            "root_course_id": root_id,
++            "root_course_uid": root_uid,
+             "type": "task",
+             "task_id": next_item.task_id,
+             "external_uid": ext_row["external_uid"] if ext_row else None,
+@@ -375,10 +454,15 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
+     # next_item.type ∈ {'none', 'blocked_dependency', 'blocked_limit'}:
+     # все active курсы пройдены или заблокированы. Трактуем как course_completed
+     # (last-active course — курс к которому виджет «Продолжить» отправит без действия).
++    fallback_root_id, fallback_root_uid = await _resolve_root_course(
++        db, user_id, last_active_course_id
++    )
+     return {
+         "course_id": last_active_course_id,
+         "course_uid": course_row["course_uid"],
+         "course_title": course_row["title"],
++        "root_course_id": fallback_root_id,
++        "root_course_uid": fallback_root_uid,
+         "type": "course_completed",
+         "last_active_at": last_ts,
+     }
+diff --git a/docs/openapi.json b/docs/openapi.json
+index e0310ea..b59767e 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -11775,6 +11775,24 @@
+             },
+             "description": "ID студента"
+           },
++          {
++            "name": "root_course_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Необязательный фильтр: ограничить обход деревом этого корневого курса. Если не задан — обход всех активных курсов (tsk-127).",
++              "title": "Root Course Id"
++            },
++            "description": "Необязательный фильтр: ограничить обход деревом этого корневого курса. Если не задан — обход всех активных курсов (tsk-127)."
++          },
+           {
+             "name": "token",
+             "in": "query",
+@@ -20716,6 +20734,28 @@
+             "type": "string",
+             "title": "Course Title"
+           },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id"
++          },
++          "root_course_uid": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Uid"
++          },
+           "type": {
+             "type": "string",
+             "enum": [
+@@ -22599,6 +22639,18 @@
+             ],
+             "title": "Course Id"
+           },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id",
++            "description": "Корневой курс дерева элемента (root). Отличается от course_id, если элемент в листовом подкурсе. SPW строит навигацию по корням (tsk-127)."
++          },
+           "material_id": {
+             "anyOf": [
+               {
