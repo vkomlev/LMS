@@ -32,7 +32,8 @@
 3. `app/api/v1/attempts.py` — `submit_attempt_answers`: жёсткий серверный запрет —
    если по квиз-задаче уже есть `task_result` в неотменённой попытке, повторный
    ответ отклоняется `409 Conflict`.
-4. `tests/test_quiz_single_attempt_tsk124.py` — 7 тестов (см. ниже).
+4. `tests/test_quiz_single_attempt_tsk124.py` — 6 тестов (см. ниже).
+5. `submit_attempt_answers` — `409` задекларирован в `responses=` (openapi).
 
 ## Влияние на фронты (правок не требуется)
 
@@ -45,7 +46,7 @@
 
 ## Тесты
 
-`tests/test_quiz_single_attempt_tsk124.py` (dev-БД, self-cleanup):
+`tests/test_quiz_single_attempt_tsk124.py` (6 тестов, dev-БД, self-cleanup):
 - лимит квиза = 1 при `max_attempts=3`;
 - лимит квиза = 1 при персональном override=5;
 - обычная SC-задача уважает `max_attempts` (регрессия);
