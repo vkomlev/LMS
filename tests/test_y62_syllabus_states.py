@@ -696,6 +696,115 @@ async def test_status_passed_edge_max_score_zero(db, client):
         await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
 
 
+# ────────────────────────── Quiz (tsk-125) ─────────────────────────────────
+
+
+async def _make_quiz_course_task(db) -> tuple[int, int]:
+    """Изолированный root-курс с одной SC_Qw-задачей. Returns (course_id, task_id)."""
+    import uuid
+
+    cid = int(
+        (
+            await db.execute(
+                text(
+                    "INSERT INTO courses (title, access_level) "
+                    "VALUES (:t, 'auto_check') RETURNING id"
+                ),
+                {"t": f"tsk125 {uuid.uuid4().hex[:8]}"},
+            )
+        ).scalar()
+    )
+    await db.commit()
+    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
+    tc = (
+        '{"type":"SC_Qw","stem":"Что ближе?","scales":["информатика","python"],'
+        '"options":[{"id":"a","text":"разгадывать","scores":{"информатика":2}},'
+        '{"id":"b","text":"игры","scores":{"python":2}}]}'
+    )
+    sr = '{"max_score":2,"quiz":{"scales":["информатика","python"],"mode":"single"}}'
+    tid = int(
+        (
+            await db.execute(
+                text(
+                    "INSERT INTO tasks (course_id, difficulty_id, task_content, solution_rules) "
+                    "VALUES (:cid, :did, CAST(:tc AS jsonb), CAST(:sr AS jsonb)) RETURNING id"
+                ),
+                {"cid": cid, "did": diff, "tc": tc, "sr": sr},
+            )
+        ).scalar()
+    )
+    await db.commit()
+    return cid, tid
+
+
+async def _drop_course_task(db, *, course_id: int, task_id: int) -> None:
+    await db.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": task_id})
+    await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": course_id})
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_status_quiz_answered_passed(db, client):
+    """tsk-125: отвеченный SC_Qw (is_correct=NULL, score=max_score) → passed, не pending_review.
+
+    Паритет с compute_task_state: score-ratio=1.0 >= PASS_THRESHOLD_RATIO → PASSED.
+    """
+    user_id, token, _ = await _create_student(db, prefix="y62-quiz")
+    cid, task_id = await _make_quiz_course_task(db)
+    await _enroll(db, user_id, cid)
+    aid = await _create_attempt(db, user_id=user_id, course_id=cid)
+    rid = await _create_task_result(
+        db, user_id=user_id, task_id=task_id, attempt_id=aid,
+        is_correct=None, score=2, max_score=2, checked_at=None,
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/me/courses/{cid}/syllabus-states",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        item = await _find_item(
+            resp.json()["items"], kind="task", id_key="task_id", target_id=task_id
+        )
+        assert item is not None
+        assert item["status"] == "passed", item  # не pending_review (tsk-125)
+    finally:
+        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
+        await _drop_course_task(db, course_id=cid, task_id=task_id)
+
+
+@pytest.mark.asyncio
+async def test_status_quiz_empty_answer_blocked_limit(db, client):
+    """tsk-125: пустой ответ на квиз (is_correct=NULL, score=0) при limit=1 → blocked_limit.
+
+    Паритет с compute_task_state: ratio 0 < порога, attempts_used(1) >= limit(1) → BLOCKED_LIMIT.
+    Квиз всегда даёт attempts_limit_effective=1 (tsk-124), второй попытки нет.
+    """
+    user_id, token, _ = await _create_student(db, prefix="y62-quiz0")
+    cid, task_id = await _make_quiz_course_task(db)
+    await _enroll(db, user_id, cid)
+    aid = await _create_attempt(db, user_id=user_id, course_id=cid)
+    rid = await _create_task_result(
+        db, user_id=user_id, task_id=task_id, attempt_id=aid,
+        is_correct=None, score=0, max_score=2, checked_at=None,
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/me/courses/{cid}/syllabus-states",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        item = await _find_item(
+            resp.json()["items"], kind="task", id_key="task_id", target_id=task_id
+        )
+        assert item is not None
+        assert item["status"] == "blocked_limit", item
+        assert item["attempts_limit_effective"] == 1
+    finally:
+        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
+        await _drop_course_task(db, course_id=cid, task_id=task_id)
+
+
 # ────────────────────────── Materials ──────────────────────────────────────
 
 
