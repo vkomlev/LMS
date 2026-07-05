@@ -113,6 +113,13 @@ class Settings:
             "true", "1", "yes"
         )
 
+        # Domain для сессионной cookie. Пусто в dev (host-only, localhost) —
+        # в prod LMS (api.learn.<domain>) и SPW (learn.<domain>) на разных
+        # поддоменах, cookie без domain видит только тот поддомен, который её
+        # выставил (браузер не шлёт её на другой поддомен даже с credentials:
+        # include). "victor-komlev.ru" расшаривает cookie на все поддомены.
+        self.cookie_domain: str | None = os.getenv("COOKIE_DOMAIN") or None
+
         # Phase Y-5: JWT-секрет для подписи embed URL-token (HS256).
         # Single-use enforce через Redis jti marker (TTL = embed_jwt_ttl_sec).
         # Backup в password-manager (как FERNET_MASTER_KEY).

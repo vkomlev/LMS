@@ -143,6 +143,7 @@ async def issue_test_session(
         httponly=True,
         secure=_settings.cookie_secure,
         samesite="lax",
+        domain=_settings.cookie_domain,
     )
 
     logger.info(

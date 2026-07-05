@@ -70,5 +70,6 @@ async def tg_init(
     response.set_cookie(
         "session", access_token,
         httponly=True, secure=True, samesite="lax", max_age=86400,
+        domain=_settings.cookie_domain,
     )
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)

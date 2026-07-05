@@ -6,11 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
+from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, MessageResponse, RefreshRequest
 from app.services.auth import session_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/session", tags=["auth"])
+_settings = Settings()
 
 
 @router.post("/refresh", response_model=AuthTokenResponse)
@@ -29,6 +31,7 @@ async def refresh(
     response.set_cookie(
         "session", access_token,
         httponly=True, secure=True, samesite="lax", max_age=86400,
+        domain=_settings.cookie_domain,
     )
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
 
@@ -46,5 +49,5 @@ async def logout(
         if session_obj:
             await session_service.revoke_session(db, session_obj.id)
             await db.commit()
-    response.delete_cookie("session")
+    response.delete_cookie("session", domain=_settings.cookie_domain)
     return MessageResponse(message="Выполнен выход")
