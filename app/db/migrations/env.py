@@ -38,9 +38,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Get database URL from settings
+# Get database URL from settings.
+# configparser интерполирует "%" в значениях (ConfigParser.BasicInterpolation) — пароли
+# из Timeweb DBaaS часто содержат URL-encoded "%XX", поэтому экранируем как "%%" перед
+# записью; get_main_option/get_section при чтении сами вернут его обратно в "%".
 settings = Settings()
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
 
 # add your model's MetaData object here
 # for 'autogenerate' support
