@@ -222,3 +222,15 @@ async def test_s3_wrong_ext_still_400(s3_mode):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get(f"/api/v1/media/{sha_ext}")
     assert r.status_code == 400, r.text
+
+
+def test_s3_bucket_url_trailing_slash_stripped(monkeypatch):
+    """
+    settings.s3_media_bucket_url нормализует trailing slash (rstrip), чтобы
+    оператор не получил двойной '//' в redirect URL при опечатке в .env.
+    Найдено независимым ревью tsk-160 (не блокирующая находка).
+    """
+    monkeypatch.setenv("S3_MEDIA_BUCKET_URL", "https://s3.twcstorage.ru/lms-media-cas/")
+    from app.core.config import Settings
+    s = Settings()
+    assert s.s3_media_bucket_url == "https://s3.twcstorage.ru/lms-media-cas"

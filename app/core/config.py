@@ -60,7 +60,10 @@ class Settings:
         # Пример: https://s3.twcstorage.ru/lms-media-cas
         # Если не задан — endpoint /api/v1/media/ работает в старом dev-режиме
         # (FileResponse из cas_media_root).
-        self.s3_media_bucket_url: str | None = os.getenv("S3_MEDIA_BUCKET_URL") or None
+        # rstrip("/") — защита от двойного слэша при неаккуратном заполнении оператором
+        # (например, .../lms-media-cas/ вместо .../lms-media-cas), найдено ревью tsk-160.
+        _s3_url = (os.getenv("S3_MEDIA_BUCKET_URL") or "").rstrip("/")
+        self.s3_media_bucket_url: str | None = _s3_url or None
 
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
