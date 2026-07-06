@@ -4,6 +4,10 @@ set -euo pipefail
 
 cd /opt/lms
 
+echo "== сохранение текущей версии для возможного отката =="
+git rev-parse HEAD > .last-deploy-sha
+echo "Версия перед деплоем (цель отката): $(cat .last-deploy-sha)"
+
 echo "== git fetch + reset to origin/main =="
 git fetch origin
 git reset --hard origin/main

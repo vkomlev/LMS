@@ -66,8 +66,23 @@ sudo -u app bash /opt/lms/deploy/vps/deploy.sh
 
 ## Откат
 
+Быстрый откат к версии, которая работала до последнего `deploy.sh` (SHA сохраняется
+скриптом деплоя в `.last-deploy-sha` перед каждым обновлением):
+
 ```bash
-cd /opt/lms && sudo -u app git log --oneline -5   # найти нужный коммит
+ssh <user>@<vps-ip>
+sudo -u app bash /opt/lms/deploy/vps/rollback.sh
+```
+
+**Важно:** `rollback.sh` откатывает только код (git + зависимости + рестарт сервиса).
+Alembic-миграции не откатывает — если последний деплой добавил миграцию, `alembic downgrade`
+нужно запускать вручную и осознанно (потенциально деструктивно для данных учеников).
+
+Откат дальше, чем на один деплой назад (`.last-deploy-sha` хранит только одну предыдущую
+версию) — вручную:
+
+```bash
+cd /opt/lms && sudo -u app git log --oneline -10   # найти нужный коммит
 sudo -u app git reset --hard <commit>
 sudo systemctl restart lms
 ```
