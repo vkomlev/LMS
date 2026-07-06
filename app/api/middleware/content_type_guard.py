@@ -46,11 +46,15 @@ class ContentTypeGuardMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if request.method in _METHODS_WITH_BODY:
-            content_length = request.headers.get("content-length")
             # Transfer-Encoding: chunked не даёт Content-Length, но тело есть —
             # без этой проверки chunked-запрос обходил бы guard целиком.
             is_chunked = "chunked" in request.headers.get("transfer-encoding", "").lower()
-            has_body = is_chunked or (bool(content_length) and content_length != "0")
+            try:
+                content_length = int(request.headers.get("content-length", "0"))
+            except ValueError:
+                # Мусорное значение заголовка — не доверяем, считаем что тело может быть.
+                content_length = 1
+            has_body = is_chunked or content_length > 0
             if has_body:
                 content_type = request.headers.get("content-type", "")
                 if not content_type.lower().startswith(_ALLOWED_CONTENT_TYPES):
