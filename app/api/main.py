@@ -112,6 +112,14 @@ app.add_middleware(
 from app.api.middleware.request_id import RequestIDMiddleware
 app.add_middleware(RequestIDMiddleware)
 
+# ✅ Content-Type enforcement (tsk-161, P0): без него CORS не защищает
+# JSON-эндпоинты от cross-subdomain session-riding (см. ADR/план tsk-161) —
+# запрос с Content-Type: text/plain (CORS-"простой", без preflight) и JSON
+# внутри тела всё равно успешно парсится FastAPI. OPTIONS/GET/тела без
+# Content-Length не затрагиваются.
+from app.api.middleware.content_type_guard import ContentTypeGuardMiddleware
+app.add_middleware(ContentTypeGuardMiddleware)
+
 # ✅ новый хэндлер доменных ошибок — минимально инвазивно
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
