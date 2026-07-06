@@ -1,8 +1,44 @@
 # Изменение: устранение widescoped-cookie риска (COOKIE_DOMAIN → auth-домен)
 
 **Дата:** 2026-07-06
-**Статус:** Ready for review
+**Статус:** Ready for review → **Фаза 0-1 done, Фазы 2-3 заменены упрощённым фиксом (см. Amendment)**
 **Задача:** tsk-161
+
+---
+
+## Amendment (2026-07-06, после Фазы 1)
+
+При подготовке Фазы 2 обнаружено: **ADR-0014** (ContentBackbone
+`docs/adr/0014-domain-layout.md`, принят 2026-04-27 — задолго до этой задачи)
+уже явно предписывал `Domain=learn.victor-komlev.ru`, а НЕ
+`Domain=victor-komlev.ru`:
+
+> «Cookie scope `Domain=.victor-komlev.ru` нельзя — не должны утекать на
+> WordPress; используем cookie scope `learn.victor-komlev.ru` (subdomain only)»
+
+Текущий widescoped cookie (`victor-komlev.ru`) — это **регресс** относительно
+уже принятого решения, введённый в этой же сессии при фиксе кросс-поддоменного
+логина (коммит `06ddccf`), а не пробел в архитектуре, требующий нового дизайна.
+
+`api.learn.victor-komlev.ru` — поддомен `learn.victor-komlev.ru` (совпадает по
+правилу cookie domain-matching: cookie с `Domain=learn.victor-komlev.ru`
+отправляется на сам этот хост и на любой хост, оканчивающийся на
+`.learn.victor-komlev.ru`). Значит **`COOKIE_DOMAIN=learn.victor-komlev.ru`**
+продолжает работать между `learn.*` и `api.learn.*` (не ломает исходный фикс
+06ddccf), но перестаёт покрывать `www.victor-komlev.ru`/`victor-komlev.ru`
+(WordPress) — закрывает репортированный риск полностью.
+
+**Решение (оператор, 2026-07-06):** применить этот простой конфиг-фикс вместо
+Фаз 2-3 плана (SPW backend-for-frontend rewrite-прокси + host-only cookie).
+Код-изменений не требуется — только значение `COOKIE_DOMAIN` в prod `.env` LMS.
+Остаточный риск (будущий сервис на `*.learn.victor-komlev.ru`) — минимален и
+контролируем (это пространство полностью под контролем LMS/SPW-команды, в
+отличие от `*.victor-komlev.ru`, где уже живёт WordPress с плагинами).
+
+Фазы 2-3 плана ниже оставлены как задокументированная, но **не выполняемая**
+альтернатива — на случай, если в будущем на `*.learn.victor-komlev.ru`
+появится недоверенный сервис и понадобится более строгая изоляция (host-only
+cookie).
 
 ---
 
