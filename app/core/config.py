@@ -47,13 +47,20 @@ class Settings:
         # ✅ CAS media root — разделяемый путь с ContentBackbone (ADR-0040, tsk-110).
         # CB скачивает файлы в эту директорию; LMS читает из неё через /api/v1/media/.
         # Структура: <cas_media_root>/<sha256[:2]>/<sha256hex>.<ext>
-        # В dev: D:\Work\ContentBackbone\data\media_store (оба сервиса на одной машине).
-        # В prod (Y-7): shared volume или S3 (отдельный ADR).
+        # Dev-fallback: используется только если S3_MEDIA_BUCKET_URL не задан (см. ниже).
         self.cas_media_root: Path = Path(
             os.getenv("CAS_MEDIA_ROOT", "data/media_store")
         )
         # Директория создаётся при старте; CB пишет туда, LMS только читает.
         self.cas_media_root.mkdir(parents=True, exist_ok=True)
+
+        # ✅ S3-хранилище медиафайлов (ADR-0047, tsk-160) — заменяет общий диск CB/LMS
+        # после переезда LMS на VPS. Публичный базовый URL bucket'а (без секретов —
+        # LMS только строит редирект, не обращается к S3 API напрямую).
+        # Пример: https://s3.twcstorage.ru/lms-media-cas
+        # Если не задан — endpoint /api/v1/media/ работает в старом dev-режиме
+        # (FileResponse из cas_media_root).
+        self.s3_media_bucket_url: str | None = os.getenv("S3_MEDIA_BUCKET_URL") or None
 
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB

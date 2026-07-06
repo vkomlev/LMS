@@ -1,7 +1,7 @@
 """
-tsk-110 ADR-0040: тесты GET /api/v1/media/{sha_ext}
+tsk-110 ADR-0040 / tsk-160 ADR-0047: тесты GET /api/v1/media/{sha_ext}
 
-Покрываемые сценарии:
+Dev-режим (S3 не настроен, cas_media_root):
   1. ok_image      — корректный sha_ext, файл существует → HTTP 200, верный content-type
   2. ok_pdf        — расширение pdf → HTTP 200, application/pdf
   3. ok_xls        — расширение xls → HTTP 200, application/vnd.ms-excel
@@ -12,6 +12,12 @@ tsk-110 ADR-0040: тесты GET /api/v1/media/{sha_ext}
   8. uppercase_sha — sha256 с заглавными буквами → HTTP 400 (regex строгий: [0-9a-f])
   9. no_ext        — только sha256 без расширения → HTTP 400
   10. traversal_dots — ../ в параметре → HTTP 400
+
+S3-режим (s3_media_bucket_url задан, ADR-0047):
+  11. s3_redirect         — корректный sha_ext → HTTP 307, Location = <bucket>/<shard>/<sha_ext>
+  12. s3_redirect_no_check_existence — редирект отдаётся, даже если файла нет ни в S3, ни локально
+      (LMS не проверяет существование в S3-режиме — принятый trade-off ADR-0047)
+  13. s3_wrong_ext_still_400 — валидация sha_ext работает одинаково в обоих режимах
 """
 from __future__ import annotations
 
@@ -165,3 +171,54 @@ async def test_traversal_dots(cas_root: Path):
         # FastAPI может вернуть 404 (not found route) или 400 (наш validator)
         r = await c.get("/api/v1/media/../../../etc/passwd")
     assert r.status_code in (400, 404), r.text
+
+
+# ─── S3-режим (ADR-0047, tsk-160) ─────────────────────────────────────────────
+
+_S3_BUCKET_URL = "https://s3.twcstorage.ru/lms-media-cas"
+
+
+@pytest.fixture()
+def s3_mode(monkeypatch):
+    """Включает S3-режим: подменяет settings.s3_media_bucket_url."""
+    from app.api.v1 import media as media_module
+    monkeypatch.setattr(media_module.settings, "s3_media_bucket_url", _S3_BUCKET_URL)
+
+
+@pytest.mark.asyncio
+async def test_s3_redirect(s3_mode):
+    """HTTP 307 с корректным Location = <bucket>/<shard>/<sha_ext> в S3-режиме."""
+    from app.api.main import app
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+    ) as c:
+        r = await c.get(f"/api/v1/media/{_GOOD_PNG}")
+    assert r.status_code == 307, r.text
+    shard = _GOOD_SHA[:2]
+    assert r.headers["location"] == f"{_S3_BUCKET_URL}/{shard}/{_GOOD_PNG}"
+
+
+@pytest.mark.asyncio
+async def test_s3_redirect_no_check_existence(s3_mode, tmp_path: Path, monkeypatch):
+    """
+    Редирект отдаётся, даже если файла нет ни в S3 (не проверяем), ни локально
+    (cas_media_root — пустая директория). Принятый trade-off ADR-0047.
+    """
+    from app.api.v1 import media as media_module
+    monkeypatch.setattr(media_module.settings, "cas_media_root", tmp_path)
+    from app.api.main import app
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test", follow_redirects=False
+    ) as c:
+        r = await c.get(f"/api/v1/media/{_GOOD_PNG}")
+    assert r.status_code == 307, r.text
+
+
+@pytest.mark.asyncio
+async def test_s3_wrong_ext_still_400(s3_mode):
+    """Валидация sha_ext (регекс) работает одинаково в S3- и dev-режиме."""
+    sha_ext = f"{_GOOD_SHA}.exe"
+    from app.api.main import app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get(f"/api/v1/media/{sha_ext}")
+    assert r.status_code == 400, r.text

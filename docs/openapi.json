@@ -16256,7 +16256,7 @@
           "media"
         ],
         "summary": "Получить CAS-медиафайл по sha256-имени",
-        "description": "Отдаёт файл из CAS-хранилища ContentBackbone.\n\nsha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).\nEndpoint публичный — не требует аутентификации (изображения задач доступны\nчерез guest-mode, sha256-имена не поддаются перебору).\n\nHTTP 400 — неверный формат sha_ext.\nHTTP 404 — файл отсутствует в CAS.\nHTTP 200 — FileResponse с корректным content-type из allowlist.",
+        "description": "Отдаёт файл из CAS-хранилища ContentBackbone (S3 в prod, локальный диск в dev).\n\nsha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).\nEndpoint публичный — не требует аутентификации (изображения задач доступны\nчерез guest-mode, sha256-имена не поддаются перебору).\n\nHTTP 400 — неверный формат sha_ext.\nHTTP 404 — файл отсутствует в CAS (только dev-режим; в S3-режиме 404 отдаёт сам S3).\nHTTP 307 — редирект на S3 (prod-режим).\nHTTP 200 — FileResponse с корректным content-type из allowlist (dev-режим).",
         "operationId": "get_cas_media_api_v1_media__sha_ext__get",
         "parameters": [
           {
@@ -16271,7 +16271,12 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
           },
           "422": {
             "description": "Validation Error",

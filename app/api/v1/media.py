@@ -1,22 +1,30 @@
 # app/api/v1/media.py
 """
-CAS media endpoint (ADR-0040, tsk-110).
+CAS media endpoint (ADR-0040, tsk-110; ADR-0047, tsk-160).
 
 Публичный endpoint для отдачи медиафайлов и файлов-вложений внешних задач,
-загруженных ContentBackbone в общее CAS-хранилище.
+загруженных ContentBackbone в S3-совместимое хранилище (или в dev-режиме —
+в общий CAS-каталог на локальном диске, если S3 не настроен).
 
 Маршрут: GET /api/v1/media/{sha_ext}
     sha_ext = {sha256hex}.{ext}  (64 hex-символа + точка + разрешённое расширение)
 
+Режимы (ADR-0047):
+- **S3-режим** (`settings.s3_media_bucket_url` задан, prod): 307-редирект на
+  публичный S3 URL. LMS не хранит S3-credentials и не обращается к S3 API —
+  только детерминированно строит URL и валидирует формат sha_ext. Существование
+  файла в S3 не проверяется — при отсутствии клиент получит ответ самого S3.
+- **Dev-режим** (S3 не настроен): старое поведение ADR-0040 — FileResponse из
+  локального `cas_media_root`.
+
 Безопасность:
-- Regex-валидация sha_ext исключает path traversal на уровне параметра.
-- Путь строится детерминированно (не из user input напрямую).
-- root-jail через Path.is_relative_to() — дополнительная страховка.
+- Regex-валидация sha_ext исключает path traversal на уровне параметра (оба режима).
+- Dev-режим: путь строится детерминированно + root-jail через Path.is_relative_to().
 - Нет аутентификации: stem-изображения уже публичны через guest-endpoint (Y-5).
 
-Структура CAS на диске:
-    <cas_media_root>/<sha256[:2]>/<sha256hex>.<ext>
-    Пример: data/media_store/ab/abc123...0000.png
+Структура CAS (совпадает в S3 и на локальном диске):
+    <root>/<sha256[:2]>/<sha256hex>.<ext>
+    Пример: ab/abc123...0000.png
 """
 
 import logging
@@ -24,7 +32,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.core.config import Settings
 
@@ -62,21 +70,21 @@ _SHA_EXT_RE = re.compile(
 @router.get(
     "/media/{sha_ext}",
     summary="Получить CAS-медиафайл по sha256-имени",
-    response_class=FileResponse,
 )
-async def get_cas_media(sha_ext: str) -> FileResponse:
+async def get_cas_media(sha_ext: str):
     """
-    Отдаёт файл из CAS-хранилища ContentBackbone.
+    Отдаёт файл из CAS-хранилища ContentBackbone (S3 в prod, локальный диск в dev).
 
     sha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).
     Endpoint публичный — не требует аутентификации (изображения задач доступны
     через guest-mode, sha256-имена не поддаются перебору).
 
     HTTP 400 — неверный формат sha_ext.
-    HTTP 404 — файл отсутствует в CAS.
-    HTTP 200 — FileResponse с корректным content-type из allowlist.
+    HTTP 404 — файл отсутствует в CAS (только dev-режим; в S3-режиме 404 отдаёт сам S3).
+    HTTP 307 — редирект на S3 (prod-режим).
+    HTTP 200 — FileResponse с корректным content-type из allowlist (dev-режим).
     """
-    # 1. Validate формат — защита от traversal до построения пути
+    # 1. Validate формат — защита от traversal до построения пути (оба режима)
     if not _SHA_EXT_RE.match(sha_ext):
         logger.warning("media: неверный sha_ext=%r (не соответствует regex)", sha_ext)
         raise HTTPException(
@@ -84,10 +92,17 @@ async def get_cas_media(sha_ext: str) -> FileResponse:
             detail="Неверный формат sha_ext. Ожидается: <64 hex-символа>.<расширение>",
         )
 
-    # 2. Построить путь (детерминированно, не из user-input напрямую)
     sha256_hex = sha_ext[:64]
     ext = sha_ext[65:]  # after the dot at position 64
     shard = sha256_hex[:2]
+
+    # S3-режим (ADR-0047): детерминированный редирект, без обращения к S3 API.
+    if settings.s3_media_bucket_url:
+        redirect_url = f"{settings.s3_media_bucket_url}/{shard}/{sha_ext}"
+        logger.info("media: редирект на S3 sha_ext=%r", sha_ext)
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+    # 2. Dev-режим (ADR-0040): построить путь (детерминированно, не из user-input напрямую)
     file_path = settings.cas_media_root / shard / sha_ext
 
     # 3. Root-jail: убедиться что resolved path внутри cas_media_root
