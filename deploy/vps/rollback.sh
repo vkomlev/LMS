@@ -43,7 +43,7 @@ main() {
   echo "== restart service =="
   sudo systemctl restart lms
   sleep 2
-  sudo systemctl is-active lms
+  systemctl is-active lms
 
   echo "== smoke: /health =="
   curl -fsS http://127.0.0.1:8000/health && echo
