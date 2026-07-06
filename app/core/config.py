@@ -127,7 +127,17 @@ class Settings:
         # в prod LMS (api.learn.<domain>) и SPW (learn.<domain>) на разных
         # поддоменах, cookie без domain видит только тот поддомен, который её
         # выставил (браузер не шлёт её на другой поддомен даже с credentials:
-        # include). "victor-komlev.ru" расшаривает cookie на все поддомены.
+        # include).
+        #
+        # ⚠️ Правильное prod-значение — `learn.victor-komlev.ru` (ADR-0014,
+        # ContentBackbone docs/adr/0014-domain-layout.md: «Cookie scope
+        # Domain=.victor-komlev.ru нельзя — не должны утекать на WordPress»).
+        # Такой домен покрывает и `learn.victor-komlev.ru`, и её поддомен
+        # `api.learn.victor-komlev.ru`, но НЕ `www.victor-komlev.ru` (WordPress)
+        # и не корневой `victor-komlev.ru`. Значение `victor-komlev.ru` (без
+        # `learn.` префикса) — регресс относительно ADR-0014, найденный
+        # независимым ревью 2026-07-06 (tsk-159/161): делит cookie-scope с
+        # живым WordPress-сайтом на том же родительском домене.
         self.cookie_domain: str | None = os.getenv("COOKIE_DOMAIN") or None
 
         # Phase Y-5: JWT-секрет для подписи embed URL-token (HS256).
