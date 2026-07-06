@@ -100,6 +100,52 @@ async def test_no_content_type_with_body_rejected(test_app):
 
 
 @pytest.mark.asyncio
+async def test_json_with_charset_param_passes(test_app):
+    """application/json; charset=utf-8 — валидный вариант с параметром, должен пройти."""
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
+        r = await c.post(
+            "/echo",
+            content=b'{"a": 1}',
+            headers={"content-type": "application/json; charset=utf-8"},
+        )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_chunked_transfer_encoding_with_bad_content_type_rejected(test_app):
+    """
+    Transfer-Encoding: chunked (тело есть, но Content-Length отсутствует) с
+    Content-Type вне allowlist — должен быть отклонён так же, как обычный
+    запрос с Content-Length. Без этой проверки chunked-запрос обходил бы guard.
+    """
+    async def _chunks():
+        yield b'{"a": 1}'
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
+        r = await c.post(
+            "/echo",
+            content=_chunks(),
+            headers={"content-type": "text/plain"},
+        )
+    assert r.status_code == 415, r.text
+
+
+@pytest.mark.asyncio
+async def test_chunked_transfer_encoding_with_json_passes(test_app):
+    """Regression: легитимный chunked-запрос с application/json всё ещё проходит."""
+    async def _chunks():
+        yield b'{"a": 1}'
+
+    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
+        r = await c.post(
+            "/echo",
+            content=_chunks(),
+            headers={"content-type": "application/json"},
+        )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
 async def test_get_request_unaffected(test_app):
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
         r = await c.get("/echo")
