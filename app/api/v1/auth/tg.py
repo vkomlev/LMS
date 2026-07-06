@@ -15,6 +15,7 @@ from app.services.auth.tg_init_service import (
     get_or_create_user_by_tg,
     verify_tg_init_data,
 )
+from app.services.auth.cookie import set_session_cookie
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -66,10 +67,5 @@ async def tg_init(
     await log_event(db, "login_tg_initdata", user_id=user.id, ip=ip)
     await db.commit()
 
-    # Y-5.2: max_age 24ч (см. session_service _ACCESS_TTL_HOURS=24).
-    response.set_cookie(
-        "session", access_token,
-        httponly=True, secure=True, samesite="lax", max_age=86400,
-        domain=_settings.cookie_domain,
-    )
+    set_session_cookie(response, access_token)
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)

@@ -31,6 +31,7 @@ from app.models.users import Users
 from app.schemas.auth_test import TestIssueSessionRequest, TestIssueSessionResponse
 from app.services import audit_service
 from app.services.auth import session_service
+from app.services.auth.cookie import set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_role
 
 logger = logging.getLogger(__name__)
@@ -136,14 +137,10 @@ async def issue_test_session(
     await db.commit()
 
     # Set-Cookie: имя 'session' (тот же alias, что использует get_current_user).
-    response.set_cookie(
-        key="session",
-        value=access_token,
+    set_session_cookie(
+        response, access_token,
         max_age=_TEST_SESSION_TTL_SECONDS,
-        httponly=True,
         secure=_settings.cookie_secure,
-        samesite="lax",
-        domain=_settings.cookie_domain,
     )
 
     logger.info(

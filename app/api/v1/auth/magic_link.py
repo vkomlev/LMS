@@ -15,6 +15,7 @@ from app.schemas.auth import (
     MessageResponse,
 )
 from app.services.auth import magic_link_service, session_service
+from app.services.auth.cookie import set_session_cookie
 from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.audit_service import log_event
@@ -128,10 +129,5 @@ async def verify_magic_link(
     await log_event(db, "login_magic_link", user_id=user.id, ip=ip)
     await db.commit()
 
-    # Y-5.2: max_age 24ч (см. session_service _ACCESS_TTL_HOURS=24).
-    response.set_cookie(
-        "session", access_token,
-        httponly=True, secure=True, samesite="lax", max_age=86400,
-        domain=_settings.cookie_domain,
-    )
+    set_session_cookie(response, access_token)
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)
