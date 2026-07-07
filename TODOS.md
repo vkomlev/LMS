@@ -124,9 +124,12 @@
   **Вердикт: ОТКЛОНЕНО** — найден **S1**: реальный прод-пароль `cb_prod` (+ IP БД)
   закоммичен в ContentBackbone как literal-строка в тестовом файле
   (`tests/test_content_hub_dsn_normalization.py`, коммит `bd56b00`, уже на
-  `origin/main`). **Требуется действие оператора: ротация пароля `cb_prod` в
-  панели Timeweb DBaaS** — заведена отдельная задача
-  `D:\Work\Root\tasks\tsk-170-rotate-cb-prod-password.md`, P0.
+  `origin/main`). **Пароль ротирован оператором** (панель Timeweb DBaaS) и
+  раскатан во все найденные потребители — `ContentBackbone/.env`, `.mcp.json`
+  (LMS + ContentBackbone), и **`ContentAnalyzer/.env`** (найден как третий
+  потребитель, не учтённый в исходном скоупе review-gate) — подтверждено живыми
+  подключениями на каждом. `D:\Work\Root\tasks\tsk-170-rotate-cb-prod-password.md`
+  закрыта.
   Остальные 3 находки (все non-blocking, S2) исправлены сразу: (1) тест переписан
   на синтетический DSN с теми же спецсимволами, коммит CB `e0b2bfb`; (2) SPW
   `.mcp.json` был не защищён (пока только dev-заглушка, но тот же класс риска) —
