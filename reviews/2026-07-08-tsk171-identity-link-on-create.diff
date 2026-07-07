@@ -1,0 +1,42 @@
+diff --git a/app/services/users_service.py b/app/services/users_service.py
+index 0085ce9..e6512af 100644
+--- a/app/services/users_service.py
++++ b/app/services/users_service.py
+@@ -6,6 +6,7 @@ from sqlalchemy.sql import ColumnElement
+ 
+ from app.models.users import Users
+ from app.repos.users_repo import UsersRepository
++from app.services.auth import identity_link_service
+ from app.services.base import BaseService
+ 
+ 
+@@ -23,8 +24,28 @@ class UsersService(BaseService[Users]):
+         больше не подставляется. Тру-passwordless flow Y-1: для создаваемых
+         users поле всегда `NULL`. Полное удаление колонки запланировано
+         в M14 (tsk-004 этап 2).
++
++        tsk-171: если заданы `email` и/или `tg_id` — синхронно регистрируем
++        identity_link (kind='email'/'tg') в ТОЙ ЖЕ транзакции, что и вставку
++        users. Иначе пользователь становится «orphan» для auth-флоу SPW
++        (в `users.email` есть запись без identity_link → magic-link и VK
++        отдают 409 «email в нестандартном состоянии»), а созданный ботом
++        преподаватель вообще не может войти в SPW. См. magic_link_service
++        (orphan-ветка) и ADR-0021 §2.
+         """
+-        return await self.repo.create(db, dict(obj_in))
++        data = dict(obj_in)
++        email = data.get("email")
++        tg_id = data.get("tg_id")
++        # commit=False: user + identity_link коммитятся одной транзакцией;
++        # при ошибке привязки ничего не сохраняется (нет partial-state).
++        user = await self.repo.create(db, data, commit=False)
++        if email:
++            await identity_link_service.upsert_identity(db, user.id, "email", email)
++        if tg_id is not None:
++            await identity_link_service.upsert_identity(db, user.id, "tg", str(tg_id))
++        await db.commit()
++        await db.refresh(user)
++        return user
+ 
+     async def get_id_by_tg_id(self, db: AsyncSession, tg_id: int) -> int | None:
+         """
