@@ -44,6 +44,7 @@
 
 | Миграция | Содержание |
 |---|---|
+| `20241231_235959_baseline_pre_alembic_schema` | Baseline: 18 таблиц, поднятых до начала трекинга Alembic |
 | `20250101_000000_add_courses_triggers` | Базовые триггеры курсов |
 | `20260124_175541_migrate_course_parents_to_many_to_many` | Переход parent→M2M |
 | `20260124_190000_add_order_number_to_course_parents` | `order_number` для иерархии |
