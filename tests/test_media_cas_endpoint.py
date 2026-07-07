@@ -40,6 +40,7 @@ _GOOD_SHA = "a" * 64          # 64 hex-символа 'a' — валидный s
 _GOOD_PNG  = f"{_GOOD_SHA}.png"
 _GOOD_PDF  = f"{_GOOD_SHA}.pdf"
 _GOOD_XLS  = f"{_GOOD_SHA}.xls"
+_GOOD_RAR  = f"{_GOOD_SHA}.rar"   # tsk-164: ОГЭ №13 файл-вложение (архив)
 
 
 # ─── фикстура: временная CAS-директория ──────────────────────────────────────
@@ -99,6 +100,17 @@ async def test_ok_xls(cas_root: Path):
         r = await c.get(f"/api/v1/media/{_GOOD_XLS}")
     assert r.status_code == 200, r.text
     assert "vnd.ms-excel" in r.headers["content-type"]
+
+
+@pytest.mark.asyncio
+async def test_ok_rar(cas_root: Path):
+    """HTTP 200 для rar (tsk-164: файл-вложение ОГЭ №13), content-type = application/vnd.rar."""
+    _write_cas_file(cas_root, _GOOD_RAR, b"Rar!\x1a\x07\x01\x00")
+    from app.api.main import app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get(f"/api/v1/media/{_GOOD_RAR}")
+    assert r.status_code == 200, r.text
+    assert "vnd.rar" in r.headers["content-type"]
 
 
 @pytest.mark.asyncio

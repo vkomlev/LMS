@@ -56,6 +56,16 @@ _EXT_CONTENT_TYPE: dict[str, str] = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xls":  "application/vnd.ms-excel",
     "csv":  "text/csv; charset=utf-8",
+    # tsk-164 (CB ADR-0049): файлы-вложения ОГЭ №13 — шаблоны презентаций и архивы
+    # (sdamgia отдаёт «Хорек.rar»). Зеркалит allowlist CB cas_downloader.py, иначе
+    # LMS отвергает sha_ext с этими расширениями (400) и файл недоступен студенту.
+    "rar":  "application/vnd.rar",
+    "zip":  "application/zip",
+    "doc":  "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "ppt":  "application/vnd.ms-powerpoint",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "odp":  "application/vnd.oasis.opendocument.presentation",
 }
 
 # Regex для валидации sha_ext:
