@@ -105,26 +105,6 @@
 - **Зависит от / блокируется:** ничем не блокируется, но стоит сделать до следующего раза,
   когда понадобится поднять ещё одну чистую копию БД (staging, тесты, ещё один регион).
 
-### Переключить site-wide CSP в SPW с Report-Only на enforcing (tsk-162)
-- **Что:** site-wide CSP (не только `/embed/:path*`) реализован и задеплоен на прод в
-  режиме `Content-Security-Policy-Report-Only` (только логирует нарушения, ничего не
-  блокирует) — коммит `9aec206`. Allowlist собран по факту использования (telegram.org,
-  vk.com/youtube-nocookie.com, s3.twcstorage.ru, api.learn.victor-komlev.ru).
-- **Почему `unsafe-inline` для script-src, не nonce:** пробовал nonce-based CSP (строже) —
-  выяснилось, что Next.js применяет nonce только при dynamic rendering КАЖДОЙ страницы
-  (парсит nonce из CSP-заголовка только во время SSR на запрос) — статика/ISR/CDN-кэш стали
-  бы невозможны для всего приложения, включая сейчас-статичные `/me/messages`,
-  `/me/notifications` и т.п. Решение — `unsafe-inline` для script-src тоже (не только
-  style-src): task_content HTML уже жёстко санитизируется DOMPurify (FORBID_TAGS
-  script/iframe/style) — основной XSS-рубеж уже есть; CSP даёт реальную защиту на уровне
-  connect-src/img-src/frame-src, не пытаясь закрыть script-src ценой архитектуры.
-- **Контекст:** найдено 2026-07-06 при независимом ревью Кодекса (tsk-159). Реализация и
-  находки — `D:\Work\Root\tasks\tsk-162-csp-site-wide-spw.md`.
-- **Зависит от / блокируется:** нужно живое наблюдение за Report-Only (несколько дней
-  реального трафика или один ручной проход по ключевым страницам с DevTools console) —
-  убедиться, что нет неожиданных violation-репортов, прежде чем менять
-  `Content-Security-Policy-Report-Only` → `Content-Security-Policy` в `next.config.ts`.
-
 ### `deploy.sh`/`rollback.sh` могут потребовать пароль sudo при неинтерактивном запуске (без pty)
 - **Что:** на `lms-spw-vds` в sudoers включён `Defaults use_pty` — sudo пытается выделить
   настоящий псевдотерминал для команды, даже когда для неё есть NOPASSWD-правило. При запуске
@@ -207,5 +187,20 @@
   поддомене того же сайта (WordPress). Независимое ревью PASS; проактивно найден и закрыт
   доп. обход через `Transfer-Encoding: chunked`. Задеплоено на прод, подтверждено живым
   curl'ом (415 на bypass-попытку). Коммиты: `d2d7e74`, `e48a5d7`, `b0e86ed`.
+- 2026-07-07: site-wide CSP в SPW (tsk-162) — переведена из Report-Only в блокирующий
+  (`enforcing`) режим после 3 живых прогонов оператора на проде без остаточных находок
+  (VK login-iframe `*.vk.com`, WP img-src `victor-komlev.ru`, `unsafe-eval` для TG Mini App).
+  `unsafe-inline` для script/style — осознанный выбор вместо nonce-CSP: nonce требует
+  dynamic rendering всех страниц (задокументировано в CSP-гайде Next.js), а task_content
+  HTML и так жёстко санитизируется DOMPurify (FORBID_TAGS script/iframe/style) — это
+  основной XSS-рубеж. Коммит `3646e26`, задеплоено, подтверждено curl'ом + автономной
+  живой проверкой браузером (`claude-in-chrome`) на реальной странице курса с TG WebApp +
+  VK-видео — без CSP-ошибок в консоли. Попутно обнаружена и заведена отдельной задачей
+  (tsk-163) недоработка парсера ContentBackbone: часть заданий из внешних источников
+  (КомпЕГЭ/РешуЕГЭ/Поляков) не имеет прикреплённых медиафайлов + случайно затянутый в
+  контент трекинг-пиксель Яндекс.Метрики (`mc.yandex.ru`, 38 заданий) — решение: не
+  расширять CSP allow-list на сторонние домены, чинить парсер/докачку. Осталось:
+  независимое ревью CSP-правки (production-critical). Детали —
+  `D:\Work\Root\tasks\tsk-162-csp-site-wide-spw.md`.
 - 2026-07-05: экранирование `%` в `DATABASE_URL` для Alembic ConfigParser (падал на
   URL-encoded паролях вида `%251MVd...%3Df`) — `app/db/migrations/env.py` (eb60788)
