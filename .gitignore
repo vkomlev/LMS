@@ -48,6 +48,7 @@ docs/*
 # Secrets and credentials
 secrets/*
 !secrets/.gitkeep
+.mcp.json
 # Игнорируем все JSON файлы с credentials (но не конфигурационные)
 *.credentials.json
 *service-account*.json
