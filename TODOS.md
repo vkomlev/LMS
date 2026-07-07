@@ -108,15 +108,15 @@
 
 - 2026-07-07: восстановлена корректная начальная Alembic-миграция (tsk-005) —
   `alembic upgrade head` на полностью пустой БД теперь работает от начала до конца
-  (все 35 миграций подряд), без ручного `pg_dump`+`stamp head`. Новая миграция
-  `20241231_235959_baseline_pre_alembic_schema.py` (revision `baseline_pre_alembic_schema`,
-  новый настоящий корень цепочки) создаёт 18 таблиц, которых не было ни в одной из 34
-  прежних миграций (`achievements`, `courses`, `difficulties`, `roles`, `users`,
-  `access_requests`, `attempts`, `course_dependencies`, `materials`, `messages`,
-  `notifications`, `social_posts`, `student_teacher_links`, `tasks`, `user_achievements`,
-  `user_courses`, `user_roles`, `task_results`) — исходная схема была поднята
-  напрямую до начала трекинга Alembic. `add_courses_triggers.down_revision` теперь
-  указывает на новую миграцию вместо `None`.
+  (все 34 миграции подряд, включая новую), без ручного `pg_dump`+`stamp head`. Новая
+  миграция `20241231_235959_baseline_pre_alembic_schema.py` (revision
+  `baseline_pre_alembic_schema`, новый настоящий корень цепочки) создаёт 18 таблиц,
+  которых не было ни в одной из 33 прежних миграций (`achievements`, `courses`,
+  `difficulties`, `roles`, `users`, `access_requests`, `attempts`, `course_dependencies`,
+  `materials`, `messages`, `notifications`, `social_posts`, `student_teacher_links`,
+  `tasks`, `user_achievements`, `user_courses`, `user_roles`, `task_results`) —
+  исходная схема была поднята напрямую до начала трекинга Alembic.
+  `add_courses_triggers.down_revision` теперь указывает на новую миграцию вместо `None`.
   Точный DDL получен не рефлексией текущей БД (многие из этих таблиц с тех пор
   сильно менялись — `materials`/`tasks`/`notifications` лишились бы половины
   реальных исторических столбцов, а более поздние `add_column` упали бы на
@@ -129,7 +129,15 @@
   Существующие dev/prod БД (уже на более поздних ревизиях) не затронуты — Alembic
   не перевыполняет уже пройденные шаги, `alembic upgrade head` на них остаётся no-op.
   Полный прогон тестов (`pytest tests/`, 506 тестов) — 12 падений совпадают 1-в-1
-  с падениями на чистом `main` (проверено `git stash`) — эта правка не вносит регрессий.
+  с падениями на чистом `main` (проверено `git stash` ДО коммита фикса, пока правка
+  ещё была в рабочем дереве — не путать с последующей проверкой уже закоммиченного
+  состояния, для которой `git stash` не применим) — эта правка не вносит регрессий.
+  **Независимое ревью (paranoid) нашло blocking-баг** — `UNIQUE NULLS DISTINCT`
+  требует Postgres 15+, а проект документирует минимум PG 13+ (dev/prod сейчас на
+  PG18, но контракт совместимости шире) — исправлено на простой `UNIQUE` (семантика
+  идентична, `NULLS DISTINCT` — просто default-поведение начиная с любой версии
+  Postgres). Пересчитано число миграций в докстринге (34, не 35). Перепроверено
+  после фикса: полный прогон с нуля + сравнение схемы с `Learn` 1-в-1 — чисто.
 - 2026-07-07: tsk-163 и производные (tsk-164..168) — все закрыты. Два параллельных
   чипа ContentBackbone доделали докачку медиа/файлов-вложений и по пути нашли и
   закрыли ещё 4 находки за пределами исходного скоупа: tsk-164 (реальные варианты
