@@ -1,7 +1,7 @@
 # app/repos/courses_repo.py
 
 from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
-from sqlalchemy import select, text, delete, insert
+from sqlalchemy import select, text, delete, insert, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -185,68 +185,87 @@ class CoursesRepository(BaseRepository[Courses]):
         ⚠️ ВАЖНО: Привязка преподавателей и студентов возможна только к курсам без родителей.
         Проверка выполняется на уровне БД через триггеры.
         """
-        # Если replace=True, удаляем все существующие связи
-        if replace:
-            delete_stmt = delete(t_course_parents).where(
-                t_course_parents.c.course_id == course_id
-            )
-            await db.execute(delete_stmt)
-            existing_parent_ids = set()
-        else:
-            # Получаем список существующих связей
-            existing_links_stmt = select(t_course_parents).where(
-                t_course_parents.c.course_id == course_id
-            )
-            existing_links_result = await db.execute(existing_links_stmt)
-            existing_links = existing_links_result.all()
-            existing_parent_ids = {link.parent_course_id for link in existing_links}
-        
-        # Определяем новые родители для добавления
-        new_parent_ids = set()
+        # Текущие связи читаем всегда (нужны и для replace, и для добавления).
+        existing_links_stmt = select(t_course_parents).where(
+            t_course_parents.c.course_id == course_id
+        )
+        existing_links = (await db.execute(existing_links_stmt)).all()
+        existing_parent_ids = {link.parent_course_id for link in existing_links}
+
+        # Целевые родители из аргументов.
         if parent_courses is not None:
-            new_parent_ids = {pc.get("parent_course_id") for pc in parent_courses}
+            desired_parent_ids = {pc.get("parent_course_id") for pc in parent_courses}
         elif parent_course_ids is not None:
-            new_parent_ids = set(parent_course_ids)
-        
-        # Определяем, какие родители нужно добавить (которых еще нет)
-        parents_to_add = new_parent_ids - existing_parent_ids
-        
-        # Если нет новых родителей для добавления, ничего не делаем
-        if not parents_to_add:
+            desired_parent_ids = set(parent_course_ids)
+        else:
+            desired_parent_ids = set()
+
+        # Какие связи добавить (INSERT). Заполняется ниже с учётом replace.
+        parents_to_insert: set = desired_parent_ids - existing_parent_ids
+
+        if replace:
+            to_remove = list(existing_parent_ids - desired_parent_ids)
+            to_add = list(desired_parent_ids - existing_parent_ids)
+            # tsk-174: НЕ делаем bulk `DELETE FROM course_parents` — он каскадит
+            # AFTER-DELETE триггер пересчёта order_number в re-entrancy (asyncpg
+            # TriggeredDataChangeViolationError: "tuple to be updated was already
+            # modified by an operation triggered by the current command"). Вместо
+            # DELETE+INSERT переносим родителя in-place: UPDATE parent_course_id
+            # НЕ меняет order_number → триггер видит NEW.order_number == OLD и выходит
+            # рано (без пересчёта соседей и без каскада).
+            swaps = min(len(to_remove), len(to_add))
+            for i in range(swaps):
+                await db.execute(
+                    sql_update(t_course_parents)
+                    .where(
+                        t_course_parents.c.course_id == course_id,
+                        t_course_parents.c.parent_course_id == to_remove[i],
+                    )
+                    .values(parent_course_id=to_add[i])
+                )
+            # Остаток удаляемых (нет пары под swap) — точечный DELETE конкретного ребра.
+            for pid in to_remove[swaps:]:
+                await db.execute(
+                    delete(t_course_parents).where(
+                        t_course_parents.c.course_id == course_id,
+                        t_course_parents.c.parent_course_id == pid,
+                    )
+                )
+            # После swap'ов эти пары уже добавлены — из INSERT их убираем.
+            parents_to_insert = set(to_add[swaps:])
+
+        # Если нечего вставлять — коммитим и выходим (swap'ы/удаления уже применены).
+        if not parents_to_insert:
             await db.commit()
             return
-        
-        # Определяем, какие данные использовать для добавления
+
+        # Данные для INSERT новых связей (триггер синхронизирует связи преподавателей).
         if parent_courses is not None:
-            # Используем parent_courses (с приоритетом), но только для новых родителей
             values = [
                 {
                     "course_id": course_id,
                     "parent_course_id": pc.get("parent_course_id"),
-                    "order_number": pc.get("order_number")  # Может быть None - триггер установит автоматически
+                    "order_number": pc.get("order_number"),  # None → триггер проставит
                 }
                 for pc in parent_courses
-                if pc.get("parent_course_id") in parents_to_add
+                if pc.get("parent_course_id") in parents_to_insert
             ]
         elif parent_course_ids is not None:
-            # Используем parent_course_ids, но только для новых родителей
             values = [
                 {
                     "course_id": course_id,
                     "parent_course_id": pid,
-                    "order_number": None  # Триггер установит автоматически
+                    "order_number": None,  # триггер проставит
                 }
                 for pid in parent_course_ids
-                if pid in parents_to_add
+                if pid in parents_to_insert
             ]
         else:
             values = []
-        
-        # Создаем новые связи (триггер автоматически синхронизирует связи преподавателей)
+
         if values:
             await db.execute(t_course_parents.insert().values(values))
-        
-        # Commit выполняется после добавления
+
         await db.commit()
     
     async def update_course_parent_order(
