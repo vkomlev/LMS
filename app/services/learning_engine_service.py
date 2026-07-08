@@ -445,15 +445,32 @@ class LearningEngineService:
         return NextItemResult(type="none", reason="Все элементы пройдены или заблокированы")
 
     async def _collect_courses_in_order(self, db: AsyncSession, root_id: int) -> List[int]:
-        """Курсы для обхода: root и потомки в порядке course_parents.order_number (рекурсивно)."""
+        """
+        Курсы для обхода: потомки (рекурсивно, по course_parents.order_number),
+        затем сам курс — POST-ORDER.
+
+        tsk-127 (первопричина, 2026-07-08): раньше обход был PRE-ORDER (сначала
+        сам курс, потом дети). Из-за этого материалы, привязанные НАПРЯМУЮ к
+        корневому/родительскому курсу, выдавались раньше, чем контент его
+        подкурсов — и студент, идущий по дереву глав, «выкидывался» на материал
+        с корня (например дубль-импорт `authored:*` на корне 825). Правильная
+        модель (решение оператора): у каждого подкурса своя очередность —
+        сперва спускаемся в подкурсы и берём материалы оттуда, а материалы
+        самого курса-контейнера отдаём в ПОСЛЕДНЮЮ очередь.
+
+        Порядок между детьми — course_parents.order_number ASC NULLS LAST, id.
+        Используется resolve_next_item (порядок важен) и compute_course_state
+        (там дерево берётся как множество — порядок безразличен).
+        """
         result: List[int] = []
 
         async def walk(course_id: int) -> None:
-            result.append(course_id)
             children = await self._courses_repo.get_children(db, course_id)
             # order_number ASC NULLS LAST, затем id
             for _c, _ord in sorted(children, key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id)):
                 await walk(_c.id)
+            # Материалы/задания самого курса — после всех его подкурсов (post-order).
+            result.append(course_id)
 
         await walk(root_id)
         return result

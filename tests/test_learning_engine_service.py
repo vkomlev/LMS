@@ -408,6 +408,70 @@ async def test_resolve_next_item_skips_passed_in_active_attempt():
             return False
 
 
+async def test_collect_courses_post_order():
+    """
+    tsk-127 (первопричина, 2026-07-08): _collect_courses_in_order обходит дерево
+    POST-ORDER — подкурсы раньше курса-контейнера. Инвариант: каждый курс идёт
+    ПОСЛЕ всех своих детей, корень — строго последним. Так next-item выдаёт
+    контент подкурсов раньше материалов, привязанных напрямую к корню
+    (регресс на дубль-импорт `authored:*` на корневом курсе).
+    """
+    print("\n=== Тест: _collect_courses_in_order post-order (подкурсы раньше корня) ===")
+    engine = create_async_engine(settings.database_url)
+    async_session = async_sessionmaker(engine, expire_on_commit=False)
+    svc = LearningEngineService()
+
+    async with async_session() as session:
+        try:
+            # Корень с максимальным числом потомков — самый показательный кейс.
+            r = await session.execute(text("""
+                SELECT parent_course_id, COUNT(*) AS n
+                FROM course_parents
+                GROUP BY parent_course_id
+                ORDER BY n DESC
+                LIMIT 1
+            """))
+            row = r.first()
+            if not row:
+                print("[SKIP] Нет ни одного курса с подкурсами (course_parents пуст)")
+                return True
+            root_id = int(row[0])
+
+            order = await svc._collect_courses_in_order(session, root_id)
+            assert order, "Обход вернул пустой список"
+            assert order[-1] == root_id, (
+                f"Post-order нарушен: корень {root_id} должен быть последним, "
+                f"а список кончается на {order[-1]}"
+            )
+            pos = {cid: i for i, cid in enumerate(order)}
+
+            # Инвариант post-order: индекс родителя > индекса каждого его ребёнка.
+            edges = await session.execute(text("""
+                SELECT parent_course_id, course_id
+                FROM course_parents
+                WHERE parent_course_id = ANY(:ids) AND course_id = ANY(:ids)
+            """), {"ids": order})
+            checked = 0
+            for parent_id, child_id in edges.fetchall():
+                if parent_id in pos and child_id in pos:
+                    assert pos[child_id] < pos[parent_id], (
+                        f"Post-order нарушен: подкурс {child_id} (поз {pos[child_id]}) "
+                        f"идёт ПОСЛЕ родителя {parent_id} (поз {pos[parent_id]})"
+                    )
+                    checked += 1
+            print(f"[PASS] root={root_id}, курсов в обходе={len(order)}, "
+                  f"проверено рёбер родитель→ребёнок={checked}, корень последний")
+            return True
+        except AssertionError as e:
+            print(f"[FAIL] {e}")
+            return False
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
 async def main():
     print("=" * 60)
     print("Тесты Learning Engine Service (этап 2)")
@@ -422,6 +486,7 @@ async def main():
         await test_resolve_next_item_with_active(),
         await test_compute_task_state_active_attempt_passed(),
         await test_resolve_next_item_skips_passed_in_active_attempt(),
+        await test_collect_courses_post_order(),
     ]
     print("\n" + "=" * 60)
     print("ИТОГИ:")
