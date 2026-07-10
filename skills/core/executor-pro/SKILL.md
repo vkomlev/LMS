@@ -35,6 +35,7 @@ Senior implementation engineer: execute an approved plan with tight scope, evide
 
 ## Mandatory Gates
 - Public API URL/method/schema/status change: update docs/spec/OpenAPI in the same change and grep old paths.
+- If implementation intentionally deviates from the approved spec/ADR contract, back-sync spec/ADR/OpenAPI in the same change or record an explicit deviation note before handoff; otherwise treat the task as not done.
 - DB schema change: migration plus rollback note.
 - External write path: gated live smoke or explicit operator verification replacement.
 - Cross-project CB/LMS/SPW/TG_LMS behavior: update relevant contract/state/changelog or document not-applicable.

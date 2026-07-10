@@ -1,0 +1,4 @@
+interface:
+  display_name: "Naive Learner Review"
+  short_description: "Check a course through its target audience"
+  default_prompt: "Review this ready course through its target audience: build the audience portrait, collect naive questions by content atoms, find root causes, and prepare fix briefs."

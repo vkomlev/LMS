@@ -21,6 +21,19 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - canonical source-of-truth;
 - required mirrors/runtime copies;
 - runtime class: `codex-runtime`, `project-runtime`, or `external-runtime`.
+If the target is a shared resource from `D:/Work/Root/agents/ownership.md`, apply
+Step 0-A from `D:/Work/Root/agents/README.md`: check claims, read the ledger,
+create a claim before writing, and release it with a ledger entry after
+verification.
+4a. Run the second-opinion gate for critical work:
+- apply `D:/Work/Root/agents/second-opinion.md` for architecture, skill or
+  infrastructure standards, course review before WP/LMS publication, critical
+  refactors/migrations, irreversible external actions, or any explicit operator
+  request;
+- preserve phase-1 isolation: do not read the other agent's `claude-*`/`codex-*`,
+  `*-proposal.md`, or handoff artifacts before your independent pass;
+- after exchange, import stronger findings without escalating agreement; escalate
+  only real unresolved disagreement to the operator-arbiter.
 5. Run the mandatory improvement loop:
 - log the incident in the error register;
 - run `5 Whys`;
@@ -76,8 +89,11 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - import platform-neutral invariants and adapt platform-specific mechanics through [references/codex-project-binding.md](references/codex-project-binding.md);
 - update source-of-truth first, then package runtime and project mirrors.
 16. For rollout, use [references/rollout-ops.md](references/rollout-ops.md) and do dry-run first.
-17. Finish with deterministic commands, expected artifacts, and verification.
-18. For unattended weekly skill improvements, use [references/booster-shared.md](references/booster-shared.md) and stage edits through `scripts/weekly-skill-maintenance.py`; never write automated improvements directly into canonical skills.
+17. For project-bound generated assets and handoffs, reconcile every requested asset before closure:
+`requested -> generated -> saved in workspace -> inserted or explicitly delegated/rejected/blocked -> published/verified when in scope`.
+Do not report asset work as complete while approved generated files remain orphaned on disk with no consuming reference or explicit owner.
+18. Finish with deterministic commands, expected artifacts, and verification.
+19. For unattended weekly skill improvements, use [references/booster-shared.md](references/booster-shared.md) and stage edits through `scripts/weekly-skill-maintenance.py`; never write automated improvements directly into canonical skills.
 
 ## Input Contract
 - `Mode`
@@ -99,6 +115,8 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - `Skill Packaging Checks`
 - `Runtime Placement Check`
 - `Runtime Boundary Check`
+- `Cross-Agent Claim Check`
+- `Second-Opinion Gate`
 - `Mirror Parity Check`
 - `Claude Practice Import Map`
 - `Post-Edit Skill Index Check`
@@ -110,6 +128,8 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 ## Quality Rules
 - Never close an improvement task without: register entry, `5 Whys`, culprit patch, and verification.
 - Never patch only one copy when the same skill has required mirrors.
+- Never edit a shared resource listed in `D:/Work/Root/agents/ownership.md` without checking live claims and recording your own claim/ledger entry.
+- Never skip `D:/Work/Root/agents/second-opinion.md` for critical decisions or explicit operator second-opinion requests; never read the other agent's isolated artifacts before your own independent pass.
 - Never apply Codex packaging assumptions to project/external runtimes without evidence or explicit user request.
 - Treat fleet updates as incomplete until affected project mirrors were checked or synchronized.
 - Prefer compact, reusable guardrails over incident-specific rule accretion.
@@ -117,5 +137,6 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 - Treat any CLI-driven non-ASCII file update as incomplete until encoding was validated by explicit UTF-8 and byte-level parity checks.
 - Treat "missing Codex/Claude buttons" as unresolved until extension activation and workspace `state.vscdb` view visibility were both checked.
 - Treat UTF-8 as the required steady-state encoding for touched text artifacts unless a documented runtime constraint says otherwise.
+- Treat project-bound generated assets as unresolved until every generated file is consumed by the project, explicitly delegated, rejected, or blocked; a PNG on disk is not a completed visual.
 - In `optimize` mode, prefer behavioral equivalence with fewer instructions over verbatim preservation of duplicated wording.
 - In `import-claude` mode, import invariants and verified workflow patterns; do not copy Claude-only permissions, command syntax, hooks, or runtime assumptions without a Codex mapping.

@@ -39,6 +39,8 @@ This catalog tracks the managed Codex Booster skill set and nearby runtime capab
 - `digital-copywriter`: Russian digital content for TG, VK, site, email, and reality/process formats.
 - `smm-specialist`: TG/VK strategy, content calendars, warmup chains, and attraction tactics.
 - `methodist`: IT course modules, learning plans, assignments, rubrics, and LMS/WP export-ready projections.
+- `naive-learner-review`: review ready courses through the actual target audience, collecting naive questions by content atoms, visual/navigation issues, root causes, and fix briefs.
+- `expert-course-review`: audit ready courses against an expert pedagogy rubric with grade and prioritized fixes.
 - `travel-copywriter`: Russian travel content for posts, blogs, guides, and itinerary-style materials.
 
 ## Nearby Non-Managed Skills

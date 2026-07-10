@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expert Course Review"
+  short_description: "Audit a ready course by pedagogy rubric"
+  default_prompt: "Audit this ready course against the expert pedagogy rubric and return prioritized findings, grade, and concrete fixes."
