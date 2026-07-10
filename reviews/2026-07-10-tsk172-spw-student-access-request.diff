@@ -1,0 +1,165 @@
+warning: in the working copy of 'app/services/auth/role_assign_service.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/api/v1/auth/magic_link.py b/app/api/v1/auth/magic_link.py
+index 4ddab63..11da274 100644
+--- a/app/api/v1/auth/magic_link.py
++++ b/app/api/v1/auth/magic_link.py
+@@ -18,6 +18,7 @@ from app.services.auth import magic_link_service, session_service
+ from app.services.auth.cookie import set_session_cookie
+ from app.services.auth.exceptions import IdentityConflictError
+ from app.services.auth.guest_attribution_service import attribute_guest_session
++from app.services.auth.role_assign_service import ensure_student_access_request
+ from app.services.audit_service import log_event
+ from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+@@ -127,6 +128,14 @@ async def verify_magic_link(
+ 
+     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
+     await log_event(db, "login_magic_link", user_id=user.id, ip=ip)
++    # tsk-172: role-holder без student-роли → заявка на student в очередь
++    # одобрения админ-бота. Soft-fail: сбой не должен блокировать вход.
++    try:
++        await ensure_student_access_request(db, user.id, channel="magic_link")
++    except Exception:
++        logger.exception(
++            "tsk-172 ensure_student_access_request failed user_id=%s", user.id
++        )
+     await db.commit()
+ 
+     set_session_cookie(response, access_token)
+diff --git a/app/api/v1/auth/tg.py b/app/api/v1/auth/tg.py
+index d9b3ccf..0465a84 100644
+--- a/app/api/v1/auth/tg.py
++++ b/app/api/v1/auth/tg.py
+@@ -16,6 +16,7 @@ from app.services.auth.tg_init_service import (
+     verify_tg_init_data,
+ )
+ from app.services.auth.cookie import set_session_cookie
++from app.services.auth.role_assign_service import ensure_student_access_request
+ from app.services.audit_service import log_event
+ from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+@@ -65,6 +66,13 @@ async def tg_init(
+ 
+     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
+     await log_event(db, "login_tg_initdata", user_id=user.id, ip=ip)
++    # tsk-172: role-holder без student-роли → заявка на student. Soft-fail.
++    try:
++        await ensure_student_access_request(db, user.id, channel="tg_init")
++    except Exception:
++        logger.exception(
++            "tsk-172 ensure_student_access_request failed user_id=%s", user.id
++        )
+     await db.commit()
+ 
+     set_session_cookie(response, access_token)
+diff --git a/app/api/v1/auth/vk.py b/app/api/v1/auth/vk.py
+index eee6eab..3489660 100644
+--- a/app/api/v1/auth/vk.py
++++ b/app/api/v1/auth/vk.py
+@@ -17,6 +17,7 @@ from app.services.auth.vk_oauth_service import (
+     get_or_create_user_by_vk,
+ )
+ from app.services.auth.cookie import set_session_cookie
++from app.services.auth.role_assign_service import ensure_student_access_request
+ from app.services.audit_service import log_event
+ from app.services.rate_limit_service import get_redis, is_rate_limited
+ 
+@@ -89,6 +90,13 @@ async def vk_callback(
+ 
+     access, refresh, _ = await session_service.create_session(db, user.id, ua)
+     await log_event(db, "login_vk_oauth", user_id=user.id, ip=ip)
++    # tsk-172: role-holder без student-роли → заявка на student. Soft-fail.
++    try:
++        await ensure_student_access_request(db, user.id, channel="vk_callback")
++    except Exception:
++        logger.exception(
++            "tsk-172 ensure_student_access_request failed user_id=%s", user.id
++        )
+     await db.commit()
+ 
+     set_session_cookie(response, access)
+diff --git a/app/services/auth/role_assign_service.py b/app/services/auth/role_assign_service.py
+index 657a381..4d0a377 100644
+--- a/app/services/auth/role_assign_service.py
++++ b/app/services/auth/role_assign_service.py
+@@ -23,8 +23,10 @@ from __future__ import annotations
+ import logging
+ 
+ from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.models.access_requests import AccessRequests
+ from app.services import audit_service
+ 
+ logger = logging.getLogger(__name__)
+@@ -101,3 +103,69 @@ async def ensure_student_role(
+         user_id, channel, origin,
+     )
+     return True
++
++
++async def ensure_student_access_request(
++    db: AsyncSession,
++    user_id: int,
++    *,
++    channel: str,
++) -> bool:
++    """Создать заявку (access_request) на роль student для role-holder без student.
++
++    Мотивация (tsk-172): пользователь, у которого УЖЕ есть роль (teacher/
++    methodist/admin), при входе в SPW не получает student автоматически —
++    `ensure_student_role` назначает роль только при ПОЛНОМ отсутствии ролей.
++    Чтобы совмещение ролей (teacher+student) можно было выдать через штатный
++    поток одобрения, формируем заявку `not_ready`, которая попадает в очередь
++    админ-бота.
++
++    Правила (вариант A, tsk-172):
++    - нет НИ ОДНОЙ роли → no-op (pure student: авто-назначение делает
++      `ensure_student_role`, без approval);
++    - уже есть роль student → no-op;
++    - уже есть заявка на student в ЛЮБОМ статусе → no-op (не дублируем и не
++      воскрешаем после rejected/completed);
++    - иначе INSERT access_request(role_id=student, flag='not_ready').
++
++    Идемпотентно. Caller отвечает за commit. Soft-fail: caller оборачивает в
++    try/except, чтобы сбой создания заявки не блокировал вход. Возвращает True,
++    если заявка создана сейчас.
++    """
++    roles = (
++        await db.execute(
++            text("SELECT role_id FROM user_roles WHERE user_id = :uid"),
++            {"uid": user_id},
++        )
++    ).scalars().all()
++    if not roles:
++        return False
++    if STUDENT_ROLE_ID in roles:
++        return False
++
++    existing = await db.execute(
++        text(
++            "SELECT 1 FROM access_requests "
++            "WHERE user_id = :uid AND role_id = :rid LIMIT 1"
++        ),
++        {"uid": user_id, "rid": STUDENT_ROLE_ID},
++    )
++    if existing.fetchone() is not None:
++        return False
++
++    # INSERT в SAVEPOINT (Y-1.5 lesson): сбой вставки откатывает только nested
++    # транзакцию и НЕ отравляет внешнюю — иначе последующий db.commit() в
++    # auth-эндпоинте упал бы и сломал вход, несмотря на soft-fail в caller.
++    try:
++        async with db.begin_nested():
++            db.add(AccessRequests(user_id=user_id, role_id=STUDENT_ROLE_ID))
++            await db.flush()
++    except IntegrityError:
++        # Гонка параллельного входа/иное нарушение — заявку не создаём, no-op.
++        return False
++
++    logger.info(
++        "tsk-172: student access_request created for user_id=%s (channel=%s)",
++        user_id, channel,
++    )
++    return True

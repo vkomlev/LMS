@@ -23,8 +23,10 @@ from __future__ import annotations
 import logging
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.access_requests import AccessRequests
 from app.services import audit_service
 
 logger = logging.getLogger(__name__)
@@ -99,5 +101,71 @@ async def ensure_student_role(
     logger.info(
         "Y-4 pre-S5: student role assigned to user_id=%s (channel=%s, origin=%s)",
         user_id, channel, origin,
+    )
+    return True
+
+
+async def ensure_student_access_request(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    channel: str,
+) -> bool:
+    """Создать заявку (access_request) на роль student для role-holder без student.
+
+    Мотивация (tsk-172): пользователь, у которого УЖЕ есть роль (teacher/
+    methodist/admin), при входе в SPW не получает student автоматически —
+    `ensure_student_role` назначает роль только при ПОЛНОМ отсутствии ролей.
+    Чтобы совмещение ролей (teacher+student) можно было выдать через штатный
+    поток одобрения, формируем заявку `not_ready`, которая попадает в очередь
+    админ-бота.
+
+    Правила (вариант A, tsk-172):
+    - нет НИ ОДНОЙ роли → no-op (pure student: авто-назначение делает
+      `ensure_student_role`, без approval);
+    - уже есть роль student → no-op;
+    - уже есть заявка на student в ЛЮБОМ статусе → no-op (не дублируем и не
+      воскрешаем после rejected/completed);
+    - иначе INSERT access_request(role_id=student, flag='not_ready').
+
+    Идемпотентно. Caller отвечает за commit. Soft-fail: caller оборачивает в
+    try/except, чтобы сбой создания заявки не блокировал вход. Возвращает True,
+    если заявка создана сейчас.
+    """
+    roles = (
+        await db.execute(
+            text("SELECT role_id FROM user_roles WHERE user_id = :uid"),
+            {"uid": user_id},
+        )
+    ).scalars().all()
+    if not roles:
+        return False
+    if STUDENT_ROLE_ID in roles:
+        return False
+
+    existing = await db.execute(
+        text(
+            "SELECT 1 FROM access_requests "
+            "WHERE user_id = :uid AND role_id = :rid LIMIT 1"
+        ),
+        {"uid": user_id, "rid": STUDENT_ROLE_ID},
+    )
+    if existing.fetchone() is not None:
+        return False
+
+    # INSERT в SAVEPOINT (Y-1.5 lesson): сбой вставки откатывает только nested
+    # транзакцию и НЕ отравляет внешнюю — иначе последующий db.commit() в
+    # auth-эндпоинте упал бы и сломал вход, несмотря на soft-fail в caller.
+    try:
+        async with db.begin_nested():
+            db.add(AccessRequests(user_id=user_id, role_id=STUDENT_ROLE_ID))
+            await db.flush()
+    except IntegrityError:
+        # Гонка параллельного входа/иное нарушение — заявку не создаём, no-op.
+        return False
+
+    logger.info(
+        "tsk-172: student access_request created for user_id=%s (channel=%s)",
+        user_id, channel,
     )
     return True

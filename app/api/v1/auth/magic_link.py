@@ -18,6 +18,7 @@ from app.services.auth import magic_link_service, session_service
 from app.services.auth.cookie import set_session_cookie
 from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.guest_attribution_service import attribute_guest_session
+from app.services.auth.role_assign_service import ensure_student_access_request
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
@@ -127,6 +128,14 @@ async def verify_magic_link(
 
     access_token, refresh_token, _ = await session_service.create_session(db, user.id, ua)
     await log_event(db, "login_magic_link", user_id=user.id, ip=ip)
+    # tsk-172: role-holder без student-роли → заявка на student в очередь
+    # одобрения админ-бота. Soft-fail: сбой не должен блокировать вход.
+    try:
+        await ensure_student_access_request(db, user.id, channel="magic_link")
+    except Exception:
+        logger.exception(
+            "tsk-172 ensure_student_access_request failed user_id=%s", user.id
+        )
     await db.commit()
 
     set_session_cookie(response, access_token)
