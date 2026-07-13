@@ -44,7 +44,14 @@ async def vk_callback(
             body.code, body.code_verifier, body.device_id, _settings
         )
     except ValueError as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
+        logger.warning("VK code exchange failed: %s", e)
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "code_invalid",
+                "message": "Код авторизации VK недействителен или истёк.",
+            },
+        )
 
     access_token: str = token_data["access_token"]
     refresh_token_vk: str | None = token_data.get("refresh_token")
@@ -54,7 +61,14 @@ async def vk_callback(
     try:
         userinfo = await fetch_vk_userinfo(access_token)
     except ValueError as e:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(e))
+        logger.warning("VK userinfo fetch failed: %s", e)
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "id_token_invalid",
+                "message": "Не удалось подтвердить личность через VK ID.",
+            },
+        )
 
     ua = request.headers.get("user-agent")
 
