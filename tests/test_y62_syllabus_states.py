@@ -520,7 +520,8 @@ async def test_syllabus_states_teacher_bypass(db, client):
 
 @pytest.mark.asyncio
 async def test_syllabus_states_cache_header(db, client):
-    """Cache-Control: private, max-age=15."""
+    """Cache-Control: no-store (tsk-214б — прогресс/попытки должны быть свежими
+    после submit; HTTP-кэш max-age defeated invalidateQueries)."""
     user_id, token, _ = await _create_student(db)
     root_id = await _pick_root_course(db)
     await _enroll(db, user_id, root_id)
@@ -531,7 +532,7 @@ async def test_syllabus_states_cache_header(db, client):
         )
         assert resp.status_code == 200
         cc = resp.headers.get("cache-control", "")
-        assert "private" in cc and "max-age=15" in cc, cc
+        assert "no-store" in cc and "max-age" not in cc, cc
     finally:
         await _cleanup(db, user_ids=[user_id])
 

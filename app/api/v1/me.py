@@ -147,15 +147,19 @@ async def get_course_syllabus_states(
     teacher / methodist / admin — bypass; student — только дерево
     `user_courses + course_parents`.
 
-    Cache: `private, max-age=15` — SPW агрессивно invalidate'ит queryKey
-    `["learning","syllabus-states", course_id]` после каждого submit /
-    material-complete (Y-6.2 frontend invariant).
+    Cache: `no-store` (tsk-214б). Раньше стоял `private, max-age=15` в расчёте на
+    то, что SPW invalidate'ит queryKey после submit — но HTTP-кэш браузера и кэш
+    TanStack Query это РАЗНЫЕ слои: `invalidateQueries` заново вызывает `fetch()`,
+    а браузер отдаёт ответ из HTTP-кэша по `max-age` без обращения к серверу. Из-за
+    этого счётчик прогресса/попыток отставал на ~15-25 сек и на одну попытку после
+    ответа. `no-store` заставляет refetch всегда идти на сервер; защита от лишних
+    запросов остаётся на клиентском `staleTime` TanStack, который уступает invalidate.
     """
     await assert_course_access(db, current_user=current_user, course_id=course_id)
     payload = await me_service.get_syllabus_states(
         db, user_id=current_user.id, root_course_id=course_id
     )
-    response.headers["Cache-Control"] = "private, max-age=15"
+    response.headers["Cache-Control"] = "no-store"
     return SyllabusStatesResponse(**payload)
 
 
