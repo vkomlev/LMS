@@ -2,7 +2,9 @@
 
 Покрывает:
 - M12 миграцию (idempotency check + индекс существует)
-- Stage 1 optimistic-PASSED для TA/SA_COM на submit_attempt_answers
+- optimistic-PASSED для TA на submit_attempt_answers (tsk-210: SA_COM больше
+  НЕ optimistic — у него первичная сверка с эталоном; см. attempts.py 2.3c и
+  test_claim_next_pending_filter_y42.py::test_claim_next_excludes_primary_wrong_sa_com)
 - Stage 2 derived `is_correct` в /grade (3-input formula trace + edge)
 - Stage 3 /regrade flow (positive→negative + history append)
 - Stage 4 escalation_cron_tick smoke (idempotent + advisory lock)

@@ -126,7 +126,12 @@ async def test_pending_count_excludes_auto_checked_mc(db, client):
 
 @pytest.mark.asyncio
 async def test_pending_count_includes_pending_sa_com(db, client):
-    """SA_COM с is_correct=NULL увеличивает pending-count на 1."""
+    """Первично-верный pending SA_COM (is_correct=TRUE, checked_at NULL)
+    увеличивает pending-count на 1.
+
+    tsk-210: под Y-6 pending = is_correct=TRUE (не NULL); count фильтруется
+    `is_correct IS TRUE` в паритете с claim_next_review.
+    """
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)
     task_id = await _create_task(db, course_id=1, type_="SA_COM")
@@ -136,7 +141,7 @@ async def test_pending_count_includes_pending_sa_com(db, client):
             headers={"Authorization": f"Bearer {token}"},
         )
         before = resp_before.json()["count"]
-        rid = await _create_tr(db, user_id=student_id, task_id=task_id, is_correct=None)
+        rid = await _create_tr(db, user_id=student_id, task_id=task_id, is_correct=True)
         try:
             resp_after = await client.get(
                 f"/api/v1/teacher/reviews/pending-count?teacher_id={methodist_id}",
@@ -173,11 +178,12 @@ async def test_pending_count_with_mixed_types(db, client):
         mc_rid = await _create_tr(
             db, user_id=student_id, task_id=mc_task, is_correct=False
         )
+        # tsk-210: под Y-6 первично-верный pending SA_COM = is_correct=TRUE.
         sa1 = await _create_tr(
-            db, user_id=student_id, task_id=sa_com_task, is_correct=None
+            db, user_id=student_id, task_id=sa_com_task, is_correct=True
         )
         sa2 = await _create_tr(
-            db, user_id=student_id, task_id=sa_com_task, is_correct=None
+            db, user_id=student_id, task_id=sa_com_task, is_correct=True
         )
         try:
             resp_after = await client.get(

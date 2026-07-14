@@ -74,14 +74,20 @@ async def _create_student(db) -> int:
 
 
 async def _create_pending_tr(db, *, user_id: int, task_id: int) -> int:
-    """Создать pending task_result (is_correct=NULL, без захвата)."""
+    """Создать pending task_result (is_correct=TRUE, checked_at NULL, без захвата).
+
+    tsk-210: под Y-6 реальный pending на вторичную проверку = is_correct=TRUE
+    (optimistic-PASSED для TA / первично-верный SA_COM). Очередь и счётчики
+    фильтруются `is_correct IS TRUE`; is_correct=NULL (стар. Y-4.2) больше не
+    отражает pending-состояние.
+    """
     now = datetime.now(timezone.utc)
     res = await db.execute(
         text(
             "INSERT INTO task_results "
             "(score, user_id, task_id, submitted_at, count_retry, received_at, "
             " max_score, source_system, is_correct) "
-            "VALUES (0, :u, :t, :now, 0, :now, 10, 'spw', NULL) RETURNING id"
+            "VALUES (10, :u, :t, :now, 0, :now, 10, 'spw', TRUE) RETURNING id"
         ),
         {"u": user_id, "t": task_id, "now": now},
     )

@@ -419,15 +419,31 @@ async def submit_attempt_answers(
                     attempt_id, task.id,
                 )
 
-        # 2.3c Y-6 optimistic-PASSED для TA/SA_COM:
-        # на submit student получает PASSED моментально (учебный flow не блокируется),
-        # teacher проверит через pending-queue (checked_at IS NULL); negative grade
-        # вернёт задачу студенту. Если попытка истекла по времени — не подменяем
-        # (overdue → честный FAILED, как для остальных типов).
-        if (
-            task_content.type in ("SA_COM", "TA")
-            and not attempt.time_expired
-        ):
+        # 2.3c optimistic-PASSED — для TA и БЕЗ-эталонного SA_COM (tsk-210):
+        # optimistic-PASSED нужен там, где авто-сверять нечем и вердикт ставит
+        # только учитель вручную. На submit ставим score=max_score/is_correct=True,
+        # чтобы учебный поток не блокировался; teacher проверит через pending-queue
+        # (checked_at IS NULL), negative grade вернёт задачу студенту.
+        #   - TA: эталона нет в принципе (checking_service → is_correct=None).
+        #   - SA_COM без правил (short_answer не задан) → checking_service тоже
+        #     вернул is_correct=None: сверять нечем, ведём себя как TA, иначе
+        #     задача «зависнет» (is_correct=None не пройдёт фильтр очереди учителя).
+        #
+        # SA_COM С эталоном (accepted_answers/regex) НЕ подменяем: первичный
+        # вердикт обязан идти от сверки с эталоном (вызов checking_service выше).
+        # Учитель делает ВТОРИЧНУЮ проверку (чистота кода, не ИИ ли сгенерирован)
+        # только для первично-верных ответов — см. фильтр `is_correct IS TRUE` в
+        # teacher_queue/escalation. Прежний blanket-override ставил здесь
+        # score=max_score/is_correct=True ДАЖЕ на неверные ответы (ученик видел
+        # «Верно» на заведомо неверный ответ) — баг P0 из обратной связи QA
+        # (tsk-210, находка A1).
+        #
+        # Если попытка истекла по времени — не подменяем (overdue → честный
+        # FAILED, как для остальных типов).
+        optimistic_manual = task_content.type == "TA" or (
+            task_content.type == "SA_COM" and check_result.is_correct is None
+        )
+        if optimistic_manual and not attempt.time_expired:
             check_result = CheckResult(
                 score=check_result.max_score,
                 max_score=check_result.max_score,

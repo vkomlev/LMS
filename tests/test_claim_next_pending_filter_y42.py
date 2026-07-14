@@ -153,17 +153,25 @@ async def test_claim_next_skips_auto_checked(db, client, task_type):
         )
 
 
-# ─── 4-5: positive — pending SA_COM / TA выдаются ──────────────────────────
+# ─── 4-5: positive — первично-верные pending SA_COM / TA выдаются ───────────
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("task_type", ["SA_COM", "TA"])
 async def test_claim_next_includes_pending_manual(db, client, task_type):
-    """Y-4.2: pending SA_COM/TA (is_correct IS NULL) остаются в очереди."""
+    """Первично-верные pending SA_COM/TA (is_correct=TRUE, checked_at NULL)
+    остаются в очереди на ВТОРИЧНУЮ проверку учителя.
+
+    tsk-210: под Y-6 реальные pending-записи имеют is_correct=TRUE — TA через
+    optimistic-PASSED, SA_COM через успешную сверку с эталоном. Раньше тест
+    подавал is_correct=None (стар. семантика Y-4.2 «pending = is_correct IS
+    NULL»); после tsk-210 очередь фильтруется `is_correct IS TRUE`, поэтому
+    для проверки положительного пути используем is_correct=True.
+    """
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)
     task_id = await _create_task(db, course_id=1, type_=task_type)
     rid = await _create_task_result(
-        db, user_id=student_id, task_id=task_id, is_correct=None, score=0
+        db, user_id=student_id, task_id=task_id, is_correct=True, score=10
     )
     try:
         # Изолируем по user_id (свежий student) → в пуле ровно один rid.
@@ -182,6 +190,40 @@ async def test_claim_next_includes_pending_manual(db, client, task_type):
             f"/api/v1/teacher/reviews/{rid}/release",
             json={"teacher_id": methodist_id, "lock_token": body["lock_token"]},
             headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        await _cleanup(
+            db, methodist_id=methodist_id, student_id=student_id,
+            task_ids=[task_id], rids=[rid],
+        )
+
+
+# ─── 6: tsk-210 — первично-неверный SA_COM НЕ попадает учителю ──────────────
+
+@pytest.mark.asyncio
+async def test_claim_next_excludes_primary_wrong_sa_com(db, client):
+    """tsk-210: SA_COM с is_correct=FALSE (не совпал с эталоном) — честный
+    FAILED, НЕ pending. Учителю на вторичную проверку он не выдаётся: ученик
+    уже видит «Неверно» и может пробовать снова.
+
+    Регрессия на баг P0 из обратной связи QA: раньше optimistic-PASSED ставил
+    любому SA_COM is_correct=TRUE, и неверный ответ и проходил как верный, и
+    засорял очередь учителя.
+    """
+    methodist_id, token = await _setup_methodist(db)
+    student_id = await _create_student(db)
+    task_id = await _create_task(db, course_id=1, type_="SA_COM")
+    rid = await _create_task_result(
+        db, user_id=student_id, task_id=task_id, is_correct=False, score=0
+    )
+    try:
+        body = await _claim_next(
+            client, teacher_id=methodist_id, token=token, user_id=student_id,
+            idem=f"y42-wrong-sacom-{rid}",
+        )
+        assert body.get("empty") is True, (
+            f"первично-неверный SA_COM rid={rid} не должен попадать учителю, "
+            f"но claim_next вернул item={body.get('item')}"
         )
     finally:
         await _cleanup(
