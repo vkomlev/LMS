@@ -700,10 +700,11 @@ def _compute_syllabus_task_status(row: dict) -> str:
     """Маппинг last task_result + attempts → public-status строка.
 
     Правила (см. tech-spec syllabus-states):
-    - passed         — last is_correct=TRUE, checked_at NOT NULL;
+    - passed         — last is_correct=TRUE у авто-типов (SC/MC/SA) сразу (checked_at
+                       им не ставится); у ручных (SA_COM/TA) — только при checked_at NOT NULL;
                        также квиз (SC_Qw/MC_Qw) с is_correct=NULL и score-ratio >= порога
-    - pending_review — last is_correct=TRUE, checked_at IS NULL (Y-6 optimistic);
-                       также legacy IS NULL pending для не-квизов (pre-Y-6 SA_COM/TA)
+    - pending_review — last is_correct=TRUE, checked_at IS NULL ТОЛЬКО у ручных
+                       SA_COM/TA (Y-6 optimistic, ждёт проверки учителя)
     - failed         — last is_correct=FALSE и attempts_used < limit;
                        также квиз с is_correct=NULL, score-ratio < порога, attempts_used < limit
     - blocked_limit  — is_correct=FALSE/квиз с недобором баллов и attempts_used >= limit
@@ -729,7 +730,16 @@ def _compute_syllabus_task_status(row: dict) -> str:
         return "in_progress" if has_open else "not_started"
 
     if is_correct is True:
-        return "passed" if checked_at is not None else "pending_review"
+        task_type = row.get("task_type") or ""
+        # Ручная проверка учителем (SA_COM/TA, тот же whitelist, что в teacher_queue):
+        # passed только после checked_at, иначе optimistic pending_review (Y-6).
+        if task_type in ("SA_COM", "TA"):
+            return "passed" if checked_at is not None else "pending_review"
+        # Авто-проверяемые (SC/MC/SA): учителя нет, checked_at не ставится → верный
+        # ответ = passed сразу. tsk-214: раньше правило «checked_at обязателен»
+        # применялось ко ВСЕМ типам, и correct auto-задачи вечно висели pending_review,
+        # не попадая в % выполнения (пройденный на 100% курс показывал 37%).
+        return "passed"
     if is_correct is None:
         if (row.get("task_type") or "") in QUIZ_TASK_TYPES:
             # Квиз: статус по score-ratio (паритет с compute_task_state), tsk-125.

@@ -140,6 +140,32 @@ async def _pick_task_in_course(db, course_id: int) -> tuple[int, int]:
     return int(row[0]), int(row[1])
 
 
+async def _pick_root_task_of_type(db, types: tuple[str, ...]) -> tuple[int, int]:
+    """(root_course_id, task_id) для root-курса с задачей нужного типа.
+
+    tsk-214: статус зависит от типа задачи (авто SC/MC/SA vs ручной SA_COM/TA),
+    поэтому тесты статусов должны брать задачу заведомо нужного типа.
+    """
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT t.course_id, t.id
+                FROM tasks t
+                WHERE t.course_id NOT IN (SELECT course_id FROM course_parents)
+                  AND t.is_active = true
+                  AND t.task_content->>'type' = ANY(:tp)
+                LIMIT 1
+                """
+            ),
+            {"tp": list(types)},
+        )
+    ).fetchone()
+    if row is None:
+        pytest.skip(f"Нет root-задачи типов {types}")
+    return int(row[0]), int(row[1])
+
+
 async def _pick_other_root(db, exclude_root_id: int) -> int:
     row = (
         await db.execute(
@@ -542,11 +568,15 @@ async def test_status_passed_checked(db, client):
 
 @pytest.mark.asyncio
 async def test_status_pending_review_optimistic(db, client):
-    """pending_review: is_correct=TRUE + checked_at IS NULL (Y-6 optimistic)."""
+    """pending_review: РУЧНОЙ SA_COM/TA, is_correct=TRUE + checked_at IS NULL (Y-6).
+
+    tsk-214: pending_review при checked_at IS NULL валиден только для типов с
+    ручной проверкой учителя (SA_COM/TA). Авто-типы (SC/MC/SA) checked_at не
+    ставят и в этом состоянии = passed (см. test_status_auto_passed_no_checked).
+    """
     user_id, token, _ = await _create_student(db)
-    root_id = await _pick_root_course(db)
+    root_id, task_id = await _pick_root_task_of_type(db, ("SA_COM", "TA"))
     await _enroll(db, user_id, root_id)
-    task_id, _ = await _pick_task_in_course(db, root_id)
     aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
     rid = await _create_task_result(
         db, user_id=user_id, task_id=task_id, attempt_id=aid,
@@ -560,6 +590,34 @@ async def test_status_pending_review_optimistic(db, client):
         item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
         assert item is not None
         assert item["status"] == "pending_review", item
+    finally:
+        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_status_auto_passed_no_checked(db, client):
+    """tsk-214: АВТО-тип (SC/MC/SA), is_correct=TRUE + checked_at IS NULL → passed.
+
+    Регрессия на баг «пройденный курс показывает низкий %»: раньше правило
+    «checked_at обязателен для passed» применялось ко всем типам, и верные
+    авто-задачи вечно висели pending_review, не попадая в % выполнения.
+    """
+    user_id, token, _ = await _create_student(db)
+    root_id, task_id = await _pick_root_task_of_type(db, ("SC", "MC", "SA"))
+    await _enroll(db, user_id, root_id)
+    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
+    rid = await _create_task_result(
+        db, user_id=user_id, task_id=task_id, attempt_id=aid,
+        is_correct=True, score=10, max_score=10, checked_at=None,
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/me/courses/{root_id}/syllabus-states",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
+        assert item is not None
+        assert item["status"] == "passed", item
     finally:
         await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
 
