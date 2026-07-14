@@ -93,8 +93,9 @@ async def test_pending_manual_reviews_total_excludes_auto_checked(db):
         before = await get_teacher_workload(db, teacher_id=methodist_id)
         baseline = before["pending_manual_reviews_total"]
 
+        # tsk-210: под Y-6 первично-верный pending SA_COM = is_correct=TRUE.
         sa = await _create_tr(
-            db, user_id=student_id, task_id=sa_com_task, is_correct=None
+            db, user_id=student_id, task_id=sa_com_task, is_correct=True
         )
         mc = await _create_tr(
             db, user_id=student_id, task_id=mc_task, is_correct=False

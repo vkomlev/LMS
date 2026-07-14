@@ -322,6 +322,12 @@ async def claim_next_review(
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
                   AND t.task_content->>'type' IN ('SA_COM', 'TA')
+                  -- tsk-210: на вторичную проверку учителя идут только первично-
+                  -- верные ответы. SA_COM с is_correct=FALSE (не совпал с эталоном)
+                  -- — это честный FAILED, ученик уже видит «Неверно», учителю его
+                  -- смотреть незачем. TA всегда is_correct=TRUE (optimistic-PASSED),
+                  -- поэтому фильтр его не отсекает.
+                  AND tr.is_correct IS TRUE
                   AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
                   AND {REVIEW_ACL_SQL}
                   {course_cond}
@@ -796,6 +802,9 @@ async def get_pending_count(
     now = datetime.now(timezone.utc)
     # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
     # `('SA_COM','TA')`. См. claim_next_review комментарий.
+    # tsk-210: тот же фильтр `is_correct IS TRUE`, что и в claim_next_review —
+    # иначе счётчик (TG_LMS поллер) считает первично-неверные SA_COM, которые
+    # claim-next не выдаёт → фантомная очередь, которую учитель не может обнулить.
     r = await db.execute(
         text(
             f"""
@@ -804,6 +813,7 @@ async def get_pending_count(
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
               AND t.task_content->>'type' IN ('SA_COM', 'TA')
+              AND tr.is_correct IS TRUE
               AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
               AND {REVIEW_ACL_SQL}
             """  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов
@@ -846,7 +856,9 @@ async def get_teacher_workload(
     open_help_requests_total = open_manual_help + open_blocked_limit
 
     # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
-    # `('SA_COM','TA')`.
+    # `('SA_COM','TA')`. tsk-210: + `is_correct IS TRUE` (паритет с
+    # claim_next_review / count_pending_reviews — не считаем первично-неверные
+    # SA_COM, которые в очередь не выдаются).
     r2 = await db.execute(
         text(f"""
             SELECT COUNT(*)
@@ -854,6 +866,7 @@ async def get_teacher_workload(
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
               AND t.task_content->>'type' IN ('SA_COM', 'TA')
+              AND tr.is_correct IS TRUE
               AND {REVIEW_ACL_SQL}
         """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов
         params,
