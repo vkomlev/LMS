@@ -159,26 +159,34 @@ async def main() -> int:
             for item in to_flip[: args.limit]:
                 print(
                     f"  result_id={item['id']} user={item['user_id']} task={item['task_id']} "
-                    f"score {item['old_score']}→{item['new_score']}/{item['max_score']}"
+                    f"score {item['old_score']}->{item['new_score']}/{item['max_score']}"
                 )
 
         if args.apply and to_flip:
             for item in to_flip:
                 await session.execute(
                     text(
+                        # Явные CAST — asyncpg не выводит тип параметров внутри
+                        # variadic jsonb_build_object (AmbiguousParameterError).
                         """
                         UPDATE task_results
-                        SET score = :new_score,
+                        SET score = CAST(:new_score AS integer),
                             is_correct = FALSE,
-                            metrics = COALESCE(metrics, '{}'::jsonb) || jsonb_build_object(
+                            -- metrics на части прод-строк — jsonb-МАССИВ (напр. [null]),
+                            -- а не объект; `||` на массиве добавляет элемент, а не
+                            -- сливает ключ. Приводим не-объект к {} для чистого маркера
+                            -- (исходное [null] смысла не несёт).
+                            metrics = (CASE WHEN jsonb_typeof(metrics) = 'object'
+                                            THEN metrics ELSE '{}'::jsonb END)
+                                      || jsonb_build_object(
                                 'tsk210_recompute',
                                 jsonb_build_object(
                                     'old_is_correct', true,
-                                    'old_score', :old_score,
-                                    'new_score', :new_score
+                                    'old_score', CAST(:old_score AS integer),
+                                    'new_score', CAST(:new_score AS integer)
                                 )
                             )
-                        WHERE id = :id
+                        WHERE id = CAST(:id AS integer)
                         """
                     ),
                     {"id": item["id"], "old_score": item["old_score"], "new_score": item["new_score"]},
