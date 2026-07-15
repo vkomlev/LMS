@@ -15,7 +15,7 @@ from app.services.auth.tg_init_service import (
     get_or_create_user_by_tg,
     verify_tg_init_data,
 )
-from app.services.auth.cookie import set_session_cookie
+from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_access_request
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
@@ -76,4 +76,5 @@ async def tg_init(
     await db.commit()
 
     set_session_cookie(response, access_token)
+    set_refresh_cookie(response, refresh_token)  # tsk-224: единообразно со всеми точками логина
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)

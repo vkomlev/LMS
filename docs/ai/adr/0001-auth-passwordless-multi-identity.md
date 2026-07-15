@@ -165,6 +165,30 @@ CREATE INDEX idx_guest_attempt_unattributed ON guest_attempt(created_at) WHERE a
 - `POST /api/v1/auth/session/refresh` — ротация: revoke старой + create новой пары токенов
 - `POST /api/v1/auth/session/logout` — invalidate текущую сессию + delete cookie
 
+#### Двух-cookie схема сессии (tsk-224)
+
+Web-контекст держит сессию на **двух** httpOnly-cookie (обе `secure`, `samesite=lax`,
+`domain=settings.cookie_domain`), выставляются в одной точке `app/services/auth/cookie.py`:
+
+| Cookie | Что | `max_age` | `path` | Ставится |
+|---|---|---|---|---|
+| `session` | access-токен | 24 ч (`_ACCESS_TTL_HOURS`) | `/` (весь API) | на логине (magic/tg/vk) + при `/refresh` |
+| `refresh` | refresh-токен | 30 дней (`_REFRESH_TTL_DAYS`) | `/api/v1/auth/session/refresh` (узкий скоуп) | на логине + при `/refresh` (ротация) |
+
+Узкий `path` у `refresh` — cookie шлётся браузером только на сам эндпоинт refresh, а не
+на каждый запрос к API (меньше поверхность утечки/CSRF-риска).
+
+`POST /api/v1/auth/session/refresh` берёт refresh-токен по приоритету:
+1. httpOnly cookie `refresh` — **web** (SPW шлёт bodyless POST + `credentials:include`;
+   тела запроса нет, токен из cookie);
+2. поле `refresh_token` в теле — **tg-app/Bearer** (CloudStorage, cookie недоступны).
+
+Тело запроса `RefreshRequest` теперь **опционально** (web не шлёт его). При успехе ставится
+новая пара cookie (ротация). `logout` чистит обе cookie.
+
+До tsk-224 refresh-cookie не выставлялась вовсе, а `/refresh` читал токен только из тела —
+web-refresh всегда возвращал 401, и web-сессия жёстко умирала через 24 ч (истечение access).
+
 Также:
 - `GET /api/v1/me` — профиль текущего пользователя
 - `POST /api/v1/me/identity/{kind}/link` — привязать вторую identity через `link_token`

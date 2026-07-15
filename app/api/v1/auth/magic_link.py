@@ -15,7 +15,7 @@ from app.schemas.auth import (
     MessageResponse,
 )
 from app.services.auth import magic_link_service, session_service
-from app.services.auth.cookie import set_session_cookie
+from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.auth.role_assign_service import ensure_student_access_request
@@ -139,4 +139,5 @@ async def verify_magic_link(
     await db.commit()
 
     set_session_cookie(response, access_token)
+    set_refresh_cookie(response, refresh_token)  # tsk-224: web-refresh переживает истечение access
     return AuthTokenResponse(access_token=access_token, refresh_token=refresh_token)

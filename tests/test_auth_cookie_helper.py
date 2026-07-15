@@ -17,8 +17,12 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from app.services.auth.cookie import (
+    DEFAULT_REFRESH_MAX_AGE_SECONDS,
     DEFAULT_SESSION_MAX_AGE_SECONDS,
+    REFRESH_COOKIE_PATH,
+    clear_refresh_cookie,
     clear_session_cookie,
+    set_refresh_cookie,
     set_session_cookie,
 )
 
@@ -69,4 +73,58 @@ def test_clear_session_cookie_uses_same_domain(monkeypatch):
     assert "session=" in raw
     assert "Domain=victor-komlev.ru" in raw
     # delete_cookie ставит истёкшую дату / Max-Age=0
+    assert "Max-Age=0" in raw or "expires=" in raw.lower()
+
+
+# ── tsk-224: refresh-cookie ───────────────────────────────────────────────────
+
+def test_set_refresh_cookie_defaults(monkeypatch):
+    """refresh-cookie: httpOnly + Secure + samesite=lax + узкий path + 30д TTL."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
+
+    response = Response()
+    set_refresh_cookie(response, "test-refresh-token")
+    raw = _parse_set_cookie(response)
+
+    assert "refresh=test-refresh-token" in raw
+    assert "HttpOnly" in raw
+    assert "Secure" in raw  # default secure=True
+    assert "samesite=lax" in raw.lower()
+    assert f"Max-Age={DEFAULT_REFRESH_MAX_AGE_SECONDS}" in raw
+    assert "Domain=victor-komlev.ru" in raw
+    # Узкий path — cookie шлётся только на сам эндпоинт refresh.
+    assert f"Path={REFRESH_COOKIE_PATH}" in raw
+
+
+def test_set_refresh_cookie_ttl_is_30_days():
+    """TTL refresh-cookie строго 30 дней (переживает истечение access 24ч)."""
+    assert DEFAULT_REFRESH_MAX_AGE_SECONDS == 30 * 86400
+
+
+def test_set_refresh_cookie_custom_secure_false(monkeypatch):
+    """secure=False (dev over HTTP) — Secure-флаг отсутствует."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", None)
+
+    response = Response()
+    set_refresh_cookie(response, "tok", secure=False)
+    raw = _parse_set_cookie(response)
+
+    assert "refresh=tok" in raw
+    assert "Secure" not in raw
+
+
+def test_clear_refresh_cookie_matches_path(monkeypatch):
+    """clear обязан ставить тот же path, иначе браузер не удалит cookie."""
+    from app.services.auth import cookie as cookie_module
+    monkeypatch.setattr(cookie_module._settings, "cookie_domain", "victor-komlev.ru")
+
+    response = Response()
+    clear_refresh_cookie(response)
+    raw = _parse_set_cookie(response)
+
+    assert "refresh=" in raw
+    assert f"Path={REFRESH_COOKIE_PATH}" in raw
+    assert "Domain=victor-komlev.ru" in raw
     assert "Max-Age=0" in raw or "expires=" in raw.lower()

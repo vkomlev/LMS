@@ -16,7 +16,7 @@ from app.services.auth.vk_oauth_service import (
     fetch_vk_userinfo,
     get_or_create_user_by_vk,
 )
-from app.services.auth.cookie import set_session_cookie
+from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_access_request
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
@@ -114,4 +114,5 @@ async def vk_callback(
     await db.commit()
 
     set_session_cookie(response, access)
+    set_refresh_cookie(response, refresh)  # tsk-224: web-refresh переживает истечение access
     return AuthTokenResponse(access_token=access, refresh_token=refresh)

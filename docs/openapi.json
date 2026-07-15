@@ -14093,17 +14093,42 @@
           "auth"
         ],
         "summary": "Refresh",
-        "description": "Обменять refresh_token на новую пару access+refresh токенов.",
+        "description": "Обменять refresh_token на новую пару access+refresh токенов (tsk-224).\n\nИсточник refresh-токена по приоритету:\n  1. httpOnly cookie `refresh` — web-контекст (SPW шлёт bodyless POST с\n     `credentials: include`; токен берётся из cookie, выставленной на логине).\n  2. Тело запроса `refresh_token` — tg-app/Bearer-контекст (CloudStorage,\n     cookie недоступны).\nПри успехе ставим НОВУЮ пару cookie (access `session` + `refresh`) —\nротация refresh-токена (старая сессия отзывается в `refresh_session`).",
         "operationId": "refresh_api_v1_auth_session_refresh_post",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Refresh"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/RefreshRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefreshRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
