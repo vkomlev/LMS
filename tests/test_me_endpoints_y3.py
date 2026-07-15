@@ -76,6 +76,25 @@ async def test_link_token_issue_requires_auth(client):
 # ── smoke happy ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_me_returns_full_name(db, client):
+    """tsk-223: GET /me содержит поле full_name из users.full_name."""
+    user_id, token, _ = await _setup_user_with_session(db)
+    try:
+        resp = await client.get(
+            "/api/v1/me",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "full_name" in body
+        # _setup_user_with_session сидирует full_name="Y3-http" в БД.
+        assert body["full_name"] == "Y3-http"
+        assert body["id"] == user_id
+    finally:
+        await _cleanup(db, user_id)
+
+
+@pytest.mark.asyncio
 async def test_me_identities_returns_masked_email(db, client):
     user_id, token, email = await _setup_user_with_session(db)
     try:

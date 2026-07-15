@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity_link import IdentityLink
+from app.models.users import Users
 from app.schemas.task_content import QUIZ_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
@@ -41,6 +42,47 @@ def mask_value(kind: IdentityKind, value: str) -> str:
     if kind == "vk":
         return f"{value[:8]}..." if len(value) > 8 else value
     return value
+
+
+# ── /me профиль: full_name (tsk-223) ─────────────────────────────────────────
+
+async def get_full_name(db: AsyncSession, user_id: int) -> str | None:
+    """Вернуть `users.full_name` пользователя (или None, если не задан/нет строки).
+
+    Тонкий read-метод для `GET /me`: `CurrentUser` не несёт ФИО, поэтому имя
+    подгружается из БД отдельным запросом одной колонки.
+    """
+    result = await db.execute(
+        select(Users.full_name).where(Users.id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_full_name(db: AsyncSession, user_id: int, full_name: str) -> str:
+    """Записать нормализованное ФИО в `users.full_name` (tsk-223).
+
+    Выполняет `flush` (без commit) — commit делает вызывающий эндпоинт вместе
+    с audit-событием в одной транзакции. `full_name` ожидается уже прошедшим
+    через `validate_full_name`.
+
+    Args:
+        db: async session.
+        user_id: ID пользователя.
+        full_name: нормализованное валидное ФИО.
+
+    Returns:
+        Записанное значение `full_name`.
+
+    Raises:
+        ValueError: если пользователь не найден.
+    """
+    user = await db.get(Users, user_id)
+    if user is None:
+        raise ValueError(f"Пользователь id={user_id} не найден.")
+    user.full_name = full_name
+    await db.flush()
+    logger.info("full_name обновлён для user_id=%s", user_id)
+    return full_name
 
 
 # ── /me/identities ──────────────────────────────────────────────────────────

@@ -10,8 +10,24 @@ class MeResponse(BaseModel):
     email: str | None
     tg_id: str | None
     is_service: bool
+    # tsk-223: реальное ФИО из users.full_name. Может быть null (email/legacy
+    # пользователи без заполненного ФИО) — обратная совместимость.
+    full_name: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class MeUpdateRequest(BaseModel):
+    """Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).
+
+    Валидация формата выполняется в эндпоинте через `validate_full_name`
+    (единое серверное правило), чтобы вернуть чистое русское 422-сообщение.
+    """
+
+    full_name: str = Field(
+        ...,
+        description="Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами.",
+    )
 
 
 # ── Phase Y-3: /me/identities ────────────────────────────────────────────────

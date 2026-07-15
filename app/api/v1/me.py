@@ -43,11 +43,13 @@ from app.schemas.me import (
     IdentityRead,
     LastPositionRead,
     MeResponse,
+    MeUpdateRequest,
     StreakRead,
     SyllabusStatesResponse,
 )
 from app.services import me_service
 from app.services.audit_service import log_event
+from app.services.full_name_validator import validate_full_name
 from app.services.auth import (
     guest_attribution_service,
     identity_link_service,
@@ -73,13 +75,66 @@ _settings = Settings()
 @router.get("", response_model=MeResponse)
 async def get_me(
     current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
 ) -> MeResponse:
-    """Вернуть профиль аутентифицированного пользователя."""
+    """Вернуть профиль аутентифицированного пользователя.
+
+    tsk-223: `full_name` подгружается из `users.full_name` (БД), а не из
+    `CurrentUser` — dataclass CurrentUser имя не несёт.
+    """
+    full_name = await me_service.get_full_name(db, current_user.id)
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
         is_service=current_user.is_service,
+        full_name=full_name,
+    )
+
+
+# ── PATCH /me — self-service обновление ФИО (tsk-223) ────────────────────────
+
+@router.patch("", response_model=MeResponse)
+async def update_me(
+    body: MeUpdateRequest,
+    request: Request,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> MeResponse:
+    """Обновить собственное ФИО (`users.full_name`) с валидацией формата.
+
+    Формат проверяется единым серверным правилом `validate_full_name`
+    («Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с
+    русским сообщением. 401 (без auth) и 403 (сервисный токен) даёт
+    `require_authenticated`.
+
+    Пишет audit-событие `user.profile.full_name_updated` перед commit.
+    """
+    try:
+        normalized = validate_full_name(body.full_name)
+    except ValueError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    await me_service.update_full_name(db, current_user.id, normalized)
+
+    ip = request.client.host if request.client else "unknown"
+    await log_event(
+        db,
+        "user.profile.full_name_updated",
+        user_id=current_user.id,
+        ip=ip,
+        details={"full_name": normalized},
+    )
+    await db.commit()
+
+    return MeResponse(
+        id=current_user.id,
+        email=current_user.email,
+        tg_id=current_user.tg_id,
+        is_service=current_user.is_service,
+        full_name=normalized,
     )
 
 

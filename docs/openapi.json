@@ -14325,7 +14325,7 @@
           "me"
         ],
         "summary": "Get Me",
-        "description": "Вернуть профиль аутентифицированного пользователя.",
+        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.",
         "operationId": "get_me_api_v1_me_get",
         "security": [
           {
@@ -14385,6 +14385,104 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Update Me",
+        "description": "Обновить собственное ФИО (`users.full_name`) с валидацией формата.\n\nФормат проверяется единым серверным правилом `validate_full_name`\n(«Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с\nрусским сообщением. 401 (без auth) и 403 (сервисный токен) даёт\n`require_authenticated`.\n\nПишет audit-событие `user.profile.full_name_updated` перед commit.",
+        "operationId": "update_me_api_v1_me_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeUpdateRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -22127,6 +22225,17 @@
           "is_service": {
             "type": "boolean",
             "title": "Is Service"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
           }
         },
         "type": "object",
@@ -22137,6 +22246,21 @@
           "is_service"
         ],
         "title": "MeResponse"
+      },
+      "MeUpdateRequest": {
+        "properties": {
+          "full_name": {
+            "type": "string",
+            "title": "Full Name",
+            "description": "Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами."
+          }
+        },
+        "type": "object",
+        "required": [
+          "full_name"
+        ],
+        "title": "MeUpdateRequest",
+        "description": "Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).\n\nВалидация формата выполняется в эндпоинте через `validate_full_name`\n(единое серверное правило), чтобы вернуть чистое русское 422-сообщение."
       },
       "MessageBulkRequest": {
         "properties": {
