@@ -24319,6 +24319,16 @@
               true
             ]
           },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment",
+            "description": "Требуется ли обязательное вложение (файл-подтверждение) для зачёта (tsk-227). Если true — ответ по задаче НЕ засчитывается без загруженного файла в попытке, даже при верном авто-ответе (в т.ч. перекрывает оптимистичный авто-пасс SA_COM). Сервер — источник истины; клиент показывает обязательную загрузку. Default false — существующие задания без флага ведут себя как раньше.",
+            "default": false,
+            "examples": [
+              false,
+              true
+            ]
+          },
           "correct_options": {
             "items": {
               "type": "string"
@@ -26632,6 +26642,12 @@
             ],
             "title": "Last Checked At",
             "description": "checked_at последнего результата (None = на проверке у учителя)"
+          },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment",
+            "description": "Требуется ли обязательное вложение для зачёта (solution_rules.requires_attachment, tsk-227). Клиент показывает обязательную загрузку файла.",
+            "default": false
           }
         },
         "type": "object",

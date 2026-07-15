@@ -111,6 +111,16 @@ class TaskStateResponse(BaseModel):
         default=None,
         description="checked_at последнего результата (None = на проверке у учителя)",
     )
+    # tsk-227: флаг обязательного вложения из solution_rules.requires_attachment.
+    # Клиент (SPW/TG_LMS) по нему включает обязательную загрузку файла и блокирует
+    # submit без вложения. Сервер — источник истины (форс на сдаче), это лишь UX-сигнал.
+    requires_attachment: bool = Field(
+        default=False,
+        description=(
+            "Требуется ли обязательное вложение для зачёта (solution_rules.requires_attachment, "
+            "tsk-227). Клиент показывает обязательную загрузку файла."
+        ),
+    )
 
 
 # ----- Request help -----

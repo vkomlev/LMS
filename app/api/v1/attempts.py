@@ -33,6 +33,7 @@ from app.schemas.attempts import (
 from app.schemas.checking import (
     StudentAnswer,
     CheckResult,
+    CheckFeedback,
 )
 from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
 from app.schemas.solution_rules import SolutionRules
@@ -449,6 +450,35 @@ async def submit_attempt_answers(
                 max_score=check_result.max_score,
                 is_correct=True,
             )
+
+        # 2.3d tsk-227: форс вложения. Если задача требует файл-подтверждение
+        # (solution_rules.requires_attachment), а в попытке нет вложения —
+        # ответ НЕ засчитывается, даже если авто-проверка (или оптимистичный
+        # пасс SA_COM выше) поставила is_correct=True. Сервер — источник истины;
+        # клиент только показывает обязательную загрузку. Гейт стоит ПОСЛЕ
+        # оптимистичного пасса, поэтому перекрывает его (см. R4 спека tsk-227).
+        # Вложение детектится per-attempt: файлы {attempt_id}_* в upload-dir
+        # ИЛИ answer.response.meta.attachments (клиент кладёт метаданные загрузки).
+        if solution_rules.requires_attachment:
+            answer_meta = getattr(answer.response, "meta", None) or {}
+            meta_attachments = answer_meta.get("attachments") if isinstance(answer_meta, dict) else None
+            has_attachment = bool(_attempt_attachment_files(attempt.id)) or bool(meta_attachments)
+            if not has_attachment:
+                logger.info(
+                    "POST /attempts/%s/answers: requires_attachment task_id=%s без вложения → не зачёт (tsk-227)",
+                    attempt_id, task.id,
+                )
+                check_result = CheckResult(
+                    score=0,
+                    max_score=check_result.max_score,
+                    is_correct=False,
+                    feedback=CheckFeedback(
+                        general=(
+                            "Прикрепите файл-подтверждение (скриншот/файл) — "
+                            "без вложения задание не засчитывается."
+                        )
+                    ),
+                )
 
         # 2.4 Записываем в task_results
         task_result = await task_results_service.create_from_check_result(

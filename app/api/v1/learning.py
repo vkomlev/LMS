@@ -12,6 +12,7 @@ from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.tasks import Tasks
+from app.schemas.solution_rules import SolutionRules
 from app.schemas.learning_api import (
     NextItemResponse,
     MaterialCompleteRequest,
@@ -335,6 +336,14 @@ async def get_task_state(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     state = await learning_service.compute_task_state(db, student_id, task_id)
+    # tsk-227: проброс флага обязательного вложения клиенту (UX-сигнал; форс — на сервере).
+    try:
+        requires_attachment = bool(
+            SolutionRules.model_validate(task.solution_rules or {}).requires_attachment
+        )
+    except Exception:
+        # Некорректные solution_rules не должны ломать выдачу состояния задания.
+        requires_attachment = False
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
             db,
@@ -360,6 +369,7 @@ async def get_task_state(
         last_answer_json=state.last_answer_json,
         last_is_correct=state.last_is_correct,
         last_checked_at=state.last_checked_at,
+        requires_attachment=requires_attachment,
     )
 
 
