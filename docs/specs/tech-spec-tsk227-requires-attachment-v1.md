@@ -56,9 +56,10 @@
 (POST `/attempts/{id}/answers`), в цикле по ответам, ПОСЛЕ резолва задачи и ДО фиксации зачёта:
 
 ```
-если task.solution_rules.requires_attachment:
+если task.solution_rules.requires_attachment И не attempt.time_expired:
     есть_вложение = _attempt_attachment_files(attempt_id) не пусто
-                    (или answer.response.meta.attachments не пусто)
+                    # ТОЛЬКО реальный файл на диске; meta.attachments из тела запроса
+                    # НЕ используется (клиентские данные, подделываются → обход форса)
     если не есть_вложение:
         # НЕ зачёт: не отдаём is_correct=True/score=max
         check_result = CheckResult(score=0, is_correct=None|False,
@@ -72,8 +73,12 @@
   клиент (`GET /learning/tasks/{id}/state` или эквивалент, через который SPW/TG получают правила
   задачи) — иначе клиент не знает, что показывать upload. Добавить поле в соответствующий
   response-schema (аддитивно, Optional).
-- **Детект вложения:** переиспользовать `_attempt_attachment_files(attempt_id)` (файлы с
-  префиксом `{attempt_id}_` в `settings.attempt_attachments_upload_dir`). Вложение — per-attempt.
+- **Детект вложения (security):** ТОЛЬКО `_attempt_attachment_files(attempt_id)` — реальные файлы
+  с префиксом `{attempt_id}_` в `settings.attempt_attachments_upload_dir` (кладёт эндпоинт
+  `POST /attempts/{id}/attachments`). `answer.response.meta.attachments` НЕ используется: это
+  клиентские данные из тела запроса, их можно подделать (`meta:{attachments:[{}]}`) и обойти форс
+  без единого файла. Оба клиента грузят реальный файл до сдачи, поэтому доверие только диску
+  честные пути не ломает. Вложение — per-attempt (см. R3).
 
 **Клиент — UX-слой (не источник истины):** показывает обязательный upload, блокирует submit до
 загрузки. Даже при обходе клиента сервер не зачтёт (гейт выше).

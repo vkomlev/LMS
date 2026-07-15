@@ -191,8 +191,10 @@ async def test_requires_attachment_with_uploaded_file_passes(client, db):
         await _cleanup(db, course_id=course_id, student_id=student_id)
 
 
-async def test_requires_attachment_with_meta_attachments_passes(client, db):
-    """SA с requires_attachment=true + attachments в meta ответа → зачёт по слову."""
+async def test_requires_attachment_forged_meta_without_file_not_passed(client, db):
+    """SECURITY (P0): подделанный meta.attachments БЕЗ реально загруженного файла
+    НЕ обходит форс — сервер доверяет только файлу на диске ({attempt_id}_*),
+    не клиентским данным из тела запроса. Иначе ученик прошёл бы миссию форжем JSON."""
     student_id = await _make_student(db)
     course_id = await _make_course(db)
     task_id = await _make_sa_task(db, course_id, requires_attachment=True)
@@ -204,6 +206,7 @@ async def test_requires_attachment_with_meta_attachments_passes(client, db):
                 "type": "SA",
                 "response": {
                     "value": "готово",
+                    # Подделка: метаданные вложения без единого файла в upload-dir.
                     "meta": {"attachments": [{"attachment_id": "x", "filename": "p.png"}]},
                 },
             }}]},
@@ -211,8 +214,9 @@ async def test_requires_attachment_with_meta_attachments_passes(client, db):
         )
         assert resp.status_code == 200, resp.text
         result = resp.json()["results"][0]["check_result"]
-        assert result["is_correct"] is True
-        assert result["score"] == 10
+        # Форж meta НЕ даёт зачёт — нужен реальный файл.
+        assert result["is_correct"] is False
+        assert result["score"] == 0
     finally:
         _cleanup_attachments(attempt_id)
         await _cleanup(db, course_id=course_id, student_id=student_id)

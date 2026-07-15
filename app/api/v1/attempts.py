@@ -452,17 +452,22 @@ async def submit_attempt_answers(
             )
 
         # 2.3d tsk-227: форс вложения. Если задача требует файл-подтверждение
-        # (solution_rules.requires_attachment), а в попытке нет вложения —
-        # ответ НЕ засчитывается, даже если авто-проверка (или оптимистичный
+        # (solution_rules.requires_attachment), а в попытке нет РЕАЛЬНО загруженного
+        # файла — ответ НЕ засчитывается, даже если авто-проверка (или оптимистичный
         # пасс SA_COM выше) поставила is_correct=True. Сервер — источник истины;
         # клиент только показывает обязательную загрузку. Гейт стоит ПОСЛЕ
         # оптимистичного пасса, поэтому перекрывает его (см. R4 спека tsk-227).
-        # Вложение детектится per-attempt: файлы {attempt_id}_* в upload-dir
-        # ИЛИ answer.response.meta.attachments (клиент кладёт метаданные загрузки).
-        if solution_rules.requires_attachment:
-            answer_meta = getattr(answer.response, "meta", None) or {}
-            meta_attachments = answer_meta.get("attachments") if isinstance(answer_meta, dict) else None
-            has_attachment = bool(_attempt_attachment_files(attempt.id)) or bool(meta_attachments)
+        #
+        # БЕЗОПАСНОСТЬ: детект ТОЛЬКО по реально загруженному файлу
+        # (_attempt_attachment_files: {attempt_id}_* в upload-dir, кладётся
+        # эндпоинтом POST /attempts/{id}/attachments). answer.response.meta.attachments
+        # НЕ используется — это клиентские данные из тела запроса, их можно подделать
+        # (`meta:{attachments:[{}]}`) и обойти форс без единого файла. Оба клиента
+        # (SPW, TG_LMS) грузят реальный файл до сдачи, поэтому доверие только диску
+        # честные пути не ломает. При истёкшем времени попытка уже завершена и
+        # провалена (score=0 выше) — гейт не трогаем, вложить файл уже нельзя.
+        if solution_rules.requires_attachment and not attempt.time_expired:
+            has_attachment = bool(_attempt_attachment_files(attempt.id))
             if not has_attachment:
                 logger.info(
                     "POST /attempts/%s/answers: requires_attachment task_id=%s без вложения → не зачёт (tsk-227)",
