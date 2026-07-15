@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 
 NextItemType = Literal[
@@ -55,6 +55,12 @@ class TaskStateResult:
     last_finished_at: Optional[datetime] = None
     attempts_used: int = 0
     attempts_limit_effective: int = 3
+    # Сохранённый ответ ученика из последнего task_result (tsk-222): нужен SPW,
+    # чтобы показать «Мой ответ» read-only на пройденном/на-проверке задании.
+    # Это ответ САМОГО ученика (StudentAnswer), эталон сюда не попадает.
+    last_answer_json: Optional[dict[str, Any]] = None
+    last_is_correct: Optional[bool] = None
+    last_checked_at: Optional[datetime] = None
 
 
 CourseStateType = Literal[

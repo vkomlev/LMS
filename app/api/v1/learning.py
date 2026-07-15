@@ -357,6 +357,9 @@ async def get_task_state(
         last_finished_at=state.last_finished_at,
         attempts_used=state.attempts_used,
         attempts_limit_effective=state.attempts_limit_effective,
+        last_answer_json=state.last_answer_json,
+        last_is_correct=state.last_is_correct,
+        last_checked_at=state.last_checked_at,
     )
 
 

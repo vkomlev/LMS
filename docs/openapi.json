@@ -26445,6 +26445,44 @@
             "type": "integer",
             "title": "Attempts Limit Effective",
             "default": 3
+          },
+          "last_answer_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Answer Json",
+            "description": "Сохранённый ответ ученика (task_results.answer_json) последнего результата"
+          },
+          "last_is_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Is Correct",
+            "description": "is_correct последнего результата (None до ручной проверки SA_COM/TA)"
+          },
+          "last_checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Checked At",
+            "description": "checked_at последнего результата (None = на проверке у учителя)"
           }
         },
         "type": "object",

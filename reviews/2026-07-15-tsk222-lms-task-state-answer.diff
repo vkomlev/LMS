@@ -1,0 +1,339 @@
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 822c17d..3aca4ac 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -357,6 +357,9 @@ async def get_task_state(
+         last_finished_at=state.last_finished_at,
+         attempts_used=state.attempts_used,
+         attempts_limit_effective=state.attempts_limit_effective,
++        last_answer_json=state.last_answer_json,
++        last_is_correct=state.last_is_correct,
++        last_checked_at=state.last_checked_at,
+     )
+ 
+ 
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 40980a3..de34f65 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -7,7 +7,7 @@ tasks/state, request-help, teacher/task-limits/override.
+ from __future__ import annotations
+ 
+ from datetime import datetime
+-from typing import Literal, Optional
++from typing import Any, Literal, Optional
+ 
+ from pydantic import BaseModel, Field
+ 
+@@ -96,6 +96,21 @@ class TaskStateResponse(BaseModel):
+     last_finished_at: Optional[datetime] = None
+     attempts_used: int = 0
+     attempts_limit_effective: int = 3
++    # tsk-222: сохранённый ответ ученика по последнему task_result. SPW показывает
++    # его как «Мой ответ» (read-only) на пройденном/на-проверке/заблокированном
++    # задании. Содержит только ответ ученика (StudentAnswer), эталон не раскрывается.
++    last_answer_json: Optional[dict[str, Any]] = Field(
++        default=None,
++        description="Сохранённый ответ ученика (task_results.answer_json) последнего результата",
++    )
++    last_is_correct: Optional[bool] = Field(
++        default=None,
++        description="is_correct последнего результата (None до ручной проверки SA_COM/TA)",
++    )
++    last_checked_at: Optional[datetime] = Field(
++        default=None,
++        description="checked_at последнего результата (None = на проверке у учителя)",
++    )
+ 
+ 
+ # ----- Request help -----
+diff --git a/app/schemas/learning_engine.py b/app/schemas/learning_engine.py
+index 154e2ee..bc63168 100644
+--- a/app/schemas/learning_engine.py
++++ b/app/schemas/learning_engine.py
+@@ -7,7 +7,7 @@ from __future__ import annotations
+ 
+ from dataclasses import dataclass
+ from datetime import datetime
+-from typing import Literal, Optional
++from typing import Any, Literal, Optional
+ 
+ 
+ NextItemType = Literal[
+@@ -55,6 +55,12 @@ class TaskStateResult:
+     last_finished_at: Optional[datetime] = None
+     attempts_used: int = 0
+     attempts_limit_effective: int = 3
++    # Сохранённый ответ ученика из последнего task_result (tsk-222): нужен SPW,
++    # чтобы показать «Мой ответ» read-only на пройденном/на-проверке задании.
++    # Это ответ САМОГО ученика (StudentAnswer), эталон сюда не попадает.
++    last_answer_json: Optional[dict[str, Any]] = None
++    last_is_correct: Optional[bool] = None
++    last_checked_at: Optional[datetime] = None
+ 
+ 
+ CourseStateType = Literal[
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 98be622..20cdf2b 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -136,9 +136,13 @@ class LearningEngineService:
+         r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
+         attempts_used = r.scalar() or 0
+ 
+-        # Последний task_result по задаче (по submitted_at task_results)
++        # Последний task_result по задаче (по submitted_at task_results).
++        # tsk-222: дополнительно тянем answer_json/is_correct/checked_at — тот же
++        # ряд, что уже используется для last_score, без новых JOIN'ов. answer_json —
++        # это ответ ученика (StudentAnswer), эталон в него не входит.
+         last_stmt = text("""
+-            SELECT a.id, tr.submitted_at, tr.score, tr.max_score
++            SELECT a.id, tr.submitted_at, tr.score, tr.max_score,
++                   tr.answer_json, tr.is_correct, tr.checked_at
+             FROM task_results tr
+             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+@@ -163,6 +167,10 @@ class LearningEngineService:
+             int(row[0]), row[1], int(row[2]) if row[2] is not None else 0,
+             int(row[3]) if row[3] is not None else 0,
+         )
++        # answer_json (JSONB) драйвер отдаёт уже как dict; is_correct/checked_at — как есть.
++        last_answer_json = row[4] if isinstance(row[4], dict) else None
++        last_is_correct = row[5]
++        last_checked_at = row[6]
+ 
+         if last_max_score and last_max_score > 0:
+             ratio = last_score / last_max_score
+@@ -175,6 +183,9 @@ class LearningEngineService:
+                     last_finished_at=last_finished_at,
+                     attempts_used=attempts_used,
+                     attempts_limit_effective=limit,
++                    last_answer_json=last_answer_json,
++                    last_is_correct=last_is_correct,
++                    last_checked_at=last_checked_at,
+                 )
+ 
+         if attempts_used >= limit:
+@@ -186,6 +197,9 @@ class LearningEngineService:
+                 last_finished_at=last_finished_at,
+                 attempts_used=attempts_used,
+                 attempts_limit_effective=limit,
++                last_answer_json=last_answer_json,
++                last_is_correct=last_is_correct,
++                last_checked_at=last_checked_at,
+             )
+ 
+         return TaskStateResult(
+@@ -196,6 +210,9 @@ class LearningEngineService:
+             last_finished_at=last_finished_at,
+             attempts_used=attempts_used,
+             attempts_limit_effective=limit,
++            last_answer_json=last_answer_json,
++            last_is_correct=last_is_correct,
++            last_checked_at=last_checked_at,
+         )
+ 
+     async def compute_course_state(
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 96e7a02..9c845f9 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -14325,7 +14325,7 @@
+           "me"
+         ],
+         "summary": "Get Me",
+-        "description": "Вернуть профиль аутентифицированного пользователя.",
++        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.",
+         "operationId": "get_me_api_v1_me_get",
+         "security": [
+           {
+@@ -14407,6 +14407,104 @@
+             }
+           }
+         }
++      },
++      "patch": {
++        "tags": [
++          "me"
++        ],
++        "summary": "Update Me",
++        "description": "Обновить собственное ФИО (`users.full_name`) с валидацией формата.\n\nФормат проверяется единым серверным правилом `validate_full_name`\n(«Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с\nрусским сообщением. 401 (без auth) и 403 (сервисный токен) даёт\n`require_authenticated`.\n\nПишет audit-событие `user.profile.full_name_updated` перед commit.",
++        "operationId": "update_me_api_v1_me_patch",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/MeUpdateRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/MeResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
+       }
+     },
+     "/api/v1/me/identities": {
+@@ -22127,6 +22225,17 @@
+           "is_service": {
+             "type": "boolean",
+             "title": "Is Service"
++          },
++          "full_name": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Full Name"
+           }
+         },
+         "type": "object",
+@@ -22138,6 +22247,21 @@
+         ],
+         "title": "MeResponse"
+       },
++      "MeUpdateRequest": {
++        "properties": {
++          "full_name": {
++            "type": "string",
++            "title": "Full Name",
++            "description": "Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами."
++          }
++        },
++        "type": "object",
++        "required": [
++          "full_name"
++        ],
++        "title": "MeUpdateRequest",
++        "description": "Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).\n\nВалидация формата выполняется в эндпоинте через `validate_full_name`\n(единое серверное правило), чтобы вернуть чистое русское 422-сообщение."
++      },
+       "MessageBulkRequest": {
+         "properties": {
+           "message_type": {
+@@ -26445,6 +26569,44 @@
+             "type": "integer",
+             "title": "Attempts Limit Effective",
+             "default": 3
++          },
++          "last_answer_json": {
++            "anyOf": [
++              {
++                "additionalProperties": true,
++                "type": "object"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Answer Json",
++            "description": "Сохранённый ответ ученика (task_results.answer_json) последнего результата"
++          },
++          "last_is_correct": {
++            "anyOf": [
++              {
++                "type": "boolean"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Is Correct",
++            "description": "is_correct последнего результата (None до ручной проверки SA_COM/TA)"
++          },
++          "last_checked_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Checked At",
++            "description": "checked_at последнего результата (None = на проверке у учителя)"
+           }
+         },
+         "type": "object",

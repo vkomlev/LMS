@@ -7,7 +7,7 @@ tasks/state, request-help, teacher/task-limits/override.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +96,21 @@ class TaskStateResponse(BaseModel):
     last_finished_at: Optional[datetime] = None
     attempts_used: int = 0
     attempts_limit_effective: int = 3
+    # tsk-222: сохранённый ответ ученика по последнему task_result. SPW показывает
+    # его как «Мой ответ» (read-only) на пройденном/на-проверке/заблокированном
+    # задании. Содержит только ответ ученика (StudentAnswer), эталон не раскрывается.
+    last_answer_json: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="Сохранённый ответ ученика (task_results.answer_json) последнего результата",
+    )
+    last_is_correct: Optional[bool] = Field(
+        default=None,
+        description="is_correct последнего результата (None до ручной проверки SA_COM/TA)",
+    )
+    last_checked_at: Optional[datetime] = Field(
+        default=None,
+        description="checked_at последнего результата (None = на проверке у учителя)",
+    )
 
 
 # ----- Request help -----

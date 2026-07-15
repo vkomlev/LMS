@@ -136,9 +136,13 @@ class LearningEngineService:
         r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
         attempts_used = r.scalar() or 0
 
-        # Последний task_result по задаче (по submitted_at task_results)
+        # Последний task_result по задаче (по submitted_at task_results).
+        # tsk-222: дополнительно тянем answer_json/is_correct/checked_at — тот же
+        # ряд, что уже используется для last_score, без новых JOIN'ов. answer_json —
+        # это ответ ученика (StudentAnswer), эталон в него не входит.
         last_stmt = text("""
-            SELECT a.id, tr.submitted_at, tr.score, tr.max_score
+            SELECT a.id, tr.submitted_at, tr.score, tr.max_score,
+                   tr.answer_json, tr.is_correct, tr.checked_at
             FROM task_results tr
             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
@@ -163,6 +167,10 @@ class LearningEngineService:
             int(row[0]), row[1], int(row[2]) if row[2] is not None else 0,
             int(row[3]) if row[3] is not None else 0,
         )
+        # answer_json (JSONB) драйвер отдаёт уже как dict; is_correct/checked_at — как есть.
+        last_answer_json = row[4] if isinstance(row[4], dict) else None
+        last_is_correct = row[5]
+        last_checked_at = row[6]
 
         if last_max_score and last_max_score > 0:
             ratio = last_score / last_max_score
@@ -175,6 +183,9 @@ class LearningEngineService:
                     last_finished_at=last_finished_at,
                     attempts_used=attempts_used,
                     attempts_limit_effective=limit,
+                    last_answer_json=last_answer_json,
+                    last_is_correct=last_is_correct,
+                    last_checked_at=last_checked_at,
                 )
 
         if attempts_used >= limit:
@@ -186,6 +197,9 @@ class LearningEngineService:
                 last_finished_at=last_finished_at,
                 attempts_used=attempts_used,
                 attempts_limit_effective=limit,
+                last_answer_json=last_answer_json,
+                last_is_correct=last_is_correct,
+                last_checked_at=last_checked_at,
             )
 
         return TaskStateResult(
@@ -196,6 +210,9 @@ class LearningEngineService:
             last_finished_at=last_finished_at,
             attempts_used=attempts_used,
             attempts_limit_effective=limit,
+            last_answer_json=last_answer_json,
+            last_is_correct=last_is_correct,
+            last_checked_at=last_checked_at,
         )
 
     async def compute_course_state(
