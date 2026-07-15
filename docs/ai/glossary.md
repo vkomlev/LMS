@@ -57,7 +57,9 @@
 - **SA** (Short Answer) — короткий ответ; автопроверка.
 - **SC** (Single Choice) — один правильный вариант; автопроверка.
 - **MC** (Multiple Choice) — несколько правильных вариантов; автопроверка.
-- **SA_COM** (Short Answer with Code/Comment) — задача с ручной проверкой. `is_correct=NULL` до grade преподавателем. FSM: [docs/ai/design/teacher-queue-states.md](design/teacher-queue-states.md).
+- **SA_COM** (Short Answer with Code/Comment) — короткий ответ с полем-комментарием. **По умолчанию — автопроверка** по `accepted_answers`/regex (как SA); задание считается выполненным без участия преподавателя. Преподаватель может опционально пересмотреть результат (regrade). Уходит на **обязательную** ручную проверку (`is_correct=NULL` до grade), только если задание помечено `solution_rules.manual_review_required=true` (tsk-230). FSM: [docs/ai/design/teacher-queue-states.md](design/teacher-queue-states.md).
+- **TA** (Text Answer) — развёрнутый ответ (эссе). **По умолчанию — ручная проверка** (`is_correct=NULL` до grade). Автопроверка (regex/ИИ) — на будущее.
+- **`manual_review_required`** (флаг `SolutionRules`, tsk-230) — единый переключатель обязательной ручной проверки. При `true` задача получает `is_correct=NULL` и попадает в очередь преподавателя (`GET /task-results/by-pending-review`, whitelist SA_COM/TA), даже если тип авто-проверяем. Default `false`. Читается в `checking_service` для SA/SA_COM; TA манулен по умолчанию независимо от флага.
 
 ## Гейты (процессные)
 

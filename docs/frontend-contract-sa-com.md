@@ -41,6 +41,14 @@
 
 Во всех ответах API, где возвращается `answer_json` или результаты попытки (в т.ч. `GET /attempts/{id}`, `POST /attempts/{id}/finish`), комментарий приходит в том же месте: **`answer_json.response.comment`**.
 
+## Проверка (scoring)
+
+По умолчанию SA_COM **авто-проверяется** по `value` (accepted_answers/regex, как SA):
+задание считается выполненным без преподавателя. Если задание помечено
+`solution_rules.manual_review_required=true` (tsk-230), авто-вердикт не выставляется —
+ответ уходит в очередь ручной проверки (`is_correct=NULL`, `score=0`), балл проставит
+преподаватель. См. [glossary](ai/glossary.md) → «Типы задач».
+
 ## Кратко
 
 | Поле            | Обязательность | Роль                          |

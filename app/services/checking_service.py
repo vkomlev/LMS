@@ -502,7 +502,21 @@ class CheckingService:
         # Проверяем наличие ответа (comment не влияет на проверку)
         value_raw = answer.response.value or ""
         missing_answer = not value_raw or value_raw.strip() == ""
-        
+
+        # tsk-230: manual_review_required — единый флаг обязательной ручной проверки.
+        # Если задание помечено (по умолчанию False для SA/SA_COM) — НЕ выставляем
+        # авто-вердикт: ответ уходит в очередь преподавателя (is_correct=None), как TA.
+        # score=0 намеренно — иначе оптимистичный авто-пасс (score/max_score ratio,
+        # Y-6) зачёл бы студента до ручной оценки. Балл проставит преподаватель.
+        if solution_rules.manual_review_required:
+            return CheckResult(
+                is_correct=None,
+                score=0,
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=None,
+            )
+
         rules: Optional[ShortAnswerRules] = solution_rules.short_answer
 
         if not rules:
