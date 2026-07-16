@@ -1,5 +1,8 @@
-"""Integration тесты Y-4.2: GET /api/v1/task-results/by-pending-review
-фильтрует автопроверенные и возвращает только SA_COM/TA с is_correct IS NULL.
+"""Integration тесты GET /api/v1/task-results/by-pending-review.
+
+tsk-247: обязательная очередь (review_kind=mandatory) = TA либо SA_COM с
+manual_review_required=true. Автопроверенные MC/SC/SA отфильтрованы. Предикат
+общий с claim-next — см. `teacher_queue_service.mandatory_review_sql`.
 """
 from __future__ import annotations
 
@@ -24,15 +27,22 @@ def _api_key_qs() -> str:
     return f"api_key={key}"
 
 
-async def _create_task(db, *, course_id: int, type_: str) -> int:
+async def _create_task(
+    db, *, course_id: int, type_: str, manual: bool | None = None
+) -> int:
+    """:param manual: solution_rules.manual_review_required (tsk-247)."""
+    rules: dict = {"max_score": 10}
+    if manual is not None:
+        rules["manual_review_required"] = manual
     res = await db.execute(
         text(
-            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
-            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), :cid, 1) RETURNING id"
         ),
         {
             "ext": f"y42lp-test-{random.randint(10**8, 10**10)}",
             "content": json.dumps({"type": type_, "stem": "test"}),
+            "rules": json.dumps(rules),
             "cid": course_id,
         },
     )
@@ -99,10 +109,11 @@ async def test_list_pending_review_excludes_auto_checked_mc(db, client):
 
 @pytest.mark.asyncio
 async def test_list_pending_review_returns_only_sa_com_ta(db, client):
-    """GET /by-pending-review возвращает только SA_COM/TA с is_correct IS NULL."""
+    """Обязательная очередь: SA_COM с manual_review_required=true — да,
+    авто-проверенный SA — нет (tsk-247)."""
     qs = _api_key_qs()
     student_id = await _create_student(db)
-    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM")
+    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM", manual=True)
     sa_com_rid = await _create_tr(
         db, user_id=student_id, task_id=sa_com_task, is_correct=None
     )

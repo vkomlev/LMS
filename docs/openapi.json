@@ -8614,11 +8614,11 @@
                 "optional"
               ],
               "type": "string",
-              "description": "mandatory (default) — очередь обязательной ручной проверки (is_correct IS NULL, SA_COM/TA, замок свободен). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230).",
+              "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230).",
               "default": "mandatory",
               "title": "Review Kind"
             },
-            "description": "mandatory (default) — очередь обязательной ручной проверки (is_correct IS NULL, SA_COM/TA, замок свободен). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230)."
+            "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230)."
           },
           {
             "name": "limit",
@@ -13307,6 +13307,126 @@
           },
           "422": {
             "description": "Невалидные параметры"
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/reviews/{result_id}/claim": {
+      "post": {
+        "tags": [
+          "teacher_reviews"
+        ],
+        "summary": "Взять на оценку конкретную работу (claim по result_id, tsk-247)",
+        "description": "Захватить конкретную работу под оценку.\n\nДополняет claim-next: тот выдаёт следующую работу из ОБЯЗАТЕЛЬНОЙ очереди,\nа этот позволяет оценить опциональную работу, открытую из списка вручную.",
+        "operationId": "review_claim_by_id_api_v1_teacher_reviews__result_id__claim_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID результата (task_result)",
+              "title": "Result Id"
+            },
+            "description": "ID результата (task_result)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Блокировка выдана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewClaimResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Работа вне зоны ответственности преподавателя"
+          },
+          "404": {
+            "description": "Работа не найдена или не подлежит ручной оценке"
+          },
+          "409": {
+            "description": "Уже оценена или захвачена другим преподавателем"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -23744,6 +23864,53 @@
         ],
         "title": "ReviewClaimNextResponse",
         "description": "Ответ claim-next для manual review."
+      },
+      "ReviewClaimRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя"
+          },
+          "ttl_sec": {
+            "type": "integer",
+            "maximum": 600.0,
+            "minimum": 30.0,
+            "title": "Ttl Sec",
+            "description": "Время жизни блокировки в секундах",
+            "default": 120
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id"
+        ],
+        "title": "ReviewClaimRequest",
+        "description": "Тело запроса «взять на оценку конкретную работу» (tsk-247).\n\nНужен для оценки опциональных работ (авто-проверенные SA_COM), которые\nпреподаватель открывает из списка, а не получает из обязательной очереди:\ngrade требует валидный lock_token, а взять его иначе было негде."
+      },
+      "ReviewClaimResponse": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ReviewClaimItem"
+          },
+          "lock_token": {
+            "type": "string",
+            "title": "Lock Token"
+          },
+          "lock_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Lock Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item",
+          "lock_token",
+          "lock_expires_at"
+        ],
+        "title": "ReviewClaimResponse",
+        "description": "Ответ claim по result_id: блокировка выдана (иначе 403/404/409)."
       },
       "ReviewGradeRequest": {
         "properties": {

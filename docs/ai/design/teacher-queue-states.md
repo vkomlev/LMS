@@ -7,6 +7,15 @@
 
 > **Назначение:** зафиксировать lifecycle SA_COM-результата от submit ученика до grade преподавателем. Документ описывает то, **что уже есть в LMS** (claim/release/lock_token), плюс жизненный цикл `is_correct` и `checked_at` для SA_COM. Используется для Phase Y-4 (teacher-bot UX в TG_LMS) и интеграции SPW.
 
+> **tsk-247 (2026-07-17) — что попадает в очередь.** Признак ОБЯЗАТЕЛЬНОЙ проверки — тип `TA`
+> либо `SA_COM` с `solution_rules.manual_review_required=true` (при `checked_at IS NULL`).
+> `is_correct` признаком очереди **не является**: его смысл менялся (Y-4.2 `IS NULL` → Y-6/tsk-210
+> `IS TRUE`), из-за чего claim-next, список `by-pending-review?review_kind=mandatory` и
+> `pending-count` разъехались, а очередь стала недостижимой. Единственный источник предиката —
+> `teacher_queue_service.mandatory_review_sql()`; любой новый потребитель очереди обязан брать
+> его оттуда, а не писать своё условие. Опциональная очередь (авто-проверенные SA_COM без флага)
+> — `review_kind=optional`; оценивается через `POST /teacher/reviews/{id}/claim` + `/grade`.
+
 ## 1. Сущности и поля
 
 `task_results` (`app/models/task_results.py`):
@@ -145,7 +154,7 @@ Body: {
 
 | Метрика | SQL |
 |---|---|
-| Pending depth | `SELECT count(*) FROM task_results WHERE is_correct IS NULL AND review_claimed_by IS NULL` |
+| Pending depth | `SELECT count(*) FROM task_results tr JOIN tasks t ON t.id = tr.task_id WHERE tr.checked_at IS NULL AND tr.review_claimed_by IS NULL AND (t.task_content->>'type' = 'TA' OR (t.task_content->>'type' = 'SA_COM' AND COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))` |
 | Stale claims | `SELECT count(*) FROM task_results WHERE review_claim_expires_at < now()` |
 | Time-to-grade (p50) | `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY checked_at - submitted_at) FROM task_results WHERE checked_at IS NOT NULL AND submitted_at >= now() - interval '7 days'` |
 

@@ -105,6 +105,39 @@ REVIEW_ACL_SQL = f"""
 """  # nosec B608
 
 
+# ─── tsk-247: единый предикат «обязательной проверки» ───────────────────────
+# ЕДИНСТВЕННОЕ определение обязательной очереди. Его обязаны использовать и
+# claim-next, и список `GET /task-results/by-pending-review?review_kind=mandatory`.
+# До tsk-247 условия разъезжались: список требовал `is_correct IS NULL` (Y-4.2),
+# claim-next — `is_correct IS TRUE` (Y-6/tsk-210). Множества не пересекались:
+# работу из обязательного списка невозможно было взять в работу, и наоборот.
+#
+# Ось «обязательная / опциональная» — это `manual_review_required` (SA_COM) и
+# тип TA, а НЕ `is_correct`:
+#   - TA — всегда ручная (рубрики), submit ставит optimistic-PASSED is_correct=TRUE;
+#   - SA_COM с manual_review_required=true — авто-чек намеренно не выносит вердикт
+#     (is_correct=NULL, см. tsk-230 `_check_short_answer`);
+#   - SA_COM с manual_review_required=false — авто-проверена, очередь опциональная
+#     (review_kind=optional). Сюда же попадают честно-заваленные (is_correct=false),
+#     которые tsk-210 не хотел показывать как обязательные — теперь их отсекает
+#     сама ось mrr, без хрупкой опоры на is_correct.
+MANDATORY_REVIEW_TEMPLATE = """
+    ({tasks}.task_content->>'type' = 'TA'
+     OR ({tasks}.task_content->>'type' = 'SA_COM'
+         AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
+"""
+
+
+def mandatory_review_sql(tasks_alias: str = "t") -> str:
+    """SQL-фрагмент «работа требует обязательной ручной проверки».
+
+    :param tasks_alias: алиас таблицы `tasks` в вызывающем запросе ('t' в
+        claim-next, 'tasks' в SQLAlchemy-select списка). User-input сюда не
+        попадает — только литералы из закрытого набора call-sites.
+    """
+    return MANDATORY_REVIEW_TEMPLATE.format(tasks=tasks_alias)  # nosec B608
+
+
 def _token() -> str:
     return secrets.token_hex(32)
 
@@ -306,14 +339,11 @@ async def claim_next_review(
     if user_id is not None:
         params["user_id"] = user_id
 
-    # Выбираем один task_result для ручной проверки. Y-6 pivot:
-    # семантика pending review = `tr.checked_at IS NULL` + whitelist типа
-    # `('SA_COM', 'TA')`. Раньше (Y-4.2) дополнительно требовалось
-    # `is_correct IS NULL` для отсечения автопроверенных MC/SC/SA. После
-    # Y-6 submit-side optimistic-PASSED записывает `is_correct=TRUE` сразу,
-    # поэтому `is_correct IS NULL` больше не подходит как маркер pending.
-    # Type-whitelist (`SA_COM`/`TA`) сам по себе исключает автопроверенные
-    # MC/SC/SA из очереди — независимо от их `checked_at`.
+    # Выбираем один task_result для ручной проверки. tsk-247: очередь
+    # определяется общим предикатом mandatory_review_sql() — тем же, что и у
+    # списка `by-pending-review?review_kind=mandatory`. Опора на `is_correct`
+    # (Y-4.2 `IS NULL` / Y-6 `IS TRUE`) убрана: она разъезжалась между двумя
+    # местами и делала очередь недостижимой (см. комментарий у предиката).
     r = await db.execute(
         text(f"""
             WITH cand AS (
@@ -321,13 +351,7 @@ async def claim_next_review(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
-                  AND t.task_content->>'type' IN ('SA_COM', 'TA')
-                  -- tsk-210: на вторичную проверку учителя идут только первично-
-                  -- верные ответы. SA_COM с is_correct=FALSE (не совпал с эталоном)
-                  -- — это честный FAILED, ученик уже видит «Неверно», учителю его
-                  -- смотреть незачем. TA всегда is_correct=TRUE (optimistic-PASSED),
-                  -- поэтому фильтр его не отсекает.
-                  AND tr.is_correct IS TRUE
+                  AND {mandatory_review_sql('t')}
                   AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
                   AND {REVIEW_ACL_SQL}
                   {course_cond}
@@ -466,6 +490,120 @@ class GradeValidationError(GradeError):
 
     def __init__(self, reason: str) -> None:
         super().__init__("validation", reason)
+
+
+class ClaimForbiddenError(GradeError):
+    """403: работа вне зоны ответственности преподавателя (ACL)."""
+
+    def __init__(self) -> None:
+        super().__init__("forbidden", "Работа вне вашей зоны ответственности")
+
+
+async def claim_review_by_id(
+    db: AsyncSession,
+    *,
+    result_id: int,
+    teacher_id: int,
+    ttl_sec: int = 120,
+) -> Tuple[dict, str, datetime]:
+    """Захватить КОНКРЕТНУЮ работу под оценку (tsk-247).
+
+    Дополняет `claim_next_review` (тот выдаёт следующую из обязательной очереди).
+    Нужен для оценки опциональных работ (авто-проверенные SA_COM,
+    `manual_review_required=false`), которые преподаватель открывает из списка
+    вручную: `grade_review` требует валидный lock_token, а взять его было негде.
+
+    Проверки (те же инварианты, что у claim-next): работа существует, не
+    оценена, тип SA_COM/TA, ACL преподавателя, замок свободен или уже наш.
+
+    :returns: (item, lock_token, lock_expires_at)
+    :raises GradeNotFoundError: работы нет / тип не подлежит ручной оценке.
+    :raises ClaimForbiddenError: работа вне ACL преподавателя.
+    :raises GradeConflictError: уже оценена или захвачена другим преподавателем.
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=ttl_sec)
+    token = _token()
+
+    # Диагностика до записи: разводим 404 / 403 / 409 явными причинами —
+    # иначе бот покажет «конфликт» там, где на деле нет доступа.
+    r = await db.execute(
+        text(f"""
+            SELECT tr.checked_at, tr.review_claimed_by, tr.review_claim_expires_at,
+                   t.task_content->>'type' AS task_type,
+                   {REVIEW_ACL_SQL} AS acl_ok
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE tr.id = :result_id
+        """),  # nosec B608 — REVIEW_ACL_SQL собран из литералов модуля
+        {"result_id": result_id, "teacher_id": teacher_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        raise GradeNotFoundError()
+    checked_at, claimed_by, claim_expires_at, task_type, acl_ok = row
+    if task_type not in ("SA_COM", "TA"):
+        raise GradeNotFoundError()
+    if not acl_ok:
+        raise ClaimForbiddenError()
+    if checked_at is not None:
+        raise GradeConflictError("Заявка уже оценена")
+
+    # Атомарный захват: условие в WHERE повторяет проверки выше — между SELECT
+    # и UPDATE работу мог забрать другой преподаватель.
+    r2 = await db.execute(
+        text("""
+            UPDATE task_results tr
+            SET review_claimed_by = :teacher_id, review_claim_token = :token,
+                review_claim_expires_at = :expires_at
+            FROM tasks t
+            WHERE t.id = tr.task_id
+              AND tr.id = :result_id
+              AND tr.checked_at IS NULL
+              AND (tr.review_claim_expires_at IS NULL
+                   OR tr.review_claim_expires_at < :now_ts
+                   OR tr.review_claimed_by = :teacher_id)
+            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
+                      tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id
+        """),
+        {
+            "result_id": result_id,
+            "teacher_id": teacher_id,
+            "token": token,
+            "expires_at": expires_at,
+            "now_ts": now,
+        },
+    )
+    urow = r2.fetchone()
+    if urow is None:
+        logger.info(
+            "claim_by_id conflict result_id=%s teacher_id=%s claimed_by=%s expires=%s",
+            result_id, teacher_id, claimed_by, claim_expires_at,
+        )
+        raise GradeConflictError("Работу уже проверяет другой преподаватель")
+
+    (
+        rid, task_id, user_id_val, score, submitted_at,
+        max_score, is_correct, answer_json, task_title, course_id_val,
+    ) = urow
+    r3 = await db.execute(
+        text("SELECT full_name FROM users WHERE id = :uid"), {"uid": user_id_val}
+    )
+    urow2 = r3.fetchone()
+    item = {
+        "id": rid,
+        "task_id": task_id,
+        "user_id": user_id_val,
+        "score": score,
+        "submitted_at": submitted_at,
+        "max_score": max_score,
+        "is_correct": is_correct,
+        "answer_json": answer_json,
+        "task_title": task_title,
+        "user_name": urow2[0] if urow2 else None,
+        "course_id": course_id_val,
+    }
+    return (item, token, expires_at)
 
 
 async def grade_review(
@@ -800,11 +938,9 @@ async def get_pending_count(
     Включает только заявки, которые сейчас НЕ захвачены (или захват просрочен).
     """
     now = datetime.now(timezone.utc)
-    # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
-    # `('SA_COM','TA')`. См. claim_next_review комментарий.
-    # tsk-210: тот же фильтр `is_correct IS TRUE`, что и в claim_next_review —
-    # иначе счётчик (TG_LMS поллер) считает первично-неверные SA_COM, которые
-    # claim-next не выдаёт → фантомная очередь, которую учитель не может обнулить.
+    # tsk-247: счётчик обязан считать РОВНО то, что выдаёт claim-next, — иначе
+    # у преподавателя фантомная очередь, которую он не может обнулить (мотив
+    # tsk-210). Поэтому предикат один и тот же — mandatory_review_sql().
     r = await db.execute(
         text(
             f"""
@@ -812,8 +948,7 @@ async def get_pending_count(
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
-              AND t.task_content->>'type' IN ('SA_COM', 'TA')
-              AND tr.is_correct IS TRUE
+              AND {mandatory_review_sql('t')}
               AND (tr.review_claim_expires_at IS NULL OR tr.review_claim_expires_at < :now_ts)
               AND {REVIEW_ACL_SQL}
             """  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов

@@ -45,15 +45,22 @@ async def _create_student(db) -> int:
     return u.id
 
 
-async def _create_task(db, *, course_id: int, type_: str) -> int:
+async def _create_task(
+    db, *, course_id: int, type_: str, manual: bool | None = None
+) -> int:
+    """:param manual: solution_rules.manual_review_required (tsk-247)."""
+    rules: dict = {"max_score": 10}
+    if manual is not None:
+        rules["manual_review_required"] = manual
     res = await db.execute(
         text(
-            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
-            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), :cid, 1) RETURNING id"
         ),
         {
             "ext": f"y42pc-test-{random.randint(10**8, 10**10)}",
             "content": json.dumps({"type": type_, "stem": "test"}),
+            "rules": json.dumps(rules),
             "cid": course_id,
         },
     )
@@ -126,15 +133,15 @@ async def test_pending_count_excludes_auto_checked_mc(db, client):
 
 @pytest.mark.asyncio
 async def test_pending_count_includes_pending_sa_com(db, client):
-    """Первично-верный pending SA_COM (is_correct=TRUE, checked_at NULL)
-    увеличивает pending-count на 1.
+    """Работа обязательной очереди увеличивает pending-count на 1.
 
-    tsk-210: под Y-6 pending = is_correct=TRUE (не NULL); count фильтруется
-    `is_correct IS TRUE` в паритете с claim_next_review.
+    tsk-247: счётчик считает ровно то, что выдаёт claim-next, — SA_COM с
+    manual_review_required=true (и TA). Иначе у преподавателя фантомная
+    очередь, которую он не может обнулить.
     """
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)
-    task_id = await _create_task(db, course_id=1, type_="SA_COM")
+    task_id = await _create_task(db, course_id=1, type_="SA_COM", manual=True)
     try:
         resp_before = await client.get(
             f"/api/v1/teacher/reviews/pending-count?teacher_id={methodist_id}",
@@ -163,11 +170,11 @@ async def test_pending_count_includes_pending_sa_com(db, client):
 
 @pytest.mark.asyncio
 async def test_pending_count_with_mixed_types(db, client):
-    """Mixed: 1 auto-checked MC + 2 pending SA_COM → count увеличен на 2 (MC игнорируется)."""
+    """Mixed: 1 auto-checked MC + 2 обязательных SA_COM → count увеличен на 2 (MC игнорируется)."""
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)
     mc_task = await _create_task(db, course_id=1, type_="MC")
-    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM")
+    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM", manual=True)
     try:
         resp_before = await client.get(
             f"/api/v1/teacher/reviews/pending-count?teacher_id={methodist_id}",

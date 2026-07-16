@@ -1,9 +1,11 @@
-"""Integration HTTP-тесты Y-4.2 R-3 fix: фильтр claim_next_review по типу
-задачи + is_correct.
+"""Integration HTTP-тесты фильтра claim_next_review.
 
-После Y-4.2 endpoint /api/v1/teacher/reviews/claim-next возвращает только
-SA_COM/TA с `is_correct IS NULL`. Авто-проверенные MC/SC/SA исключены —
-это предотвращает data corruption через переоценку автопроверки.
+tsk-247: очередь определяется осью «обязательная / опциональная», а НЕ
+`is_correct`. claim-next выдаёт только TA и SA_COM с
+`solution_rules.manual_review_required=true` — ровно то же, что показывает
+список `by-pending-review?review_kind=mandatory`. Авто-проверенные MC/SC/SA
+исключены (data corruption через переоценку автопроверки), авто-проверенные
+SA_COM без флага — это опциональная очередь (tsk-230), не обязательная.
 """
 from __future__ import annotations
 
@@ -45,16 +47,26 @@ async def _setup_methodist(db) -> tuple[int, str]:
     return u.id, token
 
 
-async def _create_task(db, *, course_id: int, type_: str) -> int:
-    """Создать synthetic task с нужным task_content->>'type'."""
+async def _create_task(
+    db, *, course_id: int, type_: str, manual: bool | None = None
+) -> int:
+    """Создать synthetic task с нужным task_content->>'type'.
+
+    :param manual: solution_rules.manual_review_required. None — флаг не задан
+        (tsk-247: SA_COM без флага = опциональная проверка, не обязательная).
+    """
+    rules: dict = {"max_score": 10}
+    if manual is not None:
+        rules["manual_review_required"] = manual
     res = await db.execute(
         text(
-            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
-            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), :cid, 1) RETURNING id"
         ),
         {
             "ext": f"y42-test-{random.randint(10**8, 10**10)}",
             "content": json.dumps({"type": type_, "stem": "test"}),
+            "rules": json.dumps(rules),
             "cid": course_id,
         },
     )
@@ -156,22 +168,31 @@ async def test_claim_next_skips_auto_checked(db, client, task_type):
 # ─── 4-5: positive — первично-верные pending SA_COM / TA выдаются ───────────
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("task_type", ["SA_COM", "TA"])
-async def test_claim_next_includes_pending_manual(db, client, task_type):
-    """Первично-верные pending SA_COM/TA (is_correct=TRUE, checked_at NULL)
-    остаются в очереди на ВТОРИЧНУЮ проверку учителя.
+@pytest.mark.parametrize(
+    "task_type,manual,is_correct",
+    [
+        # TA — всегда ручная (рубрики); submit ставит optimistic-PASSED is_correct=TRUE.
+        ("TA", None, True),
+        # SA_COM с manual_review_required=true — авто-чек намеренно не выносит
+        # вердикт (is_correct=NULL, tsk-230 `_check_short_answer`).
+        ("SA_COM", True, None),
+    ],
+)
+async def test_claim_next_includes_pending_manual(
+    db, client, task_type, manual, is_correct
+):
+    """Работы обязательной очереди достижимы через claim-next.
 
-    tsk-210: под Y-6 реальные pending-записи имеют is_correct=TRUE — TA через
-    optimistic-PASSED, SA_COM через успешную сверку с эталоном. Раньше тест
-    подавал is_correct=None (стар. семантика Y-4.2 «pending = is_correct IS
-    NULL»); после tsk-210 очередь фильтруется `is_correct IS TRUE`, поэтому
-    для проверки положительного пути используем is_correct=True.
+    tsk-247: обязательность определяется типом TA либо флагом
+    manual_review_required=true, а не значением is_correct. Раньше тест
+    опирался на is_correct (Y-4.2 `IS NULL` → tsk-210 `IS TRUE`) — именно эта
+    опора и разъехалась со списком очереди.
     """
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)
-    task_id = await _create_task(db, course_id=1, type_=task_type)
+    task_id = await _create_task(db, course_id=1, type_=task_type, manual=manual)
     rid = await _create_task_result(
-        db, user_id=student_id, task_id=task_id, is_correct=True, score=10
+        db, user_id=student_id, task_id=task_id, is_correct=is_correct, score=10
     )
     try:
         # Изолируем по user_id (свежий student) → в пуле ровно один rid.
@@ -209,6 +230,10 @@ async def test_claim_next_excludes_primary_wrong_sa_com(db, client):
     Регрессия на баг P0 из обратной связи QA: раньше optimistic-PASSED ставил
     любому SA_COM is_correct=TRUE, и неверный ответ и проходил как верный, и
     засорял очередь учителя.
+
+    tsk-247: инвариант сохранён, но держится уже на другом условии — SA_COM без
+    manual_review_required=true в обязательную очередь не входит вовсе,
+    независимо от is_correct.
     """
     methodist_id, token = await _setup_methodist(db)
     student_id = await _create_student(db)

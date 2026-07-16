@@ -91,6 +91,26 @@ class ReviewClaimNextResponse(BaseModel):
     empty: bool = Field(..., description="True, если нет доступного кейса")
 
 
+# ----- Review Claim by id (tsk-247) -----
+
+class ReviewClaimRequest(BaseModel):
+    """Тело запроса «взять на оценку конкретную работу» (tsk-247).
+
+    Нужен для оценки опциональных работ (авто-проверенные SA_COM), которые
+    преподаватель открывает из списка, а не получает из обязательной очереди:
+    grade требует валидный lock_token, а взять его иначе было негде.
+    """
+    teacher_id: int = Field(..., description="ID преподавателя")
+    ttl_sec: int = Field(120, ge=30, le=600, description="Время жизни блокировки в секундах")
+
+
+class ReviewClaimResponse(BaseModel):
+    """Ответ claim по result_id: блокировка выдана (иначе 403/404/409)."""
+    item: ReviewClaimItem
+    lock_token: str
+    lock_expires_at: datetime
+
+
 # ----- Review Release -----
 
 class ReviewReleaseRequest(BaseModel):

@@ -96,6 +96,27 @@ async def _create_pending_tr(db, *, user_id: int, task_id: int) -> int:
     return rid
 
 
+async def _create_review_task(db, course_id: int) -> int:
+    """Создать СВОЮ задачу обязательной ручной проверки в курсе (tsk-247).
+
+    Раньше тест брал произвольную SA_COM/TA из БД. После tsk-247 обязательность
+    задаётся флагом manual_review_required (или типом TA), и случайная задача
+    в очередь может не попасть — тест про ACL молча превращался в skip/падение.
+    Своя задача делает проверку доступа независимой от содержимого базы.
+    """
+    res = await db.execute(
+        text(
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
+            "VALUES (:ext, 10, CAST('{\"type\": \"TA\", \"stem\": \"acl-test\"}' AS jsonb), "
+            "        CAST('{\"max_score\": 10}' AS jsonb), :c, 1) RETURNING id"
+        ),
+        {"ext": f"y41-acl-{random.randint(10**8, 10**10)}", "c": course_id},
+    )
+    tid = res.scalar_one()
+    await db.commit()
+    return tid
+
+
 async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
     """Найти триплет (root_id, child_id, grandchild_id_with_task) — реальные данные.
 
@@ -124,23 +145,6 @@ async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
     return int(row[0]), int(row[1]), int(row[2])
 
 
-async def _pick_task_in_course(db, course_id: int) -> int:
-    row = (
-        await db.execute(
-            text(
-                "SELECT id FROM tasks "
-                "WHERE course_id = :c "
-                "AND task_content->>'type' IN ('SA_COM', 'TA') "
-                "LIMIT 1"
-            ),
-            {"c": course_id},
-        )
-    ).fetchone()
-    if row is None:
-        pytest.skip(f"Нет review-задач SA_COM/TA в course_id={course_id}")
-    return int(row[0])
-
-
 async def _pick_other_root(db, exclude_root_id: int) -> int:
     row = (
         await db.execute(
@@ -160,10 +164,14 @@ async def _pick_other_root(db, exclude_root_id: int) -> int:
     return int(row[0])
 
 
-async def _cleanup(db, *, teacher_id: int, student_id: int | None = None, rids: list[int] = None):
+async def _cleanup(db, *, teacher_id: int, student_id: int | None = None,
+                   rids: list[int] = None, task_ids: list[int] = None):
     rids = rids or []
+    task_ids = task_ids or []
     if rids:
         await db.execute(text("DELETE FROM task_results WHERE id = ANY(:r)"), {"r": rids})
+    if task_ids:
+        await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
     await db.execute(text("DELETE FROM teacher_courses WHERE teacher_id=:t"), {"t": teacher_id})
     await db.execute(text("DELETE FROM user_roles WHERE user_id=:t"), {"t": teacher_id})
     await db.execute(text("DELETE FROM user_session WHERE user_id=:t"), {"t": teacher_id})
@@ -180,7 +188,7 @@ async def _cleanup(db, *, teacher_id: int, student_id: int | None = None, rids: 
 async def test_teacher_root_sees_grandchild_review_pending(db, client):
     """Teacher привязан к root; pending review на grandchild → видим через recursive ACL."""
     root_id, _child_id, grandchild_id = await _pick_root_with_grandchild(db)
-    task_id = await _pick_task_in_course(db, grandchild_id)
+    task_id = await _create_review_task(db, grandchild_id)
     teacher_id, token = await _setup_teacher(db, course_id=root_id)
     student_id = await _create_student(db)
     rid = await _create_pending_tr(db, user_id=student_id, task_id=task_id)
@@ -196,28 +204,15 @@ async def test_teacher_root_sees_grandchild_review_pending(db, client):
             f"count={body['count']}"
         )
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid], task_ids=[task_id])
 
 
 @pytest.mark.asyncio
 async def test_teacher_root_sees_direct_child_review_pending(db, client):
     """Teacher на root; task на direct child — видим через 1 уровень ancestor_chain."""
     root_id, child_id, _grandchild_id = await _pick_root_with_grandchild(db)
-    # Возьмём task непосредственно из child (depth=1)
-    row = (
-        await db.execute(
-            text(
-                "SELECT id FROM tasks "
-                "WHERE course_id = :c "
-                "AND task_content->>'type' IN ('SA_COM', 'TA') "
-                "LIMIT 1"
-            ),
-            {"c": child_id},
-        )
-    ).fetchone()
-    if row is None:
-        pytest.skip(f"Нет задач непосредственно в child course_id={child_id}")
-    task_id = int(row[0])
+    # Задача непосредственно в child (depth=1)
+    task_id = await _create_review_task(db, child_id)
     teacher_id, token = await _setup_teacher(db, course_id=root_id)
     student_id = await _create_student(db)
     rid = await _create_pending_tr(db, user_id=student_id, task_id=task_id)
@@ -229,7 +224,7 @@ async def test_teacher_root_sees_direct_child_review_pending(db, client):
         assert resp.status_code == 200
         assert resp.json()["count"] >= 1
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid], task_ids=[task_id])
 
 
 @pytest.mark.asyncio
@@ -237,7 +232,7 @@ async def test_teacher_unrelated_root_does_not_see_other_branch(db, client):
     """Teacher на чужом root → НЕ видит review в чужой ветке."""
     root_id, _child_id, grandchild_id = await _pick_root_with_grandchild(db)
     other_root = await _pick_other_root(db, exclude_root_id=root_id)
-    task_id = await _pick_task_in_course(db, grandchild_id)
+    task_id = await _create_review_task(db, grandchild_id)
     teacher_id, token = await _setup_teacher(db, course_id=other_root)
     student_id = await _create_student(db)
     rid = await _create_pending_tr(db, user_id=student_id, task_id=task_id)
@@ -272,14 +267,14 @@ async def test_teacher_unrelated_root_does_not_see_other_branch(db, client):
                 headers={"Authorization": f"Bearer {token}"},
             )
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid], task_ids=[task_id])
 
 
 @pytest.mark.asyncio
 async def test_pending_count_uses_hierarchical_acl(db, client):
     """Y-4 endpoint /teacher/reviews/pending-count + Y-4.1 hierarchical = composed correctly."""
     root_id, _child_id, grandchild_id = await _pick_root_with_grandchild(db)
-    task_id = await _pick_task_in_course(db, grandchild_id)
+    task_id = await _create_review_task(db, grandchild_id)
     teacher_id, token = await _setup_teacher(db, course_id=root_id)
     student_id = await _create_student(db)
     # Создадим 3 pending в одной ветке
@@ -297,14 +292,14 @@ async def test_pending_count_uses_hierarchical_acl(db, client):
         assert body["count"] >= 3
         assert body["oldest_received_at"] is not None
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=rids)
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=rids, task_ids=[task_id])
 
 
 @pytest.mark.asyncio
 async def test_methodist_bypass_still_works(db, client):
     """Regression: methodist без teacher_courses видит всё (escape hatch)."""
     root_id, _child_id, grandchild_id = await _pick_root_with_grandchild(db)
-    task_id = await _pick_task_in_course(db, grandchild_id)
+    task_id = await _create_review_task(db, grandchild_id)
     # methodist БЕЗ teacher_courses
     teacher_id, token = await _setup_teacher(db, with_methodist=True)
     student_id = await _create_student(db)
@@ -318,7 +313,7 @@ async def test_methodist_bypass_still_works(db, client):
         # methodist видит весь pool — count >= 1 (наш rid + любые legacy)
         assert resp.json()["count"] >= 1
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid], task_ids=[task_id])
 
 
 @pytest.mark.asyncio
@@ -326,20 +321,7 @@ async def test_teacher_self_attached_root_with_root_task_still_works(db, client)
     """Regression на ровный (depth=0) случай: teacher на course X + task на course X → видит."""
     # Используем root_id; task на root напрямую (не на child)
     root_id, _child, _gchild = await _pick_root_with_grandchild(db)
-    row = (
-        await db.execute(
-            text(
-                "SELECT id FROM tasks "
-                "WHERE course_id = :c "
-                "AND task_content->>'type' IN ('SA_COM', 'TA') "
-                "LIMIT 1"
-            ),
-            {"c": root_id},
-        )
-    ).fetchone()
-    if row is None:
-        pytest.skip(f"Нет задач непосредственно в root course_id={root_id}")
-    task_id = int(row[0])
+    task_id = await _create_review_task(db, root_id)
     teacher_id, token = await _setup_teacher(db, course_id=root_id)
     student_id = await _create_student(db)
     rid = await _create_pending_tr(db, user_id=student_id, task_id=task_id)
@@ -352,7 +334,7 @@ async def test_teacher_self_attached_root_with_root_task_still_works(db, client)
         # ancestor_chain для root = {root}; teacher на root → совпадает → видит
         assert resp.json()["count"] >= 1
     finally:
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid], task_ids=[task_id])
 
 
 @pytest.mark.asyncio
@@ -409,7 +391,7 @@ async def test_help_request_hierarchical_acl_via_teacher_courses(db):
     from app.services.teacher_queue_service import HELP_REQUESTS_ACL_SQL
 
     root_id, _child_id, grandchild_id = await _pick_root_with_grandchild(db)
-    task_id = await _pick_task_in_course(db, grandchild_id)
+    task_id = await _create_review_task(db, grandchild_id)
     teacher_id, _token = await _setup_teacher(db, course_id=root_id)
     student_id = await _create_student(db)
     now = datetime.now(timezone.utc)
@@ -442,4 +424,4 @@ async def test_help_request_hierarchical_acl_via_teacher_courses(db):
     finally:
         await db.execute(text("DELETE FROM help_requests WHERE id=:id"), {"id": hr_id})
         await db.commit()
-        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[])
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[], task_ids=[task_id])

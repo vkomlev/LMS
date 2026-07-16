@@ -490,8 +490,9 @@ async def get_pending_review_results(
     review_kind: Literal["mandatory", "optional"] = Query(
         "mandatory",
         description=(
-            "mandatory (default) — очередь обязательной ручной проверки "
-            "(is_correct IS NULL, SA_COM/TA, замок свободен). "
+            "mandatory (default) — очередь обязательной ручной проверки: TA либо "
+            "SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). "
+            "Тот же предикат, что у claim-next (tsk-247). "
             "optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, "
             "manual_review_required=false), доступные для опционального просмотра (tsk-230)."
         ),
@@ -519,6 +520,7 @@ async def get_pending_review_results(
     from sqlalchemy import select, and_, or_, text as sa_text
     from app.models.task_results import TaskResults
     from app.models.tasks import Tasks
+    from app.services.teacher_queue_service import mandatory_review_sql
 
     now = datetime.now(timezone.utc)
     if review_kind == "optional":
@@ -535,13 +537,15 @@ async def get_pending_review_results(
             ),
         ]
     else:
-        # mandatory (default): очередь обязательной ручной проверки. Y-4.2 (R-3 fix):
-        # `is_correct IS NULL` + whitelist типа через JSONB исключает автопроверенные
-        # MC/SC/SA, которые могли быть переоценены через /grade (data corruption risk).
+        # mandatory (default): очередь обязательной ручной проверки. tsk-247:
+        # предикат берём из ЕДИНОГО источника — того же, что использует claim-next
+        # (`teacher_queue_service.mandatory_review_sql`). До tsk-247 здесь стоял
+        # `is_correct IS NULL` (Y-4.2), а в claim-next — `is_correct IS TRUE` (Y-6):
+        # множества не пересекались, и работу из этого списка нельзя было взять
+        # в работу через «Следующую проверку».
         conditions = [
             TaskResults.checked_at.is_(None),
-            TaskResults.is_correct.is_(None),
-            sa_text("tasks.task_content->>'type' IN ('SA_COM', 'TA')"),
+            sa_text(mandatory_review_sql("tasks")),
             or_(
                 TaskResults.review_claim_expires_at.is_(None),
                 TaskResults.review_claim_expires_at < now,

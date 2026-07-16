@@ -1,6 +1,7 @@
 """
 Teacher reviews API (Learning Engine V1, этап 3.9 + Phase Y-4):
 - POST /api/v1/teacher/reviews/claim-next      — взять следующий результат
+- POST /api/v1/teacher/reviews/{id}/claim      — взять на оценку конкретную работу (tsk-247)
 - POST /api/v1/teacher/reviews/{id}/release    — освободить блокировку
 - POST /api/v1/teacher/reviews/{id}/grade      — выставить оценку (Y-4)
 - GET  /api/v1/teacher/reviews/pending-count   — количество pending без захвата (Y-4)
@@ -31,6 +32,8 @@ from app.schemas.teacher_next_modes import (
     ReviewClaimItem,
     ReviewClaimNextRequest,
     ReviewClaimNextResponse,
+    ReviewClaimRequest,
+    ReviewClaimResponse,
     ReviewGradeRequest,
     ReviewGradeResponse,
     ReviewRegradePartScore,
@@ -41,10 +44,12 @@ from app.schemas.teacher_next_modes import (
 )
 from app.services import audit_service, inbox_service, notification_email_service
 from app.services.teacher_queue_service import (
+    ClaimForbiddenError,
     GradeConflictError,
     GradeNotFoundError,
     GradeValidationError,
     claim_next_review,
+    claim_review_by_id,
     get_pending_count,
     grade_review,
     regrade_review,
@@ -86,6 +91,56 @@ async def review_claim_next(
         return ReviewClaimNextResponse(empty=True, item=None, lock_token=None, lock_expires_at=None)
     return ReviewClaimNextResponse(
         empty=False,
+        item=ReviewClaimItem(**item),
+        lock_token=lock_token,
+        lock_expires_at=lock_expires_at,
+    )
+
+
+@router.post(
+    "/{result_id}/claim",
+    response_model=ReviewClaimResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Взять на оценку конкретную работу (claim по result_id, tsk-247)",
+    responses={
+        200: {"description": "Блокировка выдана"},
+        403: {"description": "Работа вне зоны ответственности преподавателя"},
+        404: {"description": "Работа не найдена или не подлежит ручной оценке"},
+        409: {"description": "Уже оценена или захвачена другим преподавателем"},
+    },
+)
+async def review_claim_by_id(
+    result_id: int = Path(..., description="ID результата (task_result)"),
+    body: ReviewClaimRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> ReviewClaimResponse:
+    """Захватить конкретную работу под оценку.
+
+    Дополняет claim-next: тот выдаёт следующую работу из ОБЯЗАТЕЛЬНОЙ очереди,
+    а этот позволяет оценить опциональную работу, открытую из списка вручную.
+    """
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    try:
+        item, lock_token, lock_expires_at = await claim_review_by_id(
+            db,
+            result_id=result_id,
+            teacher_id=body.teacher_id,
+            ttl_sec=body.ttl_sec,
+        )
+    except GradeNotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, e.message)
+    except ClaimForbiddenError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, e.message)
+    except GradeConflictError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, e.message)
+    await db.commit()
+    logger.info(
+        "review_claim_by_id result_id=%s teacher_id=%s ttl=%s",
+        result_id, body.teacher_id, body.ttl_sec,
+    )
+    return ReviewClaimResponse(
         item=ReviewClaimItem(**item),
         lock_token=lock_token,
         lock_expires_at=lock_expires_at,
