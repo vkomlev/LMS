@@ -8605,6 +8605,22 @@
             "description": "Р¤РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ"
           },
           {
+            "name": "review_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "mandatory",
+                "optional"
+              ],
+              "type": "string",
+              "description": "mandatory (default) — очередь обязательной ручной проверки (is_correct IS NULL, SA_COM/TA, замок свободен). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230).",
+              "default": "mandatory",
+              "title": "Review Kind"
+            },
+            "description": "mandatory (default) — очередь обязательной ручной проверки (is_correct IS NULL, SA_COM/TA, замок свободен). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230)."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,

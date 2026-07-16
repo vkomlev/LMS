@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, Body, HTTPException, status
@@ -487,6 +487,15 @@ async def get_user_stats(
 async def get_pending_review_results(
     course_id: Optional[int] = Query(None, description="Р¤РёР»СЊС‚СЂ РїРѕ РєСѓСЂСЃСѓ"),
     user_id: Optional[int] = Query(None, description="Р¤РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ"),
+    review_kind: Literal["mandatory", "optional"] = Query(
+        "mandatory",
+        description=(
+            "mandatory (default) — очередь обязательной ручной проверки "
+            "(is_correct IS NULL, SA_COM/TA, замок свободен). "
+            "optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, "
+            "manual_review_required=false), доступные для опционального просмотра (tsk-230)."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
     offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
     db: AsyncSession = Depends(get_db),
@@ -512,19 +521,32 @@ async def get_pending_review_results(
     from app.models.tasks import Tasks
 
     now = datetime.now(timezone.utc)
-    # Условия очереди ручной проверки. Y-4.2 (R-3 fix): добавлены `is_correct
-    # IS NULL` + whitelist типа задачи через JSONB. Это исключает автопроверенные
-    # MC/SC/SA, которые попадали в очередь и могли быть переоценены через
-    # /grade endpoint (data corruption risk).
-    conditions = [
-        TaskResults.checked_at.is_(None),
-        TaskResults.is_correct.is_(None),
-        sa_text("tasks.task_content->>'type' IN ('SA_COM', 'TA')"),
-        or_(
-            TaskResults.review_claim_expires_at.is_(None),
-            TaskResults.review_claim_expires_at < now,
-        ),
-    ]
+    if review_kind == "optional":
+        # tsk-230: опциональная проверка — авто-проверенные SA_COM, которые
+        # преподаватель МОЖЕТ пересмотреть (но не обязан). checked_at IS NULL
+        # (учитель ещё не подтверждал) + is_correct задан авто-чеком +
+        # manual_review_required=false (обязательные идут в mandatory-очередь).
+        conditions = [
+            TaskResults.checked_at.is_(None),
+            TaskResults.is_correct.isnot(None),
+            sa_text("tasks.task_content->>'type' = 'SA_COM'"),
+            sa_text(
+                "COALESCE((tasks.solution_rules->>'manual_review_required')::boolean, false) = false"
+            ),
+        ]
+    else:
+        # mandatory (default): очередь обязательной ручной проверки. Y-4.2 (R-3 fix):
+        # `is_correct IS NULL` + whitelist типа через JSONB исключает автопроверенные
+        # MC/SC/SA, которые могли быть переоценены через /grade (data corruption risk).
+        conditions = [
+            TaskResults.checked_at.is_(None),
+            TaskResults.is_correct.is_(None),
+            sa_text("tasks.task_content->>'type' IN ('SA_COM', 'TA')"),
+            or_(
+                TaskResults.review_claim_expires_at.is_(None),
+                TaskResults.review_claim_expires_at < now,
+            ),
+        ]
 
     # Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ С„РёР»СЊС‚СЂС‹
     if course_id is not None:
