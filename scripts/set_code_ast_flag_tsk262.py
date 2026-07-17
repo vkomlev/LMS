@@ -169,10 +169,12 @@ async def main(apply: bool) -> None:
                 "AND NOT (id = ANY($1::int[]))",
                 targets,
             )
-            assert after == len(targets), f"ожидали {len(targets)} с флагом, получили {after}"
-            assert flagged_not_target == 0, (
-                f"флаг попал на задания вне выборки: {flagged_not_target}"
-            )
+            # Явные raise, а не assert: под python -O assert выкидывается,
+            # а это единственный контроль корректности прод-записи.
+            if after != len(targets):
+                raise AssertionError(f"ожидали {len(targets)} с флагом, получили {after}")
+            if flagged_not_target != 0:
+                raise AssertionError(f"флаг попал на задания вне выборки: {flagged_not_target}")
 
             # Контроль целостности: остальные шаги нормализации на месте.
             sample = await conn.fetchrow(
@@ -188,9 +190,11 @@ async def main(apply: bool) -> None:
                 "AND solution_rules->'short_answer'->'normalization' ? 'code_ast' "
                 "AND solution_rules->'short_answer'->'normalization' ? 'lower'"
             )
-            assert with_lower == 0, (
-                f"у {with_lower} заданий code_ast соседствует с lower — регистр обязан быть значим"
-            )
+            if with_lower != 0:
+                raise AssertionError(
+                    f"у {with_lower} заданий code_ast соседствует с lower — "
+                    "регистр обязан быть значим"
+                )
 
             # Контроль: текстовые задания не задеты — их lower остался на месте.
             text_with_lower = await conn.fetchval(

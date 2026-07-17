@@ -7,6 +7,18 @@ from pydantic import BaseModel, Field, model_validator
 
 ScoringMode = Literal["all_or_nothing", "partial", "custom"]
 
+# Словарь шагов нормализации короткого ответа. Закрытый список намеренно:
+# неизвестный шаг молча игнорировался бы движком, и опечатка ('code-ast' вместо
+# 'code_ast') бесшумно выключила бы режим сравнения кода — задание вернулось бы
+# к ложным незачётам, и никто бы не заметил. Лучше 422 на импорте (tsk-262).
+NormalizationStep = Literal[
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces",
+    "code_ast",
+]
+
 
 class PartialRule(BaseModel):
     """
@@ -47,7 +59,7 @@ class ShortAnswerRules(BaseModel):
     Правила проверки короткого ответа (SA/SA_COM).
     """
 
-    normalization: List[str] = Field(
+    normalization: List[NormalizationStep] = Field(
         default_factory=lambda: ["trim", "lower"],
         description=(
             "Список шагов нормализации строки перед сравнением. "

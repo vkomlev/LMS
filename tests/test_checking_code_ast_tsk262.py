@@ -162,3 +162,39 @@ def test_canon_equivalent_forms():
 
 def test_canon_preserves_case():
     assert _canon("print(I)") != _canon("print(i)")
+
+
+# ---------- Словарь normalization закрыт: опечатка не проходит молча ----------
+
+def test_normalization_rejects_typo_in_step_name():
+    """'code-ast' через дефис молча выключил бы режим кода — теперь это 422
+    на импорте задания, а не тихий возврат ложных незачётов."""
+    from pydantic import ValidationError
+
+    from app.schemas.solution_rules import ShortAnswerRules
+
+    with pytest.raises(ValidationError):
+        ShortAnswerRules(normalization=["trim", "code-ast"], accepted_answers=[])
+
+
+def test_normalization_accepts_known_steps():
+    from app.schemas.solution_rules import ShortAnswerRules
+
+    rules = ShortAnswerRules(
+        normalization=["trim", "lower", "strip_punctuation", "collapse_spaces", "code_ast"],
+        accepted_answers=[],
+    )
+    assert rules.normalization[-1] == "code_ast"
+
+
+def test_normalization_accepts_existing_prod_combinations():
+    """Комбинации, реально лежащие в проде, обязаны валидироваться —
+    иначе закрытый словарь сломал бы чтение существующих заданий."""
+    from app.schemas.solution_rules import ShortAnswerRules
+
+    for steps in (
+        ["trim", "lower"],
+        ["trim", "lower", "strip_punctuation", "collapse_spaces"],
+        ["trim", "strip_punctuation", "collapse_spaces"],
+    ):
+        assert ShortAnswerRules(normalization=steps, accepted_answers=[]).normalization == steps
