@@ -104,15 +104,25 @@ class CoursesService(BaseService[Courses]):
         """
         Найти курс по его внешнему коду (course_uid).
 
+        tsk-261: `parent_courses` грузится ЯВНО. `Courses.parent_course_ids` —
+        property, и при незагруженной связи она возвращает пустой список
+        (`app/models/courses.py`), а не падает. Значит потребитель, который
+        отличает корень от подкурса по `parent_course_ids`, без eager-load
+        считал бы корнем ЛЮБОЙ курс — проверка выглядела бы рабочей и молча
+        пропускала подкурс (ровно так и произошло в SPW `useRootCourseId`).
+
         :param db: асинхронная сессия БД.
         :param course_uid: внешний код курса (например, 'COURSE-PY-01').
         :return: ORM-объект Courses.
         :raises DomainError: если курс с таким course_uid не найден.
         """
-        course: Optional[Courses] = await self.repo.get_by_keys(
-            db,
-            {"course_uid": course_uid},
+        stmt = (
+            select(Courses)
+            .options(selectinload(Courses.parent_courses))
+            .where(Courses.course_uid == course_uid)
         )
+        result = await db.execute(stmt)
+        course: Optional[Courses] = result.scalar_one_or_none()
         if course is None:
             raise DomainError(
                 detail="Курс с указанным кодом не найден",
