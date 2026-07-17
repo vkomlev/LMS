@@ -43,6 +43,7 @@ from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
+from app.services.tasks_acl_service import assert_task_access
 from app.services import assignment_rules_service
 from app.core.config import Settings
 
@@ -271,6 +272,13 @@ async def create_attempt(
                 }
             }
         },
+        403: {
+            "description": (
+                "Доступ запрещён: попытка принадлежит другому пользователю, либо "
+                "ученик не зачислён на курс задания (tsk-272). Сервисный ключ "
+                "(X-API-Key) и роли teacher/methodist/admin проверку проходят."
+            ),
+        },
         404: {
             "description": "Попытка не найдена",
         },
@@ -397,6 +405,21 @@ async def submit_attempt_answers(
                     f"(task_id={item.task_id}, external_uid={item.external_uid!r})."
                 ),
             )
+
+        # 2.1.0b tsk-272: ACL доступа к заданию. Раньше приём ответа не проверял,
+        # записан ли ученик на курс задания: чтение задания защищено assert_task_access
+        # (GET /tasks/*), а запись task_results — нет. Ученик без единой активной
+        # user_courses открывал попытку на любой курс и отвечал (коды [200,...],
+        # task_results рос) — подтверждено на живых данных. Та же проверка, что на
+        # чтении, ставит запись и чтение в один контур доступа.
+        #
+        # Bypass встроен в helper: is_service (X-API-Key — TG_LMS, CB CLI) и роли
+        # teacher/methodist/admin проходят. Гости идут отдельным эндпоинтом
+        # (/learning/guest/attempts), сюда не попадают. Гейт per-item, до записи —
+        # чтобы отказ по одному заданию не оставлял частичный результат.
+        await assert_task_access(
+            db, current_user=current_user, task_course_id=task.course_id
+        )
 
         # 2.1.1 tsk-264: результат обязан лечь в тот же контекст, в котором потом
         # считается лимит. Лимит считается по корню попытки, поэтому ответ на
@@ -658,16 +681,79 @@ async def submit_attempt_answers(
                     ),
                 )
 
-        # 2.4 Записываем в task_results
-        task_result = await task_results_service.create_from_check_result(
-            db=db,
-            attempt_id=attempt.id,
-            task_id=task.id,
-            user_id=attempt.user_id,
-            answer=answer,
-            check_result=check_result,
-            source_system=attempt.source_system,
-        )
+        # 2.4 Записываем в task_results.
+        #
+        # tsk-273: запись под точечным advisory-замком против гонки (TOCTOU).
+        # Гейт 2.3b читает счёт попыток и решает 409, но между чтением и записью
+        # нет сериализации, а repos/base.py коммитит каждую запись отдельно. Два
+        # одновременных ответа при «лимит-1» оба прочитали бы одинаковый счёт, оба
+        # прошли бы гейт и оба записались бы — task_results > limit (воспроизведено:
+        # 6 одновременных ответов при лимите 3 → 6-7 записей). Прецедент
+        # pg_advisory_xact_lock (learning.py) в исходном виде не переносится: он
+        # отпускается на первом commit, а тут commit на каждую запись; наивный
+        # session-lock тоже теряется на commit (соединение уходит в пул) — оба
+        # проверены пробником. Решение: атомарная секция {замок → ПЕРЕСЧЁТ лимита →
+        # запись → один commit} в одной транзакции. Замок xact-scoped и держится до
+        # commit, значит второй запрос пересчитает счёт уже ПОСЛЕ записи первого и
+        # получит 409. Ключ — (user, task:root): контендят только ответы на одно
+        # задание в одном корне, разные задания друг другу не мешают.
+        #
+        # effective_root_id is None — путь неизвестен/неоднозначен, лимит тут и так
+        # не форсится (2.3b: null-root → 200, ambiguous+исчерпан → 400 выше). Замок
+        # там не нужен: сериализовать нечего.
+        if effective_root_id is not None:
+            await db.execute(
+                text("SELECT pg_advisory_xact_lock(:k1, hashtext(:k2))"),
+                {"k1": attempt.user_id, "k2": f"{task.id}:{effective_root_id}"},
+            )
+            locked_state = await learning_engine_service.compute_task_state(
+                db,
+                student_id=attempt.user_id,
+                task_id=task.id,
+                root_course_id=effective_root_id,
+            )
+            if locked_state.state == "BLOCKED_LIMIT":
+                # Гонку выиграл конкурент: пока мы шли к записи, лимит добрали.
+                # Откат тут НЕ делаем: db.rollback() истёк бы ORM-объекты attempt/task
+                # (rollback экспайрит всегда, даже при expire_on_commit=False), и
+                # следующее же обращение task.id дёрнуло бы ленивую загрузку вне
+                # greenlet-контекста → MissingGreenlet. Замок xact-scoped и так
+                # отпустится при закрытии сессии на выходе из запроса — как и
+                # существующие 409/400 выше, которые тоже просто raise без rollback.
+                logger.info(
+                    "POST /attempts/%s/answers: лимит добран конкурентом под замком "
+                    "(task_id=%s root_course_id=%s used=%s limit=%s) → 409 (tsk-273)",
+                    attempt_id, task.id, effective_root_id,
+                    locked_state.attempts_used, locked_state.attempts_limit_effective,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Лимит попыток по заданию исчерпан "
+                        f"({locked_state.attempts_used} из {locked_state.attempts_limit_effective})."
+                    ),
+                )
+            task_result = await task_results_service.create_from_check_result(
+                db=db,
+                attempt_id=attempt.id,
+                task_id=task.id,
+                user_id=attempt.user_id,
+                answer=answer,
+                check_result=check_result,
+                source_system=attempt.source_system,
+                commit=False,
+            )
+            await db.commit()  # фиксируем запись и отпускаем замок атомарно
+        else:
+            task_result = await task_results_service.create_from_check_result(
+                db=db,
+                attempt_id=attempt.id,
+                task_id=task.id,
+                user_id=attempt.user_id,
+                answer=answer,
+                check_result=check_result,
+                source_system=attempt.source_system,
+            )
 
         # 2.4b tsk-031: оценка правил назначения по ответу (answer_value / task_failed).
         # Soft-fail: движок назначения никогда не ломает учебный поток.

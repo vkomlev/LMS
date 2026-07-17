@@ -1,0 +1,129 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 1aeef77..7b8f54f 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -658,16 +658,79 @@ async def submit_attempt_answers(
+                     ),
+                 )
+ 
+-        # 2.4 Записываем в task_results
+-        task_result = await task_results_service.create_from_check_result(
+-            db=db,
+-            attempt_id=attempt.id,
+-            task_id=task.id,
+-            user_id=attempt.user_id,
+-            answer=answer,
+-            check_result=check_result,
+-            source_system=attempt.source_system,
+-        )
++        # 2.4 Записываем в task_results.
++        #
++        # tsk-273: запись под точечным advisory-замком против гонки (TOCTOU).
++        # Гейт 2.3b читает счёт попыток и решает 409, но между чтением и записью
++        # нет сериализации, а repos/base.py коммитит каждую запись отдельно. Два
++        # одновременных ответа при «лимит-1» оба прочитали бы одинаковый счёт, оба
++        # прошли бы гейт и оба записались бы — task_results > limit (воспроизведено:
++        # 6 одновременных ответов при лимите 3 → 6-7 записей). Прецедент
++        # pg_advisory_xact_lock (learning.py) в исходном виде не переносится: он
++        # отпускается на первом commit, а тут commit на каждую запись; наивный
++        # session-lock тоже теряется на commit (соединение уходит в пул) — оба
++        # проверены пробником. Решение: атомарная секция {замок → ПЕРЕСЧЁТ лимита →
++        # запись → один commit} в одной транзакции. Замок xact-scoped и держится до
++        # commit, значит второй запрос пересчитает счёт уже ПОСЛЕ записи первого и
++        # получит 409. Ключ — (user, task:root): контендят только ответы на одно
++        # задание в одном корне, разные задания друг другу не мешают.
++        #
++        # effective_root_id is None — путь неизвестен/неоднозначен, лимит тут и так
++        # не форсится (2.3b: null-root → 200, ambiguous+исчерпан → 400 выше). Замок
++        # там не нужен: сериализовать нечего.
++        if effective_root_id is not None:
++            await db.execute(
++                text("SELECT pg_advisory_xact_lock(:k1, hashtext(:k2))"),
++                {"k1": attempt.user_id, "k2": f"{task.id}:{effective_root_id}"},
++            )
++            locked_state = await learning_engine_service.compute_task_state(
++                db,
++                student_id=attempt.user_id,
++                task_id=task.id,
++                root_course_id=effective_root_id,
++            )
++            if locked_state.state == "BLOCKED_LIMIT":
++                # Гонку выиграл конкурент: пока мы шли к записи, лимит добрали.
++                # Откат тут НЕ делаем: db.rollback() истёк бы ORM-объекты attempt/task
++                # (rollback экспайрит всегда, даже при expire_on_commit=False), и
++                # следующее же обращение task.id дёрнуло бы ленивую загрузку вне
++                # greenlet-контекста → MissingGreenlet. Замок xact-scoped и так
++                # отпустится при закрытии сессии на выходе из запроса — как и
++                # существующие 409/400 выше, которые тоже просто raise без rollback.
++                logger.info(
++                    "POST /attempts/%s/answers: лимит добран конкурентом под замком "
++                    "(task_id=%s root_course_id=%s used=%s limit=%s) → 409 (tsk-273)",
++                    attempt_id, task.id, effective_root_id,
++                    locked_state.attempts_used, locked_state.attempts_limit_effective,
++                )
++                raise HTTPException(
++                    status_code=status.HTTP_409_CONFLICT,
++                    detail=(
++                        f"Лимит попыток по заданию исчерпан "
++                        f"({locked_state.attempts_used} из {locked_state.attempts_limit_effective})."
++                    ),
++                )
++            task_result = await task_results_service.create_from_check_result(
++                db=db,
++                attempt_id=attempt.id,
++                task_id=task.id,
++                user_id=attempt.user_id,
++                answer=answer,
++                check_result=check_result,
++                source_system=attempt.source_system,
++                commit=False,
++            )
++            await db.commit()  # фиксируем запись и отпускаем замок атомарно
++        else:
++            task_result = await task_results_service.create_from_check_result(
++                db=db,
++                attempt_id=attempt.id,
++                task_id=task.id,
++                user_id=attempt.user_id,
++                answer=answer,
++                check_result=check_result,
++                source_system=attempt.source_system,
++            )
+ 
+         # 2.4b tsk-031: оценка правил назначения по ответу (answer_value / task_failed).
+         # Soft-fail: движок назначения никогда не ломает учебный поток.
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index fc16bb7..6441fc6 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -40,6 +40,7 @@ class TaskResultsService(BaseService[TaskResults]):
+         source_system: str = "system",
+         metrics: Any | None = None,
+         count_retry: int = 0,
++        commit: bool = True,
+     ) -> TaskResults:
+         """
+         Создать запись в task_results на основе результата проверки.
+@@ -53,6 +54,8 @@ class TaskResultsService(BaseService[TaskResults]):
+         :param source_system: Источник системы.
+         :param metrics: Доп. метрики (опционально).
+         :param count_retry: Номер попытки/кол-во попыток.
++        :param commit: Если False — только flush (для внешней транзакции, tsk-273:
++            запись идёт внутри критической секции под advisory-lock, коммит — снаружи).
+         """
+         obj_in = TaskResultCreate(
+             score=check_result.score,
+@@ -68,8 +71,11 @@ class TaskResultsService(BaseService[TaskResults]):
+             source_system=source_system,
+         )
+ 
+-        # BaseService.create ожидает dict[str, Any], поэтому передаём model_dump()
+-        return await self.create(db, obj_in.model_dump())
++        # BaseService.create ожидает dict[str, Any], поэтому передаём model_dump().
++        # commit прокидываем в repo напрямую: BaseService.create коммитит всегда,
++        # а критической секции tsk-273 нужен commit=False (коммит — снаружи, после
++        # записи, чтобы advisory-lock держался от пересчёта лимита до записи).
++        return await self.repo.create(db, obj_in.model_dump(), commit=commit)
+ 
+     async def get_by_user(
+         self,

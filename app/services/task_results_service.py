@@ -40,6 +40,7 @@ class TaskResultsService(BaseService[TaskResults]):
         source_system: str = "system",
         metrics: Any | None = None,
         count_retry: int = 0,
+        commit: bool = True,
     ) -> TaskResults:
         """
         Создать запись в task_results на основе результата проверки.
@@ -53,6 +54,8 @@ class TaskResultsService(BaseService[TaskResults]):
         :param source_system: Источник системы.
         :param metrics: Доп. метрики (опционально).
         :param count_retry: Номер попытки/кол-во попыток.
+        :param commit: Если False — только flush (для внешней транзакции, tsk-273:
+            запись идёт внутри критической секции под advisory-lock, коммит — снаружи).
         """
         obj_in = TaskResultCreate(
             score=check_result.score,
@@ -68,8 +71,11 @@ class TaskResultsService(BaseService[TaskResults]):
             source_system=source_system,
         )
 
-        # BaseService.create ожидает dict[str, Any], поэтому передаём model_dump()
-        return await self.create(db, obj_in.model_dump())
+        # BaseService.create ожидает dict[str, Any], поэтому передаём model_dump().
+        # commit прокидываем в repo напрямую: BaseService.create коммитит всегда,
+        # а критической секции tsk-273 нужен commit=False (коммит — снаружи, после
+        # записи, чтобы advisory-lock держался от пересчёта лимита до записи).
+        return await self.repo.create(db, obj_in.model_dump(), commit=commit)
 
     async def get_by_user(
         self,
