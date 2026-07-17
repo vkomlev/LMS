@@ -23,6 +23,14 @@ class AttemptCreate(BaseModel):
         default=None,
         description="ID курса, если попытка привязана к конкретному курсу.",
     )
+    root_course_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его "
+            "границах считаются попытки. Не задан — сервер определяет сам, если "
+            "узел лежит ровно в одном активном курсе ученика."
+        ),
+    )
     source_system: Optional[str] = Field(
         default="lms",
         description="Источник создания попытки (lms_web, tg_bot, import и т.п.).",
@@ -64,6 +72,14 @@ class AttemptRead(BaseModel):
     id: int = Field(..., description="ID попытки", examples=[1, 5])
     user_id: int = Field(..., description="ID пользователя, который проходит попытку", examples=[10, 15])
     course_id: Optional[int] = Field(None, description="ID курса, если попытка привязана к курсу", examples=[1, 5, None])
+    root_course_id: Optional[int] = Field(
+        None,
+        description=(
+            "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его "
+            "границах считается лимит попыток. null — путь неизвестен."
+        ),
+        examples=[1111, None],
+    )
 
     # 👇 ключевая правка: datetime вместо str
     created_at: Optional[datetime] = Field(None, description="Время создания попытки", examples=["2026-02-16T12:00:00Z"])

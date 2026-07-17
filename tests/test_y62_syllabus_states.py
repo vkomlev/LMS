@@ -186,17 +186,36 @@ async def _pick_other_root(db, exclude_root_id: int) -> int:
 
 
 async def _create_attempt(
-    db, *, user_id: int, course_id: int, finished: bool = False, cancelled: bool = False
+    db,
+    *,
+    user_id: int,
+    course_id: int,
+    finished: bool = False,
+    cancelled: bool = False,
+    root_course_id: int | None = None,
 ) -> int:
-    """Создать course-level attempt; вернуть его id."""
+    """Создать course-level attempt; вернуть его id.
+
+    tsk-264: попытка несёт корень, которым ученик пришёл к заданию — в его
+    границах считается лимит. Здесь деревья плоские (курс сам себе корень),
+    поэтому по умолчанию root = course_id; попытка без корня лимит не
+    расходует, и фикстура молча перестала бы проверять блокировку.
+    """
     finished_at = datetime.now(timezone.utc) if finished else None
     cancelled_at = datetime.now(timezone.utc) if cancelled else None
     res = await db.execute(
         text(
-            "INSERT INTO attempts (user_id, course_id, source_system, finished_at, cancelled_at) "
-            "VALUES (:u, :c, 'spw', :f, :ca) RETURNING id"
+            "INSERT INTO attempts (user_id, course_id, root_course_id, source_system, "
+            "finished_at, cancelled_at) "
+            "VALUES (:u, :c, :rc, 'spw', :f, :ca) RETURNING id"
         ),
-        {"u": user_id, "c": course_id, "f": finished_at, "ca": cancelled_at},
+        {
+            "u": user_id,
+            "c": course_id,
+            "rc": course_id if root_course_id is None else root_course_id,
+            "f": finished_at,
+            "ca": cancelled_at,
+        },
     )
     aid = int(res.scalar_one())
     await db.commit()

@@ -354,6 +354,11 @@ SELECT c.id AS root_course_id, c.course_uid AS root_course_uid
 FROM course_trees ct
 JOIN courses c ON c.id = ct.root_course_id
 WHERE ct.member_course_id = :leaf_course_id
+-- Сам себе корень — вперёд: лист, который ученику записан, и есть его корень.
+-- Дальше — по id, чтобы выбор был устойчивым: LIMIT 1 без сортировки на узле
+-- под двумя записанными деревьями возвращал разный корень от запроса к запросу
+-- (tsk-264: от этого выбора теперь зависит счёт попыток, а не только вывод).
+ORDER BY (c.id = :leaf_course_id) DESC, c.id ASC
 LIMIT 1
 """
 
@@ -637,8 +642,11 @@ LIMIT :limit OFFSET :offset
 # Python через LearningEngineService._collect_courses_in_order, чтобы
 # сохранить depth-first порядок с учётом course_parents.order_number.
 #
-# attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts —
-# парность с learning_engine_service.compute_task_state (Y-5.3 fix).
+# attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts
+# ЭТОГО корня (tsk-264) — парность с learning_engine_service.compute_task_state
+# (Y-5.3 fix). Узел графа переиспользуется несколькими курсами: лимит попыток
+# считается в границах корня (новый курс — свежие попытки), а last_per_task
+# (прогресс: passed) остаётся общим для всех корней — что ученик знает, то знает.
 # attempts_limit_effective: квиз (SC_Qw/MC_Qw) → 1 (tsk-124, перебивает всё);
 # иначе override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
 _SYLLABUS_TASKS_SQL = """
@@ -664,7 +672,15 @@ attempts_per_task AS (
     SELECT tr.task_id, COUNT(*) AS used
     FROM task_results tr
     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+    INNER JOIN tasks qt ON qt.id = tr.task_id
     WHERE tr.user_id = :user_id
+      AND (
+            -- Квиз: ответ один навсегда, submit отклоняет повтор глобально
+            -- (409) — значит и счёт общий, иначе покажем «попытка есть» там,
+            -- где сервер ответить не даст. Паритет с compute_task_state.
+            qt.task_content->>'type' IN ('SC_Qw', 'MC_Qw')
+            OR a.root_course_id = :root_course_id
+      )
       AND tr.task_id IN (
           SELECT id FROM tasks
           WHERE course_id = ANY(:tree_ids)
@@ -927,12 +943,19 @@ async def get_syllabus_states(
         ]
     tree_ids: list[int] = [m["course_id"] for m in section_meta]
 
+    # tsk-264: попытки считаются в границах КОРНЯ дерева, а параметром сюда
+    # приходит любой узел («ID корневого course (любой узел дерева)»). Для
+    # среднего узла фильтр по нему самому не нашёл бы ни одной попытки —
+    # приводим к настоящему корню тем же резолвером, что и остальной /me.
+    attempts_root_id, _ = await _resolve_root_course(db, user_id, root_course_id)
+
     tasks_res = await db.execute(
         text(_SYLLABUS_TASKS_SQL),
         {
             "user_id": user_id,
             "tree_ids": tree_ids,
             "default_max": DEFAULT_MAX_ATTEMPTS,
+            "root_course_id": attempts_root_id,
         },
     )
     task_rows = tasks_res.mappings().all()

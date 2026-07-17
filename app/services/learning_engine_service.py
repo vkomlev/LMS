@@ -41,6 +41,34 @@ DEFAULT_MAX_ATTEMPTS = 3
 QUIZ_MAX_ATTEMPTS = 1
 PASS_THRESHOLD_RATIO = 0.5
 
+# tsk-264: дерево курса вниз по course_parents — содержит ли корень данный узел.
+_ROOT_CONTAINS_NODE_SQL = """
+WITH RECURSIVE subtree AS (
+    SELECT CAST(:root_course_id AS INTEGER) AS course_id
+    UNION ALL
+    SELECT cp.course_id
+    FROM subtree s
+    JOIN course_parents cp ON cp.parent_course_id = s.course_id
+)
+SELECT EXISTS (SELECT 1 FROM subtree WHERE course_id = :course_id)
+"""
+
+# tsk-264: активные корневые курсы ученика, в чьё дерево входит данный узел.
+_ACTIVE_ROOTS_OF_NODE_SQL = """
+WITH RECURSIVE ct AS (
+    SELECT uc.course_id AS root_course_id, uc.course_id AS member_course_id
+    FROM user_courses uc
+    WHERE uc.user_id = :student_id AND uc.is_active = true
+    UNION ALL
+    SELECT ct.root_course_id, cp.course_id
+    FROM ct
+    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
+)
+SELECT DISTINCT root_course_id
+FROM ct
+WHERE member_course_id = :course_id
+"""
+
 
 class LearningEngineService:
     """
@@ -103,11 +131,92 @@ class LearningEngineService:
 
         return DEFAULT_MAX_ATTEMPTS
 
+    async def root_contains_course(
+        self,
+        db: AsyncSession,
+        root_course_id: int,
+        course_id: int,
+    ) -> bool:
+        """Входит ли курс `course_id` в дерево корня `root_course_id` (tsk-264).
+
+        Args:
+            db: async session.
+            root_course_id: корневой курс.
+            course_id: проверяемый узел (сам корень тоже входит в своё дерево).
+
+        Returns:
+            True, если узел лежит в дереве корня.
+        """
+        return bool(
+            (
+                await db.execute(text(_ROOT_CONTAINS_NODE_SQL), {
+                    "root_course_id": root_course_id,
+                    "course_id": course_id,
+                })
+            ).scalar()
+        )
+
+    async def resolve_attempt_root(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        course_id: int,
+        requested_root_course_id: Optional[int] = None,
+    ) -> Optional[int]:
+        """Корень дерева, которым ученик пришёл к узлу `course_id` (tsk-264).
+
+        Args:
+            db: async session.
+            student_id: ID студента.
+            course_id: курс узла (курс самого задания).
+            requested_root_course_id: корень, заявленный клиентом (SPW знает его
+                из URL/дерева). Принимается только если дерево этого корня
+                действительно содержит узел.
+
+        Returns:
+            ID корневого курса либо None, если путь определить нечем (узел под
+            несколькими активными деревьями и клиент корень не передал). None —
+            «путь неизвестен»: такая попытка не расходует лимит ни в одном корне.
+
+        Raises:
+            DomainError: заявленный корень не содержит узел. Проверка не
+                косметическая: `root_course_id` — ключ счёта попыток, и без неё
+                клиент обходил бы лимит, присылая каждый раз новый корень.
+        """
+        if requested_root_course_id is not None:
+            if not await self.root_contains_course(
+                db, requested_root_course_id, course_id
+            ):
+                raise DomainError(
+                    f"Курс {requested_root_course_id} не содержит узел {course_id}"
+                )
+            return requested_root_course_id
+
+        # Корень не заявлен — восстанавливаем по активным деревьям ученика.
+        # Однозначен ровно один кандидат; несколько (переиспользуемый узел) —
+        # None, гадать нельзя: ошибка съела бы попытку не в том курсе.
+        rows = (
+            await db.execute(text(_ACTIVE_ROOTS_OF_NODE_SQL), {
+                "student_id": student_id,
+                "course_id": course_id,
+            })
+        ).fetchall()
+        if len(rows) == 1:
+            return int(rows[0][0])
+        if len(rows) > 1:
+            logger.info(
+                "resolve_attempt_root: узел под несколькими корнями без контекста — "
+                "student_id=%s course_id=%s roots=%s",
+                student_id, course_id, [int(r[0]) for r in rows],
+            )
+        return None
+
     async def compute_task_state(
         self,
         db: AsyncSession,
         student_id: int,
         task_id: int,
+        root_course_id: Optional[int] = None,
     ) -> TaskStateResult:
         """
         Состояние задания по последнему task_result.
@@ -123,17 +232,51 @@ class LearningEngineService:
           - PASSED если last_score/last_max_score >= 0.5 (по последнему submitted_at);
           - FAILED если последний task_result не PASSED, attempts_used < limit;
           - BLOCKED_LIMIT если attempts_used >= limit и нет PASSED.
+
+        tsk-264: `root_course_id` — корень дерева, которым ученик пришёл к заданию.
+        Узел графа переиспользуется несколькими корнями, и раньше исчерпанные в
+        курсе X попытки убивали задание в курсе Y. Разделены ДВА эффекта:
+          - ПРОГРЕСС (последний результат, PASSED) остаётся ОБЩИМ для всех корней:
+            что ученик знает — то знает, перерешивать не нужно;
+          - СЧЁТ ПОПЫТОК считается в границах корня: новый курс — свежие попытки.
+        Попытки с root_course_id IS NULL (путь неизвестен: старые записи, где корень
+        восстановить нечем, либо вызов без контекста) не расходуют лимит ни в одном
+        корне. `root_course_id=None` у вызова — прежнее поведение: счёт по всем
+        попыткам задания независимо от пути.
         """
         limit = await self.get_effective_attempt_limit(db, student_id, task_id)
 
-        # Число поданных ответов по задаче (учитывая активный course-level attempt)
+        # tsk-264: у квиза (SC_Qw/MC_Qw) ответ ОДИН НАВСЕГДА — повтор задваивает
+        # scale_scores, и submit отклоняет его глобально, без учёта курса
+        # (attempts.py, QUIZ_TASK_TYPES → 409). Значит и счёт у квиза общий, как
+        # прогресс: иначе в соседнем курсе показали бы «попытка есть», ученик
+        # нажал бы «ответить» и получил отказ сервера.
+        if root_course_id is not None:
+            type_row = (
+                await db.execute(
+                    text("SELECT task_content->>'type' FROM tasks WHERE id = :task_id"),
+                    {"task_id": task_id},
+                )
+            ).fetchone()
+            if type_row is not None and type_row[0] in QUIZ_TASK_TYPES:
+                root_course_id = None
+
+        # Число поданных ответов по задаче (учитывая активный course-level attempt).
+        # tsk-264: при заданном корне — только попытки этого корня (см. docstring).
         count_stmt = text("""
             SELECT COUNT(*)
             FROM task_results tr
             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
+              AND (
+                    CAST(:root_course_id AS INTEGER) IS NULL
+                    OR a.root_course_id = CAST(:root_course_id AS INTEGER)
+              )
         """)
-        r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
+        r = await db.execute(
+            count_stmt,
+            {"student_id": student_id, "task_id": task_id, "root_course_id": root_course_id},
+        )
         attempts_used = r.scalar() or 0
 
         # Последний task_result по задаче (по submitted_at task_results).
@@ -549,9 +692,13 @@ class LearningEngineService:
                 if mat is not None:
                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
                     return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
-                # Первое задание не PASSED и не BLOCKED_LIMIT
+                # Первое задание не PASSED и не BLOCKED_LIMIT.
+                # tsk-264: лимит считаем в границах корня, которым идёт обход —
+                # иначе исчерпанные в другом курсе попытки блокировали бы
+                # переиспользуемый узел и здесь.
                 task_id, blocked = await self._first_incomplete_task(
-                    db, student_id, cid, task_ids=task_ids
+                    db, student_id, cid, task_ids=task_ids,
+                    root_course_id=current_root_id,
                 )
                 if blocked is not None:
                     return NextItemResult(
@@ -694,10 +841,14 @@ class LearningEngineService:
         student_id: int,
         course_id: int,
         task_ids: Optional[List[int]] = None,
+        root_course_id: Optional[int] = None,
     ) -> Tuple[Optional[int], Optional[int]]:
         """
         (task_id для следующего задания, task_id с blocked_limit или None).
         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
+
+        `root_course_id` (tsk-264) — корень обхода: лимит попыток считается в его
+        границах.
 
         `task_ids` — необязательный заранее суженный список (tsk-261: обход от
         текущей позиции передаёт сюда только задания ПОСЛЕ неё).
@@ -727,7 +878,9 @@ class LearningEngineService:
         for tid in task_ids:
             if tid in skipped_ids:
                 continue
-            state_result = await self.compute_task_state(db, student_id, tid)
+            state_result = await self.compute_task_state(
+                db, student_id, tid, root_course_id=root_course_id
+            )
             if state_result.state == "BLOCKED_LIMIT":
                 return (None, tid)
             if state_result.state in ("OPEN", "IN_PROGRESS", "FAILED"):

@@ -168,7 +168,14 @@ async def test_syllabus_limit_quiz_is_one(db):
         rows = (
             await db.execute(
                 text(_SYLLABUS_TASKS_SQL),
-                {"user_id": student_id, "tree_ids": [course_id], "default_max": DEFAULT_MAX_ATTEMPTS},
+                {
+                    "user_id": student_id,
+                    "tree_ids": [course_id],
+                    "default_max": DEFAULT_MAX_ATTEMPTS,
+                    # tsk-264: попытки считаются в границах корня; курс здесь
+                    # плоский, сам себе корень.
+                    "root_course_id": course_id,
+                },
             )
         ).mappings().all()
         by_task = {r["task_id"]: r["attempts_limit_effective"] for r in rows}

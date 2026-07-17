@@ -43,10 +43,17 @@ class Attempts(Base):
             ondelete="SET NULL",
             name="attempts_course_id_fkey",
         ),
+        ForeignKeyConstraint(
+            ["root_course_id"],
+            ["courses.id"],
+            ondelete="SET NULL",
+            name="attempts_root_course_id_fkey",
+        ),
         PrimaryKeyConstraint("id", name="attempts_pkey"),
         Index("idx_attempts_user", "user_id"),
         Index("idx_attempts_course", "course_id"),
         Index("idx_attempts_created_at", "created_at"),
+        Index("idx_attempts_user_course_root", "user_id", "course_id", "root_course_id"),
         {"comment": "Попытки прохождения заданий/тестов"},
     )
 
@@ -65,6 +72,16 @@ class Attempts(Base):
         Integer,
         nullable=True,
         comment="ID курса (если применимо)",
+    )
+    root_course_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment=(
+            "Корневой курс дерева, которым ученик пришёл к заданию (tsk-264). "
+            "Узел графа переиспользуется несколькими корнями, поэтому course_id "
+            "(курс самого задания) путь не различает. NULL — путь неизвестен: "
+            "такая попытка не расходует лимит ни в одном корне."
+        ),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -109,7 +126,14 @@ class Attempts(Base):
         "Users",
         back_populates="attempts",
     )
-    course: Mapped[Optional["Courses"]] = relationship("Courses")
+    # foreign_keys обязателен: на courses теперь два ключа (course_id и
+    # root_course_id, tsk-264), и без явного указания join неоднозначен.
+    course: Mapped[Optional["Courses"]] = relationship(
+        "Courses", foreign_keys=[course_id]
+    )
+    root_course: Mapped[Optional["Courses"]] = relationship(
+        "Courses", foreign_keys=[root_course_id]
+    )
     task_results: Mapped[list["TaskResults"]] = relationship(
         "TaskResults",
         back_populates="attempt",

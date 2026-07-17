@@ -144,7 +144,10 @@ async def _enrich_attempt_with_learning_fields(
     if not attempt_with_results.results:
         return
     first_task_id = attempt_with_results.results[0].task_id
-    state = await learning_engine_service.compute_task_state(db, attempt.user_id, first_task_id)
+    # tsk-264: лимит — в границах корня, которым открыта попытка.
+    state = await learning_engine_service.compute_task_state(
+        db, attempt.user_id, first_task_id, root_course_id=attempt.root_course_id
+    )
     attempt_with_results.attempts_used = state.attempts_used
     attempt_with_results.attempts_limit_effective = state.attempts_limit_effective
     attempt_with_results.last_based_status = state.state
@@ -174,10 +177,27 @@ async def create_attempt(
 
     Используется существующий AttemptsService.create_attempt.
     """
+    # tsk-264: корень определяем и здесь, а не только в start-or-get-attempt.
+    # Попытка с пустым корнем не расходует лимит ни в одном курсе, поэтому без
+    # резолва этот эндпоинт стал бы способом выдать себе бесконечные попытки.
+    root_course_id: int | None = None
+    if payload.course_id is not None:
+        try:
+            root_course_id = await learning_engine_service.resolve_attempt_root(
+                db,
+                student_id=payload.user_id,
+                course_id=payload.course_id,
+                requested_root_course_id=payload.root_course_id,
+            )
+        except DomainError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
     attempt = await attempts_service.create_attempt(
         db=db,
         user_id=payload.user_id,
         course_id=payload.course_id,
+        root_course_id=root_course_id,
         source_system=payload.source_system,
         meta=payload.meta,
     )
@@ -348,6 +368,28 @@ async def submit_attempt_answers(
                     f"(task_id={item.task_id}, external_uid={item.external_uid!r})."
                 ),
             )
+
+        # 2.1.1 tsk-264: результат обязан лечь в тот же контекст, в котором потом
+        # считается лимит. Лимит считается по корню попытки, поэтому ответ на
+        # задание ВНЕ дерева этого корня не считался бы нигде — то есть давал бы
+        # неограниченные попытки. Пустой корень (путь неизвестен) не проверяем:
+        # там лимит и так не расходуется, и это осознанное поведение (см. tsk-264).
+        if attempt.root_course_id is not None and task.course_id is not None:
+            if not await learning_engine_service.root_contains_course(
+                db, attempt.root_course_id, task.course_id
+            ):
+                logger.warning(
+                    "POST /attempts/%s/answers: задание вне дерева попытки "
+                    "(task_id=%s task.course_id=%s attempt.root_course_id=%s)",
+                    attempt_id, task.id, task.course_id, attempt.root_course_id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Задание {task.id} не входит в курс "
+                        f"{attempt.root_course_id}, в рамках которого открыта попытка."
+                    ),
+                )
 
         # 2.2 Приводим JSON к строгим схемам
         task_content = TaskContent.model_validate(task.task_content)

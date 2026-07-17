@@ -43,6 +43,7 @@ from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
 from app.services.users_service import UsersService
+from app.utils.exceptions import DomainError
 
 router = APIRouter(prefix="/learning", tags=["learning"])
 logger = logging.getLogger("api.learning")
@@ -98,7 +99,9 @@ async def get_next_item(
         after_task_id=after_task_id,
     )
     if result.type == "blocked_limit" and result.task_id is not None:
-        state = await learning_service.compute_task_state(db, student_id, result.task_id)
+        state = await learning_service.compute_task_state(
+            db, student_id, result.task_id, root_course_id=result.root_course_id
+        )
         await get_or_create_blocked_limit_help_request(
             db,
             student_id=student_id,
@@ -273,19 +276,43 @@ async def start_or_get_attempt(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     course_id = task.course_id
 
-    # Concurrency-safe: один активный attempt на (user_id, course_id).
-    # Advisory lock сериализует параллельные запросы для этой пары.
+    # tsk-264: курс САМОГО задания (course_id) путь не различает — узел
+    # переиспользуется несколькими курсами, и для него course_id одинаков при
+    # любом пути. Контекст навигации (корень) фиксируем в попытке: по нему потом
+    # считается лимит. Заявленный клиентом корень проверяется на то, что его
+    # дерево действительно содержит узел.
+    try:
+        root_course_id = await learning_service.resolve_attempt_root(
+            db,
+            student_id=body.student_id,
+            course_id=course_id,
+            requested_root_course_id=body.root_course_id,
+        )
+    except DomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+
+    # Concurrency-safe: один активный attempt на (user_id, course_id, root_course_id).
+    # Advisory lock сериализует параллельные запросы для этой тройки: корень входит
+    # в ключ, иначе попытка из курса X переиспользовалась бы в курсе Y и её
+    # результаты записались бы в чужой контекст.
+    # hashtext, а не арифметика по id: произведение id курса на множитель
+    # переполняет int4, который принимает pg_advisory_xact_lock.
     await db.execute(
-        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
-        {"k1": body.student_id, "k2": course_id},
+        text("SELECT pg_advisory_xact_lock(:k1, hashtext(:k2))"),
+        {"k1": body.student_id, "k2": f"{course_id}:{root_course_id}"},
     )
 
-    # Активная попытка по этому курсу (не завершена и не отменена)
+    # Активная попытка по этому курсу и корню (не завершена и не отменена)
     stmt = (
         select(Attempts)
         .where(
             Attempts.user_id == body.student_id,
             Attempts.course_id == course_id,
+            Attempts.root_course_id.is_(None)
+            if root_course_id is None
+            else Attempts.root_course_id == root_course_id,
             Attempts.finished_at.is_(None),
             Attempts.cancelled_at.is_(None),
         )
@@ -301,6 +328,7 @@ async def start_or_get_attempt(
             attempt_id=existing.id,
             user_id=existing.user_id,
             course_id=existing.course_id,
+            root_course_id=existing.root_course_id,
             created_at=existing.created_at,
             finished_at=existing.finished_at,
             source_system=existing.source_system,
@@ -310,19 +338,21 @@ async def start_or_get_attempt(
         db=db,
         user_id=body.student_id,
         course_id=course_id,
+        root_course_id=root_course_id,
         source_system=body.source_system or "learning_api",
         meta={"task_ids": [task_id]},
     )
     attempt = await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
     await db.commit()
     logger.info(
-        "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s",
-        body.student_id, task_id, attempt.id,
+        "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s root_course_id=%s",
+        body.student_id, task_id, attempt.id, root_course_id,
     )
     return StartOrGetAttemptResponse(
         attempt_id=attempt.id,
         user_id=attempt.user_id,
         course_id=attempt.course_id,
+        root_course_id=attempt.root_course_id,
         created_at=attempt.created_at,
         finished_at=attempt.finished_at,
         source_system=attempt.source_system,
@@ -339,6 +369,12 @@ async def start_or_get_attempt(
 async def get_task_state(
     task_id: int = Path(..., description="ID задания"),
     student_id: int = Query(..., description="ID студента"),
+    root_course_id: int | None = Query(
+        None,
+        description="Корневой курс, которым ученик пришёл к заданию (tsk-264): "
+        "попытки считаются в его границах. Не задан — счёт по всем попыткам "
+        "задания независимо от пути (прежнее поведение).",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
 ) -> TaskStateResponse:
@@ -350,7 +386,23 @@ async def get_task_state(
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
-    state = await learning_service.compute_task_state(db, student_id, task_id)
+    # tsk-264: тот же резолвер, что у start-or-get-attempt — состояние задания и
+    # счёт при открытии попытки обязаны сходиться, иначе SPW покажет одно, а
+    # сервер применит другое.
+    try:
+        effective_root_id = await learning_service.resolve_attempt_root(
+            db,
+            student_id=student_id,
+            course_id=task.course_id,
+            requested_root_course_id=root_course_id,
+        )
+    except DomainError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    state = await learning_service.compute_task_state(
+        db, student_id, task_id, root_course_id=effective_root_id
+    )
     # tsk-227: проброс флага обязательного вложения клиенту (UX-сигнал; форс — на сервере).
     try:
         requires_attachment = bool(

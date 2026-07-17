@@ -285,12 +285,13 @@ async def test_blocked_limit_still_detected_forward(db, tree):
     await _complete_material(db, student_id=uid, material_id=tree["m1"])
     await _complete_material(db, student_id=uid, material_id=tree["m2"])
     # Исчерпать лимит по t1: 3 результата с провалом в открытой попытке.
+    # tsk-264: попытка несёт корень обхода — лимит считается в его границах.
     res_a = await db.execute(
         text(
-            "INSERT INTO attempts (user_id, course_id, source_system) "
-            "VALUES (:u, :c, 'spw') RETURNING id"
+            "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+            "VALUES (:u, :c, :rc, 'spw') RETURNING id"
         ),
-        {"u": uid, "c": tree["child1"]},
+        {"u": uid, "c": tree["child1"], "rc": root},
     )
     aid = int(res_a.scalar_one())
     for _ in range(3):

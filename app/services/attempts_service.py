@@ -28,6 +28,7 @@ class AttemptsService(BaseService[Attempts]):
         *,
         user_id: int,
         course_id: Optional[int] = None,
+        root_course_id: Optional[int] = None,
         source_system: str = "system",
         meta: Optional[dict[str, Any]] = None,
     ) -> Attempts:
@@ -37,12 +38,16 @@ class AttemptsService(BaseService[Attempts]):
         :param db: Асинхронная сессия БД.
         :param user_id: ID пользователя.
         :param course_id: ID курса (если попытка привязана к курсу).
+        :param root_course_id: корневой курс, которым ученик пришёл к заданию
+            (tsk-264): в его границах считается лимит попыток. None — путь
+            неизвестен, попытка не расходует лимит ни в одном курсе.
         :param source_system: Источник (web, bot, import и т.п.).
         :param meta: Дополнительные метаданные (таймлимит, название и пр.).
         """
         data: dict[str, Any] = {
             "user_id": user_id,
             "course_id": course_id,
+            "root_course_id": root_course_id,
             "source_system": source_system,
             "meta": meta,
         }

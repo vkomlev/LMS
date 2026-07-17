@@ -68,12 +68,29 @@ class LearningSkipResponse(BaseModel):
 class StartOrGetAttemptRequest(BaseModel):
     student_id: int = Field(..., description="ID студента")
     source_system: str = Field(default="learning_api", description="Источник")
+    root_course_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Корневой курс, которым ученик пришёл к заданию (tsk-264). Узел графа "
+            "переиспользуется несколькими курсами, поэтому попытки считаются в "
+            "границах корня: новый курс — свежие попытки. Клиент знает корень из "
+            "дерева/URL. Если не передан — сервер определяет его сам, когда узел "
+            "лежит ровно в одном активном курсе ученика."
+        ),
+    )
 
 
 class StartOrGetAttemptResponse(BaseModel):
     attempt_id: int
     user_id: int
     course_id: Optional[int] = None
+    root_course_id: Optional[int] = Field(
+        default=None,
+        description=(
+            "Корневой курс, в границах которого считаются попытки (tsk-264). "
+            "NULL — путь неизвестен: попытка не расходует лимит ни в одном курсе."
+        ),
+    )
     created_at: datetime
     finished_at: Optional[datetime] = None
     source_system: str
