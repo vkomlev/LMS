@@ -51,14 +51,22 @@ class ShortAnswerRules(BaseModel):
         default_factory=lambda: ["trim", "lower"],
         description=(
             "Список шагов нормализации строки перед сравнением. "
-            "Поддерживаемые шаги: trim, lower, strip_punctuation, collapse_spaces. "
-            "Применяются в фиксированном порядке: "
-            "trim → lower → strip_punctuation → collapse_spaces."
+            "Текстовые шаги: trim, lower, strip_punctuation, collapse_spaces — "
+            "применяются в фиксированном порядке: "
+            "trim → lower → strip_punctuation → collapse_spaces. "
+            "Отдельный шаг 'code_ast' объявляет, что ответ на это задание — "
+            "программа на Python: ответ и эталон сначала сравниваются как код "
+            "(канон через разбор в AST), поэтому кавычки, пробелы вокруг "
+            "синтаксиса и комментарии несущественны, а регистр имён существен. "
+            "Если ответ или эталон не разбирается как Python (фрагмент, другой "
+            "язык), сравнение падает обратно на текстовые шаги из этого же списка. "
+            "Флаг ставится заданию явно и не выводится из содержимого эталона."
         ),
         examples=[
             ["trim", "lower"],
             ["trim", "lower", "collapse_spaces"],
             ["trim", "lower", "strip_punctuation", "collapse_spaces"],
+            ["trim", "code_ast", "strip_punctuation", "collapse_spaces"],
         ],
     )
     accepted_answers: List[ShortAnswerAccepted] = Field(

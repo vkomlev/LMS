@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from typing import List, Optional, Set, Dict
 
@@ -579,11 +580,11 @@ class CheckingService:
         # Если regex не дал полного балла — проверяем accepted_answers
         if base_score < solution_rules.max_score:
             for accepted in rules.accepted_answers:
-                accepted_norm = self._normalize_text(
+                if self._matches_short_answer(
+                    value_raw,
                     accepted.value,
                     rules.normalization,
-                )
-                if value_norm == accepted_norm:
+                ):
                     # Берём максимальный из найденных вариантов (на случай нескольких правил)
                     if accepted.score > base_score:
                         base_score = accepted.score
@@ -620,6 +621,62 @@ class CheckingService:
             feedback=feedback,
         )
 
+    @classmethod
+    def _matches_short_answer(
+        cls,
+        value: str,
+        accepted: str,
+        steps: List[str],
+    ) -> bool:
+        """
+        Сравнивает ответ ученика с одним эталоном по правилам нормализации.
+
+        Если задание объявило шаг 'code_ast' — ответ сначала сравнивается как
+        ПРОГРАММА: обе строки приводятся к каноническому виду через разбор в AST.
+        Это делает несущественное несущественным (кавычки, пробелы вокруг
+        синтаксиса, комментарии) и оставляет существенное существенным
+        (регистр имён: print(I) ≠ print(i)).
+
+        AST — дополнительный путь к зачёту, а не замена текстовому. Если хотя бы
+        одна сторона не разбирается как Python (фрагмент вроде 'for i in range(10):',
+        ответ не на Python вроде '.env', опечатка ученика) — сравнение падает
+        обратно на текстовую нормализацию, то есть ведёт себя как до правки.
+        Поэтому режим не может ужесточить проверку, только спасти валидный ответ.
+
+        Args:
+            value: Сырой ответ ученика.
+            accepted: Сырой эталон из accepted_answers.
+            steps: Шаги нормализации из ShortAnswerRules.normalization.
+
+        Returns:
+            True, если ответ засчитывается за этот эталон.
+        """
+        if "code_ast" in steps:
+            canon_value = cls._canon_code(value)
+            if canon_value is not None:
+                canon_accepted = cls._canon_code(accepted)
+                if canon_accepted is not None and canon_value == canon_accepted:
+                    return True
+        return cls._normalize_text(value, steps) == cls._normalize_text(accepted, steps)
+
+    @staticmethod
+    def _canon_code(value: str) -> Optional[str]:
+        """
+        Канонический вид программы через разбор в AST и обратную сборку.
+
+        Args:
+            value: Исходный текст ответа.
+
+        Returns:
+            Канонический текст программы или None, если строка не разбирается
+            как самостоятельный Python-код (фрагмент, другой язык, синтаксическая
+            ошибка). None — сигнал вызывающему коду откатиться на текстовое сравнение.
+        """
+        try:
+            return ast.unparse(ast.parse(value.strip()))
+        except (SyntaxError, ValueError, MemoryError, RecursionError):
+            return None
+
     @staticmethod
     def _normalize_text(value: str, steps: List[str]) -> str:
         """
@@ -636,6 +693,9 @@ class CheckingService:
         Порядок: trim → lower → strip_punctuation → collapse_spaces.
         strip_punctuation применяется ДО collapse_spaces, чтобы пробелы,
         оставшиеся на месте пунктуации, были схлопнуты.
+
+        Шаг 'code_ast' здесь не обрабатывается (это не построчное преобразование,
+        а способ сравнения) — он живёт в _matches_short_answer.
         """
         result = value
         if "trim" in steps:
