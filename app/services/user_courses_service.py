@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_courses import UserCourses
 from app.repos.user_courses_repo import UserCoursesRepository
+from app.services import course_dependencies_enrollment_service
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 
@@ -22,6 +23,28 @@ class UserCoursesService(BaseService[UserCourses]):
     """
     def __init__(self, repo: UserCoursesRepository = UserCoursesRepository()):
         super().__init__(repo)
+
+    async def create(self, db: AsyncSession, obj_in: Dict) -> UserCourses:
+        """Создать связь ученик↔курс и доназначить курсы-зависимости (tsk-261, A2).
+
+        Оверрайд `BaseService.create`: `POST /api/v1/user-courses/` (назначение из
+        UI) идёт мимо `assignment_rules_service.assign_course_to_student`, поэтому
+        автоназначение зависимостей подключается и здесь. Иначе назначенный из UI
+        зависимый курс остался бы заблокированным навсегда.
+
+        :param db: асинхронная сессия БД.
+        :param obj_in: данные связи (`user_id`, `course_id`, опц. `order_number`).
+        :return: созданная связь.
+        """
+        created = await super().create(db, obj_in)
+        user_id = obj_in.get("user_id")
+        course_id = obj_in.get("course_id")
+        if user_id is not None and course_id is not None:
+            await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+                db, student_id=int(user_id), course_ids=[int(course_id)]
+            )
+            await db.commit()
+        return created
 
     async def get_user_courses(
         self,
@@ -88,12 +111,22 @@ class UserCoursesService(BaseService[UserCourses]):
         Массовая привязка курсов к пользователю.
         order_number установится автоматически для каждой записи через триггер БД.
 
+        tsk-261 (A2): вместе с курсами доназначаются их курсы-зависимости
+        (`course_dependencies`, транзитивно). Иначе зависимый курс остаётся
+        заблокированным навсегда: замок снимается только по `COMPLETED`
+        required-курса, а пройти неназначенный курс ученик не может.
+
         :param db: асинхронная сессия БД.
         :param user_id: ID пользователя.
         :param course_ids: Список ID курсов для привязки.
         :return: Список созданных связей пользователя с курсами.
         """
-        return await self.repo.bulk_create_user_courses(db, user_id, course_ids)
+        created = await self.repo.bulk_create_user_courses(db, user_id, course_ids)
+        await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+            db, student_id=user_id, course_ids=course_ids
+        )
+        await db.commit()
+        return created
 
     async def reorder_courses(
         self,

@@ -26,6 +26,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import course_dependencies_enrollment_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,12 @@ async def assign_course_to_student(
                 "ON CONFLICT (user_id, course_id) DO NOTHING"
             ),
             {"uid": student_id, "cid": resolved_course_id},
+        )
+        # tsk-261 (A2): курс может требовать прохождения другого курса. Если
+        # зависимость ученику не назначена, пройти её нельзя — и замок на этом
+        # курсе не снимется никогда. Доназначаем в той же транзакции.
+        await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+            db, student_id=student_id, course_ids=[resolved_course_id]
         )
 
     event_id: Optional[int] = None

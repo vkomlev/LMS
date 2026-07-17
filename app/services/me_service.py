@@ -111,8 +111,8 @@ async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
 
 # Single-roundtrip CTE — батч-запрос по всем активным курсам пользователя,
 # избегаем N+1 (см. tech-spec §5.2). Дерево курса собирается рекурсивно через
-# course_parents; tasks_done считает заданий с PASS по последней завершённой
-# попытке (та же логика, что в learning_engine_service.compute_course_state).
+# course_parents; tasks_done считает задания с PASS по последнему результату
+# (та же логика, что в learning_engine_service.compute_course_state).
 _COURSES_PROGRESS_SQL = """
 WITH RECURSIVE active_uc AS (
     SELECT user_id, course_id, order_number
@@ -143,6 +143,16 @@ materials_per_root AS (
     WHERE m.is_active = true
       AND m.requirement_level IN ('required', 'skippable')
 ),
+-- tsk-261 (A1): фильтра `a.finished_at IS NOT NULL` здесь БЫТЬ НЕ ДОЛЖНО.
+-- `attempts` в LMS — курсового уровня: одна попытка на пару (ученик, курс)
+-- копит результаты многих задач и живёт открытой, пока ученик проходит курс
+-- (`finished_at` ей никто не проставляет — на проде завершены 78 попыток из
+-- 352). Фильтр отбрасывал всё, что ученик решает прямо сейчас: задачи в
+-- дереве показывались пройденными, а счётчик рядом давал ноль, и процент
+-- считался по одним материалам (жалоба QA «задачи все пройдены, но по ним
+-- ноль, прогресс 37%» — ровно этот случай, воспроизведён до цифры).
+-- Правило «пройдено» теперь то же, что в learning_engine.compute_course_state
+-- и в syllabus-статусах: последний результат по задаче, попытка не аннулирована.
 last_attempt_per_task AS (
     SELECT DISTINCT ON (tr.task_id)
         tr.task_id, tr.score, tr.max_score, tr.received_at
@@ -150,10 +160,9 @@ last_attempt_per_task AS (
     INNER JOIN attempts a
         ON a.id = tr.attempt_id
        AND a.user_id = :user_id
-       AND a.finished_at IS NOT NULL
        AND a.cancelled_at IS NULL
     WHERE tr.user_id = :user_id
-    ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
+    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
 ),
 tasks_total_per_root AS (
     SELECT root_course_id, COUNT(*) AS tasks_total

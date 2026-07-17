@@ -376,11 +376,39 @@ class LearningEngineService:
 
         return CourseState(state=state, course_id=course_id)
 
+    async def _locate_item_course(
+        self,
+        db: AsyncSession,
+        *,
+        after_material_id: Optional[int],
+        after_task_id: Optional[int],
+    ) -> Optional[Tuple[int, str, int]]:
+        """Курс, которому принадлежит элемент текущей позиции.
+
+        Returns:
+            (course_id, kind, item_id) либо None, если позиция не задана/не найдена.
+        """
+        if after_material_id is not None:
+            r = await db.execute(
+                select(Materials.course_id).where(Materials.id == after_material_id)
+            )
+            row = r.fetchone()
+            if row is not None:
+                return (int(row[0]), "material", after_material_id)
+        if after_task_id is not None:
+            r = await db.execute(select(Tasks.course_id).where(Tasks.id == after_task_id))
+            row = r.fetchone()
+            if row is not None:
+                return (int(row[0]), "task", after_task_id)
+        return None
+
     async def resolve_next_item(
         self,
         db: AsyncSession,
         student_id: int,
         root_course_id: Optional[int] = None,
+        after_material_id: Optional[int] = None,
+        after_task_id: Optional[int] = None,
     ) -> NextItemResult:
         """
         Следующий шаг для студента: material | task | none | blocked_dependency | blocked_limit.
@@ -390,6 +418,20 @@ class LearningEngineService:
         обход дерева курса: материалы (order_position), затем задания (id);
         приоритет material над task; блокировка по лимиту попыток.
 
+        tsk-261 (A4/A5). Раньше метод не знал, ГДЕ находится ученик, и всегда
+        отдавал ПЕРВЫЙ незавершённый элемент по всему дереву. Поэтому, отметив
+        материал в середине курса, ученик улетал назад — к любому пропуску раньше
+        по обходу (жалоба QA: «редирект не на следующий блок, а на предыдущее
+        невыполненное задание»), а собственные задания узла-контейнера
+        откладывались до конца и выглядели пропущенными («Задание 1 пропускается»).
+        tsk-127 менял порядок обхода (pre-order → post-order), но класс дефекта был
+        не в порядке, а в том, что «следующий» означало «первый недоделанный».
+
+        Теперь при заданной позиции обход идёт ВПЕРЁД от неё; дошли до конца курса
+        и впереди ничего нет → `type="none"`, и SPW возвращает ученика в список
+        разделов. Пропуски позади ученик добирает сам из списка — это осознанный
+        размен (решение оператора), иначе автопереход снова тащил бы назад.
+
         Args:
             db: Сессия БД.
             student_id: ID студента.
@@ -397,6 +439,10 @@ class LearningEngineService:
                 (active фильтруется по uc.course_id); если None — прежнее
                 поведение (обход всех активных курсов по order_number,
                 обратная совместимость, tsk-127).
+            after_material_id: текущая позиция — материал; искать строго ПОСЛЕ него.
+            after_task_id: текущая позиция — задание; искать строго ПОСЛЕ него.
+                Если позиция не задана или её элемент не найден в дереве — прежнее
+                поведение (первый незавершённый с начала обхода).
 
         Returns:
             NextItemResult с листовым course_id и корневым root_course_id
@@ -439,14 +485,50 @@ class LearningEngineService:
 
             # Обход дерева: root + дети по order_number
             flat_courses = await self._collect_courses_in_order(db, current_root_id)
-            for cid in flat_courses:
+
+            # tsk-261: начать обход с курса текущей позиции, а не с начала дерева.
+            # Позиция ищется одним запросом (material/task → course_id), поэтому
+            # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
+            start_index = 0
+            position = await self._locate_item_course(
+                db, after_material_id=after_material_id, after_task_id=after_task_id
+            )
+            if position is not None and position[0] in flat_courses:
+                start_index = flat_courses.index(position[0])
+            else:
+                position = None
+
+            for offset, cid in enumerate(flat_courses[start_index:]):
+                material_ids: Optional[List[int]] = None
+                task_ids: Optional[List[int]] = None
+
+                # Сужаем списки только в курсе самой позиции; дальше по обходу —
+                # курсы целиком.
+                if position is not None and offset == 0:
+                    _, kind, item_id = position
+                    if kind == "material":
+                        all_materials = await self._ordered_material_ids(db, cid)
+                        if item_id in all_materials:
+                            material_ids = all_materials[all_materials.index(item_id) + 1:]
+                    else:
+                        # Задание идёт после всех материалов своего курса — значит
+                        # материалы этого курса уже позади позиции.
+                        material_ids = []
+                        all_tasks = await self._ordered_task_ids(db, cid)
+                        if item_id in all_tasks:
+                            task_ids = all_tasks[all_tasks.index(item_id) + 1:]
+
                 # Первый незавершённый материал
-                mat = await self._first_incomplete_material(db, student_id, cid)
+                mat = await self._first_incomplete_material(
+                    db, student_id, cid, material_ids=material_ids
+                )
                 if mat is not None:
                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
                     return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
                 # Первое задание не PASSED и не BLOCKED_LIMIT
-                task_id, blocked = await self._first_incomplete_task(db, student_id, cid)
+                task_id, blocked = await self._first_incomplete_task(
+                    db, student_id, cid, task_ids=task_ids
+                )
                 if blocked is not None:
                     return NextItemResult(
                         type="blocked_limit",
@@ -492,8 +574,8 @@ class LearningEngineService:
         await walk(root_id)
         return result
 
-    async def _first_incomplete_material(self, db: AsyncSession, student_id: int, course_id: int) -> Optional[int]:
-        """ID первого материала курса, не отмеченного как completed для студента."""
+    async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+        """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
         materials_stmt = (
             select(Materials.id)
             .where(
@@ -504,7 +586,36 @@ class LearningEngineService:
             .order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
         )
         r = await db.execute(materials_stmt)
-        material_ids = [row[0] for row in r.fetchall()]
+        return [row[0] for row in r.fetchall()]
+
+    async def _ordered_task_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+        """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+        tasks_stmt = (
+            select(Tasks.id)
+            .where(
+                Tasks.course_id == course_id,
+                Tasks.is_active.is_(True),
+                Tasks.requirement_level.in_(("required", "skippable")),
+            )
+            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
+        )
+        r = await db.execute(tasks_stmt)
+        return [row[0] for row in r.fetchall()]
+
+    async def _first_incomplete_material(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        course_id: int,
+        material_ids: Optional[List[int]] = None,
+    ) -> Optional[int]:
+        """ID первого материала курса, не отмеченного как completed для студента.
+
+        `material_ids` — необязательный заранее суженный список (tsk-261: обход от
+        текущей позиции передаёт сюда только материалы ПОСЛЕ неё).
+        """
+        if material_ids is None:
+            material_ids = await self._ordered_material_ids(db, course_id)
 
         if not material_ids:
             return None
@@ -528,27 +639,22 @@ class LearningEngineService:
         db: AsyncSession,
         student_id: int,
         course_id: int,
+        task_ids: Optional[List[int]] = None,
     ) -> Tuple[Optional[int], Optional[int]]:
         """
         (task_id для следующего задания, task_id с blocked_limit или None).
         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
+
+        `task_ids` — необязательный заранее суженный список (tsk-261: обход от
+        текущей позиции передаёт сюда только задания ПОСЛЕ неё).
 
         Y-6: TA снова в routing — SPW рендерит TaskFormTA, на submit
         задача получает optimistic-PASSED, learning engine продолжает
         курс. Stop-gap фильтр `type != 'TA'` (commit cf1908c, 2026-05-02)
         снят — иначе course не достигнет COMPLETED для курсов с TA.
         """
-        tasks_stmt = (
-            select(Tasks.id)
-            .where(
-                Tasks.course_id == course_id,
-                Tasks.is_active.is_(True),
-                Tasks.requirement_level.in_(("required", "skippable")),
-            )
-            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
-        )
-        r = await db.execute(tasks_stmt)
-        task_ids = [row[0] for row in r.fetchall()]
+        if task_ids is None:
+            task_ids = await self._ordered_task_ids(db, course_id)
         if task_ids:
             skipped_rows = await db.execute(
                 text("""

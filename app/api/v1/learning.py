@@ -71,6 +71,17 @@ async def get_next_item(
         description="Необязательный фильтр: ограничить обход деревом этого корневого "
         "курса. Если не задан — обход всех активных курсов (tsk-127).",
     ),
+    after_material_id: int | None = Query(
+        None,
+        description="Текущая позиция ученика — материал: искать следующий шаг строго "
+        "ПОСЛЕ него по порядку обхода курса (tsk-261). Без позиции — первый "
+        "незавершённый элемент с начала дерева (прежнее поведение).",
+    ),
+    after_task_id: int | None = Query(
+        None,
+        description="Текущая позиция ученика — задание: искать следующий шаг строго "
+        "ПОСЛЕ него по порядку обхода курса (tsk-261).",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
 ) -> NextItemResponse:
@@ -80,7 +91,11 @@ async def get_next_item(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     result = await learning_service.resolve_next_item(
-        db, student_id, root_course_id=root_course_id
+        db,
+        student_id,
+        root_course_id=root_course_id,
+        after_material_id=after_material_id,
+        after_task_id=after_task_id,
     )
     if result.type == "blocked_limit" and result.task_id is not None:
         state = await learning_service.compute_task_state(db, student_id, result.task_id)
