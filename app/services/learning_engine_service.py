@@ -382,24 +382,34 @@ class LearningEngineService:
         *,
         after_material_id: Optional[int],
         after_task_id: Optional[int],
-    ) -> Optional[Tuple[int, str, int]]:
-        """Курс, которому принадлежит элемент текущей позиции.
+    ) -> Optional[Tuple[int, str, int, Optional[int]]]:
+        """Курс и порядковый ключ элемента текущей позиции.
+
+        Фильтры `is_active`/`requirement_level` здесь НЕ применяются намеренно:
+        ученик может стоять на `recommended`-элементе (на проде таких 994 задачи
+        и 44 материала), которого нет в списке обхода. Позиция всё равно должна
+        работать — обход режется по `order_position`, а не по вхождению в список.
 
         Returns:
-            (course_id, kind, item_id) либо None, если позиция не задана/не найдена.
+            (course_id, kind, item_id, order_position) либо None, если позиция не
+            задана / элемент не найден.
         """
         if after_material_id is not None:
             r = await db.execute(
-                select(Materials.course_id).where(Materials.id == after_material_id)
+                select(Materials.course_id, Materials.order_position).where(
+                    Materials.id == after_material_id
+                )
             )
             row = r.fetchone()
             if row is not None:
-                return (int(row[0]), "material", after_material_id)
+                return (int(row[0]), "material", after_material_id, row[1])
         if after_task_id is not None:
-            r = await db.execute(select(Tasks.course_id).where(Tasks.id == after_task_id))
+            r = await db.execute(
+                select(Tasks.course_id, Tasks.order_position).where(Tasks.id == after_task_id)
+            )
             row = r.fetchone()
             if row is not None:
-                return (int(row[0]), "task", after_task_id)
+                return (int(row[0]), "task", after_task_id, row[1])
         return None
 
     async def resolve_next_item(
@@ -461,6 +471,11 @@ class LearningEngineService:
             )
             return NextItemResult(type="none", reason="Нет активных курсов в плане")
 
+        # tsk-261: позиция не зависит от корня — резолвим один раз до цикла.
+        located = await self._locate_item_course(
+            db, after_material_id=after_material_id, after_task_id=after_task_id
+        )
+
         for uc in active:
             current_root_id = uc.course_id
 
@@ -487,15 +502,16 @@ class LearningEngineService:
             flat_courses = await self._collect_courses_in_order(db, current_root_id)
 
             # tsk-261: начать обход с курса текущей позиции, а не с начала дерева.
-            # Позиция ищется одним запросом (material/task → course_id), поэтому
+            # Позиция резолвится одним запросом (material/task → course_id), поэтому
             # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
+            # flat_courses дедуплицирован, поэтому index() однозначен.
             start_index = 0
-            position = await self._locate_item_course(
-                db, after_material_id=after_material_id, after_task_id=after_task_id
-            )
+            position = located
             if position is not None and position[0] in flat_courses:
                 start_index = flat_courses.index(position[0])
             else:
+                # Позиция в другом дереве (или элемент удалён) — прежнее поведение:
+                # первый незавершённый с начала этого корня.
                 position = None
 
             for offset, cid in enumerate(flat_courses[start_index:]):
@@ -503,20 +519,28 @@ class LearningEngineService:
                 task_ids: Optional[List[int]] = None
 
                 # Сужаем списки только в курсе самой позиции; дальше по обходу —
-                # курсы целиком.
+                # курсы целиком. Режем по порядковому ключу элемента, а НЕ по его
+                # индексу в списке: позиция может быть на `recommended`-элементе,
+                # которого в списке обхода нет вовсе — тогда index() не нашёл бы
+                # его и молча вернул к началу курса, то есть назад.
                 if position is not None and offset == 0:
-                    _, kind, item_id = position
+                    _, kind, item_id, item_order = position
+                    pos_key = self._order_key(item_order, item_id)
                     if kind == "material":
-                        all_materials = await self._ordered_material_ids(db, cid)
-                        if item_id in all_materials:
-                            material_ids = all_materials[all_materials.index(item_id) + 1:]
+                        material_ids = [
+                            i
+                            for i, op in await self._ordered_material_rows(db, cid)
+                            if self._order_key(op, i) > pos_key
+                        ]
                     else:
                         # Задание идёт после всех материалов своего курса — значит
                         # материалы этого курса уже позади позиции.
                         material_ids = []
-                        all_tasks = await self._ordered_task_ids(db, cid)
-                        if item_id in all_tasks:
-                            task_ids = all_tasks[all_tasks.index(item_id) + 1:]
+                        task_ids = [
+                            i
+                            for i, op in await self._ordered_task_rows(db, cid)
+                            if self._order_key(op, i) > pos_key
+                        ]
 
                 # Первый незавершённый материал
                 mat = await self._first_incomplete_material(
@@ -560,10 +584,23 @@ class LearningEngineService:
         Порядок между детьми — course_parents.order_number ASC NULLS LAST, id.
         Используется resolve_next_item (порядок важен) и compute_course_state
         (там дерево берётся как множество — порядок безразличен).
+
+        tsk-261: результат ДЕДУПЛИЦИРОВАН (остаётся первое вхождение).
+        `course_parents` — many-to-many, узел может висеть под несколькими
+        родителями одного дерева и попадал в список несколько раз (на проде:
+        839/843/1020/1054 — по 2 раза в дереве ОГЭ, 1247 — 5 раз в дереве 871).
+        Дубли ломали позиционный обход: `flat_courses.index(курс_позиции)` брал
+        ПЕРВОЕ вхождение, и ученика со второго вхождения отбрасывало назад —
+        ровно тот дефект, который позиция и чинит. Заодно снимается многократный
+        опрос материалов/заданий одного и того же узла.
         """
         result: List[int] = []
+        seen: set[int] = set()
 
         async def walk(course_id: int) -> None:
+            if course_id in seen:
+                return
+            seen.add(course_id)
             children = await self._courses_repo.get_children(db, course_id)
             # order_number ASC NULLS LAST, затем id
             for _c, _ord in sorted(children, key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id)):
@@ -574,10 +611,17 @@ class LearningEngineService:
         await walk(root_id)
         return result
 
-    async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
-        """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+    @staticmethod
+    def _order_key(order_position: Optional[int], item_id: int) -> Tuple[int, int, int]:
+        """Ключ сортировки элемента: паритет с SQL `order_position ASC NULLS LAST, id ASC`."""
+        return (0 if order_position is not None else 1, order_position or 0, item_id)
+
+    async def _ordered_material_rows(
+        self, db: AsyncSession, course_id: int
+    ) -> List[Tuple[int, Optional[int]]]:
+        """(id, order_position) материалов курса в порядке обхода."""
         materials_stmt = (
-            select(Materials.id)
+            select(Materials.id, Materials.order_position)
             .where(
                 Materials.course_id == course_id,
                 Materials.is_active.is_(True),
@@ -586,12 +630,14 @@ class LearningEngineService:
             .order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
         )
         r = await db.execute(materials_stmt)
-        return [row[0] for row in r.fetchall()]
+        return [(row[0], row[1]) for row in r.fetchall()]
 
-    async def _ordered_task_ids(self, db: AsyncSession, course_id: int) -> List[int]:
-        """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+    async def _ordered_task_rows(
+        self, db: AsyncSession, course_id: int
+    ) -> List[Tuple[int, Optional[int]]]:
+        """(id, order_position) заданий курса в порядке обхода."""
         tasks_stmt = (
-            select(Tasks.id)
+            select(Tasks.id, Tasks.order_position)
             .where(
                 Tasks.course_id == course_id,
                 Tasks.is_active.is_(True),
@@ -600,7 +646,15 @@ class LearningEngineService:
             .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
         )
         r = await db.execute(tasks_stmt)
-        return [row[0] for row in r.fetchall()]
+        return [(row[0], row[1]) for row in r.fetchall()]
+
+    async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+        """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+        return [i for i, _ in await self._ordered_material_rows(db, course_id)]
+
+    async def _ordered_task_ids(self, db: AsyncSession, course_id: int) -> List[int]:
+        """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+        return [i for i, _ in await self._ordered_task_rows(db, course_id)]
 
     async def _first_incomplete_material(
         self,

@@ -129,15 +129,22 @@ course_trees AS (
     FROM course_trees ct
     JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
 ),
+-- tsk-261 (A1, вторая часть): DISTINCT обязателен. `course_trees` — рекурсия по
+-- `course_parents`, а он many-to-many: узел с несколькими родителями попадает в
+-- дерево ПО СТРОКЕ НА КАЖДЫЙ ПУТЬ, а не по строке на узел. Без DISTINCT
+-- `COUNT(*)` в tasks_total считал фантомы: на проде у курса 871 выходило 220
+-- заданий против 172 реальных (+28%). Раздувание у «всего» и «сделано» разное,
+-- поэтому процент оставался кривым даже после снятия фильтра finished_at —
+-- то есть одного снятия фильтра для жалобы «неверный процент» НЕ хватало.
 tasks_per_root AS (
-    SELECT ct.root_course_id, t.id AS task_id
+    SELECT DISTINCT ct.root_course_id, t.id AS task_id
     FROM course_trees ct
     JOIN tasks t ON t.course_id = ct.member_course_id
     WHERE t.is_active = true
       AND t.requirement_level IN ('required', 'skippable')
 ),
 materials_per_root AS (
-    SELECT ct.root_course_id, m.id AS material_id
+    SELECT DISTINCT ct.root_course_id, m.id AS material_id
     FROM course_trees ct
     JOIN materials m ON m.course_id = ct.member_course_id
     WHERE m.is_active = true

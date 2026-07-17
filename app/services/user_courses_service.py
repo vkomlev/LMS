@@ -32,19 +32,22 @@ class UserCoursesService(BaseService[UserCourses]):
         автоназначение зависимостей подключается и здесь. Иначе назначенный из UI
         зависимый курс остался бы заблокированным навсегда.
 
+        Зависимости вставляются ДО основной связи, и коммитит их общий
+        `repo.create(commit=True)` — иначе атомарности нет: `BaseRepository.create`
+        коммитит сам, и падение доназначения оставило бы курс назначенным без
+        зависимости (замок навсегда), а вызывающему отдало 500.
+
         :param db: асинхронная сессия БД.
         :param obj_in: данные связи (`user_id`, `course_id`, опц. `order_number`).
         :return: созданная связь.
         """
-        created = await super().create(db, obj_in)
         user_id = obj_in.get("user_id")
         course_id = obj_in.get("course_id")
         if user_id is not None and course_id is not None:
             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
                 db, student_id=int(user_id), course_ids=[int(course_id)]
             )
-            await db.commit()
-        return created
+        return await super().create(db, obj_in)
 
     async def get_user_courses(
         self,
@@ -116,17 +119,21 @@ class UserCoursesService(BaseService[UserCourses]):
         заблокированным навсегда: замок снимается только по `COMPLETED`
         required-курса, а пройти неназначенный курс ученик не может.
 
+        Зависимости вставляются ДО основной привязки: `batch_create` коммитит сам,
+        и общий коммит забирает обе вставки. Обратный порядок ломал атомарность —
+        падение доназначения оставило бы курсы назначенными без зависимостей.
+        Возвращаются только явно запрошенные связи; доназначенные зависимости в
+        ответ не попадают (их видно в `GET /me/courses`).
+
         :param db: асинхронная сессия БД.
         :param user_id: ID пользователя.
         :param course_ids: Список ID курсов для привязки.
         :return: Список созданных связей пользователя с курсами.
         """
-        created = await self.repo.bulk_create_user_courses(db, user_id, course_ids)
         await course_dependencies_enrollment_service.ensure_dependencies_assigned(
             db, student_id=user_id, course_ids=course_ids
         )
-        await db.commit()
-        return created
+        return await self.repo.bulk_create_user_courses(db, user_id, course_ids)
 
     async def reorder_courses(
         self,

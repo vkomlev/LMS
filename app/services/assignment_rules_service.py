@@ -138,12 +138,17 @@ async def assign_course_to_student(
             ),
             {"uid": student_id, "cid": resolved_course_id},
         )
-        # tsk-261 (A2): курс может требовать прохождения другого курса. Если
-        # зависимость ученику не назначена, пройти её нельзя — и замок на этом
-        # курсе не снимется никогда. Доназначаем в той же транзакции.
-        await course_dependencies_enrollment_service.ensure_dependencies_assigned(
-            db, student_id=student_id, course_ids=[resolved_course_id]
-        )
+
+    # tsk-261 (A2): курс может требовать прохождения другого курса. Если
+    # зависимость ученику не назначена, пройти её нельзя — и замок на этом курсе
+    # не снимется никогда. Доназначаем в той же транзакции.
+    #
+    # ВНЕ ветки `if not already_enrolled` намеренно: живой кейс приёмки — курс
+    # 823 ученику УЖЕ назначен, а зависимость 682 нет. Внутри ветки повторное
+    # назначение уходило бы в already_enrolled и ничего не чинило.
+    await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+        db, student_id=student_id, course_ids=[resolved_course_id]
+    )
 
     event_id: Optional[int] = None
     if not (already_enrolled and skip_event_if_enrolled):
