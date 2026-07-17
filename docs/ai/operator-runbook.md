@@ -378,6 +378,43 @@ NS-делегирования и без специфичных багов Cloud-
 
 ---
 
+## R-008: Деплой падает на `git fetch` — часть объектов `/opt/lms/.git` принадлежит root
+
+**Симптом:** `deploy/local/deploy-lms.ps1` (или `deploy/vps/deploy.sh`) валится на шаге
+`git fetch + reset to origin/main`, код 128:
+```
+error: insufficient permission for adding an object to repository database .git/objects
+fatal: failed to write object
+fatal: unpack-objects failed
+```
+Прод при этом **не меняется**: падение происходит до `reset --hard` и до
+`alembic upgrade`, старая версия продолжает работать.
+
+**Причина:** репозиторий клонируется от пользователя `app`
+(`sudo -u app git clone`, см. `deploy/vps/README.md`), а деплой ходит `sudo -u app`.
+Если хоть раз выполнить git в `/opt/lms` от root, часть каталогов
+`.git/objects/**` остаётся с владельцем `root:root`, и `app` больше не может
+дописывать туда новые объекты. Разово всплыло 2026-07-17 при деплое tsk-264:
+129 из 920 каталогов объектов были root'овыми.
+
+### Autonomous workaround
+```bash
+# диагностика: сколько объектов не у app
+ssh lms-spw-vds "find /opt/lms/.git/objects -maxdepth 2 -printf '%u:%g\n' | sort | uniq -c | sort -rn | head -3"
+# лечение: вернуть владельца, задокументированного в README
+ssh lms-spw-vds "chown -R app:app /opt/lms/.git"
+# проверка
+ssh lms-spw-vds "sudo -u app git -C /opt/lms fetch origin && sudo -u app git -C /opt/lms rev-parse --short origin/main"
+```
+Дальше — обычный деплой. Права `/opt/lms/.git` — инфраструктура, не БД:
+`DBCHECK_OK` не нужен, но сам деплой гонит `alembic upgrade head` на боевой БД,
+поэтому запускать его следует по протоколу `/db-check` (прочитать состояние и
+зафиксировать ожидание до записи).
+
+**Профилактика:** в `/opt/lms` не запускать git от root — только `sudo -u app git …`.
+
+---
+
 ## Шаблон для новых записей
 
 ```
