@@ -195,21 +195,46 @@ class LearningEngineService:
         # Корень не заявлен — восстанавливаем по активным деревьям ученика.
         # Однозначен ровно один кандидат; несколько (переиспользуемый узел) —
         # None, гадать нельзя: ошибка съела бы попытку не в том курсе.
+        roots = await self.list_active_roots_of_node(db, student_id, course_id)
+        if len(roots) == 1:
+            return roots[0]
+        if len(roots) > 1:
+            logger.info(
+                "resolve_attempt_root: узел под несколькими корнями без контекста — "
+                "student_id=%s course_id=%s roots=%s",
+                student_id, course_id, roots,
+            )
+        return None
+
+    async def list_active_roots_of_node(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        course_id: int,
+    ) -> list[int]:
+        """Активные корни ученика, чьи деревья содержат узел `course_id` (tsk-264).
+
+        Кандидаты пути, которым ученик мог прийти к заданию. Один — путь
+        однозначен; несколько — неоднозначен (переиспользуемый узел).
+
+        tsk-269: нужен не только для резолва, но и чтобы решить, форсить ли лимит
+        при неоднозначном пути — см. `POST /attempts/{id}/answers`, шаг 2.3b.
+
+        Args:
+            db: async session.
+            student_id: ID студента.
+            course_id: курс узла (курс самого задания).
+
+        Returns:
+            Список ID корней (может быть пустым).
+        """
         rows = (
             await db.execute(text(_ACTIVE_ROOTS_OF_NODE_SQL), {
                 "student_id": student_id,
                 "course_id": course_id,
             })
         ).fetchall()
-        if len(rows) == 1:
-            return int(rows[0][0])
-        if len(rows) > 1:
-            logger.info(
-                "resolve_attempt_root: узел под несколькими корнями без контекста — "
-                "student_id=%s course_id=%s roots=%s",
-                student_id, course_id, [int(r[0]) for r in rows],
-            )
-        return None
+        return [int(r[0]) for r in rows]
 
     async def compute_task_state(
         self,

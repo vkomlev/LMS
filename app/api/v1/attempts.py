@@ -237,7 +237,11 @@ async def create_attempt(
             }
         },
         400: {
-            "description": "Попытка уже завершена или истекло время",
+            "description": (
+                "Попытка уже завершена, истекло время, задание вне дерева корня "
+                "попытки либо путь к заданию неоднозначен при исчерпанном лимите "
+                "(нужен root_course_id, tsk-269)"
+            ),
             "content": {
                 "application/json": {
                     "examples": {
@@ -253,6 +257,16 @@ async def create_attempt(
                                 "detail": "Время на выполнение истекло"
                             }
                         },
+                        "root_required": {
+                            "summary": "Неоднозначный путь при исчерпанном лимите",
+                            "value": {
+                                "detail": (
+                                    "Задание входит в несколько ваших курсов, и в одном "
+                                    "из них лимит попыток исчерпан. Укажите root_course_id — "
+                                    "курс, в рамках которого отправляется ответ."
+                                )
+                            }
+                        },
                     }
                 }
             }
@@ -261,11 +275,26 @@ async def create_attempt(
             "description": "Попытка не найдена",
         },
         409: {
-            "description": "Повторный ответ на квиз-вопрос (SC_Qw/MC_Qw): допускается только одна попытка",
+            "description": (
+                "Ответ не принят: повторный ответ на квиз-вопрос (SC_Qw/MC_Qw, "
+                "допускается только одна попытка) либо исчерпан лимит попыток по "
+                "заданию в рамках курса, которым открыта попытка (tsk-269)"
+            ),
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Квиз-вопрос допускает только одну попытку. Ответ уже принят."
+                    "examples": {
+                        "quiz_repeat": {
+                            "summary": "Повторный ответ на квиз",
+                            "value": {
+                                "detail": "Квиз-вопрос допускает только одну попытку. Ответ уже принят."
+                            }
+                        },
+                        "attempts_limit": {
+                            "summary": "Лимит попыток исчерпан",
+                            "value": {
+                                "detail": "Лимит попыток по заданию исчерпан (3 из 3)."
+                            }
+                        },
                     }
                 }
             },
@@ -437,13 +466,115 @@ async def submit_attempt_answers(
                     detail="Квиз-вопрос допускает только одну попытку. Ответ уже принят.",
                 )
 
+        # 2.3b tsk-269: форс лимита попыток. Раньше лимит жил только в ВЫДАЧЕ
+        # (compute_task_state → next-item/state, me_service → syllabus): интерфейс
+        # показывал «заблокировано», но приём ответа ничего не проверял, и клиент,
+        # зовущий API напрямую, отвечал сколько угодно раз. Сервер — источник истины.
+        #
+        # Спрашиваем ТОТ ЖЕ compute_task_state, что и выдача, а не считаем лимит
+        # заново: вторая копия формулы разошлась бы с первой (override, квиз,
+        # PASS_THRESHOLD). BLOCKED_LIMIT возвращается только когда лимит исчерпан
+        # И задание не сдано — сдавший ученик не блокируется, как и в выдаче.
+        #
+        # tsk-264: счёт — в границах корня. Корень берём у попытки, а если его там
+        # нет — доопределяем ПО САМОМУ ЗАДАНИЮ. Полагаться только на
+        # `attempt.root_course_id` нельзя: `course_id` в теле POST /attempts
+        # опционален, и попытка без него создаётся с пустым корнем. Тогда и этот
+        # гейт, и проверка дерева 2.1.1 молча выключались бы — клиент убирал одно
+        # поле из запроса и отвечал бесконечно на любое задание. Ровно та модель
+        # угрозы, которую tsk-269 закрывает (находка независимого ревью).
+        #
+        # Пустой корень остаётся только там, где путь ОБЪЕКТИВНО неоднозначен (узел
+        # под несколькими активными курсами ученика) — там не форсим: пришлось бы
+        # считать по всем курсам сразу, а это ровно жалоба tsk-261 A7
+        # (переиспользуемый узел мёртв в новом курсе). Это осознанная цена, и она
+        # не оправдывает пропуск там, где корень восстанавливается однозначно.
+        #
+        # Старые попытки с пустым корнем (на проде 7) от этого лимит не начинают
+        # расходовать: счёт в compute_task_state идёт по `a.root_course_id = :root`,
+        # и их результаты по-прежнему не попадают ни в один корень.
+        #
+        # Квиз (SC_Qw/MC_Qw) сюда не доходит: его 409 отдан выше (2.3a) с более
+        # точной формулировкой — про одну попытку навсегда, а не про исчерпанный лимит.
+        effective_root_id = attempt.root_course_id
+        if effective_root_id is None and task.course_id is not None:
+            try:
+                effective_root_id = await learning_engine_service.resolve_attempt_root(
+                    db,
+                    student_id=attempt.user_id,
+                    course_id=task.course_id,
+                )
+            except DomainError:
+                # Корень восстановить нечем — ведём себя как при неоднозначном пути.
+                effective_root_id = None
+
+        # Путь так и остался неоднозначным (узел под несколькими активными курсами
+        # ученика). Гадать корень нельзя — попытка спишется не в том курсе. Но и
+        # молча пропускать нельзя: счёт по корню не растёт, значит попытки тут
+        # БЕСКОНЕЧНЫ, а прогресс (PASSED) в compute_task_state корнем не
+        # фильтруется — перебором добывается зачёт в том самом корне, где ученик
+        # заблокирован (находка Б2 независимого ревью, воспроизведена).
+        #
+        # Решение оператора: спрашиваем корень (400) ТОЛЬКО когда лимит на кону —
+        # ученик уже заблокирован хотя бы в одном из своих корней. Честный ученик
+        # с оставшимися попытками 400 никогда не увидит: цена падает только на
+        # подозрительный случай. SPW корень знает (useRootCourseId) и сюда не
+        # попадёт; TG_LMS на переиспользуемом узле — отдельная задача.
+        if effective_root_id is None and task.course_id is not None:
+            candidate_roots = await learning_engine_service.list_active_roots_of_node(
+                db, student_id=attempt.user_id, course_id=task.course_id
+            )
+            for candidate_root_id in candidate_roots:
+                candidate_state = await learning_engine_service.compute_task_state(
+                    db,
+                    student_id=attempt.user_id,
+                    task_id=task.id,
+                    root_course_id=candidate_root_id,
+                )
+                if candidate_state.state == "BLOCKED_LIMIT":
+                    logger.info(
+                        "POST /attempts/%s/answers: неоднозначный путь при исчерпанном "
+                        "лимите (task_id=%s course_id=%s roots=%s blocked_in=%s) → 400 (tsk-269)",
+                        attempt_id, task.id, task.course_id, candidate_roots, candidate_root_id,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=(
+                            "Задание входит в несколько ваших курсов, и в одном из них "
+                            "лимит попыток исчерпан. Укажите root_course_id — курс, "
+                            "в рамках которого отправляется ответ."
+                        ),
+                    )
+
+        if effective_root_id is not None:
+            task_state = await learning_engine_service.compute_task_state(
+                db,
+                student_id=attempt.user_id,
+                task_id=task.id,
+                root_course_id=effective_root_id,
+            )
+            if task_state.state == "BLOCKED_LIMIT":
+                logger.info(
+                    "POST /attempts/%s/answers: лимит попыток исчерпан "
+                    "(task_id=%s root_course_id=%s used=%s limit=%s) → 409 (tsk-269)",
+                    attempt_id, task.id, effective_root_id,
+                    task_state.attempts_used, task_state.attempts_limit_effective,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Лимит попыток по заданию исчерпан "
+                        f"({task_state.attempts_used} из {task_state.attempts_limit_effective})."
+                    ),
+                )
+
         check_result: CheckResult = checking_service.check_task(
             task_content=task_content,
             solution_rules=solution_rules,
             answer=answer,
         )
 
-        # 2.3b Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
+        # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
         task_deadline_sec = getattr(task, "time_limit_sec", None) or (
             attempt.meta.get("time_limit") if isinstance(attempt.meta, dict) else None
@@ -462,7 +593,7 @@ async def submit_attempt_answers(
                     attempt_id, task.id,
                 )
 
-        # 2.3c optimistic-PASSED — для TA и БЕЗ-эталонного SA_COM (tsk-210):
+        # 2.3d optimistic-PASSED — для TA и БЕЗ-эталонного SA_COM (tsk-210):
         # optimistic-PASSED нужен там, где авто-сверять нечем и вердикт ставит
         # только учитель вручную. На submit ставим score=max_score/is_correct=True,
         # чтобы учебный поток не блокировался; teacher проверит через pending-queue
@@ -493,7 +624,7 @@ async def submit_attempt_answers(
                 is_correct=True,
             )
 
-        # 2.3d tsk-227: форс вложения. Если задача требует файл-подтверждение
+        # 2.3e tsk-227: форс вложения. Если задача требует файл-подтверждение
         # (solution_rules.requires_attachment), а в попытке нет РЕАЛЬНО загруженного
         # файла — ответ НЕ засчитывается, даже если авто-проверка (или оптимистичный
         # пасс SA_COM выше) поставила is_correct=True. Сервер — источник истины;
