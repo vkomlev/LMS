@@ -1,17 +1,93 @@
 """
 Тест upgrade/downgrade roundtrip для миграций M1–M9 Phase Y-1 / Y-1.5 / Y-3 / Y-4 / Y-4.2.
 
-Запускается против реальной БД (alembic использует DATABASE_URL из .env).
-Требует: alembic head = m9_zombie_sanitize до запуска (Y-4.2 R-3 fix merge).
+Тесты откатывают схему до M3 и потому РАЗРУШИТЕЛЬНЫ: они выполняются на отдельной
+одноразовой БД (`<основная>_migrations_test`), которая создаётся с нуля перед прогоном.
+Рабочую БД из DATABASE_URL они не трогают (tsk-169).
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 project_root = Path(__file__).resolve().parents[1]
-HEAD_REV = "tasks_order_position_triggers"
+
+TEST_DB_SUFFIX = "_migrations_test"
+
+
+def _alembic_head() -> str:
+    """Актуальный head из дерева миграций Alembic, а не из прибитой константы."""
+    cfg = Config(str(project_root / "alembic.ini"))
+    script_location = cfg.get_main_option("script_location")
+    cfg.set_main_option("script_location", str(project_root / script_location))
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
+HEAD_REV = _alembic_head()
+
+
+def _swap_database(dsn: str, db_name: str) -> str:
+    """Тот же DSN, но с другим именем базы."""
+    parts = urlsplit(dsn)
+    return urlunsplit(parts._replace(path=f"/{db_name}"))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def migrations_test_db() -> str:
+    """Создаёт чистую одноразовую БД и направляет в неё alembic на весь модуль.
+
+    Тесты этого файла откатывают схему до M3 — на рабочей БД это снесло бы данные.
+    """
+    import asyncio
+
+    import asyncpg
+    from dotenv import load_dotenv
+
+    load_dotenv(project_root / ".env", encoding="utf-8-sig")
+    source_dsn = os.environ["DATABASE_URL"]
+    source_db = urlsplit(source_dsn).path.lstrip("/")
+    test_db = f"{source_db}{TEST_DB_SUFFIX}"
+
+    # asyncpg не понимает префикс диалекта SQLAlchemy
+    admin_dsn = _swap_database(source_dsn, "postgres").replace("postgresql+asyncpg://", "postgresql://")
+
+    async def _recreate() -> None:
+        conn = await asyncpg.connect(admin_dsn)
+        try:
+            await conn.execute(f'DROP DATABASE IF EXISTS "{test_db}" WITH (FORCE)')
+            await conn.execute(f'CREATE DATABASE "{test_db}"')
+        finally:
+            await conn.close()
+
+    asyncio.run(_recreate())
+
+    test_dsn = _swap_database(source_dsn, test_db)
+    previous = os.environ["DATABASE_URL"]
+    os.environ["DATABASE_URL"] = test_dsn
+
+    up = _run_alembic("upgrade", "head")
+    assert up.returncode == 0, f"upgrade head на тестовой БД не прошёл:\n{up.stderr}"
+
+    # roles заполняет seed-скрипт, а не миграция: без него m10_role_backfill
+    # подставит NULL в user_roles.role_id (tsk-169).
+    seed = subprocess.run(
+        [sys.executable, "scripts/seed_roles.py"],
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert seed.returncode == 0, f"seed_roles на тестовой БД не прошёл:\n{seed.stderr}"
+
+    yield test_dsn
+
+    os.environ["DATABASE_URL"] = previous
 M9_REV = "m9_zombie_sanitize"
 M8_REV = "20260430_010000_m8_inbox"
 M7_REV = "20260429_010000_m7_streak_idx"
@@ -32,7 +108,11 @@ def _run_alembic(*args: str) -> subprocess.CompletedProcess:
 
 
 def test_alembic_head_is_current():
-    """Текущий head должен соответствовать последней миграции проекта."""
+    """Цепочка миграций накатывается с нуля ровно до актуального head.
+
+    Head берётся из дерева миграций, а не из константы: тест не устаревает
+    при добавлении новой миграции (tsk-169).
+    """
     result = _run_alembic("current")
     assert result.returncode == 0, f"alembic current failed:\n{result.stderr}"
     assert HEAD_REV in result.stdout, (
@@ -97,7 +177,7 @@ def test_alembic_downgrade_m6_then_upgrade():
     assert up.returncode == 0, f"upgrade head after M6 downgrade failed:\n{up.stderr}"
 
     current = _run_alembic("current")
-    assert HEAD_REV in current.stdout or "m10_role_backfill" in current.stdout
+    assert HEAD_REV in current.stdout
 
 
 def test_alembic_downgrade_m5_then_upgrade():
@@ -109,7 +189,7 @@ def test_alembic_downgrade_m5_then_upgrade():
     assert up.returncode == 0, f"upgrade head after M5 downgrade failed:\n{up.stderr}"
 
     current = _run_alembic("current")
-    assert HEAD_REV in current.stdout or "m10_role_backfill" in current.stdout
+    assert HEAD_REV in current.stdout
 
 
 def test_alembic_downgrade_m4_then_upgrade():

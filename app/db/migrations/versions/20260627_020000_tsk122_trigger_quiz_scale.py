@@ -5,6 +5,10 @@
 попытки/курса и интерпретирует накопленные по курсу баллы по шкалам
 (``task_results.scale_scores``) через argmax / min_score (ADR-0003).
 
+Rollback-note: откат УДАЛЯЕТ правила с ``trigger_event='quiz_scale'`` — старый
+CHECK их не допускает, и без удаления откат невозможен в принципе. Перед откатом
+на проде выгрузить эти строки, если они нужны (tsk-169).
+
 Revision ID: tsk122_trigger_quiz_scale
 Revises: tsk122_quiz_scale_scores
 Create Date: 2026-06-27 02:00:00
@@ -35,5 +39,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Правила с trigger_event='quiz_scale' старая схема выразить не может:
+    # без их удаления восстановление _OLD_CHECK отвергается базой.
+    op.execute("DELETE FROM assignment_rule WHERE trigger_event = 'quiz_scale'")
     op.drop_constraint(_CHECK_NAME, "assignment_rule", type_="check")
     op.create_check_constraint(_CHECK_NAME, "assignment_rule", _OLD_CHECK)
