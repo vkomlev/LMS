@@ -588,7 +588,12 @@ async def search_tasks(
         "**Требования к таблице:**\n"
         "- Первая строка должна содержать заголовки колонок\n"
         "- Обязательные колонки: `external_uid`, `type`, `stem`, `correct_answer`\n"
-        "- Для SC/MC обязательно указать `options`\n\n"
+        "- Для SC/MC обязательно указать `options`\n"
+        "- Для SA/SA_COM колонка `normalization` объявляет вид ответа: `code` — ответ "
+        "является программой на Python (сравнение через AST, регистр значим), `text` — "
+        "слово/число/имя. Можно задать шаги списком через запятую из закрытого словаря "
+        "(`trim`, `lower`, `strip_punctuation`, `collapse_spaces`, `code_ast`); опечатка "
+        "отклоняет строку, а не подставляет дефолт молча. Пустая колонка — `trim, lower`\n\n"
         "**Обработка ошибок:**\n"
         "- Импорт продолжается даже при ошибках в отдельных строках\n"
         "- Все ошибки возвращаются в массиве `errors` с указанием номера строки\n"
@@ -807,6 +812,7 @@ async def import_from_google_sheets(
             "task_content_json",
             "input_link",
             "accepted_answers",
+            "normalization",
         }
         if not any(k in known_fields for k in column_mapping.keys()) and any(
             v in known_fields for v in column_mapping.values()
@@ -852,6 +858,8 @@ async def import_from_google_sheets(
                 column_mapping["input_link"] = header
             elif header_lower in ("accepted_answers", "принятые"):
                 column_mapping["accepted_answers"] = header
+            elif header_lower in ("normalization", "нормализация"):
+                column_mapping["normalization"] = header
 
     has_row_difficulty_code = "difficulty_code" in column_mapping and bool(column_mapping.get("difficulty_code"))
     has_row_difficulty_uid = "difficulty_uid" in column_mapping and bool(column_mapping.get("difficulty_uid"))

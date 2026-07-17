@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import logging
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, get_args
 from urllib.parse import urlparse, parse_qs
 
 from app.schemas.task_content import TaskContent, TaskOption, TaskType
@@ -14,11 +14,44 @@ from app.schemas.solution_rules import (
     PenaltiesRules,
     ShortAnswerRules,
     ShortAnswerAccepted,
+    NormalizationStep,
 )
 from app.core.config import Settings
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger("services.sheets_parser")
+
+# Вид ответа объявляет автор задания в колонке `normalization` листа Tasks.
+# Из эталона он не выводится и выводиться не будет: `тест-кейс` разбирается как
+# вычитание имён, `example.ru` — как обращение к атрибуту (tsk-262/265).
+CODE_NORMALIZATION: List[NormalizationStep] = [
+    "trim",
+    "strip_punctuation",
+    "collapse_spaces",
+    "code_ast",
+]
+TEXT_NORMALIZATION: List[NormalizationStep] = [
+    "trim",
+    "lower",
+    "strip_punctuation",
+    "collapse_spaces",
+]
+# Пустая колонка = поведение импорта до tsk-267. Дефолт намеренно оставлен
+# двухшаговым (не выровнен по TEXT_NORMALIZATION): ре-импорт молчащей таблицы
+# перезаписывает solution_rules, и более щедрый дефолт вернул бы
+# strip_punctuation тем заданиям, у которых его точечно сняли в tsk-218
+# (SA с двоеточием в эталоне). Хочешь текстовый набор — объяви его в колонке.
+DEFAULT_NORMALIZATION: List[NormalizationStep] = ["trim", "lower"]
+
+# Алиасы вместо списка шагов — по таблице выбора из
+# ~/.claude/skills/methodist/references/assignment-rules.md § 4b.
+NORMALIZATION_PRESETS: Dict[str, List[NormalizationStep]] = {
+    "code": CODE_NORMALIZATION,
+    "код": CODE_NORMALIZATION,
+    "text": TEXT_NORMALIZATION,
+    "текст": TEXT_NORMALIZATION,
+}
+ALLOWED_NORMALIZATION_STEPS: frozenset = frozenset(get_args(NormalizationStep))
 
 
 class SheetsParserService:
@@ -212,7 +245,7 @@ class SheetsParserService:
             if accepted_answers:
                 solution_rules_data["short_answer"] = ShortAnswerRules(
                     accepted_answers=accepted_answers,
-                    normalization=["trim", "lower"],
+                    normalization=self._parse_normalization(row, column_mapping),
                 )
         
         solution_rules = SolutionRules.model_validate(solution_rules_data)
@@ -250,6 +283,7 @@ class SheetsParserService:
             "max_score": "max_score",
             "input_link": "input_link",
             "accepted_answers": "accepted_answers",
+            "normalization": "normalization",
         }
 
     def _get_field(
@@ -411,6 +445,54 @@ class SheetsParserService:
         if task_type in ("SA", "SA_COM"):
             return self.settings.default_points_short_answer
         return 10  # Дефолт для SC/MC/TA
+
+    def _parse_normalization(
+        self,
+        row: Dict[str, str],
+        column_mapping: Dict[str, str],
+    ) -> List[NormalizationStep]:
+        """
+        Читает вид ответа из колонки `normalization` листа Tasks.
+
+        Принимает либо алиас (`code`/`код` — ответ является программой на Python,
+        `text`/`текст` — слово, число, имя), либо явный список шагов через запятую
+        или `|` (например `trim, code_ast`). Пустая колонка — дефолт
+        DEFAULT_NORMALIZATION (поведение импорта до tsk-267).
+
+        Args:
+            row: Словарь с данными строки.
+            column_mapping: Маппинг колонок.
+
+        Returns:
+            Список шагов нормализации для ShortAnswerRules.normalization.
+
+        Raises:
+            DomainError: если указан шаг вне закрытого словаря (опечатка) —
+                строка отклоняется, а не проверяется по молча подставленному
+                дефолту (tsk-262).
+        """
+        raw = self._get_field(row, column_mapping, "normalization", required=False)
+        if not raw:
+            return list(DEFAULT_NORMALIZATION)
+
+        preset = NORMALIZATION_PRESETS.get(raw.strip().lower())
+        if preset is not None:
+            return list(preset)
+
+        steps = [part.strip().lower() for part in re.split(r"[,|]", raw) if part.strip()]
+        unknown = [step for step in steps if step not in ALLOWED_NORMALIZATION_STEPS]
+        if unknown or not steps:
+            allowed = ", ".join(sorted(ALLOWED_NORMALIZATION_STEPS))
+            aliases = ", ".join(sorted(NORMALIZATION_PRESETS))
+            raise DomainError(
+                detail=(
+                    f"normalization_invalid: {', '.join(unknown) or 'пустое значение'}. "
+                    f"Допустимые шаги: {allowed}. Алиасы: {aliases}. "
+                    f"Пустая колонка — дефолт {', '.join(DEFAULT_NORMALIZATION)}."
+                ),
+                status_code=400,
+            )
+        return steps  # type: ignore[return-value]
 
     def _parse_accepted_answers(
         self,

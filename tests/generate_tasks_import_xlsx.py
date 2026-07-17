@@ -40,7 +40,16 @@ HEADERS = [
     "prompt",
     "input_link",
     "accepted_answers",
+    "normalization",
 ]
+
+# Вид ответа для SA/SA_COM (tsk-267). Пусто = дефолт ["trim","lower"] как раньше.
+# SA_COM с ответом-кодом помечаем `code` → сравнение через AST без lower.
+ROW_NORMALIZATION: dict[str, str] = {
+    "TEST-SA-COM-001": "code",
+    "TEST-SA-COM-002": "code",
+    "TEST-SA-002": "text",
+}
 
 # Для части заданий задаём другой курс, чтобы проверить импорт "курс на строке"
 ROW_COURSE_UID: dict[str, str] = {
@@ -340,12 +349,13 @@ def main() -> None:
     # Данные
     for row_idx, row_tuple in enumerate(ROWS, start=2):
         values = row_tuple
-        # Поддержка формата ROWS без course_uid и difficulty_code (11 полей)
-        if len(row_tuple) == len(HEADERS) - 2:
+        # Поддержка формата ROWS без course_uid, difficulty_uid и normalization (11 полей)
+        if len(row_tuple) == len(HEADERS) - 3:
             external_uid = str(row_tuple[0])
             course_uid = ROW_COURSE_UID.get(external_uid, COURSE_UID_MAIN)
             difficulty_uid = ROW_DIFFICULTY_UID.get(external_uid, DEFAULT_DIFFICULTY_UID)
-            values = (external_uid, course_uid, difficulty_uid, *row_tuple[1:])
+            normalization = ROW_NORMALIZATION.get(external_uid, "")
+            values = (external_uid, course_uid, difficulty_uid, *row_tuple[1:], normalization)
 
         for col_idx, value in enumerate(values, start=1):
             ws.cell(row=row_idx, column=col_idx, value=value)
