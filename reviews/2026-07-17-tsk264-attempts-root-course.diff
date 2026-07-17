@@ -1,0 +1,1355 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 751200c..8a72917 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -144,7 +144,10 @@ async def _enrich_attempt_with_learning_fields(
+     if not attempt_with_results.results:
+         return
+     first_task_id = attempt_with_results.results[0].task_id
+-    state = await learning_engine_service.compute_task_state(db, attempt.user_id, first_task_id)
++    # tsk-264: лимит — в границах корня, которым открыта попытка.
++    state = await learning_engine_service.compute_task_state(
++        db, attempt.user_id, first_task_id, root_course_id=attempt.root_course_id
++    )
+     attempt_with_results.attempts_used = state.attempts_used
+     attempt_with_results.attempts_limit_effective = state.attempts_limit_effective
+     attempt_with_results.last_based_status = state.state
+@@ -174,10 +177,27 @@ async def create_attempt(
+ 
+     Используется существующий AttemptsService.create_attempt.
+     """
++    # tsk-264: корень определяем и здесь, а не только в start-or-get-attempt.
++    # Попытка с пустым корнем не расходует лимит ни в одном курсе, поэтому без
++    # резолва этот эндпоинт стал бы способом выдать себе бесконечные попытки.
++    root_course_id: int | None = None
++    if payload.course_id is not None:
++        try:
++            root_course_id = await learning_engine_service.resolve_attempt_root(
++                db,
++                student_id=payload.user_id,
++                course_id=payload.course_id,
++                requested_root_course_id=payload.root_course_id,
++            )
++        except DomainError as exc:
++            raise HTTPException(
++                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
++            ) from exc
+     attempt = await attempts_service.create_attempt(
+         db=db,
+         user_id=payload.user_id,
+         course_id=payload.course_id,
++        root_course_id=root_course_id,
+         source_system=payload.source_system,
+         meta=payload.meta,
+     )
+@@ -349,6 +369,28 @@ async def submit_attempt_answers(
+                 ),
+             )
+ 
++        # 2.1.1 tsk-264: результат обязан лечь в тот же контекст, в котором потом
++        # считается лимит. Лимит считается по корню попытки, поэтому ответ на
++        # задание ВНЕ дерева этого корня не считался бы нигде — то есть давал бы
++        # неограниченные попытки. Пустой корень (путь неизвестен) не проверяем:
++        # там лимит и так не расходуется, и это осознанное поведение (см. tsk-264).
++        if attempt.root_course_id is not None and task.course_id is not None:
++            if not await learning_engine_service.root_contains_course(
++                db, attempt.root_course_id, task.course_id
++            ):
++                logger.warning(
++                    "POST /attempts/%s/answers: задание вне дерева попытки "
++                    "(task_id=%s task.course_id=%s attempt.root_course_id=%s)",
++                    attempt_id, task.id, task.course_id, attempt.root_course_id,
++                )
++                raise HTTPException(
++                    status_code=status.HTTP_400_BAD_REQUEST,
++                    detail=(
++                        f"Задание {task.id} не входит в курс "
++                        f"{attempt.root_course_id}, в рамках которого открыта попытка."
++                    ),
++                )
++
+         # 2.2 Приводим JSON к строгим схемам
+         task_content = TaskContent.model_validate(task.task_content)
+         solution_rules = SolutionRules.model_validate(task.solution_rules or {})
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index e86e01a..9f88f1d 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -43,6 +43,7 @@ from app.services.attempts_service import AttemptsService
+ from app.services.tasks_service import TasksService
+ from app.services.materials_service import MaterialsService
+ from app.services.users_service import UsersService
++from app.utils.exceptions import DomainError
+ 
+ router = APIRouter(prefix="/learning", tags=["learning"])
+ logger = logging.getLogger("api.learning")
+@@ -98,7 +99,9 @@ async def get_next_item(
+         after_task_id=after_task_id,
+     )
+     if result.type == "blocked_limit" and result.task_id is not None:
+-        state = await learning_service.compute_task_state(db, student_id, result.task_id)
++        state = await learning_service.compute_task_state(
++            db, student_id, result.task_id, root_course_id=result.root_course_id
++        )
+         await get_or_create_blocked_limit_help_request(
+             db,
+             student_id=student_id,
+@@ -273,19 +276,43 @@ async def start_or_get_attempt(
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+     course_id = task.course_id
+ 
+-    # Concurrency-safe: один активный attempt на (user_id, course_id).
+-    # Advisory lock сериализует параллельные запросы для этой пары.
++    # tsk-264: курс САМОГО задания (course_id) путь не различает — узел
++    # переиспользуется несколькими курсами, и для него course_id одинаков при
++    # любом пути. Контекст навигации (корень) фиксируем в попытке: по нему потом
++    # считается лимит. Заявленный клиентом корень проверяется на то, что его
++    # дерево действительно содержит узел.
++    try:
++        root_course_id = await learning_service.resolve_attempt_root(
++            db,
++            student_id=body.student_id,
++            course_id=course_id,
++            requested_root_course_id=body.root_course_id,
++        )
++    except DomainError as exc:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
++        ) from exc
++
++    # Concurrency-safe: один активный attempt на (user_id, course_id, root_course_id).
++    # Advisory lock сериализует параллельные запросы для этой тройки: корень входит
++    # в ключ, иначе попытка из курса X переиспользовалась бы в курсе Y и её
++    # результаты записались бы в чужой контекст.
++    # hashtext, а не арифметика по id: произведение id курса на множитель
++    # переполняет int4, который принимает pg_advisory_xact_lock.
+     await db.execute(
+-        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+-        {"k1": body.student_id, "k2": course_id},
++        text("SELECT pg_advisory_xact_lock(:k1, hashtext(:k2))"),
++        {"k1": body.student_id, "k2": f"{course_id}:{root_course_id}"},
+     )
+ 
+-    # Активная попытка по этому курсу (не завершена и не отменена)
++    # Активная попытка по этому курсу и корню (не завершена и не отменена)
+     stmt = (
+         select(Attempts)
+         .where(
+             Attempts.user_id == body.student_id,
+             Attempts.course_id == course_id,
++            Attempts.root_course_id.is_(None)
++            if root_course_id is None
++            else Attempts.root_course_id == root_course_id,
+             Attempts.finished_at.is_(None),
+             Attempts.cancelled_at.is_(None),
+         )
+@@ -301,6 +328,7 @@ async def start_or_get_attempt(
+             attempt_id=existing.id,
+             user_id=existing.user_id,
+             course_id=existing.course_id,
++            root_course_id=existing.root_course_id,
+             created_at=existing.created_at,
+             finished_at=existing.finished_at,
+             source_system=existing.source_system,
+@@ -310,19 +338,21 @@ async def start_or_get_attempt(
+         db=db,
+         user_id=body.student_id,
+         course_id=course_id,
++        root_course_id=root_course_id,
+         source_system=body.source_system or "learning_api",
+         meta={"task_ids": [task_id]},
+     )
+     attempt = await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
+     await db.commit()
+     logger.info(
+-        "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s",
+-        body.student_id, task_id, attempt.id,
++        "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s root_course_id=%s",
++        body.student_id, task_id, attempt.id, root_course_id,
+     )
+     return StartOrGetAttemptResponse(
+         attempt_id=attempt.id,
+         user_id=attempt.user_id,
+         course_id=attempt.course_id,
++        root_course_id=attempt.root_course_id,
+         created_at=attempt.created_at,
+         finished_at=attempt.finished_at,
+         source_system=attempt.source_system,
+@@ -339,6 +369,12 @@ async def start_or_get_attempt(
+ async def get_task_state(
+     task_id: int = Path(..., description="ID задания"),
+     student_id: int = Query(..., description="ID студента"),
++    root_course_id: int | None = Query(
++        None,
++        description="Корневой курс, которым ученик пришёл к заданию (tsk-264): "
++        "попытки считаются в его границах. Не задан — счёт по всем попыткам "
++        "задания независимо от пути (прежнее поведение).",
++    ),
+     current_user: CurrentUser = Depends(get_current_user),
+     db: AsyncSession = Depends(get_bare_db),
+ ) -> TaskStateResponse:
+@@ -350,7 +386,23 @@ async def get_task_state(
+     user = await users_service.get_by_id(db, student_id)
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+-    state = await learning_service.compute_task_state(db, student_id, task_id)
++    # tsk-264: тот же резолвер, что у start-or-get-attempt — состояние задания и
++    # счёт при открытии попытки обязаны сходиться, иначе SPW покажет одно, а
++    # сервер применит другое.
++    try:
++        effective_root_id = await learning_service.resolve_attempt_root(
++            db,
++            student_id=student_id,
++            course_id=task.course_id,
++            requested_root_course_id=root_course_id,
++        )
++    except DomainError as exc:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
++        ) from exc
++    state = await learning_service.compute_task_state(
++        db, student_id, task_id, root_course_id=effective_root_id
++    )
+     # tsk-227: проброс флага обязательного вложения клиенту (UX-сигнал; форс — на сервере).
+     try:
+         requires_attachment = bool(
+diff --git a/app/db/migrations/versions/20260717_010000_tsk264_attempts_root_course.py b/app/db/migrations/versions/20260717_010000_tsk264_attempts_root_course.py
+new file mode 100644
+index 0000000..3431e26
+--- /dev/null
++++ b/app/db/migrations/versions/20260717_010000_tsk264_attempts_root_course.py
+@@ -0,0 +1,119 @@
++"""Попытки по паре «курс + задание»: контекст навигации в попытке (tsk-264).
++
++Узел графа курсов переиспользуется несколькими корнями (из 645 узлов — 24, до 5
++родителей). ``attempts.course_id`` хранит курс САМОГО задания, а не путь, которым
++ученик пришёл, поэтому для переиспользуемого узла он одинаков при любом пути и
++разделить попытки по нему нельзя. Добавляем ``attempts.root_course_id`` —
++корневой курс дерева, в котором ученик находился, когда открыл попытку.
++
++Бэкфилл (детерминированный, только однозначные случаи):
++1. Узел входит ровно в одно дерево графа → этот корень.
++2. Иначе узел входит ровно в одно АКТИВНОЕ дерево ученика → этот корень.
++3. Иначе (узел под несколькими активными корнями ученика) → NULL: путь не
++   записывался и восстановить его нечем. NULL означает «путь неизвестен» и не
++   расходует лимит попыток ни в одном корне (см. ``compute_task_state``).
++
++Revision ID: tsk264_attempts_root_course
++Revises: tsk122_trigger_quiz_scale
++Create Date: 2026-07-17 01:00:00
++"""
++from __future__ import annotations
++
++from typing import Union
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision: str = "tsk264_attempts_root_course"
++down_revision: Union[str, None] = "tsk122_trigger_quiz_scale"
++branch_labels: Union[str, None] = None
++depends_on: Union[str, None] = None
++
++
++# Дерево «корень → все потомки» строится по course_parents. Корень — курс без
++# родителей. Тот же обход, что у LearningEngineService (course_parents —
++# единственный источник вложенности).
++_BACKFILL_SQL = """
++WITH RECURSIVE ct AS (
++    SELECT c.id AS root_course_id, c.id AS member_course_id
++    FROM courses c
++    WHERE NOT EXISTS (
++        SELECT 1 FROM course_parents cp WHERE cp.course_id = c.id
++    )
++    UNION ALL
++    SELECT ct.root_course_id, cp.course_id
++    FROM ct
++    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
++),
++tree AS (
++    SELECT DISTINCT root_course_id, member_course_id FROM ct
++),
++-- (1) узел входит ровно в одно дерево графа — корень однозначен без учёта записей
++single_root AS (
++    SELECT member_course_id, MIN(root_course_id) AS root_course_id
++    FROM tree
++    GROUP BY member_course_id
++    HAVING COUNT(*) = 1
++),
++-- (2) узел под несколькими корнями, но активное дерево ученика ровно одно
++single_active_root AS (
++    SELECT a.id AS attempt_id, MIN(t.root_course_id) AS root_course_id
++    FROM attempts a
++    JOIN tree t ON t.member_course_id = a.course_id
++    JOIN user_courses uc
++      ON uc.course_id = t.root_course_id
++     AND uc.user_id = a.user_id
++     AND uc.is_active = true
++    GROUP BY a.id
++    HAVING COUNT(DISTINCT t.root_course_id) = 1
++)
++UPDATE attempts a
++SET root_course_id = COALESCE(sr.root_course_id, sar.root_course_id)
++FROM attempts src
++LEFT JOIN single_root sr ON sr.member_course_id = src.course_id
++LEFT JOIN single_active_root sar ON sar.attempt_id = src.id
++WHERE a.id = src.id
++  AND a.course_id IS NOT NULL
++  AND a.root_course_id IS NULL
++  AND COALESCE(sr.root_course_id, sar.root_course_id) IS NOT NULL
++"""
++
++
++def upgrade() -> None:
++    op.add_column(
++        "attempts",
++        sa.Column(
++            "root_course_id",
++            sa.Integer(),
++            nullable=True,
++            comment=(
++                "Корневой курс дерева, которым ученик пришёл к заданию (tsk-264). "
++                "NULL — путь неизвестен: попытка не расходует лимит ни в одном корне."
++            ),
++        ),
++    )
++    op.create_foreign_key(
++        "attempts_root_course_id_fkey",
++        "attempts",
++        "courses",
++        ["root_course_id"],
++        ["id"],
++        ondelete="SET NULL",
++    )
++    op.create_index(
++        "idx_attempts_user_course_root",
++        "attempts",
++        ["user_id", "course_id", "root_course_id"],
++    )
++    op.execute(_BACKFILL_SQL)
++
++
++def downgrade() -> None:
++    # Rollback-note: снос колонки теряет записанный контекст навигации —
++    # счёт попыток возвращается к прежнему («по заданию, независимо от пути»).
++    # Данных, кроме контекста, миграция не меняет: бэкфилл пишет только в
++    # добавленную колонку, ни один существующий столбец не трогается.
++    op.drop_index("idx_attempts_user_course_root", table_name="attempts")
++    op.drop_constraint("attempts_root_course_id_fkey", "attempts", type_="foreignkey")
++    op.drop_column("attempts", "root_course_id")
+diff --git a/app/models/attempts.py b/app/models/attempts.py
+index f24a694..80bc4d9 100644
+--- a/app/models/attempts.py
++++ b/app/models/attempts.py
+@@ -43,10 +43,17 @@ class Attempts(Base):
+             ondelete="SET NULL",
+             name="attempts_course_id_fkey",
+         ),
++        ForeignKeyConstraint(
++            ["root_course_id"],
++            ["courses.id"],
++            ondelete="SET NULL",
++            name="attempts_root_course_id_fkey",
++        ),
+         PrimaryKeyConstraint("id", name="attempts_pkey"),
+         Index("idx_attempts_user", "user_id"),
+         Index("idx_attempts_course", "course_id"),
+         Index("idx_attempts_created_at", "created_at"),
++        Index("idx_attempts_user_course_root", "user_id", "course_id", "root_course_id"),
+         {"comment": "Попытки прохождения заданий/тестов"},
+     )
+ 
+@@ -66,6 +73,16 @@ class Attempts(Base):
+         nullable=True,
+         comment="ID курса (если применимо)",
+     )
++    root_course_id: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        nullable=True,
++        comment=(
++            "Корневой курс дерева, которым ученик пришёл к заданию (tsk-264). "
++            "Узел графа переиспользуется несколькими корнями, поэтому course_id "
++            "(курс самого задания) путь не различает. NULL — путь неизвестен: "
++            "такая попытка не расходует лимит ни в одном корне."
++        ),
++    )
+     created_at: Mapped[datetime] = mapped_column(
+         DateTime(timezone=True),
+         nullable=False,
+@@ -109,7 +126,14 @@ class Attempts(Base):
+         "Users",
+         back_populates="attempts",
+     )
+-    course: Mapped[Optional["Courses"]] = relationship("Courses")
++    # foreign_keys обязателен: на courses теперь два ключа (course_id и
++    # root_course_id, tsk-264), и без явного указания join неоднозначен.
++    course: Mapped[Optional["Courses"]] = relationship(
++        "Courses", foreign_keys=[course_id]
++    )
++    root_course: Mapped[Optional["Courses"]] = relationship(
++        "Courses", foreign_keys=[root_course_id]
++    )
+     task_results: Mapped[list["TaskResults"]] = relationship(
+         "TaskResults",
+         back_populates="attempt",
+diff --git a/app/schemas/attempts.py b/app/schemas/attempts.py
+index a139457..837a61f 100644
+--- a/app/schemas/attempts.py
++++ b/app/schemas/attempts.py
+@@ -23,6 +23,14 @@ class AttemptCreate(BaseModel):
+         default=None,
+         description="ID курса, если попытка привязана к конкретному курсу.",
+     )
++    root_course_id: Optional[int] = Field(
++        default=None,
++        description=(
++            "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его "
++            "границах считаются попытки. Не задан — сервер определяет сам, если "
++            "узел лежит ровно в одном активном курсе ученика."
++        ),
++    )
+     source_system: Optional[str] = Field(
+         default="lms",
+         description="Источник создания попытки (lms_web, tg_bot, import и т.п.).",
+@@ -64,6 +72,14 @@ class AttemptRead(BaseModel):
+     id: int = Field(..., description="ID попытки", examples=[1, 5])
+     user_id: int = Field(..., description="ID пользователя, который проходит попытку", examples=[10, 15])
+     course_id: Optional[int] = Field(None, description="ID курса, если попытка привязана к курсу", examples=[1, 5, None])
++    root_course_id: Optional[int] = Field(
++        None,
++        description=(
++            "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его "
++            "границах считается лимит попыток. null — путь неизвестен."
++        ),
++        examples=[1111, None],
++    )
+ 
+     # 👇 ключевая правка: datetime вместо str
+     created_at: Optional[datetime] = Field(None, description="Время создания попытки", examples=["2026-02-16T12:00:00Z"])
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 5109a9d..57122d7 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -68,12 +68,29 @@ class LearningSkipResponse(BaseModel):
+ class StartOrGetAttemptRequest(BaseModel):
+     student_id: int = Field(..., description="ID студента")
+     source_system: str = Field(default="learning_api", description="Источник")
++    root_course_id: Optional[int] = Field(
++        default=None,
++        description=(
++            "Корневой курс, которым ученик пришёл к заданию (tsk-264). Узел графа "
++            "переиспользуется несколькими курсами, поэтому попытки считаются в "
++            "границах корня: новый курс — свежие попытки. Клиент знает корень из "
++            "дерева/URL. Если не передан — сервер определяет его сам, когда узел "
++            "лежит ровно в одном активном курсе ученика."
++        ),
++    )
+ 
+ 
+ class StartOrGetAttemptResponse(BaseModel):
+     attempt_id: int
+     user_id: int
+     course_id: Optional[int] = None
++    root_course_id: Optional[int] = Field(
++        default=None,
++        description=(
++            "Корневой курс, в границах которого считаются попытки (tsk-264). "
++            "NULL — путь неизвестен: попытка не расходует лимит ни в одном курсе."
++        ),
++    )
+     created_at: datetime
+     finished_at: Optional[datetime] = None
+     source_system: str
+diff --git a/app/services/attempts_service.py b/app/services/attempts_service.py
+index f28f287..1977498 100644
+--- a/app/services/attempts_service.py
++++ b/app/services/attempts_service.py
+@@ -28,6 +28,7 @@ class AttemptsService(BaseService[Attempts]):
+         *,
+         user_id: int,
+         course_id: Optional[int] = None,
++        root_course_id: Optional[int] = None,
+         source_system: str = "system",
+         meta: Optional[dict[str, Any]] = None,
+     ) -> Attempts:
+@@ -37,12 +38,16 @@ class AttemptsService(BaseService[Attempts]):
+         :param db: Асинхронная сессия БД.
+         :param user_id: ID пользователя.
+         :param course_id: ID курса (если попытка привязана к курсу).
++        :param root_course_id: корневой курс, которым ученик пришёл к заданию
++            (tsk-264): в его границах считается лимит попыток. None — путь
++            неизвестен, попытка не расходует лимит ни в одном курсе.
+         :param source_system: Источник (web, bot, import и т.п.).
+         :param meta: Дополнительные метаданные (таймлимит, название и пр.).
+         """
+         data: dict[str, Any] = {
+             "user_id": user_id,
+             "course_id": course_id,
++            "root_course_id": root_course_id,
+             "source_system": source_system,
+             "meta": meta,
+         }
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index e8d8745..0fd9030 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -41,6 +41,34 @@ DEFAULT_MAX_ATTEMPTS = 3
+ QUIZ_MAX_ATTEMPTS = 1
+ PASS_THRESHOLD_RATIO = 0.5
+ 
++# tsk-264: дерево курса вниз по course_parents — содержит ли корень данный узел.
++_ROOT_CONTAINS_NODE_SQL = """
++WITH RECURSIVE subtree AS (
++    SELECT CAST(:root_course_id AS INTEGER) AS course_id
++    UNION ALL
++    SELECT cp.course_id
++    FROM subtree s
++    JOIN course_parents cp ON cp.parent_course_id = s.course_id
++)
++SELECT EXISTS (SELECT 1 FROM subtree WHERE course_id = :course_id)
++"""
++
++# tsk-264: активные корневые курсы ученика, в чьё дерево входит данный узел.
++_ACTIVE_ROOTS_OF_NODE_SQL = """
++WITH RECURSIVE ct AS (
++    SELECT uc.course_id AS root_course_id, uc.course_id AS member_course_id
++    FROM user_courses uc
++    WHERE uc.user_id = :student_id AND uc.is_active = true
++    UNION ALL
++    SELECT ct.root_course_id, cp.course_id
++    FROM ct
++    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
++)
++SELECT DISTINCT root_course_id
++FROM ct
++WHERE member_course_id = :course_id
++"""
++
+ 
+ class LearningEngineService:
+     """
+@@ -103,11 +131,92 @@ class LearningEngineService:
+ 
+         return DEFAULT_MAX_ATTEMPTS
+ 
++    async def root_contains_course(
++        self,
++        db: AsyncSession,
++        root_course_id: int,
++        course_id: int,
++    ) -> bool:
++        """Входит ли курс `course_id` в дерево корня `root_course_id` (tsk-264).
++
++        Args:
++            db: async session.
++            root_course_id: корневой курс.
++            course_id: проверяемый узел (сам корень тоже входит в своё дерево).
++
++        Returns:
++            True, если узел лежит в дереве корня.
++        """
++        return bool(
++            (
++                await db.execute(text(_ROOT_CONTAINS_NODE_SQL), {
++                    "root_course_id": root_course_id,
++                    "course_id": course_id,
++                })
++            ).scalar()
++        )
++
++    async def resolve_attempt_root(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        course_id: int,
++        requested_root_course_id: Optional[int] = None,
++    ) -> Optional[int]:
++        """Корень дерева, которым ученик пришёл к узлу `course_id` (tsk-264).
++
++        Args:
++            db: async session.
++            student_id: ID студента.
++            course_id: курс узла (курс самого задания).
++            requested_root_course_id: корень, заявленный клиентом (SPW знает его
++                из URL/дерева). Принимается только если дерево этого корня
++                действительно содержит узел.
++
++        Returns:
++            ID корневого курса либо None, если путь определить нечем (узел под
++            несколькими активными деревьями и клиент корень не передал). None —
++            «путь неизвестен»: такая попытка не расходует лимит ни в одном корне.
++
++        Raises:
++            DomainError: заявленный корень не содержит узел. Проверка не
++                косметическая: `root_course_id` — ключ счёта попыток, и без неё
++                клиент обходил бы лимит, присылая каждый раз новый корень.
++        """
++        if requested_root_course_id is not None:
++            if not await self.root_contains_course(
++                db, requested_root_course_id, course_id
++            ):
++                raise DomainError(
++                    f"Курс {requested_root_course_id} не содержит узел {course_id}"
++                )
++            return requested_root_course_id
++
++        # Корень не заявлен — восстанавливаем по активным деревьям ученика.
++        # Однозначен ровно один кандидат; несколько (переиспользуемый узел) —
++        # None, гадать нельзя: ошибка съела бы попытку не в том курсе.
++        rows = (
++            await db.execute(text(_ACTIVE_ROOTS_OF_NODE_SQL), {
++                "student_id": student_id,
++                "course_id": course_id,
++            })
++        ).fetchall()
++        if len(rows) == 1:
++            return int(rows[0][0])
++        if len(rows) > 1:
++            logger.info(
++                "resolve_attempt_root: узел под несколькими корнями без контекста — "
++                "student_id=%s course_id=%s roots=%s",
++                student_id, course_id, [int(r[0]) for r in rows],
++            )
++        return None
++
+     async def compute_task_state(
+         self,
+         db: AsyncSession,
+         student_id: int,
+         task_id: int,
++        root_course_id: Optional[int] = None,
+     ) -> TaskStateResult:
+         """
+         Состояние задания по последнему task_result.
+@@ -123,17 +232,51 @@ class LearningEngineService:
+           - PASSED если last_score/last_max_score >= 0.5 (по последнему submitted_at);
+           - FAILED если последний task_result не PASSED, attempts_used < limit;
+           - BLOCKED_LIMIT если attempts_used >= limit и нет PASSED.
++
++        tsk-264: `root_course_id` — корень дерева, которым ученик пришёл к заданию.
++        Узел графа переиспользуется несколькими корнями, и раньше исчерпанные в
++        курсе X попытки убивали задание в курсе Y. Разделены ДВА эффекта:
++          - ПРОГРЕСС (последний результат, PASSED) остаётся ОБЩИМ для всех корней:
++            что ученик знает — то знает, перерешивать не нужно;
++          - СЧЁТ ПОПЫТОК считается в границах корня: новый курс — свежие попытки.
++        Попытки с root_course_id IS NULL (путь неизвестен: старые записи, где корень
++        восстановить нечем, либо вызов без контекста) не расходуют лимит ни в одном
++        корне. `root_course_id=None` у вызова — прежнее поведение: счёт по всем
++        попыткам задания независимо от пути.
+         """
+         limit = await self.get_effective_attempt_limit(db, student_id, task_id)
+ 
+-        # Число поданных ответов по задаче (учитывая активный course-level attempt)
++        # tsk-264: у квиза (SC_Qw/MC_Qw) ответ ОДИН НАВСЕГДА — повтор задваивает
++        # scale_scores, и submit отклоняет его глобально, без учёта курса
++        # (attempts.py, QUIZ_TASK_TYPES → 409). Значит и счёт у квиза общий, как
++        # прогресс: иначе в соседнем курсе показали бы «попытка есть», ученик
++        # нажал бы «ответить» и получил отказ сервера.
++        if root_course_id is not None:
++            type_row = (
++                await db.execute(
++                    text("SELECT task_content->>'type' FROM tasks WHERE id = :task_id"),
++                    {"task_id": task_id},
++                )
++            ).fetchone()
++            if type_row is not None and type_row[0] in QUIZ_TASK_TYPES:
++                root_course_id = None
++
++        # Число поданных ответов по задаче (учитывая активный course-level attempt).
++        # tsk-264: при заданном корне — только попытки этого корня (см. docstring).
+         count_stmt = text("""
+             SELECT COUNT(*)
+             FROM task_results tr
+             INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
+             WHERE tr.user_id = :student_id AND tr.task_id = :task_id
++              AND (
++                    CAST(:root_course_id AS INTEGER) IS NULL
++                    OR a.root_course_id = CAST(:root_course_id AS INTEGER)
++              )
+         """)
+-        r = await db.execute(count_stmt, {"student_id": student_id, "task_id": task_id})
++        r = await db.execute(
++            count_stmt,
++            {"student_id": student_id, "task_id": task_id, "root_course_id": root_course_id},
++        )
+         attempts_used = r.scalar() or 0
+ 
+         # Последний task_result по задаче (по submitted_at task_results).
+@@ -549,9 +692,13 @@ class LearningEngineService:
+                 if mat is not None:
+                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
+                     return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
+-                # Первое задание не PASSED и не BLOCKED_LIMIT
++                # Первое задание не PASSED и не BLOCKED_LIMIT.
++                # tsk-264: лимит считаем в границах корня, которым идёт обход —
++                # иначе исчерпанные в другом курсе попытки блокировали бы
++                # переиспользуемый узел и здесь.
+                 task_id, blocked = await self._first_incomplete_task(
+-                    db, student_id, cid, task_ids=task_ids
++                    db, student_id, cid, task_ids=task_ids,
++                    root_course_id=current_root_id,
+                 )
+                 if blocked is not None:
+                     return NextItemResult(
+@@ -694,11 +841,15 @@ class LearningEngineService:
+         student_id: int,
+         course_id: int,
+         task_ids: Optional[List[int]] = None,
++        root_course_id: Optional[int] = None,
+     ) -> Tuple[Optional[int], Optional[int]]:
+         """
+         (task_id для следующего задания, task_id с blocked_limit или None).
+         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
+ 
++        `root_course_id` (tsk-264) — корень обхода: лимит попыток считается в его
++        границах.
++
+         `task_ids` — необязательный заранее суженный список (tsk-261: обход от
+         текущей позиции передаёт сюда только задания ПОСЛЕ неё).
+ 
+@@ -727,7 +878,9 @@ class LearningEngineService:
+         for tid in task_ids:
+             if tid in skipped_ids:
+                 continue
+-            state_result = await self.compute_task_state(db, student_id, tid)
++            state_result = await self.compute_task_state(
++                db, student_id, tid, root_course_id=root_course_id
++            )
+             if state_result.state == "BLOCKED_LIMIT":
+                 return (None, tid)
+             if state_result.state in ("OPEN", "IN_PROGRESS", "FAILED"):
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index e9cebf0..393f7e2 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -354,6 +354,11 @@ SELECT c.id AS root_course_id, c.course_uid AS root_course_uid
+ FROM course_trees ct
+ JOIN courses c ON c.id = ct.root_course_id
+ WHERE ct.member_course_id = :leaf_course_id
++-- Сам себе корень — вперёд: лист, который ученику записан, и есть его корень.
++-- Дальше — по id, чтобы выбор был устойчивым: LIMIT 1 без сортировки на узле
++-- под двумя записанными деревьями возвращал разный корень от запроса к запросу
++-- (tsk-264: от этого выбора теперь зависит счёт попыток, а не только вывод).
++ORDER BY (c.id = :leaf_course_id) DESC, c.id ASC
+ LIMIT 1
+ """
+ 
+@@ -637,8 +642,11 @@ LIMIT :limit OFFSET :offset
+ # Python через LearningEngineService._collect_courses_in_order, чтобы
+ # сохранить depth-first порядок с учётом course_parents.order_number.
+ #
+-# attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts —
+-# парность с learning_engine_service.compute_task_state (Y-5.3 fix).
++# attempts_used = COUNT task_results по active (cancelled_at IS NULL) attempts
++# ЭТОГО корня (tsk-264) — парность с learning_engine_service.compute_task_state
++# (Y-5.3 fix). Узел графа переиспользуется несколькими курсами: лимит попыток
++# считается в границах корня (новый курс — свежие попытки), а last_per_task
++# (прогресс: passed) остаётся общим для всех корней — что ученик знает, то знает.
+ # attempts_limit_effective: квиз (SC_Qw/MC_Qw) → 1 (tsk-124, перебивает всё);
+ # иначе override → tasks.max_attempts → DEFAULT_MAX_ATTEMPTS.
+ _SYLLABUS_TASKS_SQL = """
+@@ -664,7 +672,15 @@ attempts_per_task AS (
+     SELECT tr.task_id, COUNT(*) AS used
+     FROM task_results tr
+     INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
++    INNER JOIN tasks qt ON qt.id = tr.task_id
+     WHERE tr.user_id = :user_id
++      AND (
++            -- Квиз: ответ один навсегда, submit отклоняет повтор глобально
++            -- (409) — значит и счёт общий, иначе покажем «попытка есть» там,
++            -- где сервер ответить не даст. Паритет с compute_task_state.
++            qt.task_content->>'type' IN ('SC_Qw', 'MC_Qw')
++            OR a.root_course_id = :root_course_id
++      )
+       AND tr.task_id IN (
+           SELECT id FROM tasks
+           WHERE course_id = ANY(:tree_ids)
+@@ -927,12 +943,19 @@ async def get_syllabus_states(
+         ]
+     tree_ids: list[int] = [m["course_id"] for m in section_meta]
+ 
++    # tsk-264: попытки считаются в границах КОРНЯ дерева, а параметром сюда
++    # приходит любой узел («ID корневого course (любой узел дерева)»). Для
++    # среднего узла фильтр по нему самому не нашёл бы ни одной попытки —
++    # приводим к настоящему корню тем же резолвером, что и остальной /me.
++    attempts_root_id, _ = await _resolve_root_course(db, user_id, root_course_id)
++
+     tasks_res = await db.execute(
+         text(_SYLLABUS_TASKS_SQL),
+         {
+             "user_id": user_id,
+             "tree_ids": tree_ids,
+             "default_max": DEFAULT_MAX_ATTEMPTS,
++            "root_course_id": attempts_root_id,
+         },
+     )
+     task_rows = tasks_res.mappings().all()
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 501e64e..21d57df 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -12447,6 +12447,24 @@
+             },
+             "description": "ID студента"
+           },
++          {
++            "name": "root_course_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Корневой курс, которым ученик пришёл к заданию (tsk-264): попытки считаются в его границах. Не задан — счёт по всем попыткам задания независимо от пути (прежнее поведение).",
++              "title": "Root Course Id"
++            },
++            "description": "Корневой курс, которым ученик пришёл к заданию (tsk-264): попытки считаются в его границах. Не задан — счёт по всем попыткам задания независимо от пути (прежнее поведение)."
++          },
+           {
+             "name": "token",
+             "in": "query",
+@@ -17382,6 +17400,18 @@
+             "title": "Course Id",
+             "description": "ID курса, если попытка привязана к конкретному курсу."
+           },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id",
++            "description": "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его границах считаются попытки. Не задан — сервер определяет сам, если узел лежит ровно в одном активном курсе ученика."
++          },
+           "source_system": {
+             "anyOf": [
+               {
+@@ -17524,6 +17554,22 @@
+               null
+             ]
+           },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id",
++            "description": "Корневой курс, которым ученик пришёл к заданию (tsk-264): в его границах считается лимит попыток. null — путь неизвестен.",
++            "examples": [
++              1111,
++              null
++            ]
++          },
+           "created_at": {
+             "anyOf": [
+               {
+@@ -24702,6 +24748,18 @@
+             "title": "Source System",
+             "description": "Источник",
+             "default": "learning_api"
++          },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id",
++            "description": "Корневой курс, которым ученик пришёл к заданию (tsk-264). Узел графа переиспользуется несколькими курсами, поэтому попытки считаются в границах корня: новый курс — свежие попытки. Клиент знает корень из дерева/URL. Если не передан — сервер определяет его сам, когда узел лежит ровно в одном активном курсе ученика."
+           }
+         },
+         "type": "object",
+@@ -24731,6 +24789,18 @@
+             ],
+             "title": "Course Id"
+           },
++          "root_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Root Course Id",
++            "description": "Корневой курс, в границах которого считаются попытки (tsk-264). NULL — путь неизвестен: попытка не расходует лимит ни в одном курсе."
++          },
+           "created_at": {
+             "type": "string",
+             "format": "date-time",
+diff --git a/tests/test_attempts_root_course_tsk264.py b/tests/test_attempts_root_course_tsk264.py
+new file mode 100644
+index 0000000..058ff55
+--- /dev/null
++++ b/tests/test_attempts_root_course_tsk264.py
+@@ -0,0 +1,366 @@
++"""
++Попытки по паре «курс + задание» (tsk-264): счёт попыток в границах корня.
++
++Граф курсов переиспользует узлы (из 645 узлов прода — 24, до 5 родителей).
++Раньше `attempts_used` считался по заданию независимо от пути, и ученик,
++исчерпавший попытки в курсе X, приходил в курс Y через тот же узел с уже
++мёртвым заданием (жалоба приёмки tsk-261 A7).
++
++Проверяем на НАСТОЯЩЕЙ БД (не на моках — граф, рекурсивные CTE и запись
++попытки живут в PostgreSQL, мок их не воспроизводит):
++- переиспользуемый узел под двумя корнями → попытки не пересекаются;
++- обычный узел → счёт как раньше (регресс);
++- прогресс (PASSED) остаётся ОБЩИМ для обоих корней — решение оператора;
++- заявленный клиентом чужой корень отвергается (иначе лимит обходится);
++- попытка с пустым корнем (путь неизвестен) не расходует лимит.
++
++Фикстура графа:
++    root_a (1)          root_b (2)
++        \\               /
++         reused_node (общий узел с заданием)
++    root_c → plain_node (обычный узел, один родитель)
++"""
++import os
++import sys
++from pathlib import Path
++
++import pytest
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from dotenv import load_dotenv
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++
++from app.core.config import Settings
++from app.services.attempts_service import AttemptsService
++from app.services.learning_engine_service import (
++    DEFAULT_MAX_ATTEMPTS,
++    LearningEngineService,
++)
++from app.utils.exceptions import DomainError
++
++settings = Settings()
++engine_svc = LearningEngineService()
++attempts_svc = AttemptsService()
++
++
++@pytest_asyncio.fixture(scope="function")
++async def graph():
++    """Учебный граф с переиспользуемым узлом + студент. Полная уборка за собой."""
++    engine = create_async_engine(settings.database_url)
++    ids: dict[str, int] = {}
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        try:
++            async def new_course(title: str) -> int:
++                return (
++                    await s.execute(
++                        text(
++                            "INSERT INTO courses (title, access_level) "
++                            "VALUES (:t, 'self_guided') RETURNING id"
++                        ),
++                        {"t": title},
++                    )
++                ).scalar()
++
++            ids["root_a"] = await new_course("tsk264 корень A")
++            ids["root_b"] = await new_course("tsk264 корень B")
++            ids["root_c"] = await new_course("tsk264 корень C")
++            ids["reused"] = await new_course("tsk264 переиспользуемый узел")
++            ids["plain"] = await new_course("tsk264 обычный узел")
++
++            # Переиспользуемый узел висит под двумя корнями — как на проде.
++            for parent in ("root_a", "root_b"):
++                await s.execute(
++                    text(
++                        "INSERT INTO course_parents (course_id, parent_course_id) "
++                        "VALUES (:c, :p)"
++                    ),
++                    {"c": ids["reused"], "p": ids[parent]},
++                )
++            await s.execute(
++                text(
++                    "INSERT INTO course_parents (course_id, parent_course_id) "
++                    "VALUES (:c, :p)"
++                ),
++                {"c": ids["plain"], "p": ids["root_c"]},
++            )
++
++            difficulty_id = (
++                await s.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++            ).scalar()
++            assert difficulty_id is not None, "нет difficulties — граф не собрать"
++
++            async def new_task(course_id: int, uid: str) -> int:
++                return (
++                    await s.execute(
++                        text(
++                            "INSERT INTO tasks (task_content, course_id, difficulty_id, "
++                            "external_uid) VALUES "
++                            "(CAST(:tc AS jsonb), :cid, :did, :uid) RETURNING id"
++                        ),
++                        {
++                            "tc": '{"type": "SA", "question": "tsk264"}',
++                            "cid": course_id,
++                            "did": difficulty_id,
++                            "uid": uid,
++                        },
++                    )
++                ).scalar()
++
++            ids["task_reused"] = await new_task(ids["reused"], "tsk264-reused")
++            ids["task_plain"] = await new_task(ids["plain"], "tsk264-plain")
++            # Квиз на переиспользуемом узле — у него ответ один навсегда.
++            ids["task_quiz"] = (
++                await s.execute(
++                    text(
++                        "INSERT INTO tasks (task_content, course_id, difficulty_id, "
++                        "external_uid) VALUES (CAST(:tc AS jsonb), :cid, :did, :uid) "
++                        "RETURNING id"
++                    ),
++                    {
++                        "tc": '{"type": "SC_Qw", "question": "tsk264 quiz"}',
++                        "cid": ids["reused"],
++                        "did": difficulty_id,
++                        "uid": "tsk264-quiz",
++                    },
++                )
++            ).scalar()
++
++            ids["user"] = (
++                await s.execute(
++                    text(
++                        "INSERT INTO users (full_name) VALUES "
++                        "('tsk264 тестовый ученик') RETURNING id"
++                    )
++                )
++            ).scalar()
++            # Ученик записан на оба корня сразу — как в жалобе: прошёл A, пришёл в B.
++            for r in ("root_a", "root_b", "root_c"):
++                await s.execute(
++                    text(
++                        "INSERT INTO user_courses (user_id, course_id, is_active) "
++                        "VALUES (:u, :c, true)"
++                    ),
++                    {"u": ids["user"], "c": ids[r]},
++                )
++            await s.commit()
++            yield ids, s
++        finally:
++            await s.rollback()
++            await s.execute(
++                text("DELETE FROM task_results WHERE user_id = :u"), {"u": ids.get("user", -1)}
++            )
++            await s.execute(
++                text("DELETE FROM attempts WHERE user_id = :u"), {"u": ids.get("user", -1)}
++            )
++            await s.execute(
++                text("DELETE FROM user_courses WHERE user_id = :u"), {"u": ids.get("user", -1)}
++            )
++            await s.execute(
++                text("DELETE FROM tasks WHERE id = ANY(:t)"),
++                {"t": [ids[k] for k in ("task_reused", "task_plain", "task_quiz") if k in ids]},
++            )
++            await s.execute(
++                text("DELETE FROM course_parents WHERE course_id = ANY(:c)"),
++                {"c": [ids[k] for k in ("reused", "plain") if k in ids]},
++            )
++            await s.execute(
++                text("DELETE FROM users WHERE id = :u"), {"u": ids.get("user", -1)}
++            )
++            await s.execute(
++                text("DELETE FROM courses WHERE id = ANY(:c)"),
++                {"c": list(ids[k] for k in ids if k != "user" and not k.startswith("task"))},
++            )
++            await s.commit()
++            await engine.dispose()
++
++
++async def _burn_attempts(
++    s: AsyncSession, user_id: int, task_id: int, course_id: int,
++    root_course_id: int | None, count: int,
++) -> None:
++    """Записать `count` неверных ответов по заданию в контексте корня."""
++    for _ in range(count):
++        attempt = await attempts_svc.create_attempt(
++            s,
++            user_id=user_id,
++            course_id=course_id,
++            root_course_id=root_course_id,
++            source_system="test_tsk264",
++        )
++        await s.execute(
++            text(
++                "INSERT INTO task_results (user_id, task_id, attempt_id, score, "
++                "max_score, is_correct, submitted_at) VALUES "
++                "(:u, :t, :a, 0, 10, false, now())"
++            ),
++            {"u": user_id, "t": task_id, "a": attempt.id},
++        )
++    await s.commit()
++
++
++async def test_reused_node_attempts_do_not_cross_roots(graph):
++    """Исчерпал попытки в курсе A → в курсе B задание живо и попытки свежие."""
++    ids, s = graph
++    await _burn_attempts(
++        s, ids["user"], ids["task_reused"], ids["reused"],
++        ids["root_a"], DEFAULT_MAX_ATTEMPTS,
++    )
++
++    in_a = await engine_svc.compute_task_state(
++        s, ids["user"], ids["task_reused"], root_course_id=ids["root_a"]
++    )
++    assert in_a.attempts_used == DEFAULT_MAX_ATTEMPTS
++    assert in_a.state == "BLOCKED_LIMIT", "в своём курсе лимит обязан работать"
++
++    in_b = await engine_svc.compute_task_state(
++        s, ids["user"], ids["task_reused"], root_course_id=ids["root_b"]
++    )
++    assert in_b.attempts_used == 0, (
++        "попытки курса A просочились в курс B — это и есть жалоба tsk-261 A7"
++    )
++    assert in_b.state != "BLOCKED_LIMIT", "в новом курсе задание не должно быть заблокировано"
++
++
++async def test_passed_progress_stays_shared_between_roots(graph):
++    """Прогресс общий: пройденное в A остаётся пройденным в B (решение оператора)."""
++    ids, s = graph
++    attempt = await attempts_svc.create_attempt(
++        s, user_id=ids["user"], course_id=ids["reused"],
++        root_course_id=ids["root_a"], source_system="test_tsk264",
++    )
++    await s.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++            "is_correct, submitted_at) VALUES (:u, :t, :a, 10, 10, true, now())"
++        ),
++        {"u": ids["user"], "t": ids["task_reused"], "a": attempt.id},
++    )
++    await s.commit()
++
++    in_b = await engine_svc.compute_task_state(
++        s, ids["user"], ids["task_reused"], root_course_id=ids["root_b"]
++    )
++    assert in_b.state == "PASSED", (
++        "решённое в курсе A обязано остаться решённым в курсе B — "
++        "перерешивать известное ученик не должен"
++    )
++
++
++async def test_plain_node_regression_unchanged(graph):
++    """Обычный узел (один родитель): счёт попыток как раньше."""
++    ids, s = graph
++    await _burn_attempts(
++        s, ids["user"], ids["task_plain"], ids["plain"],
++        ids["root_c"], DEFAULT_MAX_ATTEMPTS,
++    )
++    state = await engine_svc.compute_task_state(
++        s, ids["user"], ids["task_plain"], root_course_id=ids["root_c"]
++    )
++    assert state.attempts_used == DEFAULT_MAX_ATTEMPTS
++    assert state.state == "BLOCKED_LIMIT", "регресс: обычный узел обязан блокироваться"
++
++
++async def test_resolve_root_picks_single_active_root(graph):
++    """Узел под одним активным корнем → корень восстанавливается без подсказки клиента."""
++    ids, s = graph
++    root = await engine_svc.resolve_attempt_root(
++        s, student_id=ids["user"], course_id=ids["plain"]
++    )
++    assert root == ids["root_c"]
++
++
++async def test_resolve_root_ambiguous_returns_none(graph):
++    """Узел под двумя активными корнями без контекста → None, гадать нельзя."""
++    ids, s = graph
++    root = await engine_svc.resolve_attempt_root(
++        s, student_id=ids["user"], course_id=ids["reused"]
++    )
++    assert root is None
++
++
++async def test_resolve_root_rejects_foreign_root(graph):
++    """Заявленный корень, не содержащий узел, отвергается — иначе лимит обходится."""
++    ids, s = graph
++    with pytest.raises(DomainError):
++        await engine_svc.resolve_attempt_root(
++            s,
++            student_id=ids["user"],
++            course_id=ids["plain"],
++            requested_root_course_id=ids["root_a"],
++        )
++
++
++async def test_requested_root_accepted_when_contains_node(graph):
++    """Клиент передал корень, чьё дерево содержит узел → он и берётся."""
++    ids, s = graph
++    root = await engine_svc.resolve_attempt_root(
++        s,
++        student_id=ids["user"],
++        course_id=ids["reused"],
++        requested_root_course_id=ids["root_b"],
++    )
++    assert root == ids["root_b"]
++
++
++async def test_null_root_attempts_do_not_consume_limit(graph):
++    """Попытка с неизвестным путём не расходует лимит ни в одном корне.
++
++    Это осознанное поведение для старых записей, где корень восстановить нечем
++    (на проде таких 7, все у 2 учеников). Оно описано в карточке tsk-264,
++    а не замолчано: ученик получает свежие попытки — сторона ошибки выбрана
++    в пользу ученика, а не блокировки.
++    """
++    ids, s = graph
++    await _burn_attempts(
++        s, ids["user"], ids["task_reused"], ids["reused"],
++        None, DEFAULT_MAX_ATTEMPTS,
++    )
++    for root_key in ("root_a", "root_b"):
++        state = await engine_svc.compute_task_state(
++            s, ids["user"], ids["task_reused"], root_course_id=ids[root_key]
++        )
++        assert state.attempts_used == 0, f"попытка без пути не должна считаться в {root_key}"
++
++
++async def test_quiz_stays_blocked_across_roots(graph):
++    """Квиз считается ОБЩЕ, а не по курсам: у него ответ один навсегда.
++
++    Находка ревью tsk-264: submit отклоняет повтор квиза глобально (409,
++    QUIZ_TASK_TYPES в attempts.py — задваивать scale_scores нельзя). Если бы счёт
++    квиза стал по-курсовым, в соседнем курсе ученику показали бы «попытка есть»,
++    он нажал бы «ответить» и получил отказ сервера.
++    """
++    ids, s = graph
++    # Ответ ниже порога в курсе A — единственная попытка квиза израсходована.
++    await _burn_attempts(
++        s, ids["user"], ids["task_quiz"], ids["reused"], ids["root_a"], 1,
++    )
++    in_b = await engine_svc.compute_task_state(
++        s, ids["user"], ids["task_quiz"], root_course_id=ids["root_b"]
++    )
++    assert in_b.attempts_used == 1, "счёт квиза обязан быть общим для всех курсов"
++    assert in_b.state == "BLOCKED_LIMIT", (
++        "иначе SPW предложит ответить повторно, а сервер вернёт 409"
++    )
++
++
++async def test_legacy_call_without_root_counts_globally(graph):
++    """Вызов без корня — прежнее поведение: счёт по всем попыткам задания."""
++    ids, s = graph
++    await _burn_attempts(
++        s, ids["user"], ids["task_reused"], ids["reused"],
++        ids["root_a"], 2,
++    )
++    state = await engine_svc.compute_task_state(s, ids["user"], ids["task_reused"])
++    assert state.attempts_used == 2
+diff --git a/tests/test_quiz_single_attempt_tsk124.py b/tests/test_quiz_single_attempt_tsk124.py
+index 21e3a6b..c125f09 100644
+--- a/tests/test_quiz_single_attempt_tsk124.py
++++ b/tests/test_quiz_single_attempt_tsk124.py
+@@ -168,7 +168,14 @@ async def test_syllabus_limit_quiz_is_one(db):
+         rows = (
+             await db.execute(
+                 text(_SYLLABUS_TASKS_SQL),
+-                {"user_id": student_id, "tree_ids": [course_id], "default_max": DEFAULT_MAX_ATTEMPTS},
++                {
++                    "user_id": student_id,
++                    "tree_ids": [course_id],
++                    "default_max": DEFAULT_MAX_ATTEMPTS,
++                    # tsk-264: попытки считаются в границах корня; курс здесь
++                    # плоский, сам себе корень.
++                    "root_course_id": course_id,
++                },
+             )
+         ).mappings().all()
+         by_task = {r["task_id"]: r["attempts_limit_effective"] for r in rows}
+diff --git a/tests/test_tsk261_next_item_position.py b/tests/test_tsk261_next_item_position.py
+index bdd62e4..c66efe1 100644
+--- a/tests/test_tsk261_next_item_position.py
++++ b/tests/test_tsk261_next_item_position.py
+@@ -285,12 +285,13 @@ async def test_blocked_limit_still_detected_forward(db, tree):
+     await _complete_material(db, student_id=uid, material_id=tree["m1"])
+     await _complete_material(db, student_id=uid, material_id=tree["m2"])
+     # Исчерпать лимит по t1: 3 результата с провалом в открытой попытке.
++    # tsk-264: попытка несёт корень обхода — лимит считается в его границах.
+     res_a = await db.execute(
+         text(
+-            "INSERT INTO attempts (user_id, course_id, source_system) "
+-            "VALUES (:u, :c, 'spw') RETURNING id"
++            "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++            "VALUES (:u, :c, :rc, 'spw') RETURNING id"
+         ),
+-        {"u": uid, "c": tree["child1"]},
++        {"u": uid, "c": tree["child1"], "rc": root},
+     )
+     aid = int(res_a.scalar_one())
+     for _ in range(3):
+diff --git a/tests/test_y62_syllabus_states.py b/tests/test_y62_syllabus_states.py
+index 58d92f7..f95041f 100644
+--- a/tests/test_y62_syllabus_states.py
++++ b/tests/test_y62_syllabus_states.py
+@@ -186,17 +186,36 @@ async def _pick_other_root(db, exclude_root_id: int) -> int:
+ 
+ 
+ async def _create_attempt(
+-    db, *, user_id: int, course_id: int, finished: bool = False, cancelled: bool = False
++    db,
++    *,
++    user_id: int,
++    course_id: int,
++    finished: bool = False,
++    cancelled: bool = False,
++    root_course_id: int | None = None,
+ ) -> int:
+-    """Создать course-level attempt; вернуть его id."""
++    """Создать course-level attempt; вернуть его id.
++
++    tsk-264: попытка несёт корень, которым ученик пришёл к заданию — в его
++    границах считается лимит. Здесь деревья плоские (курс сам себе корень),
++    поэтому по умолчанию root = course_id; попытка без корня лимит не
++    расходует, и фикстура молча перестала бы проверять блокировку.
++    """
+     finished_at = datetime.now(timezone.utc) if finished else None
+     cancelled_at = datetime.now(timezone.utc) if cancelled else None
+     res = await db.execute(
+         text(
+-            "INSERT INTO attempts (user_id, course_id, source_system, finished_at, cancelled_at) "
+-            "VALUES (:u, :c, 'spw', :f, :ca) RETURNING id"
++            "INSERT INTO attempts (user_id, course_id, root_course_id, source_system, "
++            "finished_at, cancelled_at) "
++            "VALUES (:u, :c, :rc, 'spw', :f, :ca) RETURNING id"
+         ),
+-        {"u": user_id, "c": course_id, "f": finished_at, "ca": cancelled_at},
++        {
++            "u": user_id,
++            "c": course_id,
++            "rc": course_id if root_course_id is None else root_course_id,
++            "f": finished_at,
++            "ca": cancelled_at,
++        },
+     )
+     aid = int(res.scalar_one())
+     await db.commit()
