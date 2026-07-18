@@ -479,7 +479,7 @@ async def get_user_stats(
     summary="Детальный разбор результатов ученика",
     responses={
         200: {
-            "description": "Детальный разбор: по каждому заданию + свод по курсам и общий",
+            "description": "Детальный разбор, сгруппированный по урокам + общий свод",
             "content": {
                 "application/json": {
                     "example": {
@@ -492,28 +492,30 @@ async def get_user_stats(
                             "attempts_total": 129,
                             "hints_used": 10,
                         },
-                        "course_summaries": [
+                        "lessons": [
                             {
-                                "course_id": 1248,
-                                "course_title": "Вступительное испытание в вуз",
-                                "tasks_total": 74,
-                                "tasks_solved": 74,
-                                "total_score": 74,
-                                "total_max_score": 74,
-                                "hints_used": 10,
-                            }
-                        ],
-                        "tasks": [
-                            {
-                                "task_id": 7399,
-                                "course_id": 1248,
-                                "label": "A1-03 • id=7399",
-                                "is_correct": True,
-                                "score": 1,
-                                "max_score": 1,
-                                "attempts": 2,
-                                "solved_on_attempt": 2,
-                                "hints_used": 0,
+                                "lesson_id": 1250,
+                                "lesson_title": "Системный блок изнутри",
+                                "tasks_total": 13,
+                                "tasks_solved": 13,
+                                "hints_used": 1,
+                                "first_at": "2026-07-13T14:32:00Z",
+                                "last_at": "2026-07-13T14:45:00Z",
+                                "tasks": [
+                                    {
+                                        "task_id": 7399,
+                                        "question_no": 5,
+                                        "text": "Отметь все узлы, которые внутри системного блока",
+                                        "is_correct": True,
+                                        "score": 1,
+                                        "max_score": 1,
+                                        "attempts": 2,
+                                        "solved_on_attempt": 2,
+                                        "hints_used": 0,
+                                        "solved_at": "2026-07-13T14:37:37Z",
+                                        "last_at": "2026-07-13T14:37:37Z",
+                                    }
+                                ],
                             }
                         ],
                     }

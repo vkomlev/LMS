@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -216,20 +217,20 @@ class TaskResultsService(BaseService[TaskResults]):
         return max_score > 0 and (score / max_score) >= PASS_THRESHOLD_RATIO
 
     @staticmethod
-    def _build_task_label(
-        task_id: int,
-        external_uid: str | None,
-        title: str | None,
-        stem: str | None,
-    ) -> str:
-        """
-        Человекочитаемая подпись задания: код/название + id.
-        Повторяет логику подписи в teacher-боте (external_uid → title/stem → id).
-        """
-        uid = (external_uid or "").strip()
-        name = (title or stem or "").strip()[:40]
-        primary = uid or name or f"id={task_id}"
-        return f"{primary} • id={task_id}" if primary != f"id={task_id}" else f"id={task_id}"
+    def _question_no(external_uid: str | None) -> int | None:
+        """Номер вопроса из external_uid вида '...#q12' → 12 (None, если нет)."""
+        if not external_uid:
+            return None
+        m = re.search(r"#q(\d+)", external_uid)
+        return int(m.group(1)) if m else None
+
+    @staticmethod
+    def _short_text(title: str | None, stem: str | None, limit: int = 50) -> str:
+        """Короткий человекочитаемый текст задания (title, иначе stem), схлопнутые пробелы."""
+        raw = " ".join((title or stem or "").split())
+        if not raw:
+            return ""
+        return raw if len(raw) <= limit else raw[:limit].rstrip() + "…"
 
     async def get_detail_by_user(
         self,
@@ -238,24 +239,27 @@ class TaskResultsService(BaseService[TaskResults]):
         course_id: int | None = None,
     ) -> Dict[str, Any]:
         """
-        Детальный разбор результатов ученика для экрана преподавателя (tsk-309).
+        Детальный разбор результатов ученика для экрана преподавателя (tsk-309),
+        сгруппированный ПО УРОКАМ (подкурсам) — чтобы преподаватель видел прогресс
+        по ходу урока.
 
-        По каждому заданию: статус (решено/нет), баллы (лучший результат),
-        с какой попытки сдал, число попыток, сколько подсказок открыто.
-        Плюс свод по корневым курсам и общий свод.
+        По каждому заданию: номер и текст вопроса, статус (решено/нет), баллы
+        (лучший результат), с какой попытки сдал, число попыток, подсказки, ВРЕМЯ
+        сдачи (solved_at, ISO/UTC — клиент форматирует в местное время).
 
         «С какой попытки сдал» — порядковый номер (1-based) первой ВЕРНОЙ строки
-        task_results по паре (ученик, задание), упорядоченной по времени
-        (submitted_at, id). None — если задание ещё не сдано.
+        task_results по паре (ученик, задание) по времени (submitted_at, id).
+        None — если задание ещё не сдано.
 
-        Учитываются только незакрытые попытки (attempts.cancelled_at IS NULL) —
-        консистентно с остальной статистикой (этап 6). Курс группировки — корневой
-        (attempts.root_course_id), чтобы подкурсы не дробили свод.
+        Урок = подкурс задания (tasks.course_id). Учитываются только незакрытые
+        попытки (attempts.cancelled_at IS NULL). Уроки упорядочены по времени начала
+        (хронология прохождения), задания внутри урока — по номеру вопроса.
 
         :param db: Асинхронная сессия БД.
         :param user_id: ID ученика.
-        :param course_id: Опциональный фильтр по корневому курсу.
-        :return: dict со структурой {user_id, overall, courses, tasks}.
+        :param course_id: Опциональный фильтр по КОРНЕВОМУ курсу.
+        :return: dict {user_id, overall, lessons:[{lesson_id, lesson_title,
+                 tasks_total, tasks_solved, hints_used, first_at, last_at, tasks:[...]}]}.
         """
         params: Dict[str, Any] = {"uid": user_id}
         course_filter = ""
@@ -266,30 +270,33 @@ class TaskResultsService(BaseService[TaskResults]):
         detail_sql = text(f"""
             WITH src AS (
                 SELECT tr.task_id,
-                       COALESCE(a.root_course_id, a.course_id) AS course_id,
+                       t.course_id AS lesson_id,
                        tr.is_correct,
                        tr.score,
                        COALESCE(tr.max_score, 0) AS max_score,
+                       tr.submitted_at,
                        ROW_NUMBER() OVER (
                            PARTITION BY tr.task_id
                            ORDER BY tr.submitted_at, tr.id
                        ) AS rn
                 FROM task_results tr
                 INNER JOIN attempts a ON a.id = tr.attempt_id
+                INNER JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.user_id = :uid
                   AND a.cancelled_at IS NULL
                   {course_filter}
             )
             SELECT task_id,
-                   MAX(course_id) AS course_id,
+                   MAX(lesson_id) AS lesson_id,
                    COALESCE(bool_or(is_correct), FALSE) AS is_correct,
                    MAX(score) AS score,
                    MAX(max_score) AS max_score,
                    COUNT(*) AS attempts,
-                   MIN(rn) FILTER (WHERE is_correct IS TRUE) AS solved_on_attempt
+                   MIN(rn) FILTER (WHERE is_correct IS TRUE) AS solved_on_attempt,
+                   MIN(submitted_at) FILTER (WHERE is_correct IS TRUE) AS solved_at,
+                   MAX(submitted_at) AS last_at
             FROM src
             GROUP BY task_id
-            ORDER BY task_id
         """)
         detail_rows = (await db.execute(detail_sql, params)).fetchall()
 
@@ -302,15 +309,10 @@ class TaskResultsService(BaseService[TaskResults]):
             "hints_used": 0,
         }
         if not detail_rows:
-            return {
-                "user_id": user_id,
-                "overall": empty_overall,
-                "course_summaries": [],
-                "tasks": [],
-            }
+            return {"user_id": user_id, "overall": empty_overall, "lessons": []}
 
         task_ids = [int(r.task_id) for r in detail_rows]
-        course_ids = sorted({int(r.course_id) for r in detail_rows if r.course_id is not None})
+        lesson_ids = sorted({int(r.lesson_id) for r in detail_rows if r.lesson_id is not None})
 
         # Подсказки по каждому заданию (событие hint_open по этому ученику).
         hints_sql = text("""
@@ -326,7 +328,7 @@ class TaskResultsService(BaseService[TaskResults]):
             int(r.task_id): int(r.hints) for r in hints_rows if r.task_id is not None
         }
 
-        # Подписи заданий одним запросом (без N+1).
+        # Текст и номер вопроса одним запросом (без N+1).
         labels_sql = text("""
             SELECT id,
                    NULLIF(external_uid, '') AS external_uid,
@@ -336,43 +338,53 @@ class TaskResultsService(BaseService[TaskResults]):
             WHERE id = ANY(:ids)
         """)
         label_rows = (await db.execute(labels_sql, {"ids": task_ids})).fetchall()
-        labels_by_task: Dict[int, str] = {
-            int(r.id): self._build_task_label(int(r.id), r.external_uid, r.title, r.stem)
+        meta_by_task: Dict[int, Dict[str, Any]] = {
+            int(r.id): {
+                "question_no": self._question_no(r.external_uid),
+                "text": self._short_text(r.title, r.stem),
+            }
             for r in label_rows
         }
 
-        # Названия курсов.
-        titles_by_course: Dict[int, str | None] = {}
-        if course_ids:
+        # Названия уроков (подкурсов).
+        titles_by_lesson: Dict[int, str | None] = {}
+        if lesson_ids:
             titles_sql = text("SELECT id, title FROM courses WHERE id = ANY(:ids)")
-            title_rows = (await db.execute(titles_sql, {"ids": course_ids})).fetchall()
-            titles_by_course = {int(r.id): r.title for r in title_rows}
+            title_rows = (await db.execute(titles_sql, {"ids": lesson_ids})).fetchall()
+            titles_by_lesson = {int(r.id): r.title for r in title_rows}
 
-        tasks: List[Dict[str, Any]] = []
-        courses_acc: Dict[int, Dict[str, Any]] = {}
+        def _iso(dt: Any) -> str | None:
+            return dt.isoformat() if dt is not None else None
+
+        lessons_acc: Dict[int, Dict[str, Any]] = {}
         overall = dict(empty_overall)
 
         for r in detail_rows:
             tid = int(r.task_id)
-            cid = int(r.course_id) if r.course_id is not None else None
+            lid = int(r.lesson_id) if r.lesson_id is not None else None
             score = int(r.score or 0)
             max_score = int(r.max_score or 0)
             attempts = int(r.attempts or 0)
             is_correct = bool(r.is_correct)
             solved_on = int(r.solved_on_attempt) if r.solved_on_attempt is not None else None
             hints = hints_by_task.get(tid, 0)
+            meta = meta_by_task.get(tid, {})
+            solved_at = r.solved_at
+            last_at = r.last_at
 
-            tasks.append({
+            task_obj = {
                 "task_id": tid,
-                "course_id": cid,
-                "label": labels_by_task.get(tid, f"id={tid}"),
+                "question_no": meta.get("question_no"),
+                "text": meta.get("text", ""),
                 "is_correct": is_correct,
                 "score": score,
                 "max_score": max_score,
                 "attempts": attempts,
                 "solved_on_attempt": solved_on,
                 "hints_used": hints,
-            })
+                "solved_at": _iso(solved_at),
+                "last_at": _iso(last_at),
+            }
 
             overall["tasks_total"] += 1
             overall["tasks_solved"] += 1 if is_correct else 0
@@ -381,34 +393,39 @@ class TaskResultsService(BaseService[TaskResults]):
             overall["attempts_total"] += attempts
             overall["hints_used"] += hints
 
-            if cid is not None:
-                acc = courses_acc.setdefault(cid, {
-                    "course_id": cid,
-                    "course_title": titles_by_course.get(cid),
-                    "tasks_total": 0,
-                    "tasks_solved": 0,
-                    "total_score": 0,
-                    "total_max_score": 0,
-                    "hints_used": 0,
-                })
-                acc["tasks_total"] += 1
-                acc["tasks_solved"] += 1 if is_correct else 0
-                acc["total_score"] += score
-                acc["total_max_score"] += max_score
-                acc["hints_used"] += hints
+            lg = lessons_acc.setdefault(lid, {
+                "lesson_id": lid,
+                "lesson_title": titles_by_lesson.get(lid) if lid is not None else None,
+                "tasks_total": 0,
+                "tasks_solved": 0,
+                "hints_used": 0,
+                "_first": None,
+                "_last": None,
+                "tasks": [],
+            })
+            lg["tasks"].append(task_obj)
+            lg["tasks_total"] += 1
+            lg["tasks_solved"] += 1 if is_correct else 0
+            lg["hints_used"] += hints
+            t_ref = solved_at or last_at
+            if t_ref is not None:
+                if lg["_first"] is None or t_ref < lg["_first"]:
+                    lg["_first"] = t_ref
+                if lg["_last"] is None or t_ref > lg["_last"]:
+                    lg["_last"] = t_ref
 
-        courses = [courses_acc[cid] for cid in sorted(courses_acc.keys())]
+        lessons: List[Dict[str, Any]] = []
+        for lg in lessons_acc.values():
+            # Задания внутри урока — по номеру вопроса (без номера — в конец).
+            lg["tasks"].sort(key=lambda t: (t["question_no"] is None, t["question_no"] or 0, t["task_id"]))
+            lg["first_at"] = _iso(lg.pop("_first"))
+            lg["last_at"] = _iso(lg.pop("_last"))
+            lessons.append(lg)
 
-        # ВАЖНО: ключ именно "course_summaries", НЕ "courses". Клиент TG_LMS
-        # (api_client._normalize_page_payload) считает ответ с одновременными
-        # user_id + courses (без items) легаси-списком курсов студента и схлопывает
-        # его в пустой Page — теряя все поля разбора (tsk-309, живой прод-баг).
-        return {
-            "user_id": user_id,
-            "overall": overall,
-            "course_summaries": courses,
-            "tasks": tasks,
-        }
+        # Уроки — по времени начала (хронология); без времени — в конец.
+        lessons.sort(key=lambda l: (l["first_at"] is None, l["first_at"] or ""))
+
+        return {"user_id": user_id, "overall": overall, "lessons": lessons}
 
     async def get_stats_by_task(
         self,
