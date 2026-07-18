@@ -44,7 +44,7 @@ from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
-from app.services import assignment_rules_service
+from app.services import assignment_rules_service, teacher_queue_service
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
@@ -901,7 +901,14 @@ async def download_attempt_attachment(
     if attempt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
     if not current_user.is_service and current_user.id != attempt.user_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        # tsk-298 Фаза 2: сверх владельца-ученика и service-key — преподаватель,
+        # авторизованный на проверку работы этой попытки (REVIEW_ACL:
+        # teacher на course-tree ИЛИ methodist), тоже может скачать вложение
+        # ответа для оценки в веб-портале.
+        if not await teacher_queue_service.teacher_can_review_attempt(
+            db, attempt_id, current_user.id
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
     safe_attachment_id = _validate_attempt_attachment_id(attempt_id, attachment_id)
     file_path = settings.attempt_attachments_upload_dir / safe_attachment_id

@@ -1,0 +1,576 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 27451fa..d654fa5 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -44,7 +44,7 @@ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services.tasks_acl_service import assert_task_access
+-from app.services import assignment_rules_service
++from app.services import assignment_rules_service, teacher_queue_service
+ from app.core.config import Settings
+ 
+ from app.utils.exceptions import DomainError
+@@ -901,7 +901,14 @@ async def download_attempt_attachment(
+     if attempt is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Попытка не найдена")
+     if not current_user.is_service and current_user.id != attempt.user_id:
+-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++        # tsk-298 Фаза 2: сверх владельца-ученика и service-key — преподаватель,
++        # авторизованный на проверку работы этой попытки (REVIEW_ACL:
++        # teacher на course-tree ИЛИ methodist), тоже может скачать вложение
++        # ответа для оценки в веб-портале.
++        if not await teacher_queue_service.teacher_can_review_attempt(
++            db, attempt_id, current_user.id
++        ):
++            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+     safe_attachment_id = _validate_attempt_attachment_id(attempt_id, attachment_id)
+     file_path = settings.attempt_attachments_upload_dir / safe_attachment_id
+diff --git a/app/api/v1/teacher_reviews.py b/app/api/v1/teacher_reviews.py
+index e06fb3b..083575e 100644
+--- a/app/api/v1/teacher_reviews.py
++++ b/app/api/v1/teacher_reviews.py
+@@ -29,6 +29,8 @@ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.schemas.teacher_next_modes import (
+     PendingCountResponse,
++    PendingReviewItem,
++    PendingReviewListResponse,
+     ReviewClaimItem,
+     ReviewClaimNextRequest,
+     ReviewClaimNextResponse,
+@@ -52,6 +54,7 @@ from app.services.teacher_queue_service import (
+     claim_review_by_id,
+     get_pending_count,
+     grade_review,
++    list_pending_reviews,
+     regrade_review,
+     release_review_claim,
+ )
+@@ -556,6 +559,41 @@ async def get_pending_count_endpoint(
+     return PendingCountResponse(count=count, oldest_received_at=oldest)
+ 
+ 
++@router.get(
++    "/pending",
++    response_model=PendingReviewListResponse,
++    status_code=status.HTTP_200_OK,
++    summary="Очередь ожидающих ручной проверки работ преподавателя (tsk-298 Фаза 2)",
++    responses={
++        200: {"description": "Список очереди (возможно пустой)"},
++        403: {"description": "Чужой teacher_id"},
++    },
++)
++async def list_pending_reviews_endpoint(
++    teacher_id: int = Query(..., description="ID преподавателя"),
++    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
++    limit: int = Query(50, ge=1, le=200, description="Размер страницы (max 200)"),
++    offset: int = Query(0, ge=0, description="Смещение"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> PendingReviewListResponse:
++    """Read-only очередь ручной проверки для веб-портала преподавателя (SPW).
++
++    Тот же предикат обязательной очереди, что у `claim-next`, но без захвата.
++    ACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree
++    преподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь
++    не отдаётся (лёгкий item) — он приходит при claim конкретной работы.
++    """
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    items, total = await list_pending_reviews(
++        db, teacher_id, course_id=course_id, limit=limit, offset=offset
++    )
++    return PendingReviewListResponse(
++        items=[PendingReviewItem(**it) for it in items], total=total
++    )
++
++
+ def _render_inbox_content(
+     score: int, max_score: int, comment: Optional[str], is_correct: bool
+ ) -> str:
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index f458210..4968979 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -81,6 +81,37 @@ class ReviewClaimItem(BaseModel):
+     task_title: Optional[str] = None
+     user_name: Optional[str] = None
+     course_id: Optional[int] = None
++    # tsk-298 Фаза 2: attempt_id нужен веб-порталу для построения URL скачивания
++    # вложений ответа (`/attempts/{attempt_id}/attachments/{id}`). Аддитивно.
++    attempt_id: Optional[int] = None
++
++
++# ----- Review pending list (tsk-298 Фаза 2, teacher-scoped очередь для веб-портала) -----
++
++class PendingReviewItem(BaseModel):
++    """Лёгкий элемент очереди ожидающих проверки (без answer_json).
++
++    Полный ответ ученика приходит при claim конкретной работы
++    (`/teacher/reviews/{id}/claim`) — здесь только контекст для списка-очереди.
++    """
++    id: int = Field(..., description="ID результата (task_result)")
++    attempt_id: Optional[int] = None
++    task_id: int
++    user_id: int
++    user_name: Optional[str] = None
++    task_title: Optional[str] = Field(None, description="external_uid задания")
++    course_id: Optional[int] = None
++    score: int
++    max_score: Optional[int] = None
++    is_correct: Optional[bool] = None
++    submitted_at: datetime
++    is_claimed: bool = Field(False, description="Работа уже взята кем-то на проверку (действующий lock)")
++
++
++class PendingReviewListResponse(BaseModel):
++    """Ответ списка очереди проверки преподавателя."""
++    items: list[PendingReviewItem]
++    total: int = Field(..., description="Всего работ в очереди (без учёта limit/offset)")
+ 
+ 
+ class ReviewClaimNextResponse(BaseModel):
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index a8ffd93..37cfb6e 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -364,7 +364,7 @@ async def claim_next_review(
+             SET review_claimed_by = :teacher_id, review_claim_token = :token, review_claim_expires_at = :expires_at
+             FROM cand
+             WHERE tr.id = cand.id
+-            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json
++            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id
+         """),  # nosec B608 — REVIEW_ACL_SQL/course_cond/user_cond из закрытого набора литералов
+         params,
+     )
+@@ -377,7 +377,7 @@ async def claim_next_review(
+                 _idempotency_cache[cache_key] = (None, None, None, cache_until)
+         return (None, None, None)
+ 
+-    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json = row
++    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val = row
+     # Догрузить task title и user name для ответа
+     r2 = await db.execute(
+         text("""
+@@ -407,6 +407,7 @@ async def claim_next_review(
+         "task_title": task_title,
+         "user_name": user_name,
+         "course_id": course_id_val,
++        "attempt_id": attempt_id_val,
+     }
+     if idempotency_key:
+         cache_until = expires_at + timedelta(seconds=_IDEM_SUCCESS_BUFFER_SEC)
+@@ -564,7 +565,8 @@ async def claim_review_by_id(
+                    OR tr.review_claim_expires_at < :now_ts
+                    OR tr.review_claimed_by = :teacher_id)
+             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
+-                      tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id
++                      tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
++                      tr.attempt_id
+         """),
+         {
+             "result_id": result_id,
+@@ -584,7 +586,7 @@ async def claim_review_by_id(
+ 
+     (
+         rid, task_id, user_id_val, score, submitted_at,
+-        max_score, is_correct, answer_json, task_title, course_id_val,
++        max_score, is_correct, answer_json, task_title, course_id_val, attempt_id_val,
+     ) = urow
+     r3 = await db.execute(
+         text("SELECT full_name FROM users WHERE id = :uid"), {"uid": user_id_val}
+@@ -602,6 +604,7 @@ async def claim_review_by_id(
+         "task_title": task_title,
+         "user_name": urow2[0] if urow2 else None,
+         "course_id": course_id_val,
++        "attempt_id": attempt_id_val,
+     }
+     return (item, token, expires_at)
+ 
+@@ -963,6 +966,122 @@ async def get_pending_count(
+     return (cnt, oldest)
+ 
+ 
++async def list_pending_reviews(
++    db: AsyncSession,
++    teacher_id: int,
++    *,
++    course_id: Optional[int] = None,
++    limit: int = 50,
++    offset: int = 0,
++) -> Tuple[list[dict], int]:
++    """Список ожидающих ручной проверки работ в зоне ответственности преподавателя.
++
++    Тот же предикат обязательной очереди, что у `claim_next_review`
++    (`mandatory_review_sql` + `REVIEW_ACL_SQL`, `checked_at IS NULL`), но БЕЗ
++    захвата/lock — read-only для веб-очереди SPW (tsk-298 Фаза 2). FIFO по
++    `submitted_at`. Item лёгкий (без `answer_json` — он тяжёлый; полный ответ
++    приходит при claim конкретной работы). `is_claimed` помечает работу, уже
++    взятую кем-то на проверку (действующий lock), — для UI.
++
++    :param teacher_id: ID преподавателя (ACL-scope через REVIEW_ACL_SQL).
++    :param course_id: опциональный фильтр по курсу.
++    :param limit: размер страницы.
++    :param offset: смещение.
++    :returns: (items, total) — total игнорирует limit/offset.
++    """
++    now = datetime.now(timezone.utc)
++    course_cond = "AND t.course_id = :course_id" if course_id is not None else ""
++    params: dict[str, Any] = {"teacher_id": teacher_id, "now_ts": now}
++    if course_id is not None:
++        params["course_id"] = course_id
++
++    where_sql = f"""
++        WHERE tr.checked_at IS NULL
++          AND {mandatory_review_sql('t')}
++          AND {REVIEW_ACL_SQL}
++          {course_cond}
++    """
++
++    total_row = await db.execute(
++        text(f"""
++            SELECT COUNT(*)
++            FROM task_results tr
++            JOIN tasks t ON t.id = tr.task_id
++            {where_sql}
++        """),  # nosec B608 — where_sql из закрытого набора литералов модуля
++        params,
++    )
++    total = int(total_row.scalar() or 0)
++
++    page_params = dict(params)
++    page_params["limit"] = int(limit)
++    page_params["offset"] = int(offset)
++    r = await db.execute(
++        text(f"""
++            SELECT tr.id, tr.attempt_id, tr.task_id, tr.user_id, tr.score,
++                   tr.max_score, tr.is_correct, tr.submitted_at,
++                   t.external_uid, t.course_id, u.full_name,
++                   (tr.review_claim_expires_at IS NOT NULL
++                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed
++            FROM task_results tr
++            JOIN tasks t ON t.id = tr.task_id
++            LEFT JOIN users u ON u.id = tr.user_id
++            {where_sql}
++            ORDER BY tr.submitted_at ASC
++            LIMIT :limit OFFSET :offset
++        """),  # nosec B608 — where_sql из закрытого набора литералов модуля
++        page_params,
++    )
++    items = [
++        {
++            "id": row[0],
++            "attempt_id": row[1],
++            "task_id": row[2],
++            "user_id": row[3],
++            "score": row[4],
++            "max_score": row[5],
++            "is_correct": row[6],
++            "submitted_at": row[7],
++            "task_title": row[8],
++            "course_id": row[9],
++            "user_name": row[10],
++            "is_claimed": bool(row[11]),
++        }
++        for row in r.fetchall()
++    ]
++    return (items, total)
++
++
++async def teacher_can_review_attempt(
++    db: AsyncSession,
++    attempt_id: int,
++    teacher_id: int,
++) -> bool:
++    """Есть ли у преподавателя ACL на проверку хотя бы одной работы этой попытки.
++
++    Вложение ответа относится к `task_result` внутри `attempt` (attempts —
++    course-level, задача резолвится через task_results). Преподаватель может
++    скачать вложение из веб-портала (tsk-298 Фаза 2), если авторизован
++    (`REVIEW_ACL_SQL`: teacher на course-tree задачи ИЛИ methodist) хотя бы на
++    одну задачу этой попытки. Read-only.
++
++    :returns: True — доступ разрешён; False — нет.
++    """
++    r = await db.execute(
++        text(f"""
++            SELECT EXISTS (
++                SELECT 1
++                FROM task_results tr
++                JOIN tasks t ON t.id = tr.task_id
++                WHERE tr.attempt_id = :attempt_id
++                  AND {REVIEW_ACL_SQL}
++            )
++        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов модуля
++        {"attempt_id": attempt_id, "teacher_id": teacher_id},
++    )
++    return bool(r.scalar())
++
++
+ async def get_teacher_workload(
+     db: AsyncSession,
+     teacher_id: int,
+diff --git a/tests/test_teacher_reviews_pending_tsk298.py b/tests/test_teacher_reviews_pending_tsk298.py
+new file mode 100644
+index 0000000..6382a47
+--- /dev/null
++++ b/tests/test_teacher_reviews_pending_tsk298.py
+@@ -0,0 +1,256 @@
++"""tsk-298 Фаза 2 (LMS enablers): teacher-scoped очередь `GET /teacher/reviews/pending`,
++`attempt_id` в claim-item, расширение ACL скачивания вложения на препода-ревьюера.
++
++Фикстуры — как в test_review_queue_alignment_tsk247.py (methodist-bypass в
++REVIEW_ACL упрощает setup без teacher_courses).
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import teacher_queue_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++async def _setup_methodist(db) -> tuple[int, str]:
++    u = Users(
++        email=f"t298p-met-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="t298p-met", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, r.id FROM roles r WHERE r.name = 'methodist' ON CONFLICT DO NOTHING"
++        ),
++        {"u": u.id},
++    )
++    await db.commit()
++    return u.id, token
++
++
++async def _create_user_with_session(db, tag: str) -> tuple[int, str]:
++    u = Users(
++        email=f"t298p-{tag}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=f"t298p-{tag}", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++async def _create_task(db, *, type_: str = "SA_COM", manual: bool = True) -> int:
++    rules: dict = {"max_score": 10, "manual_review_required": manual}
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
++            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), 1, 1) RETURNING id"
++        ),
++        {
++            "ext": f"t298p-{random.randint(10**8, 10**10)}",
++            "content": json.dumps({"type": type_, "stem": "test"}),
++            "rules": json.dumps(rules),
++        },
++    )
++    tid = res.scalar_one()
++    await db.commit()
++    return tid
++
++
++async def _create_attempt(db, user_id: int) -> int:
++    res = await db.execute(
++        text("INSERT INTO attempts (user_id) VALUES (:u) RETURNING id"),
++        {"u": user_id},
++    )
++    aid = res.scalar_one()
++    await db.commit()
++    return aid
++
++
++async def _create_tr(db, *, user_id: int, task_id: int, attempt_id: int | None,
++                     is_correct: bool | None = None, score: int = 0) -> int:
++    now = datetime.now(timezone.utc)
++    res = await db.execute(
++        text(
++            "INSERT INTO task_results (score, user_id, task_id, attempt_id, submitted_at, "
++            "count_retry, received_at, max_score, source_system, is_correct) "
++            "VALUES (:s, :u, :t, :a, :now, 0, :now, 10, 'spw', :ic) RETURNING id"
++        ),
++        {"s": score, "u": user_id, "t": task_id, "a": attempt_id, "now": now, "ic": is_correct},
++    )
++    rid = res.scalar_one()
++    await db.commit()
++    return rid
++
++
++async def _cleanup(db, *, user_ids, task_ids=(), rids=(), attempt_ids=()):
++    if rids:
++        await db.execute(text("DELETE FROM task_results WHERE id = ANY(:r)"), {"r": list(rids)})
++    if attempt_ids:
++        await db.execute(text("DELETE FROM attempts WHERE id = ANY(:a)"), {"a": list(attempt_ids)})
++    if task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": list(task_ids)})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    await db.commit()
++
++
++# ── GET /teacher/reviews/pending ─────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_pending_list_shows_item_with_attempt_id(db, client):
++    """Список отдаёт ожидающую работу с attempt_id и лёгким контекстом."""
++    met_id, token = await _setup_methodist(db)
++    stud_id, _ = await _create_user_with_session(db, "stud")
++    task_id = await _create_task(db, manual=True)
++    aid = await _create_attempt(db, stud_id)
++    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["total"] >= 1
++        mine = next((it for it in body["items"] if it["id"] == rid), None)
++        assert mine is not None, "созданная работа должна быть в очереди"
++        assert mine["attempt_id"] == aid
++        assert mine["user_id"] == stud_id
++        assert mine["max_score"] == 10
++        assert mine["is_claimed"] is False
++        assert "answer_json" not in mine  # лёгкий item без тяжёлого ответа
++    finally:
++        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id],
++                       rids=[rid], attempt_ids=[aid])
++
++
++@pytest.mark.asyncio
++async def test_pending_list_marks_claimed(db, client):
++    """Работа с действующим lock помечается is_claimed=true."""
++    met_id, token = await _setup_methodist(db)
++    stud_id, _ = await _create_user_with_session(db, "stud")
++    task_id = await _create_task(db, manual=True)
++    aid = await _create_attempt(db, stud_id)
++    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
++    try:
++        await db.execute(
++            text(
++                "UPDATE task_results SET review_claimed_by=:o, review_claim_token='x', "
++                "review_claim_expires_at = now() + interval '10 minutes' WHERE id=:r"
++            ),
++            {"o": met_id, "r": rid},
++        )
++        await db.commit()
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        mine = next((it for it in resp.json()["items"] if it["id"] == rid), None)
++        assert mine is not None and mine["is_claimed"] is True
++    finally:
++        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id],
++                       rids=[rid], attempt_ids=[aid])
++
++
++@pytest.mark.asyncio
++async def test_pending_list_forbidden_wrong_teacher(db, client):
++    """Запрос очереди с чужим teacher_id → 403 (identity-гейт)."""
++    met_id, token = await _setup_methodist(db)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id + 999999}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[met_id])
++
++
++# ── attempt_id в claim-next ──────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_claim_next_item_includes_attempt_id(db, client):
++    """claim-next отдаёт attempt_id в item (нужен вебу для URL вложений)."""
++    met_id, token = await _setup_methodist(db)
++    stud_id, _ = await _create_user_with_session(db, "stud")
++    task_id = await _create_task(db, manual=True)
++    aid = await _create_attempt(db, stud_id)
++    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/reviews/claim-next",
++            json={"teacher_id": met_id, "user_id": stud_id, "ttl_sec": 120},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["empty"] is False
++        assert body["item"]["id"] == rid
++        assert body["item"]["attempt_id"] == aid
++    finally:
++        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id],
++                       rids=[rid], attempt_ids=[aid])
++
++
++# ── ACL вложения ─────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_attachment_acl_service_helper(db):
++    """teacher_can_review_attempt: methodist (bypass) → true, посторонний → false."""
++    met_id, _ = await _setup_methodist(db)
++    other_id, _ = await _create_user_with_session(db, "other")
++    stud_id, _ = await _create_user_with_session(db, "stud")
++    task_id = await _create_task(db, manual=True)
++    aid = await _create_attempt(db, stud_id)
++    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
++    try:
++        assert await teacher_queue_service.teacher_can_review_attempt(db, aid, met_id) is True
++        assert await teacher_queue_service.teacher_can_review_attempt(db, aid, other_id) is False
++    finally:
++        await _cleanup(db, user_ids=[met_id, other_id, stud_id], task_ids=[task_id],
++                       rids=[rid], attempt_ids=[aid])
++
++
++@pytest.mark.asyncio
++async def test_attachment_endpoint_extends_acl_to_reviewer(db, client):
++    """Download-эндпоинт: посторонний → 403; авторизованный препод проходит ACL
++    (файла нет → 404, но НЕ 403 — значит ACL расширен)."""
++    met_id, met_token = await _setup_methodist(db)
++    other_id, other_token = await _create_user_with_session(db, "other")
++    stud_id, _ = await _create_user_with_session(db, "stud")
++    task_id = await _create_task(db, manual=True)
++    aid = await _create_attempt(db, stud_id)
++    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
++    try:
++        # Посторонний (не владелец, без ACL) → 403.
++        r_other = await client.get(
++            f"/api/v1/attempts/{aid}/attachments/att-does-not-exist",
++            headers={"Authorization": f"Bearer {other_token}"},
++        )
++        assert r_other.status_code == 403, r_other.text
++        # Методист (авторизован на проверку) → ACL пройден, файла нет → 404 (не 403).
++        r_met = await client.get(
++            f"/api/v1/attempts/{aid}/attachments/att-does-not-exist",
++            headers={"Authorization": f"Bearer {met_token}"},
++        )
++        assert r_met.status_code != 403, r_met.text
++    finally:
++        await _cleanup(db, user_ids=[met_id, other_id, stud_id], task_ids=[task_id],
++                       rids=[rid], attempt_ids=[aid])

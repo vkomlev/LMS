@@ -81,6 +81,37 @@ class ReviewClaimItem(BaseModel):
     task_title: Optional[str] = None
     user_name: Optional[str] = None
     course_id: Optional[int] = None
+    # tsk-298 Фаза 2: attempt_id нужен веб-порталу для построения URL скачивания
+    # вложений ответа (`/attempts/{attempt_id}/attachments/{id}`). Аддитивно.
+    attempt_id: Optional[int] = None
+
+
+# ----- Review pending list (tsk-298 Фаза 2, teacher-scoped очередь для веб-портала) -----
+
+class PendingReviewItem(BaseModel):
+    """Лёгкий элемент очереди ожидающих проверки (без answer_json).
+
+    Полный ответ ученика приходит при claim конкретной работы
+    (`/teacher/reviews/{id}/claim`) — здесь только контекст для списка-очереди.
+    """
+    id: int = Field(..., description="ID результата (task_result)")
+    attempt_id: Optional[int] = None
+    task_id: int
+    user_id: int
+    user_name: Optional[str] = None
+    task_title: Optional[str] = Field(None, description="external_uid задания")
+    course_id: Optional[int] = None
+    score: int
+    max_score: Optional[int] = None
+    is_correct: Optional[bool] = None
+    submitted_at: datetime
+    is_claimed: bool = Field(False, description="Работа уже взята кем-то на проверку (действующий lock)")
+
+
+class PendingReviewListResponse(BaseModel):
+    """Ответ списка очереди проверки преподавателя."""
+    items: list[PendingReviewItem]
+    total: int = Field(..., description="Всего работ в очереди (без учёта limit/offset)")
 
 
 class ReviewClaimNextResponse(BaseModel):

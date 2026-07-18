@@ -14113,6 +14113,155 @@
         }
       }
     },
+    "/api/v1/teacher/reviews/pending": {
+      "get": {
+        "tags": [
+          "teacher_reviews"
+        ],
+        "summary": "Очередь ожидающих ручной проверки работ преподавателя (tsk-298 Фаза 2)",
+        "description": "Read-only очередь ручной проверки для веб-портала преподавателя (SPW).\n\nТот же предикат обязательной очереди, что у `claim-next`, но без захвата.\nACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree\nпреподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь\nне отдаётся (лёгкий item) — он приходит при claim конкретной работы.",
+        "operationId": "list_pending_reviews_endpoint_api_v1_teacher_reviews_pending_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр по курсу",
+              "title": "Course Id"
+            },
+            "description": "Фильтр по курсу"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Размер страницы (max 200)",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Размер страницы (max 200)"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список очереди (возможно пустой)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingReviewListResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Чужой teacher_id"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/assignments": {
       "post": {
         "tags": [
@@ -23810,6 +23959,138 @@
         "title": "PendingCountResponse",
         "description": "Количество pending-заявок на проверку для преподавателя (без захвата)."
       },
+      "PendingReviewItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id",
+            "description": "ID результата (task_result)"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "user_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Name"
+          },
+          "task_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Title",
+            "description": "external_uid задания"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score"
+          },
+          "is_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Correct"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submitted At"
+          },
+          "is_claimed": {
+            "type": "boolean",
+            "title": "Is Claimed",
+            "description": "Работа уже взята кем-то на проверку (действующий lock)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "task_id",
+          "user_id",
+          "score",
+          "submitted_at"
+        ],
+        "title": "PendingReviewItem",
+        "description": "Лёгкий элемент очереди ожидающих проверки (без answer_json).\n\nПолный ответ ученика приходит при claim конкретной работы\n(`/teacher/reviews/{id}/claim`) — здесь только контекст для списка-очереди."
+      },
+      "PendingReviewListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingReviewItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "Всего работ в очереди (без учёта limit/offset)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "PendingReviewListResponse",
+        "description": "Ответ списка очереди проверки преподавателя."
+      },
       "QuizRules": {
         "properties": {
           "scales": {
@@ -24012,6 +24293,17 @@
               }
             ],
             "title": "Course Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
           }
         },
         "type": "object",

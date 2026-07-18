@@ -29,6 +29,8 @@ from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.schemas.teacher_next_modes import (
     PendingCountResponse,
+    PendingReviewItem,
+    PendingReviewListResponse,
     ReviewClaimItem,
     ReviewClaimNextRequest,
     ReviewClaimNextResponse,
@@ -52,6 +54,7 @@ from app.services.teacher_queue_service import (
     claim_review_by_id,
     get_pending_count,
     grade_review,
+    list_pending_reviews,
     regrade_review,
     release_review_claim,
 )
@@ -554,6 +557,41 @@ async def get_pending_count_endpoint(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     count, oldest = await get_pending_count(db, teacher_id)
     return PendingCountResponse(count=count, oldest_received_at=oldest)
+
+
+@router.get(
+    "/pending",
+    response_model=PendingReviewListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Очередь ожидающих ручной проверки работ преподавателя (tsk-298 Фаза 2)",
+    responses={
+        200: {"description": "Список очереди (возможно пустой)"},
+        403: {"description": "Чужой teacher_id"},
+    },
+)
+async def list_pending_reviews_endpoint(
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
+    limit: int = Query(50, ge=1, le=200, description="Размер страницы (max 200)"),
+    offset: int = Query(0, ge=0, description="Смещение"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> PendingReviewListResponse:
+    """Read-only очередь ручной проверки для веб-портала преподавателя (SPW).
+
+    Тот же предикат обязательной очереди, что у `claim-next`, но без захвата.
+    ACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree
+    преподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь
+    не отдаётся (лёгкий item) — он приходит при claim конкретной работы.
+    """
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    items, total = await list_pending_reviews(
+        db, teacher_id, course_id=course_id, limit=limit, offset=offset
+    )
+    return PendingReviewListResponse(
+        items=[PendingReviewItem(**it) for it in items], total=total
+    )
 
 
 def _render_inbox_content(

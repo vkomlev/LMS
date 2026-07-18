@@ -364,7 +364,7 @@ async def claim_next_review(
             SET review_claimed_by = :teacher_id, review_claim_token = :token, review_claim_expires_at = :expires_at
             FROM cand
             WHERE tr.id = cand.id
-            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json
+            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id
         """),  # nosec B608 — REVIEW_ACL_SQL/course_cond/user_cond из закрытого набора литералов
         params,
     )
@@ -377,7 +377,7 @@ async def claim_next_review(
                 _idempotency_cache[cache_key] = (None, None, None, cache_until)
         return (None, None, None)
 
-    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json = row
+    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val = row
     # Догрузить task title и user name для ответа
     r2 = await db.execute(
         text("""
@@ -407,6 +407,7 @@ async def claim_next_review(
         "task_title": task_title,
         "user_name": user_name,
         "course_id": course_id_val,
+        "attempt_id": attempt_id_val,
     }
     if idempotency_key:
         cache_until = expires_at + timedelta(seconds=_IDEM_SUCCESS_BUFFER_SEC)
@@ -564,7 +565,8 @@ async def claim_review_by_id(
                    OR tr.review_claim_expires_at < :now_ts
                    OR tr.review_claimed_by = :teacher_id)
             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
-                      tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id
+                      tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
+                      tr.attempt_id
         """),
         {
             "result_id": result_id,
@@ -584,7 +586,7 @@ async def claim_review_by_id(
 
     (
         rid, task_id, user_id_val, score, submitted_at,
-        max_score, is_correct, answer_json, task_title, course_id_val,
+        max_score, is_correct, answer_json, task_title, course_id_val, attempt_id_val,
     ) = urow
     r3 = await db.execute(
         text("SELECT full_name FROM users WHERE id = :uid"), {"uid": user_id_val}
@@ -602,6 +604,7 @@ async def claim_review_by_id(
         "task_title": task_title,
         "user_name": urow2[0] if urow2 else None,
         "course_id": course_id_val,
+        "attempt_id": attempt_id_val,
     }
     return (item, token, expires_at)
 
@@ -961,6 +964,122 @@ async def get_pending_count(
     cnt = int(row[0] or 0)
     oldest = row[1]
     return (cnt, oldest)
+
+
+async def list_pending_reviews(
+    db: AsyncSession,
+    teacher_id: int,
+    *,
+    course_id: Optional[int] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> Tuple[list[dict], int]:
+    """Список ожидающих ручной проверки работ в зоне ответственности преподавателя.
+
+    Тот же предикат обязательной очереди, что у `claim_next_review`
+    (`mandatory_review_sql` + `REVIEW_ACL_SQL`, `checked_at IS NULL`), но БЕЗ
+    захвата/lock — read-only для веб-очереди SPW (tsk-298 Фаза 2). FIFO по
+    `submitted_at`. Item лёгкий (без `answer_json` — он тяжёлый; полный ответ
+    приходит при claim конкретной работы). `is_claimed` помечает работу, уже
+    взятую кем-то на проверку (действующий lock), — для UI.
+
+    :param teacher_id: ID преподавателя (ACL-scope через REVIEW_ACL_SQL).
+    :param course_id: опциональный фильтр по курсу.
+    :param limit: размер страницы.
+    :param offset: смещение.
+    :returns: (items, total) — total игнорирует limit/offset.
+    """
+    now = datetime.now(timezone.utc)
+    course_cond = "AND t.course_id = :course_id" if course_id is not None else ""
+    params: dict[str, Any] = {"teacher_id": teacher_id, "now_ts": now}
+    if course_id is not None:
+        params["course_id"] = course_id
+
+    where_sql = f"""
+        WHERE tr.checked_at IS NULL
+          AND {mandatory_review_sql('t')}
+          AND {REVIEW_ACL_SQL}
+          {course_cond}
+    """
+
+    total_row = await db.execute(
+        text(f"""
+            SELECT COUNT(*)
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            {where_sql}
+        """),  # nosec B608 — where_sql из закрытого набора литералов модуля
+        params,
+    )
+    total = int(total_row.scalar() or 0)
+
+    page_params = dict(params)
+    page_params["limit"] = int(limit)
+    page_params["offset"] = int(offset)
+    r = await db.execute(
+        text(f"""
+            SELECT tr.id, tr.attempt_id, tr.task_id, tr.user_id, tr.score,
+                   tr.max_score, tr.is_correct, tr.submitted_at,
+                   t.external_uid, t.course_id, u.full_name,
+                   (tr.review_claim_expires_at IS NOT NULL
+                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            LEFT JOIN users u ON u.id = tr.user_id
+            {where_sql}
+            ORDER BY tr.submitted_at ASC
+            LIMIT :limit OFFSET :offset
+        """),  # nosec B608 — where_sql из закрытого набора литералов модуля
+        page_params,
+    )
+    items = [
+        {
+            "id": row[0],
+            "attempt_id": row[1],
+            "task_id": row[2],
+            "user_id": row[3],
+            "score": row[4],
+            "max_score": row[5],
+            "is_correct": row[6],
+            "submitted_at": row[7],
+            "task_title": row[8],
+            "course_id": row[9],
+            "user_name": row[10],
+            "is_claimed": bool(row[11]),
+        }
+        for row in r.fetchall()
+    ]
+    return (items, total)
+
+
+async def teacher_can_review_attempt(
+    db: AsyncSession,
+    attempt_id: int,
+    teacher_id: int,
+) -> bool:
+    """Есть ли у преподавателя ACL на проверку хотя бы одной работы этой попытки.
+
+    Вложение ответа относится к `task_result` внутри `attempt` (attempts —
+    course-level, задача резолвится через task_results). Преподаватель может
+    скачать вложение из веб-портала (tsk-298 Фаза 2), если авторизован
+    (`REVIEW_ACL_SQL`: teacher на course-tree задачи ИЛИ methodist) хотя бы на
+    одну задачу этой попытки. Read-only.
+
+    :returns: True — доступ разрешён; False — нет.
+    """
+    r = await db.execute(
+        text(f"""
+            SELECT EXISTS (
+                SELECT 1
+                FROM task_results tr
+                JOIN tasks t ON t.id = tr.task_id
+                WHERE tr.attempt_id = :attempt_id
+                  AND {REVIEW_ACL_SQL}
+            )
+        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов модуля
+        {"attempt_id": attempt_id, "teacher_id": teacher_id},
+    )
+    return bool(r.scalar())
 
 
 async def get_teacher_workload(
