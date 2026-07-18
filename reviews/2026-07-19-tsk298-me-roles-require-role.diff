@@ -1,0 +1,229 @@
+diff --git a/app/api/deps.py b/app/api/deps.py
+index ea11312..3a510e3 100644
+--- a/app/api/deps.py
++++ b/app/api/deps.py
+@@ -1,3 +1,5 @@
++from typing import Awaitable, Callable
++
+ from fastapi import Cookie, Depends, Header, HTTPException, Query, Security, status
+ from fastapi.security.api_key import APIKeyHeader, APIKeyQuery
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -108,6 +110,52 @@ async def require_authenticated(
+     return current_user
+ 
+ 
++# ---------------------------------------------------------------------------
++# Централизованный роль-гейт (tsk-298, Фаза 0).
++# Один источник проверки НАЛИЧИЯ роли вместо размазанных per-handler проверок.
++# ---------------------------------------------------------------------------
++
++def require_role(*role_names: str) -> Callable[..., Awaitable[CurrentUser]]:
++    """Фабрика dependency: требует у пользователя хотя бы одну из ролей `role_names`.
++
++    Семантика (совпадает с существующими teacher/methodist-эндпоинтами):
++    - сервисный токен (X-API-Key / legacy `?api_key=`) — полный доступ (bypass);
++    - обычный пользователь без нужной роли — 403;
++    - неаутентифицированный — 401 (даёт `get_current_user`).
++
++    Проверяет только НАЛИЧИЕ роли. Course-tree / student-scoped ACL
++    (teacher_course_acl, student_teacher_links) остаётся в хендлерах —
++    его этот гейт не заменяет.
++
++    :param role_names: допустимые имена ролей (например, "teacher", "methodist").
++    :return: асинхронную FastAPI-dependency, возвращающую CurrentUser.
++    """
++    allowed: frozenset[str] = frozenset(role_names)
++
++    async def _require_role(
++        current_user: CurrentUser = Depends(get_current_user),
++        db: AsyncSession = Depends(get_async_db),
++    ) -> CurrentUser:
++        if current_user.is_service:
++            return current_user
++        # Ленивый импорт: deps.py грузится очень рано (через users-роутер),
++        # а roles_service тянет модели — top-level импорт даёт circular import.
++        from app.services import roles_service  # noqa: PLC0415
++        user_roles = set(await roles_service.get_user_role_names(db, current_user.id))
++        if user_roles.isdisjoint(allowed):
++            raise HTTPException(
++                status.HTTP_403_FORBIDDEN,
++                detail="Недостаточно прав: требуется роль " + " или ".join(sorted(allowed)),
++            )
++        return current_user
++
++    return _require_role
++
++
++# Удобный алиас для самого частого случая — teacher-эндпоинты.
++require_teacher = require_role("teacher")
++
++
+ async def _self_heal_student_role(db: AsyncSession, user_id: int) -> None:
+     """Y-4 pre-S5 defensive self-heal: legacy-user без роли получает 'student'.
+ 
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 9a8dcc9..b340c79 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -47,7 +47,7 @@ from app.schemas.me import (
+     StreakRead,
+     SyllabusStatesResponse,
+ )
+-from app.services import me_service
++from app.services import me_service, roles_service
+ from app.services.audit_service import log_event
+ from app.services.full_name_validator import validate_full_name
+ from app.services.auth import (
+@@ -81,14 +81,18 @@ async def get_me(
+ 
+     tsk-223: `full_name` подгружается из `users.full_name` (БД), а не из
+     `CurrentUser` — dataclass CurrentUser имя не несёт.
++    tsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним
++    teacher-зону портала.
+     """
+     full_name = await me_service.get_full_name(db, current_user.id)
++    roles = await roles_service.get_user_role_names(db, current_user.id)
+     return MeResponse(
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+         is_service=current_user.is_service,
+         full_name=full_name,
++        roles=roles,
+     )
+ 
+ 
+@@ -129,12 +133,14 @@ async def update_me(
+     )
+     await db.commit()
+ 
++    roles = await roles_service.get_user_role_names(db, current_user.id)
+     return MeResponse(
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+         is_service=current_user.is_service,
+         full_name=normalized,
++        roles=roles,
+     )
+ 
+ 
+diff --git a/app/api/v1/methodist_escalations.py b/app/api/v1/methodist_escalations.py
+index abdf9bb..1a0ce93 100644
+--- a/app/api/v1/methodist_escalations.py
++++ b/app/api/v1/methodist_escalations.py
+@@ -12,12 +12,12 @@ import logging
+ from datetime import datetime
+ from typing import Optional
+ 
+-from fastapi import APIRouter, Depends, HTTPException, Query, status
++from fastapi import APIRouter, Depends, Query, status
+ from pydantic import BaseModel, Field
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_async_db, get_current_user
++from app.api.deps import get_async_db, require_role
+ from app.auth.current_user import CurrentUser
+ 
+ router = APIRouter(prefix="/methodist", tags=["methodist_escalations"])
+@@ -40,19 +40,6 @@ class EscalationListResponse(BaseModel):
+     count: int = Field(..., description="Длина items (≤ limit)")
+ 
+ 
+-async def _user_is_methodist(db: AsyncSession, user_id: int) -> bool:
+-    res = await db.execute(
+-        text(
+-            "SELECT 1 FROM user_roles ur "
+-            "JOIN roles r ON r.id = ur.role_id "
+-            "WHERE ur.user_id = :uid AND r.name = 'methodist' "
+-            "LIMIT 1"
+-        ),
+-        {"uid": user_id},
+-    )
+-    return res.fetchone() is not None
+-
+-
+ @router.get(
+     "/escalations/pending",
+     response_model=EscalationListResponse,
+@@ -70,17 +57,16 @@ async def list_pending_escalations(
+         description="Если указано — только эскалации с created_at >= since (ISO8601)",
+     ),
+     limit: int = Query(100, ge=1, le=500),
+-    current_user: CurrentUser = Depends(get_current_user),
++    current_user: CurrentUser = Depends(require_role("methodist")),
+     db: AsyncSession = Depends(get_async_db),
+ ) -> EscalationListResponse:
+     """Возвращает свежие эскалации `review_escalated` и `course_pending_review`
+     для current_user (методиста). Используется TG_LMS methodist-поллером.
+-    """
+-    if not current_user.is_service:
+-        ok = await _user_is_methodist(db, current_user.id)
+-        if not ok:
+-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Только для методиста")
+ 
++    tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
++    `require_role("methodist")` (service-token — bypass, как и раньше);
++    поведение эндпоинта не изменилось.
++    """
+     params: dict = {"uid": current_user.id, "limit": int(limit)}
+     since_clause = ""
+     if since is not None:
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index fe389d2..c472037 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -13,6 +13,10 @@ class MeResponse(BaseModel):
+     # tsk-223: реальное ФИО из users.full_name. Может быть null (email/legacy
+     # пользователи без заполненного ФИО) — обратная совместимость.
+     full_name: str | None = None
++    # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
++    # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
++    # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
++    roles: list[str] = Field(default_factory=list)
+ 
+     model_config = {"from_attributes": True}
+ 
+diff --git a/app/services/roles_service.py b/app/services/roles_service.py
+index c0001b1..f7e005b 100644
+--- a/app/services/roles_service.py
++++ b/app/services/roles_service.py
+@@ -1,5 +1,8 @@
+ # app/services/roles_service.py
+ 
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
+ from app.models.roles import Roles
+ from app.repos.roles_repo import RolesRepository
+ from app.services.base import BaseService
+@@ -13,3 +16,28 @@ class RolesService(BaseService[Roles]):
+         super().__init__(repo)
+ 
+     # TODO: get_by_name
++
++
++async def get_user_role_names(db: AsyncSession, user_id: int) -> list[str]:
++    """Вернуть отсортированный список имён ролей пользователя (user_roles M2M).
++
++    Единый источник правды по ролям для API-слоя (tsk-298, Фаза 0):
++    используется и в `GET /me` (поле `roles`), и в dependency `require_role`.
++    Запрос через `text()` (без ORM-импорта association-таблицы) — чтобы
++    сервис можно было импортировать в `app.api.deps` на раннем этапе загрузки
++    приложения без циклического импорта моделей.
++
++    :param db: асинхронная сессия SQLAlchemy.
++    :param user_id: ID пользователя.
++    :return: отсортированные по алфавиту имена ролей (может быть пустым).
++    """
++    result = await db.execute(
++        text(
++            "SELECT r.name FROM user_roles ur "
++            "JOIN roles r ON r.id = ur.role_id "
++            "WHERE ur.user_id = :uid "
++            "ORDER BY r.name"
++        ),
++        {"uid": user_id},
++    )
++    return [row[0] for row in result.fetchall()]

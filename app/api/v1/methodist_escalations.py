@@ -12,12 +12,12 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, get_current_user
+from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
 
 router = APIRouter(prefix="/methodist", tags=["methodist_escalations"])
@@ -40,19 +40,6 @@ class EscalationListResponse(BaseModel):
     count: int = Field(..., description="Длина items (≤ limit)")
 
 
-async def _user_is_methodist(db: AsyncSession, user_id: int) -> bool:
-    res = await db.execute(
-        text(
-            "SELECT 1 FROM user_roles ur "
-            "JOIN roles r ON r.id = ur.role_id "
-            "WHERE ur.user_id = :uid AND r.name = 'methodist' "
-            "LIMIT 1"
-        ),
-        {"uid": user_id},
-    )
-    return res.fetchone() is not None
-
-
 @router.get(
     "/escalations/pending",
     response_model=EscalationListResponse,
@@ -70,17 +57,16 @@ async def list_pending_escalations(
         description="Если указано — только эскалации с created_at >= since (ISO8601)",
     ),
     limit: int = Query(100, ge=1, le=500),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(require_role("methodist")),
     db: AsyncSession = Depends(get_async_db),
 ) -> EscalationListResponse:
     """Возвращает свежие эскалации `review_escalated` и `course_pending_review`
     для current_user (методиста). Используется TG_LMS methodist-поллером.
-    """
-    if not current_user.is_service:
-        ok = await _user_is_methodist(db, current_user.id)
-        if not ok:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Только для методиста")
 
+    tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
+    `require_role("methodist")` (service-token — bypass, как и раньше);
+    поведение эндпоинта не изменилось.
+    """
     params: dict = {"uid": current_user.id, "limit": int(limit)}
     since_clause = ""
     if since is not None:

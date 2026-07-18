@@ -13,6 +13,10 @@ class MeResponse(BaseModel):
     # tsk-223: реальное ФИО из users.full_name. Может быть null (email/legacy
     # пользователи без заполненного ФИО) — обратная совместимость.
     full_name: str | None = None
+    # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
+    # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
+    # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
+    roles: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

@@ -47,7 +47,7 @@ from app.schemas.me import (
     StreakRead,
     SyllabusStatesResponse,
 )
-from app.services import me_service
+from app.services import me_service, roles_service
 from app.services.audit_service import log_event
 from app.services.full_name_validator import validate_full_name
 from app.services.auth import (
@@ -81,14 +81,18 @@ async def get_me(
 
     tsk-223: `full_name` подгружается из `users.full_name` (БД), а не из
     `CurrentUser` — dataclass CurrentUser имя не несёт.
+    tsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним
+    teacher-зону портала.
     """
     full_name = await me_service.get_full_name(db, current_user.id)
+    roles = await roles_service.get_user_role_names(db, current_user.id)
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
         is_service=current_user.is_service,
         full_name=full_name,
+        roles=roles,
     )
 
 
@@ -129,12 +133,14 @@ async def update_me(
     )
     await db.commit()
 
+    roles = await roles_service.get_user_role_names(db, current_user.id)
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
         is_service=current_user.is_service,
         full_name=normalized,
+        roles=roles,
     )
 
 

@@ -1,3 +1,5 @@
+from typing import Awaitable, Callable
+
 from fastapi import Cookie, Depends, Header, HTTPException, Query, Security, status
 from fastapi.security.api_key import APIKeyHeader, APIKeyQuery
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,6 +108,52 @@ async def require_authenticated(
     if current_user.is_service:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Service token not allowed here")
     return current_user
+
+
+# ---------------------------------------------------------------------------
+# Централизованный роль-гейт (tsk-298, Фаза 0).
+# Один источник проверки НАЛИЧИЯ роли вместо размазанных per-handler проверок.
+# ---------------------------------------------------------------------------
+
+def require_role(*role_names: str) -> Callable[..., Awaitable[CurrentUser]]:
+    """Фабрика dependency: требует у пользователя хотя бы одну из ролей `role_names`.
+
+    Семантика (совпадает с существующими teacher/methodist-эндпоинтами):
+    - сервисный токен (X-API-Key / legacy `?api_key=`) — полный доступ (bypass);
+    - обычный пользователь без нужной роли — 403;
+    - неаутентифицированный — 401 (даёт `get_current_user`).
+
+    Проверяет только НАЛИЧИЕ роли. Course-tree / student-scoped ACL
+    (teacher_course_acl, student_teacher_links) остаётся в хендлерах —
+    его этот гейт не заменяет.
+
+    :param role_names: допустимые имена ролей (например, "teacher", "methodist").
+    :return: асинхронную FastAPI-dependency, возвращающую CurrentUser.
+    """
+    allowed: frozenset[str] = frozenset(role_names)
+
+    async def _require_role(
+        current_user: CurrentUser = Depends(get_current_user),
+        db: AsyncSession = Depends(get_async_db),
+    ) -> CurrentUser:
+        if current_user.is_service:
+            return current_user
+        # Ленивый импорт: deps.py грузится очень рано (через users-роутер),
+        # а roles_service тянет модели — top-level импорт даёт circular import.
+        from app.services import roles_service  # noqa: PLC0415
+        user_roles = set(await roles_service.get_user_role_names(db, current_user.id))
+        if user_roles.isdisjoint(allowed):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail="Недостаточно прав: требуется роль " + " или ".join(sorted(allowed)),
+            )
+        return current_user
+
+    return _require_role
+
+
+# Удобный алиас для самого частого случая — teacher-эндпоинты.
+require_teacher = require_role("teacher")
 
 
 async def _self_heal_student_role(db: AsyncSession, user_id: int) -> None:

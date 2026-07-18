@@ -14560,7 +14560,7 @@
           "me"
         ],
         "summary": "Get Me",
-        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.",
+        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.",
         "operationId": "get_me_api_v1_me_get",
         "security": [
           {
@@ -16462,7 +16462,7 @@
           "methodist_escalations"
         ],
         "summary": "Список эскалаций для методиста (Phase Y-6)",
-        "description": "Возвращает свежие эскалации `review_escalated` и `course_pending_review`\nдля current_user (методиста). Используется TG_LMS methodist-поллером.",
+        "description": "Возвращает свежие эскалации `review_escalated` и `course_pending_review`\nдля current_user (методиста). Используется TG_LMS methodist-поллером.\n\ntsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в\n`require_role(\"methodist\")` (service-token — bypass, как и раньше);\nповедение эндпоинта не изменилось.",
         "operationId": "list_pending_escalations_api_v1_methodist_escalations_pending_get",
         "security": [
           {
@@ -22499,6 +22499,13 @@
               }
             ],
             "title": "Full Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roles"
           }
         },
         "type": "object",
