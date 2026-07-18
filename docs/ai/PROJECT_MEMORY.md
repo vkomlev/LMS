@@ -33,6 +33,25 @@ Profile updated: 2026-05-26
 - Focused smoke: `curl http://localhost:8000/health`; `curl "http://localhost:8000/api/v1/users/?api_key=<dev-key>"`.
 - Migration create: `alembic revision --autogenerate -m "<message>"`.
 
+### Канонический префикс команды (Windows, Git Bash)
+
+Три факта каждый бьют отдельной ошибкой, если пропущены — собирать одним блоком:
+
+```
+PYTHONIOENCODING=utf-8 PYTHONPATH=. .venv/Scripts/python.exe <скрипт/модуль>
+```
+
+- `.venv/Scripts/python.exe` — интерпретатор Windows-venv (`Scripts`, не `bin`); системный `python` даёт `No module named 'fastapi'`.
+- `PYTHONPATH=.` — иначе `No module named 'app'` при запуске скриптов из `scripts/`.
+- `PYTHONIOENCODING=utf-8` — иначе mojibake в выводе кириллицы (Windows-консоль).
+
+### Доступ к БД (dev / прод) — не собирать DATABASE_URL вручную
+
+- **MCP-серверы уже настроены** в `.mcp.json`: `learn_public_db` (dev, read-only), `learn_prod_db` (прод, read-only), `content_backbone_db`, `content_backbone_prod_db` — использовать их ПЕРВЫМ делом для чтения, а не пересобирать строку подключения из хоста/пароля.
+- Локальный `scripts/connect_db.py` подключается к **dev**-БД из `.env` (`load_dotenv` + `app/db/session`) — быстрый smoke, что БД жива и какие `course_uid` доступны.
+- **На прод** формула DSN — только в `docs/ai/operator-runbook.md` (Шаг 3, `DATABASE_URL`); реального пароля нигде в репозитории нет и быть не должно. Любая операция с прод-БД (в т.ч. read вне MCP, любой write/миграция) — через `/db-check`, хук `~/.claude/hooks/db_write_gate.py` блокирует запись без `DBCHECK_OK=1` после реального прохождения `/db-check`.
+- Alembic: `alembic current` / `alembic heads` / `alembic upgrade head` / `alembic downgrade -1` — с тем же префиксом выше.
+
 ## Required Skills
 
 - Use `fastapi-api-developer` for API feature/debug work.
