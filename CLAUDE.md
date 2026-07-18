@@ -7,7 +7,7 @@
 LMS — backend FastAPI + PostgreSQL (`learn` DB). Курсы, материалы, задания, попытки, результаты, ручная проверка преподавателями.
 Источник правды по стратегии — ContentBackbone (`D:\Work\ContentBackbone\`). Frontend клиент — SPW (`D:\Work\spw\`). TG-боты — TG_LMS (`D:\Work\TG_LMS\`).
 
-**Текущий статус:** Phase Y-1 завершена (passwordless auth + identity_link + user_session + audit/product/guest events).
+**Текущий статус:** именованные фазы (Y-1…Y-6, passwordless auth + учебный движок) завершены; разработка идёт точечными задачами `tsk-NNN` (кросс-проектный трекер `D:\Work\Root\tasks/`) — последние: forced attempt-limit на сервере при приёме ответа (tsk-269), попытки по паре «курс + задание» (tsk-264), normalization-driven импорт заданий из Google Sheets (tsk-267).
 
 ## Tech stack
 

@@ -74,7 +74,7 @@ app/
 - Trust model: trusted-zone (TG_LMS bots + ContentBackbone CLI).
 - Ролевая модель — в БД (таблицы `roles`, `user_roles`, `access_requests`).
 
-### Phase Y-1 (в разработке) — первичный auth-слой
+### Phase Y-1 (завершено) — первичный auth-слой
 
 Auth-слой для SPW: magic-link email + TG initData HMAC + VK ID 2.0 OAuth. Сохраняет совместимость с service-level api_key через `X-API-Key` header.
 
@@ -88,6 +88,15 @@ Auth-слой для SPW: magic-link email + TG initData HMAC + VK ID 2.0 OAuth.
 IDOR sweep test (CI gate): все endpoints с `id`-параметром проверяются на 403 при доступе к чужим данным.
 
 Полная спецификация: [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
+
+### После Phase Y-1 — точечные задачи учебного движка (tsk-NNN)
+
+Именованные фазы (Y-1…Y-6) закрыты; дальнейшая разработка трекается отдельными задачами
+`tsk-NNN` в кросс-проектном трекере (`D:\Work\Root\tasks/`), не фазами. Из последних:
+
+- **tsk-264** — попытки считаются по паре «курс + задание» (`attempts.root_course_id`), а не глобально по заданию: узел графа курсов, переиспользуемый несколькими курсами, не блокируется исчерпанным лимитом попыток в другом курсе.
+- **tsk-269** — форс лимита попыток на сервере при приёме ответа (`POST /attempts/{id}/answers`): раньше лимит проверялся только при выдаче задания (`compute_task_state`), приём ответа лимит игнорировал. Теперь приём отдаёт `409` при исчерпанном лимите и `400`, если корень попытки неоднозначен.
+- **tsk-267** — импорт из Google Sheets читает вид нормализации ответа (`code` / `text` / явный список) из колонки `normalization` листа Tasks вместо хардкода `["trim","lower"]` для всех типов ответов.
 
 ## Бизнес-логика в БД
 

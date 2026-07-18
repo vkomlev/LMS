@@ -61,6 +61,24 @@
 | `20260227_100000_help_requests_stage38` | Запросы помощи от учеников |
 | `20260227_120000_help_requests_type_and_context_stage381` | Типизация + context |
 | `20260301_100000_teacher_next_modes_stage39` | Режимы выдачи заданий преподавателем |
+| `20260428_010000_M1_users_relax_constraints` | Y-1: снятие `NOT NULL` password_hash/email, `pgcrypto` |
+| `20260428_020000_M2_identity_link` | Y-1: таблица `identity_link` (multi-identity email/tg/vk) |
+| `20260428_030000_M3_user_session_magic_link` | Y-1: таблицы `user_session` + `magic_link` |
+| `20260428_040000_M4_audit_product_events` | Y-1: `audit_event` (append-only) + `product_event` (partitioned by month) |
+| `20260428_050000_M5_guest_session_attempt` | Y-1: таблицы `guest_session` + `guest_attempt` |
+| `20260428_060000_M6_users_tg_id_backfill` | Y-1.5: бэкфилл `users.tg_id` ↔ `identity_link` (kind='tg') |
+| `20260429_010000_M7_task_results_user_received_idx` | Y-3: индекс `task_results(user_id, received_at DESC)` для streak-запроса |
+| `20260430_010000_M8_notifications_inbox` | Y-4: расширение `notifications` под inbox-семантику |
+| `20260430_020000_M9_zombie_sanitize` | Y-4.2: data-миграция — санация zombie `task_results` (R-3 fix) |
+| `20260501_010000_M10_role_backfill` | Y-4 pre-S5: бэкфилл роли `student` для users без роли |
+| `20260502_010000_M11_courses_is_public_demo` | Y-5: `courses.is_public_demo` для guest-mode |
+| `20260504_010000_M12_y6_optimistic_pass` | Y-6: optimistic-PASSED бэкфилл + индекс pending review |
+| `20260521_120000_tasks_order_position_triggers` | `tasks.order_position` — колонка, бэкфилл, триггеры, индекс (зеркало materials) |
+| `20260606_010000_tsk111_content_requirement_skip` | tsk-111: уровни content requirement + skip progress |
+| `20260624_010000_tsk031_assignment_rules` | tsk-031: `assignment_rule` + `assignment_event` — авто/ручное назначение курсов |
+| `20260627_010000_tsk122_quiz_scale_scores` | tsk-122 Stage 1: `task_results.scale_scores` (JSONB) для квиз-шкал SC_Qw/MC_Qw |
+| `20260627_020000_tsk122_trigger_quiz_scale` | tsk-122 Stage 2: значение `quiz_scale` в CHECK `assignment_rule_trigger_event_check` |
+| `20260717_010000_tsk264_attempts_root_course` | tsk-264: `attempts.root_course_id` — контекст навигации, попытки по паре «курс + задание» |
 
 ## Date/Time safety (критично)
 
@@ -73,9 +91,9 @@
 
 Подробности — [PROJECT_OVERRIDES.md](PROJECT_OVERRIDES.md) и `.claude/CLAUDE.md` (секция Date/Time Safety).
 
-## Phase Y-1 (планируемые миграции)
+## Phase Y-1 (применено) — миграции M1-M5
 
-Миграции M1–M5 (`20260428_*`). Down-revision: `teacher_next_modes_stage39`.
+Миграции M1–M5 (`20260428_*`), см. таблицу выше. Down-revision: `teacher_next_modes_stage39`.
 
 ### Изменения в `users`
 

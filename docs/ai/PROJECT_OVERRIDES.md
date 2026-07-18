@@ -1,4 +1,4 @@
-﻿# Project Overrides - LMS
+# Project Overrides - LMS
 
 ## Цель
 Фиксировать особенности backend LMS (FastAPI + PostgreSQL).
