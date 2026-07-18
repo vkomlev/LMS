@@ -215,6 +215,197 @@ class TaskResultsService(BaseService[TaskResults]):
     def _is_pass(score: int, max_score: int) -> bool:
         return max_score > 0 and (score / max_score) >= PASS_THRESHOLD_RATIO
 
+    @staticmethod
+    def _build_task_label(
+        task_id: int,
+        external_uid: str | None,
+        title: str | None,
+        stem: str | None,
+    ) -> str:
+        """
+        Человекочитаемая подпись задания: код/название + id.
+        Повторяет логику подписи в teacher-боте (external_uid → title/stem → id).
+        """
+        uid = (external_uid or "").strip()
+        name = (title or stem or "").strip()[:40]
+        primary = uid or name or f"id={task_id}"
+        return f"{primary} • id={task_id}" if primary != f"id={task_id}" else f"id={task_id}"
+
+    async def get_detail_by_user(
+        self,
+        db: AsyncSession,
+        user_id: int,
+        course_id: int | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Детальный разбор результатов ученика для экрана преподавателя (tsk-309).
+
+        По каждому заданию: статус (решено/нет), баллы (лучший результат),
+        с какой попытки сдал, число попыток, сколько подсказок открыто.
+        Плюс свод по корневым курсам и общий свод.
+
+        «С какой попытки сдал» — порядковый номер (1-based) первой ВЕРНОЙ строки
+        task_results по паре (ученик, задание), упорядоченной по времени
+        (submitted_at, id). None — если задание ещё не сдано.
+
+        Учитываются только незакрытые попытки (attempts.cancelled_at IS NULL) —
+        консистентно с остальной статистикой (этап 6). Курс группировки — корневой
+        (attempts.root_course_id), чтобы подкурсы не дробили свод.
+
+        :param db: Асинхронная сессия БД.
+        :param user_id: ID ученика.
+        :param course_id: Опциональный фильтр по корневому курсу.
+        :return: dict со структурой {user_id, overall, courses, tasks}.
+        """
+        params: Dict[str, Any] = {"uid": user_id}
+        course_filter = ""
+        if course_id is not None:
+            course_filter = " AND COALESCE(a.root_course_id, a.course_id) = :course_id"
+            params["course_id"] = course_id
+
+        detail_sql = text(f"""
+            WITH src AS (
+                SELECT tr.task_id,
+                       COALESCE(a.root_course_id, a.course_id) AS course_id,
+                       tr.is_correct,
+                       tr.score,
+                       COALESCE(tr.max_score, 0) AS max_score,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY tr.task_id
+                           ORDER BY tr.submitted_at, tr.id
+                       ) AS rn
+                FROM task_results tr
+                INNER JOIN attempts a ON a.id = tr.attempt_id
+                WHERE tr.user_id = :uid
+                  AND a.cancelled_at IS NULL
+                  {course_filter}
+            )
+            SELECT task_id,
+                   MAX(course_id) AS course_id,
+                   COALESCE(bool_or(is_correct), FALSE) AS is_correct,
+                   MAX(score) AS score,
+                   MAX(max_score) AS max_score,
+                   COUNT(*) AS attempts,
+                   MIN(rn) FILTER (WHERE is_correct IS TRUE) AS solved_on_attempt
+            FROM src
+            GROUP BY task_id
+            ORDER BY task_id
+        """)
+        detail_rows = (await db.execute(detail_sql, params)).fetchall()
+
+        empty_overall = {
+            "tasks_total": 0,
+            "tasks_solved": 0,
+            "total_score": 0,
+            "total_max_score": 0,
+            "attempts_total": 0,
+            "hints_used": 0,
+        }
+        if not detail_rows:
+            return {
+                "user_id": user_id,
+                "overall": empty_overall,
+                "courses": [],
+                "tasks": [],
+            }
+
+        task_ids = [int(r.task_id) for r in detail_rows]
+        course_ids = sorted({int(r.course_id) for r in detail_rows if r.course_id is not None})
+
+        # Подсказки по каждому заданию (событие hint_open по этому ученику).
+        hints_sql = text("""
+            SELECT (payload->>'task_id')::int AS task_id, COUNT(*) AS hints
+            FROM learning_events
+            WHERE event_type = 'hint_open'
+              AND student_id = :uid
+              AND payload ? 'task_id'
+            GROUP BY 1
+        """)
+        hints_rows = (await db.execute(hints_sql, {"uid": user_id})).fetchall()
+        hints_by_task: Dict[int, int] = {
+            int(r.task_id): int(r.hints) for r in hints_rows if r.task_id is not None
+        }
+
+        # Подписи заданий одним запросом (без N+1).
+        labels_sql = text("""
+            SELECT id,
+                   NULLIF(external_uid, '') AS external_uid,
+                   task_content->>'title' AS title,
+                   task_content->>'stem' AS stem
+            FROM tasks
+            WHERE id = ANY(:ids)
+        """)
+        label_rows = (await db.execute(labels_sql, {"ids": task_ids})).fetchall()
+        labels_by_task: Dict[int, str] = {
+            int(r.id): self._build_task_label(int(r.id), r.external_uid, r.title, r.stem)
+            for r in label_rows
+        }
+
+        # Названия курсов.
+        titles_by_course: Dict[int, str | None] = {}
+        if course_ids:
+            titles_sql = text("SELECT id, title FROM courses WHERE id = ANY(:ids)")
+            title_rows = (await db.execute(titles_sql, {"ids": course_ids})).fetchall()
+            titles_by_course = {int(r.id): r.title for r in title_rows}
+
+        tasks: List[Dict[str, Any]] = []
+        courses_acc: Dict[int, Dict[str, Any]] = {}
+        overall = dict(empty_overall)
+
+        for r in detail_rows:
+            tid = int(r.task_id)
+            cid = int(r.course_id) if r.course_id is not None else None
+            score = int(r.score or 0)
+            max_score = int(r.max_score or 0)
+            attempts = int(r.attempts or 0)
+            is_correct = bool(r.is_correct)
+            solved_on = int(r.solved_on_attempt) if r.solved_on_attempt is not None else None
+            hints = hints_by_task.get(tid, 0)
+
+            tasks.append({
+                "task_id": tid,
+                "course_id": cid,
+                "label": labels_by_task.get(tid, f"id={tid}"),
+                "is_correct": is_correct,
+                "score": score,
+                "max_score": max_score,
+                "attempts": attempts,
+                "solved_on_attempt": solved_on,
+                "hints_used": hints,
+            })
+
+            overall["tasks_total"] += 1
+            overall["tasks_solved"] += 1 if is_correct else 0
+            overall["total_score"] += score
+            overall["total_max_score"] += max_score
+            overall["attempts_total"] += attempts
+            overall["hints_used"] += hints
+
+            if cid is not None:
+                acc = courses_acc.setdefault(cid, {
+                    "course_id": cid,
+                    "course_title": titles_by_course.get(cid),
+                    "tasks_total": 0,
+                    "tasks_solved": 0,
+                    "total_score": 0,
+                    "total_max_score": 0,
+                    "hints_used": 0,
+                })
+                acc["tasks_total"] += 1
+                acc["tasks_solved"] += 1 if is_correct else 0
+                acc["total_score"] += score
+                acc["total_max_score"] += max_score
+                acc["hints_used"] += hints
+
+        courses = [courses_acc[cid] for cid in sorted(courses_acc.keys())]
+
+        return {
+            "user_id": user_id,
+            "overall": overall,
+            "courses": courses,
+            "tasks": tasks,
+        }
+
     async def get_stats_by_task(
         self,
         db: AsyncSession,

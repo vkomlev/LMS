@@ -475,6 +475,87 @@ async def get_user_stats(
 
 
 @router.get(
+    "/task-results/detail/by-user/{user_id}",
+    summary="Детальный разбор результатов ученика",
+    responses={
+        200: {
+            "description": "Детальный разбор: по каждому заданию + свод по курсам и общий",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "user_id": 4497,
+                        "overall": {
+                            "tasks_total": 74,
+                            "tasks_solved": 74,
+                            "total_score": 74,
+                            "total_max_score": 74,
+                            "attempts_total": 129,
+                            "hints_used": 10,
+                        },
+                        "courses": [
+                            {
+                                "course_id": 1248,
+                                "course_title": "Вступительное испытание в вуз",
+                                "tasks_total": 74,
+                                "tasks_solved": 74,
+                                "total_score": 74,
+                                "total_max_score": 74,
+                                "hints_used": 10,
+                            }
+                        ],
+                        "tasks": [
+                            {
+                                "task_id": 7399,
+                                "course_id": 1248,
+                                "label": "A1-03 • id=7399",
+                                "is_correct": True,
+                                "score": 1,
+                                "max_score": 1,
+                                "attempts": 2,
+                                "solved_on_attempt": 2,
+                                "hints_used": 0,
+                            }
+                        ],
+                    }
+                }
+            },
+        },
+        403: {"description": "Доступ к чужому разбору запрещён"},
+    },
+)
+async def get_user_detail(
+    user_id: int,
+    course_id: Optional[int] = Query(None, description="Фильтр по корневому курсу"),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """
+    Детальный разбор результатов ученика для экрана преподавателя (tsk-309).
+
+    По каждому заданию: решено/нет, баллы (лучший результат), с какой попытки сдал,
+    число попыток, сколько подсказок открыто. Плюс свод по корневым курсам и общий.
+
+    ACL (как у /stats/by-user): ученик видит только свой разбор; service-key и
+    расширенные роли (admin/methodist/teacher) — сквозной доступ.
+    """
+    if not current_user.is_service and current_user.id != user_id:
+        from sqlalchemy import text as _text
+        role_check = await db.execute(
+            _text(
+                "SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id "
+                "WHERE ur.user_id=:uid AND r.name IN ('admin','methodist','teacher') LIMIT 1"
+            ),
+            {"uid": current_user.id},
+        )
+        if role_check.fetchone() is None:
+            raise HTTPException(
+                http_status.HTTP_403_FORBIDDEN,
+                "Доступ к чужому разбору запрещён",
+            )
+    return await task_results_service.get_detail_by_user(db, user_id, course_id=course_id)
+
+
+@router.get(
     "/task-results/by-pending-review",
     response_model=List[TaskResultRead],
     summary="РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё",

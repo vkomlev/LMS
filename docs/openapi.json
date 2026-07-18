@@ -8554,6 +8554,163 @@
         }
       }
     },
+    "/api/v1/task-results/detail/by-user/{user_id}": {
+      "get": {
+        "tags": [
+          "task_results"
+        ],
+        "summary": "Детальный разбор результатов ученика",
+        "description": "Детальный разбор результатов ученика для экрана преподавателя (tsk-309).\n\nПо каждому заданию: решено/нет, баллы (лучший результат), с какой попытки сдал,\nчисло попыток, сколько подсказок открыто. Плюс свод по корневым курсам и общий.\n\nACL (как у /stats/by-user): ученик видит только свой разбор; service-key и\nрасширенные роли (admin/methodist/teacher) — сквозной доступ.",
+        "operationId": "get_user_detail_api_v1_task_results_detail_by_user__user_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр по корневому курсу",
+              "title": "Course Id"
+            },
+            "description": "Фильтр по корневому курсу"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Детальный разбор: по каждому заданию + свод по курсам и общий",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get User Detail Api V1 Task Results Detail By User  User Id  Get"
+                },
+                "example": {
+                  "user_id": 4497,
+                  "overall": {
+                    "tasks_total": 74,
+                    "tasks_solved": 74,
+                    "total_score": 74,
+                    "total_max_score": 74,
+                    "attempts_total": 129,
+                    "hints_used": 10
+                  },
+                  "courses": [
+                    {
+                      "course_id": 1248,
+                      "course_title": "Вступительное испытание в вуз",
+                      "tasks_total": 74,
+                      "tasks_solved": 74,
+                      "total_score": 74,
+                      "total_max_score": 74,
+                      "hints_used": 10
+                    }
+                  ],
+                  "tasks": [
+                    {
+                      "task_id": 7399,
+                      "course_id": 1248,
+                      "label": "A1-03 • id=7399",
+                      "is_correct": true,
+                      "score": 1,
+                      "max_score": 1,
+                      "attempts": 2,
+                      "solved_on_attempt": 2,
+                      "hints_used": 0
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Доступ к чужому разбору запрещён"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/task-results/by-pending-review": {
       "get": {
         "tags": [
