@@ -492,7 +492,7 @@ async def get_user_stats(
                             "attempts_total": 129,
                             "hints_used": 10,
                         },
-                        "courses": [
+                        "course_summaries": [
                             {
                                 "course_id": 1248,
                                 "course_title": "Вступительное испытание в вуз",

@@ -305,7 +305,7 @@ class TaskResultsService(BaseService[TaskResults]):
             return {
                 "user_id": user_id,
                 "overall": empty_overall,
-                "courses": [],
+                "course_summaries": [],
                 "tasks": [],
             }
 
@@ -399,10 +399,14 @@ class TaskResultsService(BaseService[TaskResults]):
 
         courses = [courses_acc[cid] for cid in sorted(courses_acc.keys())]
 
+        # ВАЖНО: ключ именно "course_summaries", НЕ "courses". Клиент TG_LMS
+        # (api_client._normalize_page_payload) считает ответ с одновременными
+        # user_id + courses (без items) легаси-списком курсов студента и схлопывает
+        # его в пустой Page — теряя все поля разбора (tsk-309, живой прод-баг).
         return {
             "user_id": user_id,
             "overall": overall,
-            "courses": courses,
+            "course_summaries": courses,
             "tasks": tasks,
         }
 
