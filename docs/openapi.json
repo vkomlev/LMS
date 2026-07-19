@@ -3843,9 +3843,68 @@
           "messages"
         ],
         "summary": "Отправить per2per или системное сообщение",
-        "description": "Высокоуровневый эндпойнт отправки сообщения.\n\nЛогика thread_id:\n- Если указан reply_to_id:\n  * thread_id наследуется из исходного сообщения (или его id, если thread_id пустой)\n  * Если thread_id передан явно, он игнорируется (используется из исходного сообщения)\n- Если reply_to_id НЕ указан и thread_id НЕ передан:\n  * Создаётся новый тред: thread_id = id созданного сообщения (корневое сообщение)\n- Если reply_to_id НЕ указан, но thread_id передан явно:\n  * Используется переданный thread_id (для продолжения существующего треда)\n\nЭто обёртка над MessagesService.send_message и замена голого CRUD в случаях,\nкогда нужна логика тредов и reply/forward.",
+        "description": "Высокоуровневый эндпойнт отправки сообщения.\n\ntsk-298 Фаза 3-Ⅲ: открыт cookie (был сервис-only). non-service: отправитель\nпринудительно = current_user (без подмены sender_id), и получатель обязан быть\nучастником переписки (`can_message`: связь teacher↔student или methodist/admin).\nСервисный токен (TG-бот) — bypass.\n\nЛогика thread_id:\n- Если указан reply_to_id:\n  * thread_id наследуется из исходного сообщения (или его id, если thread_id пустой)\n  * Если thread_id передан явно, он игнорируется (используется из исходного сообщения)\n- Если reply_to_id НЕ указан и thread_id НЕ передан:\n  * Создаётся новый тред: thread_id = id созданного сообщения (корневое сообщение)\n- Если reply_to_id НЕ указан, но thread_id передан явно:\n  * Используется переданный thread_id (для продолжения существующего треда)\n\nЭто обёртка над MessagesService.send_message и замена голого CRUD в случаях,\nкогда нужна логика тредов и reply/forward.",
         "operationId": "send_message_endpoint_api_v1_messages_send_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
@@ -3853,8 +3912,7 @@
                 "description": "Данные сообщения для отправки"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -3877,12 +3935,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/messages/{message_id}/reply": {
@@ -4191,9 +4244,12 @@
           "messages"
         ],
         "summary": "Сообщения пользователя с фильтрами по направлению и периоду",
-        "description": "Получить сообщения пользователя с возможностью указать направление и период.\n\ndirection:\n    - sent     — только отправленные пользователем;\n    - received — только полученные;\n    - both     — по умолчанию, всё.\nis_read / unread_only применяются ТОЛЬКО к входящим сообщениям (recipient_id == user_id). \nПри direction=both исходящие сообщения не фильтруются по is_read.\nthread_id:\n    - опциональный фильтр для получения сообщений конкретного треда.",
+        "description": "Получить сообщения пользователя с возможностью указать направление и период.\n\ntsk-298 Фаза 3-Ⅲ: открыт cookie (был сервис-only) — identity-гейт по user_id;\n`peer_id` фильтрует 1:1-диалог. Сервисный токен — bypass.\n\ndirection:\n    - sent     — только отправленные пользователем;\n    - received — только полученные;\n    - both     — по умолчанию, всё.\nis_read / unread_only применяются ТОЛЬКО к входящим сообщениям (recipient_id == user_id). \nПри direction=both исходящие сообщения не фильтруются по is_read.\nthread_id:\n    - опциональный фильтр для получения сообщений конкретного треда.",
         "operationId": "get_messages_by_user_endpoint_api_v1_messages_by_user_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -4297,6 +4353,24 @@
             "description": "Фильтр по ID треда"
           },
           {
+            "name": "peer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр 1:1-диалога с собеседником (tsk-298)",
+              "title": "Peer Id"
+            },
+            "description": "Фильтр 1:1-диалога с собеседником (tsk-298)"
+          },
+          {
             "name": "skip",
             "in": "query",
             "required": false,
@@ -4314,6 +4388,54 @@
               "type": "integer",
               "default": 50,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -4777,15 +4899,73 @@
         ],
         "summary": "Отметить как прочитанные все сообщения от отправителя",
         "operationId": "mark_read_by_sender_endpoint_api_v1_messages_mark_read_by_sender_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/MarkReadBySenderRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -4808,12 +4988,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/messages/inbox": {
@@ -4825,6 +5000,9 @@
         "operationId": "get_inbox_api_v1_messages_inbox_get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -4832,11 +5010,20 @@
           {
             "name": "user_id",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "integer",
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ID пользователя (для cookie — по умолчанию свой)",
               "title": "User Id"
-            }
+            },
+            "description": "ID пользователя (для cookie — по умолчанию свой)"
           },
           {
             "name": "limit",
@@ -4856,6 +5043,54 @@
               "type": "integer",
               "default": 0,
               "title": "Offset"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],

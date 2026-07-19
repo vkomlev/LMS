@@ -23,7 +23,8 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user, get_db
+from app.auth.current_user import CurrentUser
 from app.schemas.messages import (
     MessageRead, 
     MessageCreate,
@@ -95,10 +96,16 @@ class MessageForwardRequest(BaseModel):
 )
 async def send_message_endpoint(
     payload: MessageCreate = Body(..., description="Данные сообщения для отправки"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> MessageRead:
     """
     Высокоуровневый эндпойнт отправки сообщения.
+
+    tsk-298 Фаза 3-Ⅲ: открыт cookie (был сервис-only). non-service: отправитель
+    принудительно = current_user (без подмены sender_id), и получатель обязан быть
+    участником переписки (`can_message`: связь teacher↔student или methodist/admin).
+    Сервисный токен (TG-бот) — bypass.
 
     Логика thread_id:
     - Если указан reply_to_id:
@@ -112,6 +119,12 @@ async def send_message_endpoint(
     Это обёртка над MessagesService.send_message и замена голого CRUD в случаях,
     когда нужна логика тредов и reply/forward.
     """
+    if not current_user.is_service:
+        if payload.sender_id is not None and payload.sender_id != current_user.id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        payload.sender_id = current_user.id
+        if not await service.can_message(db, current_user.id, payload.recipient_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Нельзя писать этому пользователю")
     msg = await service.send_message(
         db,
         message_type=payload.message_type,
@@ -352,12 +365,17 @@ async def get_messages_by_user_endpoint(
     is_read: Optional[bool] = None,
     unread_only: bool = False,
     thread_id: Optional[int] = Query(None, description="Фильтр по ID треда"),
+    peer_id: Optional[int] = Query(None, description="Фильтр 1:1-диалога с собеседником (tsk-298)"),
     skip: int = 0,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> Page[MessageRead]:
     """
     Получить сообщения пользователя с возможностью указать направление и период.
+
+    tsk-298 Фаза 3-Ⅲ: открыт cookie (был сервис-only) — identity-гейт по user_id;
+    `peer_id` фильтрует 1:1-диалог. Сервисный токен — bypass.
 
     direction:
         - sent     — только отправленные пользователем;
@@ -368,6 +386,8 @@ async def get_messages_by_user_endpoint(
     thread_id:
         - опциональный фильтр для получения сообщений конкретного треда.
     """
+    if not current_user.is_service and current_user.id != user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     items, total = await service.get_messages_for_user(
         db,
         user_id=user_id,
@@ -377,6 +397,7 @@ async def get_messages_by_user_endpoint(
         is_read=is_read,
         unread_only=unread_only,
         thread_id=thread_id,
+        peer_id=peer_id,
         limit=limit,
         offset=skip,
     )
@@ -605,8 +626,12 @@ async def mark_read_endpoint(
 )
 async def mark_read_by_sender_endpoint(
     payload: MarkReadBySenderRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> MarkReadResponse:
+    # tsk-298 Фаза 3-Ⅲ: cookie + гейт — отмечать прочитанным можно только свои.
+    if not current_user.is_service and current_user.id != payload.user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     updated = await service.mark_read_by_sender(
         db,
         user_id=payload.user_id,
@@ -620,12 +645,24 @@ async def mark_read_by_sender_endpoint(
     summary="Список диалогов (peer + last_message + unread_count)",
 )
 async def get_inbox(
-    user_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    user_id: Optional[int] = Query(None, description="ID пользователя (для cookie — по умолчанию свой)"),
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> InboxResponse:
-    rows = await service.get_inbox(db, user_id=user_id, limit=limit, offset=offset)
+    # tsk-298 Фаза 3-Ⅲ: cookie + гейт. `user_id` опционален: для cookie по
+    # умолчанию свой inbox (это и чинит ученическую переписку — её хук не
+    # передавал user_id → был 422). Сервисный токен обязан указать user_id.
+    effective_user_id = (
+        user_id if user_id is not None
+        else (None if current_user.is_service else current_user.id)
+    )
+    if effective_user_id is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "user_id обязателен для сервисного токена")
+    if not current_user.is_service and current_user.id != effective_user_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    rows = await service.get_inbox(db, user_id=effective_user_id, limit=limit, offset=offset)
 
     items = [
         InboxItem(

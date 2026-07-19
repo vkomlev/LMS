@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func, or_, select, update, case
+from sqlalchemy import func, or_, select, text, update, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.messages import Messages
@@ -269,6 +269,7 @@ class MessagesService(BaseService[Messages]):
         is_read: Optional[bool] = None,
         unread_only: bool = False,
         thread_id: Optional[int] = None,
+        peer_id: Optional[int] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Tuple[List[Messages], int]:
@@ -316,6 +317,17 @@ class MessagesService(BaseService[Messages]):
         if thread_id is not None:
             filters.append(model.thread_id == thread_id)
 
+        # tsk-298 Фаза 3-Ⅲ: 1:1-переписка с конкретным собеседником peer_id —
+        # только сообщения между user_id и peer_id (в обе стороны). Нужно веб-
+        # порталу (inbox группирует по peer, клик открывает диалог с этим peer).
+        if peer_id is not None:
+            filters.append(
+                or_(
+                    (model.sender_id == user_id) & (model.recipient_id == peer_id),
+                    (model.sender_id == peer_id) & (model.recipient_id == user_id),
+                )
+            )
+
         # Период
         if from_dt is not None:
             filters.append(model.sent_at >= from_dt)
@@ -332,6 +344,33 @@ class MessagesService(BaseService[Messages]):
             filters=filters,
             order_by=[model.sent_at.desc()],
         )
+
+    async def can_message(
+        self, db: AsyncSession, sender_id: int, recipient_id: int
+    ) -> bool:
+        """Разрешено ли sender_id писать recipient_id (tsk-298 Фаза 3-Ⅲ).
+
+        Модель LMS — переписка teacher↔student. Разрешаем, если пара связана в
+        `student_teacher_links` (в любую сторону) ИЛИ отправитель methodist/admin
+        (может писать любому). Защита от рассылки произвольным пользователям при
+        открытии `/messages/send` на cookie. Read-only.
+        """
+        r = await db.execute(
+            text("""
+                SELECT
+                    EXISTS (
+                        SELECT 1 FROM student_teacher_links stl
+                        WHERE (stl.student_id = :a AND stl.teacher_id = :b)
+                           OR (stl.student_id = :b AND stl.teacher_id = :a)
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                        WHERE ur.user_id = :a AND r.name IN ('methodist', 'admin')
+                    )
+            """),
+            {"a": sender_id, "b": recipient_id},
+        )
+        return bool(r.scalar())
 
     async def get_thread_messages(
         self,
