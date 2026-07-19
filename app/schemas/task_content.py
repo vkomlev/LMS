@@ -123,6 +123,19 @@ class TaskContent(BaseModel):
         description="Мультимедийные материалы для задания (изображение, аудио, видео).",
     )
 
+    @field_validator("media", mode="before")
+    @classmethod
+    def _coerce_empty_media(cls, v: object) -> object:
+        """tsk-325: импортированные задания ЕГЭ хранят media = [] (пустой список),
+        а схема ждёт объект TaskMedia (dict) или null. Пустой список данных не несёт —
+        приводим к None, иначе TaskContent.model_validate падает 500 и роняет приём
+        ответа на строке attempts.py:446 (найдено живым прогоном; 1080 заданий,
+        весь импортный ЕГЭ). Непустой список НЕ трогаем: это реальная потеря
+        данных, её надо увидеть (валидация упадёт), а не спрятать."""
+        if isinstance(v, list) and not v:
+            return None
+        return v
+
     options: Optional[List[TaskOption]] = Field(
         default=None,
         description="Варианты ответа для задач с выбором (SC/MC/SA_COM). Обязательно для SC/MC (минимум 2 варианта).",

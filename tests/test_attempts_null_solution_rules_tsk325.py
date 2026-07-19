@@ -136,8 +136,9 @@ async def null_rules_graph():
             ).scalar()
             assert difficulty_id is not None, "нет difficulties — задание не собрать"
 
-            # Ключевое: solution_rules = JSON null (ровно как у 1116 заданий на проде),
-            # max_score задан на самой задаче.
+            # Ключевое: solution_rules = JSON null и task_content.media = [] —
+            # ровно прод-формат импортных ЕГЭ-заданий (media:[] роняет валидацию
+            # task_content ещё до solution_rules, найдено живым прогоном tsk-325).
             ids["task"] = (
                 await s.execute(
                     text(
@@ -147,10 +148,34 @@ async def null_rules_graph():
                         "RETURNING id"
                     ),
                     {
-                        "tc": '{"type":"SA_COM","stem":"Введите число"}',
+                        "tc": '{"type":"SA_COM","stem":"Введите число","media":[]}',
                         "cid": ids["course"],
                         "did": difficulty_id,
                         "uid": "tsk325-null-task",
+                        "ma": 3,
+                        "ms": 1,
+                    },
+                )
+            ).scalar()
+
+            # Второе задание: правило ЗАВЕДЕНО (accepted='17') + media:[] — путь F1.
+            # Должен пройти автопроверку, а не только «не упасть».
+            ids["task_auto"] = (
+                await s.execute(
+                    text(
+                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
+                        "difficulty_id, external_uid, max_attempts, max_score) VALUES "
+                        "(CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, :uid, :ma, :ms) "
+                        "RETURNING id"
+                    ),
+                    {
+                        "tc": '{"type":"SA_COM","stem":"Введите число","media":[]}',
+                        "sr": '{"max_score":1,"scoring_mode":"all_or_nothing","auto_check":true,'
+                              '"manual_review_required":false,"short_answer":{"normalization":'
+                              '["trim","lower"],"accepted_answers":[{"value":"17","score":1}]}}',
+                        "cid": ids["course"],
+                        "did": difficulty_id,
+                        "uid": "tsk325-auto-task",
                         "ma": 3,
                         "ms": 1,
                     },
@@ -183,8 +208,9 @@ async def null_rules_graph():
                 await s.execute(
                     text("DELETE FROM user_courses WHERE user_id = :u"), {"u": ids["enrolled"]}
                 )
-            if "task" in ids:
-                await s.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": ids["task"]})
+            for k in ("task", "task_auto"):
+                if k in ids:
+                    await s.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": ids[k]})
             if "enrolled" in ids:
                 await s.execute(text("DELETE FROM users WHERE id = :u"), {"u": ids["enrolled"]})
             if "course" in ids:
@@ -242,3 +268,31 @@ async def test_null_rules_answer_does_not_500(client, null_rules_graph):
         )
     ).scalar()
     assert written == 1, "ответ должен быть записан в task_results"
+
+
+async def test_auto_task_with_media_empty_passes_autocheck(client, null_rules_graph):
+    """F1-путь: правило заведено (accepted='17') + media:[] → 200 и is_correct=True.
+
+    Регресс на оба дефекта сразу: media:[] не роняет task_content, а перенесённый
+    accepted_answers действительно автопроверяется.
+    """
+    ids, s = null_rules_graph
+    enrolled = ids["enrolled"]
+    attempt_id = await _open_attempt_service(client, enrolled, ids["course"])
+
+    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+        id=enrolled, is_service=False
+    )
+    try:
+        resp = await client.post(
+            f"/api/v1/attempts/{attempt_id}/answers",
+            json={"items": [{"task_id": ids["task_auto"],
+                             "answer": {"type": "SA_COM", "response": {"value": "17"}}}]},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200, f"приём должен пройти: {resp.text}"
+    check = resp.json()["results"][0]["check_result"]
+    assert check["is_correct"] is True, f"верный ответ '17' обязан зачесться: {check}"
+    assert check["score"] == 1
