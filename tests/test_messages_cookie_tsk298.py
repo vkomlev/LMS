@@ -69,6 +69,33 @@ async def test_inbox_cookie_self(db, client):
 
 
 @pytest.mark.asyncio
+async def test_inbox_with_messages_returns_last_message(db, client):
+    """Непустой inbox отдаёт вложенный last_message (регрессия KeyError 'last_message')."""
+    tid, token = await _user(db, "teacher")
+    sid, _ = await _user(db)
+    await _link(db, sid, tid)
+    api_key = next(iter(_settings.valid_api_keys))
+    try:
+        # ученик пишет преподавателю (создаём диалог)
+        r = await client.post(
+            "/api/v1/messages/send",
+            json={"message_type": "text", "content": {"text": "здравствуйте"}, "recipient_id": tid, "sender_id": sid},
+            headers={"X-API-Key": api_key},
+        )
+        assert r.status_code == 201, r.text
+        # преподаватель читает свой inbox по cookie
+        resp = await client.get("/api/v1/messages/inbox", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        mine = next((it for it in items if it["peer_id"] == sid), None)
+        assert mine is not None, "диалог с учеником должен быть в inbox"
+        assert mine["last_message"]["id"] is not None
+        assert mine["last_message"]["content"] == {"text": "здравствуйте"}
+    finally:
+        await _cleanup(db, [tid, sid])
+
+
+@pytest.mark.asyncio
 async def test_inbox_cookie_no_user_id_defaults_to_self(db, client):
     """Без user_id (как ученический хук) cookie отдаёт свой inbox — фикс разрыва."""
     uid, token = await _user(db)

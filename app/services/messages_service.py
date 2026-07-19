@@ -601,6 +601,8 @@ class MessagesService(BaseService[Messages]):
                 m.message_type.label("last_message_type"),
                 m.content.label("last_content"),
                 m.sent_at.label("last_sent_at"),
+                m.is_read.label("last_is_read"),
+                m.source_system.label("last_source_system"),
                 peer_id_expr,
                 func.row_number()
                 .over(
@@ -639,6 +641,8 @@ class MessagesService(BaseService[Messages]):
                 base.c.last_message_type,
                 base.c.last_content,
                 base.c.last_sent_at,
+                base.c.last_is_read,
+                base.c.last_source_system,
                 func.coalesce(unread.c.unread_count, 0).label("unread_count"),
             )
             .join(Users, Users.id == base.c.peer_id)
@@ -650,5 +654,26 @@ class MessagesService(BaseService[Messages]):
         )
 
         res = await db.execute(stmt)
-        # mappings() -> list[dict]-подобных, удобно для роутера
-        return [dict(r) for r in res.mappings().all()]
+        # tsk-298 Фаза 3-Ⅲ (fix): роутер ждёт вложенный `last_message` (MessageRead),
+        # а раньше сервис отдавал ПЛОСКИЕ `last_*` поля → эндпоинт падал KeyError
+        # 'last_message' на любом непустом inbox (баг не проявлялся: эндпоинт был
+        # сервис-only и не вызывался с данными). Собираем last_message со всеми
+        # обязательными полями MessageRead (включая is_read, source_system).
+        rows: list[dict] = []
+        for r in res.mappings().all():
+            rows.append({
+                "peer_id": r["peer_id"],
+                "peer_full_name": r["peer_full_name"],
+                "unread_count": r["unread_count"],
+                "last_message": {
+                    "id": r["last_message_id"],
+                    "sender_id": r["last_sender_id"],
+                    "recipient_id": r["last_recipient_id"],
+                    "message_type": r["last_message_type"],
+                    "content": r["last_content"],
+                    "sent_at": r["last_sent_at"],
+                    "is_read": r["last_is_read"],
+                    "source_system": r["last_source_system"],
+                },
+            })
+        return rows
