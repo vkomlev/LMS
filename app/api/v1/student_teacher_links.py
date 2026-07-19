@@ -5,7 +5,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user, get_db
+from app.auth.current_user import CurrentUser
 from app.schemas.users import UserRead
 from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
@@ -207,21 +208,21 @@ async def remove_student_teacher_link(
 )
 async def list_teacher_students(
     teacher_id: int,
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> List[UserRead]:
     """
     Вернуть всех студентов, привязанных к преподавателю.
-    
-    **Параметры пути:**
-    - `teacher_id` (int, обязательный): ID преподавателя
-    
-    **Ответ:**
-    Возвращает массив объектов `UserRead` с информацией о студентах.
-    Если у преподавателя нет привязанных студентов, возвращается пустой массив.
-    
-    **Коды ответов:**
-    - `200` - Список получен успешно (может быть пустым)
-    - `403` - Неверный или отсутствующий API ключ
-    - `404` - Преподаватель не найден (если проверка выполняется на уровне сервиса)
+
+    tsk-298 Фаза 3: переведён с сервисного ключа на `get_current_user` +
+    identity-гейт — доступен веб-порталу преподавателя по cookie (свой ростер).
+    Сервисный токен (TG-бот) по-прежнему проходит (bypass). Остальные эндпоинты
+    этого роутера (link CRUD) остаются service/admin.
+
+    **Ответ:** массив `UserRead` (может быть пустым).
+    - `200` - Список получен успешно
+    - `403` - Чужой teacher_id или нет аутентификации
     """
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     return await service.list_students(db, teacher_id)

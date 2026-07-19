@@ -1,0 +1,254 @@
+diff --git a/app/api/v1/student_teacher_links.py b/app/api/v1/student_teacher_links.py
+index 87b73e7..6ece39a 100644
+--- a/app/api/v1/student_teacher_links.py
++++ b/app/api/v1/student_teacher_links.py
+@@ -5,7 +5,8 @@ from typing import List
+ from fastapi import APIRouter, Depends, HTTPException, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_db
++from app.api.deps import get_bare_db, get_current_user, get_db
++from app.auth.current_user import CurrentUser
+ from app.schemas.users import UserRead
+ from app.services.student_teacher_links_service import (
+     StudentTeacherLinksService,
+@@ -207,21 +208,21 @@ async def remove_student_teacher_link(
+ )
+ async def list_teacher_students(
+     teacher_id: int,
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> List[UserRead]:
+     """
+     Вернуть всех студентов, привязанных к преподавателю.
+-    
+-    **Параметры пути:**
+-    - `teacher_id` (int, обязательный): ID преподавателя
+-    
+-    **Ответ:**
+-    Возвращает массив объектов `UserRead` с информацией о студентах.
+-    Если у преподавателя нет привязанных студентов, возвращается пустой массив.
+-    
+-    **Коды ответов:**
+-    - `200` - Список получен успешно (может быть пустым)
+-    - `403` - Неверный или отсутствующий API ключ
+-    - `404` - Преподаватель не найден (если проверка выполняется на уровне сервиса)
++
++    tsk-298 Фаза 3: переведён с сервисного ключа на `get_current_user` +
++    identity-гейт — доступен веб-порталу преподавателя по cookie (свой ростер).
++    Сервисный токен (TG-бот) по-прежнему проходит (bypass). Остальные эндпоинты
++    этого роутера (link CRUD) остаются service/admin.
++
++    **Ответ:** массив `UserRead` (может быть пустым).
++    - `200` - Список получен успешно
++    - `403` - Чужой teacher_id или нет аутентификации
+     """
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     return await service.list_students(db, teacher_id)
+diff --git a/app/api/v1/teacher_workload.py b/app/api/v1/teacher_workload.py
+index 7676a10..ca4fa9d 100644
+--- a/app/api/v1/teacher_workload.py
++++ b/app/api/v1/teacher_workload.py
+@@ -6,10 +6,11 @@ GET /api/v1/teacher/workload?teacher_id=... — счётчики для глав
+ from __future__ import annotations
+ 
+ import logging
+-from fastapi import APIRouter, Depends, Query
++from fastapi import APIRouter, Depends, HTTPException, Query, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_db
++from app.api.deps import get_bare_db, get_current_user
++from app.auth.current_user import CurrentUser
+ from app.schemas.teacher_next_modes import TeacherWorkloadResponse
+ from app.services.teacher_queue_service import get_teacher_workload
+ 
+@@ -24,7 +25,17 @@ logger = logging.getLogger("api.teacher_workload")
+ )
+ async def teacher_workload(
+     teacher_id: int = Query(..., description="ID преподавателя"),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> TeacherWorkloadResponse:
++    """Сводка нагрузки преподавателя.
++
++    tsk-298 Фаза 3: переведён с сервисного ключа (`get_db`) на
++    `get_current_user` + identity-гейт — теперь доступен и веб-порталу
++    преподавателя по cookie (не только TG-боту по service-key). Сервисный
++    токен (`?api_key=` / X-API-Key) по-прежнему проходит (bypass).
++    """
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     data = await get_teacher_workload(db, teacher_id)
+     return TeacherWorkloadResponse(**data)
+diff --git a/tests/test_teacher_workload_roster_cookie_tsk298.py b/tests/test_teacher_workload_roster_cookie_tsk298.py
+new file mode 100644
+index 0000000..e9af8c5
+--- /dev/null
++++ b/tests/test_teacher_workload_roster_cookie_tsk298.py
+@@ -0,0 +1,162 @@
++"""tsk-298 Фаза 3-Ⅰ: workload + ростер открыты cookie-преподавателю.
++
++Проверяем enabler'ы (`get_db` → `get_current_user` + identity-гейт):
++- по cookie своего teacher_id → 200;
++- по cookie чужого teacher_id → 403;
++- по сервисному ключу (TG-бот) → 200 (backward compat).
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++_settings = Settings()
++
++
++async def _teacher_with_session(db) -> tuple[int, str]:
++    u = Users(
++        email=f"t298w-tea-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="t298w-tea", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, r.id FROM roles r WHERE r.name = 'teacher' ON CONFLICT DO NOTHING"
++        ),
++        {"u": u.id},
++    )
++    await db.commit()
++    return u.id, token
++
++
++async def _student(db) -> int:
++    u = Users(
++        email=f"t298w-stu-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="t298w-stu", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await db.commit()
++    return u.id
++
++
++async def _link(db, student_id: int, teacher_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_teacher_links (student_id, teacher_id) "
++            "VALUES (:s, :t) ON CONFLICT DO NOTHING"
++        ),
++        {"s": student_id, "t": teacher_id},
++    )
++    await db.commit()
++
++
++async def _cleanup(db, user_ids: list[int]) -> None:
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM student_teacher_links WHERE teacher_id=:u OR student_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    await db.commit()
++
++
++# ── workload ─────────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_workload_cookie_self(db, client):
++    tid, token = await _teacher_with_session(db)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/workload?teacher_id={tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert "pending_manual_reviews_total" in body
++        assert "open_help_requests_total" in body
++    finally:
++        await _cleanup(db, [tid])
++
++
++@pytest.mark.asyncio
++async def test_workload_cookie_foreign_forbidden(db, client):
++    tid, token = await _teacher_with_session(db)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/workload?teacher_id={tid + 987654}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, [tid])
++
++
++@pytest.mark.asyncio
++async def test_workload_service_key_bypass(db, client):
++    tid, _ = await _teacher_with_session(db)
++    api_key = next(iter(_settings.valid_api_keys))
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/workload?teacher_id={tid}",
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, [tid])
++
++
++# ── ростер ───────────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_roster_cookie_self_lists_linked_students(db, client):
++    tid, token = await _teacher_with_session(db)
++    sid = await _student(db)
++    await _link(db, sid, tid)
++    try:
++        resp = await client.get(
++            f"/api/v1/users/{tid}/students",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        ids = [u["id"] for u in resp.json()]
++        assert sid in ids
++    finally:
++        await _cleanup(db, [tid, sid])
++
++
++@pytest.mark.asyncio
++async def test_roster_cookie_foreign_forbidden(db, client):
++    tid, token = await _teacher_with_session(db)
++    try:
++        resp = await client.get(
++            f"/api/v1/users/{tid + 987654}/students",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, [tid])
++
++
++@pytest.mark.asyncio
++async def test_roster_service_key_bypass(db, client):
++    tid, _ = await _teacher_with_session(db)
++    api_key = next(iter(_settings.valid_api_keys))
++    try:
++        resp = await client.get(
++            f"/api/v1/users/{tid}/students",
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, [tid])

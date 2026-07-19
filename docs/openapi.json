@@ -9476,6 +9476,9 @@
         "operationId": "list_teacher_students_api_v1_users__teacher_id__students_get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -9487,6 +9490,54 @@
             "schema": {
               "type": "integer",
               "title": "Teacher Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -12995,8 +13046,12 @@
           "teacher_workload"
         ],
         "summary": "Сводка нагрузки преподавателя (этап 3.9)",
+        "description": "Сводка нагрузки преподавателя.\n\ntsk-298 Фаза 3: переведён с сервисного ключа (`get_db`) на\n`get_current_user` + identity-гейт — теперь доступен и веб-порталу\nпреподавателя по cookie (не только TG-боту по service-key). Сервисный\nтокен (`?api_key=` / X-API-Key) по-прежнему проходит (bypass).",
         "operationId": "teacher_workload_api_v1_teacher_workload_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -13012,6 +13067,54 @@
               "title": "Teacher Id"
             },
             "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
