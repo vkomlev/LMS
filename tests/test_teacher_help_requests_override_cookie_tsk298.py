@@ -124,6 +124,38 @@ async def test_help_requests_list_service_bypass(db, client):
 # ── override ─────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
+async def test_help_request_detail_student_name_is_full_name(db, client):
+    """Regression off-by-one: деталь возвращает ФИО ученика в student_name,
+    а НЕ external_uid задания (маппинг dict был сдвинут на +1)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)  # full_name = 't298h-stu'
+    tid = await _task(db)
+    r = await db.execute(
+        text(
+            "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+            "auto_created, context_json, priority, created_at, updated_at) "
+            "VALUES ('open', :s, :t, 'blocked_limit', false, '{}'::jsonb, 100, now(), now()) RETURNING id"
+        ),
+        {"s": sid, "t": tid},
+    )
+    hr_id = r.scalar_one()
+    await db.commit()
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/{hr_id}?teacher_id={mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["student_name"] == "t298h-stu", body
+        assert body["student_name"] != body.get("task_title")
+    finally:
+        await db.execute(text("DELETE FROM help_requests WHERE id=:h"), {"h": hr_id})
+        await db.commit()
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
 async def test_override_methodist_allowed(db, client):
     """Методист (ACL bypass) может переопределить лимит."""
     mid, token = await _user_with_session(db, "methodist")

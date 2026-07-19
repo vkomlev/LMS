@@ -421,10 +421,14 @@ async def get_help_request_detail(
     if not isinstance(ctx, dict):
         ctx = {}
     now = datetime.now(timezone.utc)
-    due_at = row[19] if len(row) > 19 else None
+    # tsk-298 (fix): off-by-one — SELECT отдаёт 22 колонки (0-21), а маппинг
+    # читал row[18..22], сдвигая priority/due_at/student_name/task_title/
+    # course_title на +1. Из-за этого «Ученик» показывал external_uid задания
+    # вместо ФИО. Индексы приведены к реальному порядку колонок.
+    due_at = row[18] if len(row) > 18 else None
     due_at_norm = _normalize_due_at(due_at)
     is_overdue = due_at_norm is not None and due_at_norm < now
-    priority_val = int(row[18]) if len(row) > 18 and row[18] is not None else 100
+    priority_val = int(row[17]) if len(row) > 17 and row[17] is not None else 100
 
     r2 = await db.execute(
         text("""
@@ -468,9 +472,9 @@ async def get_help_request_detail(
         "priority": priority_val,
         "due_at": due_at_norm,
         "is_overdue": is_overdue,
-        "student_name": row[20] if len(row) > 20 else None,
-        "task_title": _task_title_display(row[3], row[21]) if len(row) > 21 and (row[21] or row[3]) else None,
-        "course_title": row[22] if len(row) > 22 else None,
+        "student_name": row[19] if len(row) > 19 else None,
+        "task_title": _task_title_display(row[3], row[20]) if len(row) > 20 and (row[20] or row[3]) else None,
+        "course_title": row[21] if len(row) > 21 else None,
         "history": replies,
     }, None)
 
