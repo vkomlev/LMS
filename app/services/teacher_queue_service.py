@@ -1082,6 +1082,44 @@ async def teacher_can_review_attempt(
     return bool(r.scalar())
 
 
+async def teacher_can_override_limit(
+    db: AsyncSession,
+    teacher_id: int,
+    student_id: int,
+    task_id: int,
+) -> bool:
+    """Может ли преподаватель переопределить лимит попыток по (student, task).
+
+    tsk-298 Фаза 3-Ⅱ: override открыт cookie-преподавателю, но он write и ранее
+    не имел ACL (сервис-only). Разрешаем, если преподаватель авторизован на
+    задачу этого ученика: teacher на course-tree задачи (`teacher_course_acl`)
+    ИЛИ ученик закреплён за ним (`student_teacher_links`) ИЛИ роль
+    methodist/admin. Тот же принцип, что `can_access_help_request` для
+    blocked_limit-заявки, из которой override и вызывается. Read-only.
+
+    :returns: True — можно; False — нет.
+    """
+    r = await db.execute(
+        text(f"""
+            SELECT
+                EXISTS (
+                    SELECT 1 FROM tasks t
+                    WHERE t.id = :task_id AND {teacher_course_acl('t.course_id')}
+                )
+                OR EXISTS (
+                    SELECT 1 FROM student_teacher_links stl
+                    WHERE stl.student_id = :student_id AND stl.teacher_id = :teacher_id
+                )
+                OR EXISTS (
+                    SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = :teacher_id AND r.name IN ('methodist', 'admin')
+                )
+        """),  # nosec B608 — teacher_course_acl() из закрытого набора литералов модуля
+        {"task_id": task_id, "student_id": student_id, "teacher_id": teacher_id},
+    )
+    return bool(r.scalar())
+
+
 async def get_teacher_workload(
     db: AsyncSession,
     teacher_id: int,

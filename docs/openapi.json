@@ -13001,15 +13001,73 @@
         ],
         "summary": "Установить/обновить лимит попыток по заданию для студента (идемпотентно)",
         "operationId": "task_limit_override_api_v1_teacher_task_limits_override_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TaskLimitOverrideRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -13032,12 +13090,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/teacher/workload": {
@@ -13148,15 +13201,73 @@
         ],
         "summary": "Р’Р·СЏС‚СЊ СЃР»РµРґСѓСЋС‰РёР№ РѕС‚РєСЂС‹С‚С‹Р№ help-request (Р°С‚РѕРјР°СЂРЅС‹Р№ claim)",
         "operationId": "help_request_claim_next_api_v1_teacher_help_requests_claim_next_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/HelpRequestClaimNextRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -13172,12 +13283,7 @@
           "422": {
             "description": "РќРµРІР°Р»РёРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹"
           }
-        },
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/teacher/help-requests": {
@@ -13188,6 +13294,9 @@
         "summary": "РЎРїРёСЃРѕРє Р·Р°СЏРІРѕРє РЅР° РїРѕРјРѕС‰СЊ (СЃ ACL)",
         "operationId": "help_requests_list_api_v1_teacher_help_requests_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -13262,6 +13371,54 @@
               "default": 0,
               "title": "Offset"
             }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
@@ -13297,6 +13454,9 @@
         "operationId": "help_request_detail_api_v1_teacher_help_requests__request_id__get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -13322,6 +13482,54 @@
               "title": "Teacher Id"
             },
             "description": "ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
@@ -13363,6 +13571,9 @@
         "operationId": "help_request_close_api_v1_teacher_help_requests__request_id__close_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -13377,6 +13588,54 @@
               "title": "Request Id"
             },
             "description": "ID Р·Р°СЏРІРєРё"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "requestBody": {
@@ -13431,6 +13690,9 @@
         "operationId": "help_request_release_api_v1_teacher_help_requests__request_id__release_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -13445,6 +13707,54 @@
               "title": "Request Id"
             },
             "description": "ID Р·Р°СЏРІРєРё"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "requestBody": {
@@ -13496,6 +13806,9 @@
         "operationId": "help_request_reply_api_v1_teacher_help_requests__request_id__reply_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -13510,6 +13823,54 @@
               "title": "Request Id"
             },
             "description": "ID Р·Р°СЏРІРєРё"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "requestBody": {

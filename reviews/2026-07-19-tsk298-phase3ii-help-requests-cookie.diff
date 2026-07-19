@@ -1,0 +1,414 @@
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 3790545..3028bab 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -14,7 +14,8 @@ from typing import Optional
+ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_db
++from app.api.deps import get_bare_db, get_current_user
++from app.auth.current_user import CurrentUser
+ from app.schemas.teacher_help_requests import (
+     HelpRequestListResponse,
+     HelpRequestListItem,
+@@ -63,8 +64,11 @@ logger = logging.getLogger("api.teacher_help_requests")
+ )
+ async def help_request_claim_next(
+     body: HelpRequestClaimNextRequest = Body(...),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestClaimNextResponse:
++    if not current_user.is_service and current_user.id != body.teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     item, lock_token, lock_expires_at = await claim_next_help_request(
+         db,
+         teacher_id=body.teacher_id,
+@@ -96,8 +100,11 @@ async def help_requests_list(
+     sort: str = Query("priority", description="priority | created_at | due_at (СЌС‚Р°Рї 3.9)", alias="sort"),
+     limit: int = Query(20, ge=1, le=100),
+     offset: int = Query(0, ge=0),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestListResponse:
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     if status_filter not in ("open", "closed", "all"):
+         raise HTTPException(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+@@ -131,8 +138,11 @@ async def help_requests_list(
+ async def help_request_detail(
+     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+     teacher_id: int = Query(..., description="ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestDetailResponse:
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     detail, err = await get_help_request_detail(db, request_id, teacher_id)
+     if err == "not_found":
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+@@ -156,8 +166,11 @@ async def help_request_detail(
+ async def help_request_close(
+     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+     body: HelpRequestCloseRequest = Body(...),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestCloseResponse:
++    if not current_user.is_service and current_user.id != body.closed_by:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     if not await help_request_exists(db, request_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+     ok = await can_access_help_request(db, request_id, body.closed_by)
+@@ -191,8 +204,11 @@ async def help_request_close(
+ async def help_request_release(
+     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+     body: HelpRequestReleaseRequest = Body(...),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestReleaseResponse:
++    if not current_user.is_service and current_user.id != body.teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     if not await help_request_exists(db, request_id):
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+     released, err = await release_help_request_claim(
+@@ -221,8 +237,11 @@ async def help_request_release(
+ async def help_request_reply(
+     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+     body: HelpRequestReplyRequest = Body(...),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> HelpRequestReplyResponse:
++    if not current_user.is_service and current_user.id != body.teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+     data, err = await reply_help_request(
+         db,
+         request_id,
+diff --git a/app/api/v1/teacher_learning.py b/app/api/v1/teacher_learning.py
+index 0ca8053..c6c1c21 100644
+--- a/app/api/v1/teacher_learning.py
++++ b/app/api/v1/teacher_learning.py
+@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Body, status
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_db
++from app.api.deps import get_bare_db, get_current_user
++from app.auth.current_user import CurrentUser
+ from app.schemas.learning_api import TaskLimitOverrideRequest, TaskLimitOverrideResponse
+ from app.services.learning_events_service import record_task_limit_override
++from app.services.teacher_queue_service import teacher_can_override_limit
+ from app.services.users_service import UsersService
+ from app.services.tasks_service import TasksService
+ 
+@@ -21,8 +23,6 @@ users_service = UsersService()
+ tasks_service = TasksService()
+ 
+ 
+-# TODO: проверка роли updated_by (teacher/methodist), когда роли доступны в модели
+-
+ @router.post(
+     "/task-limits/override",
+     response_model=TaskLimitOverrideResponse,
+@@ -30,8 +30,21 @@ tasks_service = TasksService()
+ )
+ async def task_limit_override(
+     body: TaskLimitOverrideRequest = Body(...),
+-    db: AsyncSession = Depends(get_db),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
+ ) -> TaskLimitOverrideResponse:
++    # tsk-298 Фаза 3-Ⅱ: открыт cookie-преподавателю (был сервис-only, без ACL —
++    # закрывает старый TODO). Identity: updated_by = сам преподаватель; ACL:
++    # авторизован на задачу этого ученика (course-tree / свой ученик / methodist).
++    # Сервисный токен (TG-бот) — bypass.
++    if not current_user.is_service:
++        if current_user.id != body.updated_by:
++            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++        if not await teacher_can_override_limit(
++            db, body.updated_by, body.student_id, body.task_id
++        ):
++            raise HTTPException(status.HTTP_403_FORBIDDEN, "Работа вне вашей зоны ответственности")
++
+     student = await users_service.get_by_id(db, body.student_id)
+     if student is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 37cfb6e..4782a82 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -1082,6 +1082,44 @@ async def teacher_can_review_attempt(
+     return bool(r.scalar())
+ 
+ 
++async def teacher_can_override_limit(
++    db: AsyncSession,
++    teacher_id: int,
++    student_id: int,
++    task_id: int,
++) -> bool:
++    """Может ли преподаватель переопределить лимит попыток по (student, task).
++
++    tsk-298 Фаза 3-Ⅱ: override открыт cookie-преподавателю, но он write и ранее
++    не имел ACL (сервис-only). Разрешаем, если преподаватель авторизован на
++    задачу этого ученика: teacher на course-tree задачи (`teacher_course_acl`)
++    ИЛИ ученик закреплён за ним (`student_teacher_links`) ИЛИ роль
++    methodist/admin. Тот же принцип, что `can_access_help_request` для
++    blocked_limit-заявки, из которой override и вызывается. Read-only.
++
++    :returns: True — можно; False — нет.
++    """
++    r = await db.execute(
++        text(f"""
++            SELECT
++                EXISTS (
++                    SELECT 1 FROM tasks t
++                    WHERE t.id = :task_id AND {teacher_course_acl('t.course_id')}
++                )
++                OR EXISTS (
++                    SELECT 1 FROM student_teacher_links stl
++                    WHERE stl.student_id = :student_id AND stl.teacher_id = :teacher_id
++                )
++                OR EXISTS (
++                    SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
++                    WHERE ur.user_id = :teacher_id AND r.name IN ('methodist', 'admin')
++                )
++        """),  # nosec B608 — teacher_course_acl() из закрытого набора литералов модуля
++        {"task_id": task_id, "student_id": student_id, "teacher_id": teacher_id},
++    )
++    return bool(r.scalar())
++
++
+ async def get_teacher_workload(
+     db: AsyncSession,
+     teacher_id: int,
+diff --git a/tests/test_teacher_help_requests_override_cookie_tsk298.py b/tests/test_teacher_help_requests_override_cookie_tsk298.py
+new file mode 100644
+index 0000000..854aafe
+--- /dev/null
++++ b/tests/test_teacher_help_requests_override_cookie_tsk298.py
+@@ -0,0 +1,218 @@
++"""tsk-298 Фаза 3-Ⅱ: help-requests + override открыты cookie-преподавателю.
++
++- help-requests list: cookie своего teacher_id → 200, чужого → 403, service → 200.
++- task-limits/override: identity по updated_by + ACL (course-tree/свой ученик/methodist):
++  methodist → 200, чужой updated_by → 403, teacher без ACL → 403, service → 200.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++_settings = Settings()
++
++
++async def _user_with_session(db, role: str | None) -> tuple[int, str]:
++    u = Users(
++        email=f"t298h-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="t298h", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    await db.commit()
++    return u.id, token
++
++
++async def _student(db) -> int:
++    u = Users(email=f"t298h-stu-{random.randint(10**8, 10**10)}@example.com",
++              password_hash=None, full_name="t298h-stu", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await db.commit()
++    return u.id
++
++
++async def _task(db) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
++            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1) RETURNING id"
++        ),
++        {"e": f"t298h-{random.randint(10**8, 10**10)}",
++         "c": json.dumps({"type": "SA_COM", "stem": "x"}),
++         "r": json.dumps({"max_score": 10})},
++    )
++    tid = res.scalar_one()
++    await db.commit()
++    return tid
++
++
++async def _cleanup(db, *, user_ids, task_ids=()):
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM student_task_limit_override WHERE student_id=:u OR updated_by=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM student_teacher_links WHERE teacher_id=:u OR student_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    for tid in task_ids:
++        await db.execute(text("DELETE FROM student_task_limit_override WHERE task_id=:t"), {"t": tid})
++        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": tid})
++    await db.commit()
++
++
++# ── help-requests list ───────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_help_requests_list_cookie_self(db, client):
++    tid, token = await _user_with_session(db, "teacher")
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests?teacher_id={tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert "items" in resp.json()
++    finally:
++        await _cleanup(db, user_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_help_requests_list_cookie_foreign_forbidden(db, client):
++    tid, token = await _user_with_session(db, "teacher")
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests?teacher_id={tid + 987654}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_help_requests_list_service_bypass(db, client):
++    tid, _ = await _user_with_session(db, "teacher")
++    api_key = next(iter(_settings.valid_api_keys))
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests?teacher_id={tid}",
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid])
++
++
++# ── override ─────────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_override_methodist_allowed(db, client):
++    """Методист (ACL bypass) может переопределить лимит."""
++    mid, token = await _user_with_session(db, "methodist")
++    sid = await _student(db)
++    tid = await _task(db)
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/task-limits/override",
++            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
++                  "reason": "тест", "updated_by": mid},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["ok"] is True
++    finally:
++        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_override_foreign_updated_by_forbidden(db, client):
++    """updated_by != current_user → 403 (нельзя действовать за другого)."""
++    mid, token = await _user_with_session(db, "methodist")
++    sid = await _student(db)
++    tid = await _task(db)
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/task-limits/override",
++            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
++                  "reason": "тест", "updated_by": mid + 55555},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_override_teacher_without_acl_forbidden(db, client):
++    """Teacher без ACL (не свой ученик, не course-tree, не methodist) → 403."""
++    tid_user, token = await _user_with_session(db, "teacher")
++    sid = await _student(db)
++    tid = await _task(db)
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/task-limits/override",
++            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
++                  "reason": "тест", "updated_by": tid_user},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid_user, sid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_override_teacher_linked_student_allowed(db, client):
++    """Teacher со связью student_teacher_links → 200."""
++    tid_user, token = await _user_with_session(db, "teacher")
++    sid = await _student(db)
++    tid = await _task(db)
++    await db.execute(
++        text("INSERT INTO student_teacher_links (student_id, teacher_id) VALUES (:s, :t) ON CONFLICT DO NOTHING"),
++        {"s": sid, "t": tid_user},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/task-limits/override",
++            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
++                  "reason": "тест", "updated_by": tid_user},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid_user, sid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_override_service_bypass(db, client):
++    sid = await _student(db)
++    tid = await _task(db)
++    api_key = next(iter(_settings.valid_api_keys))
++    try:
++        resp = await client.post(
++            "/api/v1/teacher/task-limits/override",
++            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
++                  "reason": "тест", "updated_by": sid},
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid])

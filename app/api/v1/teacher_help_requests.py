@@ -14,7 +14,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.schemas.teacher_help_requests import (
     HelpRequestListResponse,
     HelpRequestListItem,
@@ -63,8 +64,11 @@ logger = logging.getLogger("api.teacher_help_requests")
 )
 async def help_request_claim_next(
     body: HelpRequestClaimNextRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestClaimNextResponse:
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     item, lock_token, lock_expires_at = await claim_next_help_request(
         db,
         teacher_id=body.teacher_id,
@@ -96,8 +100,11 @@ async def help_requests_list(
     sort: str = Query("priority", description="priority | created_at | due_at (СЌС‚Р°Рї 3.9)", alias="sort"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestListResponse:
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if status_filter not in ("open", "closed", "all"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -131,8 +138,11 @@ async def help_requests_list(
 async def help_request_detail(
     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
     teacher_id: int = Query(..., description="ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestDetailResponse:
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     detail, err = await get_help_request_detail(db, request_id, teacher_id)
     if err == "not_found":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
@@ -156,8 +166,11 @@ async def help_request_detail(
 async def help_request_close(
     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
     body: HelpRequestCloseRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestCloseResponse:
+    if not current_user.is_service and current_user.id != body.closed_by:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if not await help_request_exists(db, request_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
     ok = await can_access_help_request(db, request_id, body.closed_by)
@@ -191,8 +204,11 @@ async def help_request_close(
 async def help_request_release(
     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
     body: HelpRequestReleaseRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestReleaseResponse:
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if not await help_request_exists(db, request_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
     released, err = await release_help_request_claim(
@@ -221,8 +237,11 @@ async def help_request_release(
 async def help_request_reply(
     request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
     body: HelpRequestReplyRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestReplyResponse:
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     data, err = await reply_help_request(
         db,
         request_id,

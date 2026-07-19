@@ -8,9 +8,11 @@ from fastapi import APIRouter, Depends, HTTPException, Body, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_bare_db, get_current_user
+from app.auth.current_user import CurrentUser
 from app.schemas.learning_api import TaskLimitOverrideRequest, TaskLimitOverrideResponse
 from app.services.learning_events_service import record_task_limit_override
+from app.services.teacher_queue_service import teacher_can_override_limit
 from app.services.users_service import UsersService
 from app.services.tasks_service import TasksService
 
@@ -21,8 +23,6 @@ users_service = UsersService()
 tasks_service = TasksService()
 
 
-# TODO: проверка роли updated_by (teacher/methodist), когда роли доступны в модели
-
 @router.post(
     "/task-limits/override",
     response_model=TaskLimitOverrideResponse,
@@ -30,8 +30,21 @@ tasks_service = TasksService()
 )
 async def task_limit_override(
     body: TaskLimitOverrideRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
 ) -> TaskLimitOverrideResponse:
+    # tsk-298 Фаза 3-Ⅱ: открыт cookie-преподавателю (был сервис-only, без ACL —
+    # закрывает старый TODO). Identity: updated_by = сам преподаватель; ACL:
+    # авторизован на задачу этого ученика (course-tree / свой ученик / methodist).
+    # Сервисный токен (TG-бот) — bypass.
+    if not current_user.is_service:
+        if current_user.id != body.updated_by:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        if not await teacher_can_override_limit(
+            db, body.updated_by, body.student_id, body.task_id
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Работа вне вашей зоны ответственности")
+
     student = await users_service.get_by_id(db, body.student_id)
     if student is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
