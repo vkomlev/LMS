@@ -301,11 +301,13 @@ async def list_help_requests(
     limit: int = 20,
     offset: int = 0,
     sort: str = "priority",
+    overdue: bool = False,
 ) -> Tuple[list[dict[str, Any]], int]:
     """
     Список заявок с ACL. status_filter: open | closed | all.
     request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
     sort: priority | created_at | due_at (этап 3.9).
+    overdue: True — только просроченные (due_at < now), ортогонально типу (tsk-312).
     Возвращает (items, total). items — словари для HelpRequestListItem.
     """
     status_cond = ""
@@ -323,13 +325,23 @@ async def list_help_requests(
     # Y-4.1: переиспользуем общий HELP_REQUESTS_ACL_SQL из teacher_queue_service —
     # hierarchical через teacher_course_acl(); methodist-bypass сохранён.
     acl_sql = HELP_REQUESTS_ACL_SQL
-    params: dict[str, Any] = {"teacher_id": teacher_id}
     now = datetime.now(timezone.utc)
+    params: dict[str, Any] = {"teacher_id": teacher_id}
+
+    # tsk-312: отдельная ось фильтра «только просроченные» (ортогональна типу).
+    # Предикат зеркалит get_teacher_workload.overdue_total, чтобы ячейка
+    # «Просрочено» и её список считались по одному правилу (TZ-aware bind :now_ts,
+    # как в _normalize_due_at). Фильтруем на сервере, а не по is_overdue поверх
+    # limit/offset, иначе просроченные за пределами страницы пропадут из списка.
+    overdue_cond = ""
+    if overdue:
+        overdue_cond = "AND hr.due_at IS NOT NULL AND hr.due_at < :now_ts"
+        params["now_ts"] = now
 
     r = await db.execute(
         text(f"""
             SELECT COUNT(*) FROM help_requests hr
-            WHERE {acl_sql} {status_cond} {type_cond}
+            WHERE {acl_sql} {status_cond} {type_cond} {overdue_cond}
         """),
         params,
     )
@@ -350,7 +362,7 @@ async def list_help_requests(
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
-            WHERE {acl_sql} {status_cond} {type_cond}
+            WHERE {acl_sql} {status_cond} {type_cond} {overdue_cond}
             {order_sql}
             LIMIT :limit OFFSET :offset
         """),

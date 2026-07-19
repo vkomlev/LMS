@@ -13585,6 +13585,18 @@
             "description": "priority | created_at | due_at (СЌС‚Р°Рї 3.9)"
           },
           {
+            "name": "overdue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "true — только просроченные (due_at < now), ортогонально типу (tsk-312)",
+              "default": false,
+              "title": "Overdue"
+            },
+            "description": "true — только просроченные (due_at < now), ортогонально типу (tsk-312)"
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,

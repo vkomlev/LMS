@@ -98,6 +98,7 @@ async def help_requests_list(
     status_filter: str = Query("open", description="open | closed | all", alias="status"),
     request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
     sort: str = Query("priority", description="priority | created_at | due_at (СЌС‚Р°Рї 3.9)", alias="sort"),
+    overdue: bool = Query(False, description="true — только просроченные (due_at < now), ортогонально типу (tsk-312)"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     current_user: CurrentUser = Depends(get_current_user),
@@ -121,7 +122,7 @@ async def help_requests_list(
             detail="sort РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ priority, created_at РёР»Рё due_at",
         )
     items, total = await list_help_requests(
-        db, teacher_id, status_filter, request_type_filter, limit, offset, sort=sort
+        db, teacher_id, status_filter, request_type_filter, limit, offset, sort=sort, overdue=overdue
     )
     return HelpRequestListResponse(
         items=[HelpRequestListItem(**it) for it in items],
