@@ -66,8 +66,8 @@ Missing required context is a stop condition. Load it before writing.
    for that mood.
 8. Apply the full M1-M14 and human-quality checks from `human-quality.md`.
    For TG and other short forms, treat all Instagram-style wrap-ups and
-   `не X, а Y` / `это не X, это Y` contrasts as hard failures, even when a
-   shared checklist allows one occurrence. Rewrite before output.
+   denial-based framing formulas as hard failures: `не про X`, `про не X`,
+   `не X, а Y`, `это не X, а Y`, `это не X, это Y`. Rewrite before output.
    Three or more failures require a rewrite; one or two require direct fixes.
 9. Verify the result against every user requirement and template limit.
 10. Return only the publishable text. No preface, explanation, checklist,
@@ -109,6 +109,14 @@ exists, add `-2`, `-3`, and so on. `output/` is non-canonical and gitignored.
 - Tone comes from `travel-tone.md`: friend-guide, not salesperson or lecturer.
 - Replace postcard cliches and empty praise with supported concrete detail.
 - Keep rhythm varied; avoid formulaic transitions and symmetrical paragraphs.
+- Check metaphors and figurative phrases for instant clarity: keep them only
+  when the image is understandable from the photo or context without author
+  explanation. If a phrase feels private, vague, or ornamental, replace it
+  with an observable action, object, or contrast.
+- For nature-recognition posts, do not stop at a species list. Keep uncertain
+  IDs explicitly tentative, then attach each plant or animal to an observable
+  detail, interaction, use, smell, season, or small action in the scene. If the
+  paragraph reads like a field-guide card stack, rewrite it as a story.
 - Across a series, avoid repeating the same contemplative command, especially
   "go slowly", "do not rush", "just look/watch", and similar slow-travel
   endings, unless the contrast with prior posts is intentional.

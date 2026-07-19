@@ -1,0 +1,1348 @@
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index fdfefee..e86e01a 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -71,6 +71,17 @@ async def get_next_item(
+         description="Необязательный фильтр: ограничить обход деревом этого корневого "
+         "курса. Если не задан — обход всех активных курсов (tsk-127).",
+     ),
++    after_material_id: int | None = Query(
++        None,
++        description="Текущая позиция ученика — материал: искать следующий шаг строго "
++        "ПОСЛЕ него по порядку обхода курса (tsk-261). Без позиции — первый "
++        "незавершённый элемент с начала дерева (прежнее поведение).",
++    ),
++    after_task_id: int | None = Query(
++        None,
++        description="Текущая позиция ученика — задание: искать следующий шаг строго "
++        "ПОСЛЕ него по порядку обхода курса (tsk-261).",
++    ),
+     current_user: CurrentUser = Depends(get_current_user),
+     db: AsyncSession = Depends(get_bare_db),
+ ) -> NextItemResponse:
+@@ -80,7 +91,11 @@ async def get_next_item(
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+     result = await learning_service.resolve_next_item(
+-        db, student_id, root_course_id=root_course_id
++        db,
++        student_id,
++        root_course_id=root_course_id,
++        after_material_id=after_material_id,
++        after_task_id=after_task_id,
+     )
+     if result.type == "blocked_limit" and result.task_id is not None:
+         state = await learning_service.compute_task_state(db, student_id, result.task_id)
+diff --git a/app/services/assignment_rules_service.py b/app/services/assignment_rules_service.py
+index 1a64b47..8cad81b 100644
+--- a/app/services/assignment_rules_service.py
++++ b/app/services/assignment_rules_service.py
+@@ -26,6 +26,7 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services import course_dependencies_enrollment_service
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+@@ -137,6 +138,12 @@ async def assign_course_to_student(
+             ),
+             {"uid": student_id, "cid": resolved_course_id},
+         )
++        # tsk-261 (A2): курс может требовать прохождения другого курса. Если
++        # зависимость ученику не назначена, пройти её нельзя — и замок на этом
++        # курсе не снимется никогда. Доназначаем в той же транзакции.
++        await course_dependencies_enrollment_service.ensure_dependencies_assigned(
++            db, student_id=student_id, course_ids=[resolved_course_id]
++        )
+ 
+     event_id: Optional[int] = None
+     if not (already_enrolled and skip_event_if_enrolled):
+diff --git a/app/services/course_dependencies_enrollment_service.py b/app/services/course_dependencies_enrollment_service.py
+new file mode 100644
+index 0000000..7dc58a3
+--- /dev/null
++++ b/app/services/course_dependencies_enrollment_service.py
+@@ -0,0 +1,147 @@
++"""tsk-261 (A2): автоназначение курсов-зависимостей при назначении курса.
++
++Зачем. Курс может требовать прохождения другого курса (`course_dependencies`).
++Замок снимается ТОЛЬКО когда required-курс перешёл в `COMPLETED`
++(`me_service._BLOCKED_COURSES_SQL`, `learning_engine_service.resolve_next_item`).
++Но пройти курс, который ученику не назначен, физически нельзя — он не попадает
++ни в `user_courses`, ни в учебный движок. Итог: назначили зависимый курс, не
++назначив зависимость — и замок висит вечно, без выхода.
++
++Живой случай приёмки QA 2026-07-16 («заблоченный курс так и висит»): курс
++«Python для подростков (11-14)» зависит от «Вводный Python», который QA не был
++назначен вовсе. На проде этот курс был назначен ровно одному ученику.
++
++Решение оператора: при назначении курса зависимости доназначаются автоматически.
++
++Границы:
++- зависимости собираются ТРАНЗИТИВНО (A → B → C), с защитой от циклов: БД
++  запрещает только самоссылку (`check_no_self_dependency`), взаимный цикл
++  A → B → A ничем не запрещён;
++- курсы, у которых есть родитель, пропускаются: триггер БД
++  `trg_check_user_course_no_parents` запрещает привязывать ученика к некорневому
++  курсу, и такой INSERT уронил бы всю транзакцию вызывающего;
++- `access_level` намеренно не проверяется: это уровень сопровождения
++  (self_guided / auto_check / …), а не признак платности, и ни один путь
++  назначения его не читает.
++"""
++from __future__ import annotations
++
++import logging
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++logger = logging.getLogger(__name__)
++
++# Транзитивный обход зависимостей с защитой от циклов через накопленный путь.
++# NOT ... = ANY(path) отсекает повторный вход в уже пройденный курс.
++_REQUIRED_COURSES_SQL = """
++WITH RECURSIVE deps AS (
++    SELECT cd.required_course_id AS course_id,
++           ARRAY[cd.course_id, cd.required_course_id] AS path
++    FROM course_dependencies cd
++    WHERE cd.course_id = ANY(:course_ids)
++    UNION ALL
++    SELECT cd.required_course_id,
++           d.path || cd.required_course_id
++    FROM deps d
++    JOIN course_dependencies cd ON cd.course_id = d.course_id
++    WHERE NOT (cd.required_course_id = ANY(d.path))
++)
++SELECT DISTINCT course_id FROM deps
++"""
++
++_REQUIRED_COURSES_STMT = text(_REQUIRED_COURSES_SQL)
++
++
++async def collect_required_course_ids(
++    db: AsyncSession, course_ids: list[int]
++) -> list[int]:
++    """Транзитивно собрать курсы, от которых зависят указанные курсы.
++
++    Сами `course_ids` в результат не входят. Циклы в графе зависимостей
++    безопасны — путь обхода не заходит в уже посещённый курс.
++
++    Args:
++        db: async-сессия.
++        course_ids: курсы, для которых ищем зависимости.
++
++    Returns:
++        Список id курсов-зависимостей (без дублей, порядок не гарантирован).
++    """
++    if not course_ids:
++        return []
++    res = await db.execute(_REQUIRED_COURSES_STMT, {"course_ids": course_ids})
++    required = {int(row[0]) for row in res.fetchall()}
++    required.difference_update(course_ids)
++    return sorted(required)
++
++
++async def ensure_dependencies_assigned(
++    db: AsyncSession, *, student_id: int, course_ids: list[int]
++) -> list[int]:
++    """Доназначить ученику курсы-зависимости указанных курсов.
++
++    Идемпотентно: уже назначенные курсы пропускаются (`ON CONFLICT DO NOTHING`).
++    Commit НЕ делает — остаётся в транзакции вызывающего, чтобы назначение курса
++    и его зависимостей было атомарным.
++
++    Курсы с родителями пропускаются: триггер БД запрещает привязывать ученика к
++    некорневому курсу. Такая зависимость — ошибка данных курса, о ней пишем в лог,
++    но назначение основного курса не роняем.
++
++    Args:
++        db: async-сессия.
++        student_id: ID ученика.
++        course_ids: только что назначенные курсы.
++
++    Returns:
++        Список id реально доназначенных курсов (пустой, если зависимостей нет).
++    """
++    required = await collect_required_course_ids(db, course_ids)
++    if not required:
++        return []
++
++    # Триггер trg_check_user_course_no_parents уронит INSERT для некорневого курса.
++    res = await db.execute(
++        text(
++            "SELECT c.id, EXISTS (SELECT 1 FROM course_parents cp WHERE cp.course_id = c.id) "
++            "FROM courses c WHERE c.id = ANY(:ids)"
++        ),
++        {"ids": required},
++    )
++    assignable: list[int] = []
++    for course_id, has_parents in res.fetchall():
++        if has_parents:
++            logger.warning(
++                "tsk-261: курс-зависимость id=%s не назначен ученику id=%s — "
++                "у него есть родитель, ученика можно привязать только к корневому "
++                "курсу. Это ошибка данных курса: зависимость должна быть корневой.",
++                course_id,
++                student_id,
++            )
++            continue
++        assignable.append(int(course_id))
++
++    if not assignable:
++        return []
++
++    # order_number проставит триггер trg_set_user_course_order_number.
++    res = await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id) "
++            "SELECT :uid, cid FROM unnest(CAST(:ids AS int[])) AS cid "
++            "ON CONFLICT (user_id, course_id) DO NOTHING "
++            "RETURNING course_id"
++        ),
++        {"uid": student_id, "ids": assignable},
++    )
++    assigned = [int(row[0]) for row in res.fetchall()]
++    if assigned:
++        logger.info(
++            "tsk-261: ученику id=%s доназначены курсы-зависимости %s (для курсов %s)",
++            student_id,
++            assigned,
++            course_ids,
++        )
++    return assigned
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 20cdf2b..b77c693 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -376,11 +376,39 @@ class LearningEngineService:
+ 
+         return CourseState(state=state, course_id=course_id)
+ 
++    async def _locate_item_course(
++        self,
++        db: AsyncSession,
++        *,
++        after_material_id: Optional[int],
++        after_task_id: Optional[int],
++    ) -> Optional[Tuple[int, str, int]]:
++        """Курс, которому принадлежит элемент текущей позиции.
++
++        Returns:
++            (course_id, kind, item_id) либо None, если позиция не задана/не найдена.
++        """
++        if after_material_id is not None:
++            r = await db.execute(
++                select(Materials.course_id).where(Materials.id == after_material_id)
++            )
++            row = r.fetchone()
++            if row is not None:
++                return (int(row[0]), "material", after_material_id)
++        if after_task_id is not None:
++            r = await db.execute(select(Tasks.course_id).where(Tasks.id == after_task_id))
++            row = r.fetchone()
++            if row is not None:
++                return (int(row[0]), "task", after_task_id)
++        return None
++
+     async def resolve_next_item(
+         self,
+         db: AsyncSession,
+         student_id: int,
+         root_course_id: Optional[int] = None,
++        after_material_id: Optional[int] = None,
++        after_task_id: Optional[int] = None,
+     ) -> NextItemResult:
+         """
+         Следующий шаг для студента: material | task | none | blocked_dependency | blocked_limit.
+@@ -390,6 +418,20 @@ class LearningEngineService:
+         обход дерева курса: материалы (order_position), затем задания (id);
+         приоритет material над task; блокировка по лимиту попыток.
+ 
++        tsk-261 (A4/A5). Раньше метод не знал, ГДЕ находится ученик, и всегда
++        отдавал ПЕРВЫЙ незавершённый элемент по всему дереву. Поэтому, отметив
++        материал в середине курса, ученик улетал назад — к любому пропуску раньше
++        по обходу (жалоба QA: «редирект не на следующий блок, а на предыдущее
++        невыполненное задание»), а собственные задания узла-контейнера
++        откладывались до конца и выглядели пропущенными («Задание 1 пропускается»).
++        tsk-127 менял порядок обхода (pre-order → post-order), но класс дефекта был
++        не в порядке, а в том, что «следующий» означало «первый недоделанный».
++
++        Теперь при заданной позиции обход идёт ВПЕРЁД от неё; дошли до конца курса
++        и впереди ничего нет → `type="none"`, и SPW возвращает ученика в список
++        разделов. Пропуски позади ученик добирает сам из списка — это осознанный
++        размен (решение оператора), иначе автопереход снова тащил бы назад.
++
+         Args:
+             db: Сессия БД.
+             student_id: ID студента.
+@@ -397,6 +439,10 @@ class LearningEngineService:
+                 (active фильтруется по uc.course_id); если None — прежнее
+                 поведение (обход всех активных курсов по order_number,
+                 обратная совместимость, tsk-127).
++            after_material_id: текущая позиция — материал; искать строго ПОСЛЕ него.
++            after_task_id: текущая позиция — задание; искать строго ПОСЛЕ него.
++                Если позиция не задана или её элемент не найден в дереве — прежнее
++                поведение (первый незавершённый с начала обхода).
+ 
+         Returns:
+             NextItemResult с листовым course_id и корневым root_course_id
+@@ -439,14 +485,50 @@ class LearningEngineService:
+ 
+             # Обход дерева: root + дети по order_number
+             flat_courses = await self._collect_courses_in_order(db, current_root_id)
+-            for cid in flat_courses:
++
++            # tsk-261: начать обход с курса текущей позиции, а не с начала дерева.
++            # Позиция ищется одним запросом (material/task → course_id), поэтому
++            # курсы ДО неё не опрашиваются вовсе — ленивость обхода сохраняется.
++            start_index = 0
++            position = await self._locate_item_course(
++                db, after_material_id=after_material_id, after_task_id=after_task_id
++            )
++            if position is not None and position[0] in flat_courses:
++                start_index = flat_courses.index(position[0])
++            else:
++                position = None
++
++            for offset, cid in enumerate(flat_courses[start_index:]):
++                material_ids: Optional[List[int]] = None
++                task_ids: Optional[List[int]] = None
++
++                # Сужаем списки только в курсе самой позиции; дальше по обходу —
++                # курсы целиком.
++                if position is not None and offset == 0:
++                    _, kind, item_id = position
++                    if kind == "material":
++                        all_materials = await self._ordered_material_ids(db, cid)
++                        if item_id in all_materials:
++                            material_ids = all_materials[all_materials.index(item_id) + 1:]
++                    else:
++                        # Задание идёт после всех материалов своего курса — значит
++                        # материалы этого курса уже позади позиции.
++                        material_ids = []
++                        all_tasks = await self._ordered_task_ids(db, cid)
++                        if item_id in all_tasks:
++                            task_ids = all_tasks[all_tasks.index(item_id) + 1:]
++
+                 # Первый незавершённый материал
+-                mat = await self._first_incomplete_material(db, student_id, cid)
++                mat = await self._first_incomplete_material(
++                    db, student_id, cid, material_ids=material_ids
++                )
+                 if mat is not None:
+                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
+                     return NextItemResult(type="material", course_id=cid, root_course_id=current_root_id, material_id=mat, reason="Следующий материал")
+                 # Первое задание не PASSED и не BLOCKED_LIMIT
+-                task_id, blocked = await self._first_incomplete_task(db, student_id, cid)
++                task_id, blocked = await self._first_incomplete_task(
++                    db, student_id, cid, task_ids=task_ids
++                )
+                 if blocked is not None:
+                     return NextItemResult(
+                         type="blocked_limit",
+@@ -492,8 +574,8 @@ class LearningEngineService:
+         await walk(root_id)
+         return result
+ 
+-    async def _first_incomplete_material(self, db: AsyncSession, student_id: int, course_id: int) -> Optional[int]:
+-        """ID первого материала курса, не отмеченного как completed для студента."""
++    async def _ordered_material_ids(self, db: AsyncSession, course_id: int) -> List[int]:
++        """ID материалов курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+         materials_stmt = (
+             select(Materials.id)
+             .where(
+@@ -504,7 +586,36 @@ class LearningEngineService:
+             .order_by(Materials.order_position.asc().nulls_last(), Materials.id.asc())
+         )
+         r = await db.execute(materials_stmt)
+-        material_ids = [row[0] for row in r.fetchall()]
++        return [row[0] for row in r.fetchall()]
++
++    async def _ordered_task_ids(self, db: AsyncSession, course_id: int) -> List[int]:
++        """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
++        tasks_stmt = (
++            select(Tasks.id)
++            .where(
++                Tasks.course_id == course_id,
++                Tasks.is_active.is_(True),
++                Tasks.requirement_level.in_(("required", "skippable")),
++            )
++            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
++        )
++        r = await db.execute(tasks_stmt)
++        return [row[0] for row in r.fetchall()]
++
++    async def _first_incomplete_material(
++        self,
++        db: AsyncSession,
++        student_id: int,
++        course_id: int,
++        material_ids: Optional[List[int]] = None,
++    ) -> Optional[int]:
++        """ID первого материала курса, не отмеченного как completed для студента.
++
++        `material_ids` — необязательный заранее суженный список (tsk-261: обход от
++        текущей позиции передаёт сюда только материалы ПОСЛЕ неё).
++        """
++        if material_ids is None:
++            material_ids = await self._ordered_material_ids(db, course_id)
+ 
+         if not material_ids:
+             return None
+@@ -528,27 +639,22 @@ class LearningEngineService:
+         db: AsyncSession,
+         student_id: int,
+         course_id: int,
++        task_ids: Optional[List[int]] = None,
+     ) -> Tuple[Optional[int], Optional[int]]:
+         """
+         (task_id для следующего задания, task_id с blocked_limit или None).
+         Если есть задание с BLOCKED_LIMIT — возвращаем (None, that_task_id).
+ 
++        `task_ids` — необязательный заранее суженный список (tsk-261: обход от
++        текущей позиции передаёт сюда только задания ПОСЛЕ неё).
++
+         Y-6: TA снова в routing — SPW рендерит TaskFormTA, на submit
+         задача получает optimistic-PASSED, learning engine продолжает
+         курс. Stop-gap фильтр `type != 'TA'` (commit cf1908c, 2026-05-02)
+         снят — иначе course не достигнет COMPLETED для курсов с TA.
+         """
+-        tasks_stmt = (
+-            select(Tasks.id)
+-            .where(
+-                Tasks.course_id == course_id,
+-                Tasks.is_active.is_(True),
+-                Tasks.requirement_level.in_(("required", "skippable")),
+-            )
+-            .order_by(Tasks.order_position.asc().nulls_last(), Tasks.id.asc())
+-        )
+-        r = await db.execute(tasks_stmt)
+-        task_ids = [row[0] for row in r.fetchall()]
++        if task_ids is None:
++            task_ids = await self._ordered_task_ids(db, course_id)
+         if task_ids:
+             skipped_rows = await db.execute(
+                 text("""
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 81e9f83..c642d4c 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -111,8 +111,8 @@ async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
+ 
+ # Single-roundtrip CTE — батч-запрос по всем активным курсам пользователя,
+ # избегаем N+1 (см. tech-spec §5.2). Дерево курса собирается рекурсивно через
+-# course_parents; tasks_done считает заданий с PASS по последней завершённой
+-# попытке (та же логика, что в learning_engine_service.compute_course_state).
++# course_parents; tasks_done считает задания с PASS по последнему результату
++# (та же логика, что в learning_engine_service.compute_course_state).
+ _COURSES_PROGRESS_SQL = """
+ WITH RECURSIVE active_uc AS (
+     SELECT user_id, course_id, order_number
+@@ -143,6 +143,16 @@ materials_per_root AS (
+     WHERE m.is_active = true
+       AND m.requirement_level IN ('required', 'skippable')
+ ),
++-- tsk-261 (A1): фильтра `a.finished_at IS NOT NULL` здесь БЫТЬ НЕ ДОЛЖНО.
++-- `attempts` в LMS — курсового уровня: одна попытка на пару (ученик, курс)
++-- копит результаты многих задач и живёт открытой, пока ученик проходит курс
++-- (`finished_at` ей никто не проставляет — на проде завершены 78 попыток из
++-- 352). Фильтр отбрасывал всё, что ученик решает прямо сейчас: задачи в
++-- дереве показывались пройденными, а счётчик рядом давал ноль, и процент
++-- считался по одним материалам (жалоба QA «задачи все пройдены, но по ним
++-- ноль, прогресс 37%» — ровно этот случай, воспроизведён до цифры).
++-- Правило «пройдено» теперь то же, что в learning_engine.compute_course_state
++-- и в syllabus-статусах: последний результат по задаче, попытка не аннулирована.
+ last_attempt_per_task AS (
+     SELECT DISTINCT ON (tr.task_id)
+         tr.task_id, tr.score, tr.max_score, tr.received_at
+@@ -150,10 +160,9 @@ last_attempt_per_task AS (
+     INNER JOIN attempts a
+         ON a.id = tr.attempt_id
+        AND a.user_id = :user_id
+-       AND a.finished_at IS NOT NULL
+        AND a.cancelled_at IS NULL
+     WHERE tr.user_id = :user_id
+-    ORDER BY tr.task_id, a.finished_at DESC, a.id DESC
++    ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC
+ ),
+ tasks_total_per_root AS (
+     SELECT root_course_id, COUNT(*) AS tasks_total
+diff --git a/app/services/user_courses_service.py b/app/services/user_courses_service.py
+index 0c17c96..d9baa70 100644
+--- a/app/services/user_courses_service.py
++++ b/app/services/user_courses_service.py
+@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.user_courses import UserCourses
+ from app.repos.user_courses_repo import UserCoursesRepository
++from app.services import course_dependencies_enrollment_service
+ from app.services.base import BaseService
+ from app.utils.exceptions import DomainError
+ 
+@@ -23,6 +24,28 @@ class UserCoursesService(BaseService[UserCourses]):
+     def __init__(self, repo: UserCoursesRepository = UserCoursesRepository()):
+         super().__init__(repo)
+ 
++    async def create(self, db: AsyncSession, obj_in: Dict) -> UserCourses:
++        """Создать связь ученик↔курс и доназначить курсы-зависимости (tsk-261, A2).
++
++        Оверрайд `BaseService.create`: `POST /api/v1/user-courses/` (назначение из
++        UI) идёт мимо `assignment_rules_service.assign_course_to_student`, поэтому
++        автоназначение зависимостей подключается и здесь. Иначе назначенный из UI
++        зависимый курс остался бы заблокированным навсегда.
++
++        :param db: асинхронная сессия БД.
++        :param obj_in: данные связи (`user_id`, `course_id`, опц. `order_number`).
++        :return: созданная связь.
++        """
++        created = await super().create(db, obj_in)
++        user_id = obj_in.get("user_id")
++        course_id = obj_in.get("course_id")
++        if user_id is not None and course_id is not None:
++            await course_dependencies_enrollment_service.ensure_dependencies_assigned(
++                db, student_id=int(user_id), course_ids=[int(course_id)]
++            )
++            await db.commit()
++        return created
++
+     async def get_user_courses(
+         self,
+         db: AsyncSession,
+@@ -88,12 +111,22 @@ class UserCoursesService(BaseService[UserCourses]):
+         Массовая привязка курсов к пользователю.
+         order_number установится автоматически для каждой записи через триггер БД.
+ 
++        tsk-261 (A2): вместе с курсами доназначаются их курсы-зависимости
++        (`course_dependencies`, транзитивно). Иначе зависимый курс остаётся
++        заблокированным навсегда: замок снимается только по `COMPLETED`
++        required-курса, а пройти неназначенный курс ученик не может.
++
+         :param db: асинхронная сессия БД.
+         :param user_id: ID пользователя.
+         :param course_ids: Список ID курсов для привязки.
+         :return: Список созданных связей пользователя с курсами.
+         """
+-        return await self.repo.bulk_create_user_courses(db, user_id, course_ids)
++        created = await self.repo.bulk_create_user_courses(db, user_id, course_ids)
++        await course_dependencies_enrollment_service.ensure_dependencies_assigned(
++            db, student_id=user_id, course_ids=course_ids
++        )
++        await db.commit()
++        return created
+ 
+     async def reorder_courses(
+         self,
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 79ae024..bac8a30 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -11860,6 +11860,42 @@
+             },
+             "description": "Необязательный фильтр: ограничить обход деревом этого корневого курса. Если не задан — обход всех активных курсов (tsk-127)."
+           },
++          {
++            "name": "after_material_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Текущая позиция ученика — материал: искать следующий шаг строго ПОСЛЕ него по порядку обхода курса (tsk-261). Без позиции — первый незавершённый элемент с начала дерева (прежнее поведение).",
++              "title": "After Material Id"
++            },
++            "description": "Текущая позиция ученика — материал: искать следующий шаг строго ПОСЛЕ него по порядку обхода курса (tsk-261). Без позиции — первый незавершённый элемент с начала дерева (прежнее поведение)."
++          },
++          {
++            "name": "after_task_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Текущая позиция ученика — задание: искать следующий шаг строго ПОСЛЕ него по порядку обхода курса (tsk-261).",
++              "title": "After Task Id"
++            },
++            "description": "Текущая позиция ученика — задание: искать следующий шаг строго ПОСЛЕ него по порядку обхода курса (tsk-261)."
++          },
+           {
+             "name": "token",
+             "in": "query",
+diff --git a/tests/test_tsk261_dependency_autoassign.py b/tests/test_tsk261_dependency_autoassign.py
+new file mode 100644
+index 0000000..3b2ee8d
+--- /dev/null
++++ b/tests/test_tsk261_dependency_autoassign.py
+@@ -0,0 +1,215 @@
++"""tsk-261 (A2): автоназначение курсов-зависимостей при назначении курса.
++
++Дефект приёмки QA 2026-07-16 — «заблоченный курс так и висит». Курс зависит от
++другого (`course_dependencies`); замок снимается только когда required-курс стал
++`COMPLETED`. Но если required-курс ученику НЕ назначен — пройти его нельзя, и
++замок висит вечно (живой случай: «Python для подростков» требует «Вводный
++Python», у QA он не назначен).
++
++Покрывает:
++- прямая зависимость доназначается;
++- транзитивная цепочка A → B → C;
++- цикл A → B → A не вешает обход (БД запрещает только самоссылку);
++- зависимость-не-корень пропускается (триггер `trg_check_user_course_no_parents`),
++  назначение основного курса при этом не падает;
++- идемпотентность: повторное назначение не плодит дублей.
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import course_dependencies_enrollment_service as deps_service
++from app.services import assignment_rules_service
++from app.services.auth import identity_link_service
++
++
++async def _create_student(db, *, prefix: str = "tsk261a2") -> int:
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=f"{prefix}-stud", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    await db.commit()
++    return u.id
++
++
++async def _create_course(db, *, title: str) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, is_required, course_uid) "
++            "VALUES (:t, 'self_guided', false, :uid) RETURNING id"
++        ),
++        {"t": title, "uid": f"tsk261-{random.randint(10**8, 10**10)}"},
++    )
++    cid = int(res.scalar_one())
++    await db.commit()
++    return cid
++
++
++async def _add_dependency(db, *, course_id: int, required_course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO course_dependencies (course_id, required_course_id) "
++            "VALUES (:c, :r) ON CONFLICT DO NOTHING"
++        ),
++        {"c": course_id, "r": required_course_id},
++    )
++    await db.commit()
++
++
++async def _add_parent(db, *, course_id: int, parent_course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO course_parents (course_id, parent_course_id) "
++            "VALUES (:c, :p) ON CONFLICT DO NOTHING"
++        ),
++        {"c": course_id, "p": parent_course_id},
++    )
++    await db.commit()
++
++
++async def _enrolled_ids(db, user_id: int) -> set[int]:
++    res = await db.execute(
++        text("SELECT course_id FROM user_courses WHERE user_id = :u"), {"u": user_id}
++    )
++    return {int(r[0]) for r in res.fetchall()}
++
++
++async def _cleanup(db, *, user_id: int, course_ids: list[int]) -> None:
++    await db.execute(text("DELETE FROM user_courses WHERE user_id = :u"), {"u": user_id})
++    await db.execute(
++        text("DELETE FROM assignment_event WHERE student_id = :u"), {"u": user_id}
++    )
++    await db.execute(text("DELETE FROM user_session WHERE user_id = :u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id = :u"), {"u": user_id})
++    await db.execute(text("DELETE FROM users WHERE id = :u"), {"u": user_id})
++    if course_ids:
++        await db.execute(
++            text(
++                "DELETE FROM course_dependencies "
++                "WHERE course_id = ANY(:ids) OR required_course_id = ANY(:ids)"
++            ),
++            {"ids": course_ids},
++        )
++        await db.execute(
++            text(
++                "DELETE FROM course_parents "
++                "WHERE course_id = ANY(:ids) OR parent_course_id = ANY(:ids)"
++            ),
++            {"ids": course_ids},
++        )
++        await db.execute(text("DELETE FROM courses WHERE id = ANY(:ids)"), {"ids": course_ids})
++    await db.commit()
++
++
++@pytest.mark.asyncio
++async def test_direct_dependency_is_autoassigned(db):
++    """Назначили курс с зависимостью → зависимость назначена тоже (падал до tsk-261)."""
++    user_id = await _create_student(db)
++    dep = await _create_course(db, title="tsk261 Вводный")
++    main = await _create_course(db, title="tsk261 Основной")
++    await _add_dependency(db, course_id=main, required_course_id=dep)
++    try:
++        await assignment_rules_service.assign_course_to_student(
++            db, student_id=user_id, course_id=main, source="manual_teacher"
++        )
++        enrolled = await _enrolled_ids(db, user_id)
++        assert main in enrolled
++        assert dep in enrolled, (
++            "курс-зависимость обязан быть назначен, иначе замок не снять никогда"
++        )
++    finally:
++        await _cleanup(db, user_id=user_id, course_ids=[main, dep])
++
++
++@pytest.mark.asyncio
++async def test_transitive_chain_is_autoassigned(db):
++    """A → B → C: назначаем A, ожидаем B и C."""
++    user_id = await _create_student(db)
++    c = await _create_course(db, title="tsk261 C")
++    b = await _create_course(db, title="tsk261 B")
++    a = await _create_course(db, title="tsk261 A")
++    await _add_dependency(db, course_id=a, required_course_id=b)
++    await _add_dependency(db, course_id=b, required_course_id=c)
++    try:
++        await assignment_rules_service.assign_course_to_student(
++            db, student_id=user_id, course_id=a, source="manual_teacher"
++        )
++        enrolled = await _enrolled_ids(db, user_id)
++        assert {a, b, c} <= enrolled, f"ожидали транзитивную цепочку, получили {enrolled}"
++    finally:
++        await _cleanup(db, user_id=user_id, course_ids=[a, b, c])
++
++
++@pytest.mark.asyncio
++async def test_dependency_cycle_does_not_hang(db):
++    """Цикл A → B → A: обход завершается, оба курса назначены.
++
++    БД запрещает только самоссылку (check_no_self_dependency); взаимный цикл
++    возможен, и наивная рекурсия на нём зациклится.
++    """
++    user_id = await _create_student(db)
++    a = await _create_course(db, title="tsk261 cycle A")
++    b = await _create_course(db, title="tsk261 cycle B")
++    await _add_dependency(db, course_id=a, required_course_id=b)
++    await _add_dependency(db, course_id=b, required_course_id=a)
++    try:
++        required = await deps_service.collect_required_course_ids(db, [a])
++        assert b in required
++        assert a not in required, "сам курс не должен попадать в свои зависимости"
++
++        await assignment_rules_service.assign_course_to_student(
++            db, student_id=user_id, course_id=a, source="manual_teacher"
++        )
++        enrolled = await _enrolled_ids(db, user_id)
++        assert {a, b} <= enrolled
++    finally:
++        await _cleanup(db, user_id=user_id, course_ids=[a, b])
++
++
++@pytest.mark.asyncio
++async def test_non_root_dependency_skipped_without_breaking_assignment(db):
++    """Зависимость с родителем пропускается, основной курс всё равно назначен.
++
++    Триггер trg_check_user_course_no_parents запрещает привязку ученика к
++    некорневому курсу — INSERT такой зависимости уронил бы всю транзакцию.
++    """
++    user_id = await _create_student(db)
++    parent = await _create_course(db, title="tsk261 родитель")
++    dep_child = await _create_course(db, title="tsk261 зависимость-ребёнок")
++    main = await _create_course(db, title="tsk261 основной")
++    await _add_parent(db, course_id=dep_child, parent_course_id=parent)
++    await _add_dependency(db, course_id=main, required_course_id=dep_child)
++    try:
++        await assignment_rules_service.assign_course_to_student(
++            db, student_id=user_id, course_id=main, source="manual_teacher"
++        )
++        enrolled = await _enrolled_ids(db, user_id)
++        assert main in enrolled, "основной курс должен назначиться несмотря на плохую зависимость"
++        assert dep_child not in enrolled, "некорневой курс привязывать нельзя (триггер БД)"
++    finally:
++        await _cleanup(db, user_id=user_id, course_ids=[main, dep_child, parent])
++
++
++@pytest.mark.asyncio
++async def test_autoassign_is_idempotent(db):
++    """Повторное назначение не плодит дублей и не падает."""
++    user_id = await _create_student(db)
++    dep = await _create_course(db, title="tsk261 idem dep")
++    main = await _create_course(db, title="tsk261 idem main")
++    await _add_dependency(db, course_id=main, required_course_id=dep)
++    try:
++        for _ in range(2):
++            await assignment_rules_service.assign_course_to_student(
++                db, student_id=user_id, course_id=main, source="manual_teacher"
++            )
++        res = await db.execute(
++            text("SELECT COUNT(*) FROM user_courses WHERE user_id = :u"), {"u": user_id}
++        )
++        assert int(res.scalar_one()) == 2, "ожидали ровно 2 строки: основной + зависимость"
++    finally:
++        await _cleanup(db, user_id=user_id, course_ids=[main, dep])
+diff --git a/tests/test_tsk261_me_courses_open_attempt.py b/tests/test_tsk261_me_courses_open_attempt.py
+new file mode 100644
+index 0000000..c374f85
+--- /dev/null
++++ b/tests/test_tsk261_me_courses_open_attempt.py
+@@ -0,0 +1,219 @@
++"""tsk-261 (A1): /me/courses считает прогресс по ОТКРЫТЫМ попыткам.
++
++Регресс, который ловит дефект приёмки QA 2026-07-16:
++«Задачи все пройдены — но стоит по ним ноль. Прогресс по курсу всё равно 37%».
++
++Первопричина: `_COURSES_PROGRESS_SQL` фильтровал `attempts.finished_at IS NOT NULL`.
++Но `attempts` в LMS — КУРСОВОГО уровня: одна попытка на пару (ученик, курс) копит
++результаты многих задач и остаётся открытой, пока ученик проходит курс —
++`finished_at` ей никто не проставляет (на проде на момент правки: завершено
++78 попыток из 352). Из-за фильтра всё, что ученик решает прямо сейчас, в процент
++не попадало: дерево курса показывало задачи пройденными (там своя реализация
++«пройдено», без фильтра), а счётчик рядом давал ноль.
++
++До правки первый тест падает: tasks_done == 0 и percent считается по материалам.
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++async def _create_student(db, *, prefix: str = "tsk261") -> tuple[int, str]:
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=f"{prefix}-stud", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.commit()
++    return u.id, token
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active) "
++            "VALUES (:u, :c, true) ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++    await db.commit()
++
++
++async def _pick_course_with_tasks(db) -> tuple[int, list[int]]:
++    """КОРНЕВОЙ курс со своими задачами и без подкурсов.
++
++    Корневой (нет строки в `course_parents` как child) — иначе триггер БД не даёт
++    записать ученика: «Teachers and students can only be linked to courses without
++    parents». Без подкурсов — чтобы дерево курса состояло только из его задач и
++    прогресс был предсказуем.
++    """
++    res = await db.execute(
++        text(
++            "SELECT t.course_id, COUNT(*) AS n "
++            "FROM tasks t "
++            "WHERE t.is_active = true "
++            "  AND t.requirement_level IN ('required','skippable') "
++            "  AND NOT EXISTS (SELECT 1 FROM course_parents cp "
++            "                  WHERE cp.course_id = t.course_id) "
++            "  AND NOT EXISTS (SELECT 1 FROM course_parents cp "
++            "                  WHERE cp.parent_course_id = t.course_id) "
++            "  AND NOT EXISTS (SELECT 1 FROM course_dependencies cd "
++            "                  WHERE cd.course_id = t.course_id) "
++            "GROUP BY t.course_id HAVING COUNT(*) >= 2 "
++            "ORDER BY t.course_id LIMIT 1"
++        )
++    )
++    row = res.fetchone()
++    if row is None:
++        pytest.skip("В dev-БД нет корневого курса без подкурсов с ≥2 активными задачами")
++    course_id = int(row[0])
++    res2 = await db.execute(
++        text(
++            "SELECT id FROM tasks WHERE course_id = :c AND is_active = true "
++            "  AND requirement_level IN ('required','skippable') "
++            "ORDER BY id LIMIT 2"
++        ),
++        {"c": course_id},
++    )
++    return course_id, [int(r[0]) for r in res2.fetchall()]
++
++
++async def _open_attempt(db, *, user_id: int, course_id: int) -> int:
++    """Открытая (finished_at IS NULL) course-level попытка — как на проде."""
++    res = await db.execute(
++        text(
++            "INSERT INTO attempts (user_id, course_id, source_system, finished_at, cancelled_at) "
++            "VALUES (:u, :c, 'spw', NULL, NULL) RETURNING id"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++    aid = int(res.scalar_one())
++    await db.commit()
++    return aid
++
++
++async def _result(db, *, user_id: int, task_id: int, attempt_id: int, score: int) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO task_results "
++            "(score, user_id, task_id, attempt_id, submitted_at, count_retry, received_at, "
++            " max_score, source_system, is_correct, checked_at) "
++            "VALUES (:s, :u, :t, :a, NOW(), 0, NOW(), 10, 'spw', :ic, NULL) RETURNING id"
++        ),
++        {"s": score, "u": user_id, "t": task_id, "a": attempt_id, "ic": score >= 5},
++    )
++    rid = int(res.scalar_one())
++    await db.commit()
++    return rid
++
++
++async def _cleanup(db, *, user_id: int, attempt_ids: list[int], result_ids: list[int]) -> None:
++    if result_ids:
++        await db.execute(
++            text("DELETE FROM task_results WHERE id = ANY(:ids)"), {"ids": result_ids}
++        )
++    if attempt_ids:
++        await db.execute(
++            text("DELETE FROM attempts WHERE id = ANY(:ids)"), {"ids": attempt_ids}
++        )
++    for tbl in ("user_courses", "user_session", "identity_link"):
++        await db.execute(
++            text(f"DELETE FROM {tbl} WHERE user_id = :u"), {"u": user_id}
++        )
++    await db.commit()
++
++
++async def _get_course(client, token: str, course_id: int) -> dict | None:
++    resp = await client.get(
++        "/api/v1/me/courses", headers={"Authorization": f"Bearer {token}"}
++    )
++    assert resp.status_code == 200, resp.text
++    for c in resp.json():
++        if c["course_id"] == course_id:
++            return c
++    return None
++
++
++@pytest.mark.asyncio
++async def test_open_attempt_result_counts_in_progress(db, client):
++    """Верный ответ в ОТКРЫТОЙ попытке даёт tasks_done ≥ 1 (падал до tsk-261)."""
++    user_id, token = await _create_student(db)
++    course_id, task_ids = await _pick_course_with_tasks(db)
++    await _enroll(db, user_id, course_id)
++    aid = await _open_attempt(db, user_id=user_id, course_id=course_id)
++    rid = await _result(db, user_id=user_id, task_id=task_ids[0], attempt_id=aid, score=10)
++    try:
++        course = await _get_course(client, token, course_id)
++        assert course is not None, "курс должен быть в /me/courses после enroll"
++        progress = course["progress"]
++        assert progress["tasks_done"] >= 1, (
++            "результат из открытой course-level попытки обязан считаться пройденным; "
++            f"получено {progress}"
++        )
++        assert progress["percent"] > 0, progress
++    finally:
++        await _cleanup(db, user_id=user_id, attempt_ids=[aid], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_open_attempt_failed_result_not_counted(db, client):
++    """Неверный ответ не должен считаться пройденным (порог 0.5)."""
++    user_id, token = await _create_student(db)
++    course_id, task_ids = await _pick_course_with_tasks(db)
++    await _enroll(db, user_id, course_id)
++    aid = await _open_attempt(db, user_id=user_id, course_id=course_id)
++    rid = await _result(db, user_id=user_id, task_id=task_ids[0], attempt_id=aid, score=1)
++    try:
++        course = await _get_course(client, token, course_id)
++        assert course is not None
++        assert course["progress"]["tasks_done"] == 0, course["progress"]
++    finally:
++        await _cleanup(db, user_id=user_id, attempt_ids=[aid], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_last_result_wins_over_earlier(db, client):
++    """Считается ПОСЛЕДНИЙ результат по задаче: провал после успеха → не пройдено."""
++    user_id, token = await _create_student(db)
++    course_id, task_ids = await _pick_course_with_tasks(db)
++    await _enroll(db, user_id, course_id)
++    aid = await _open_attempt(db, user_id=user_id, course_id=course_id)
++    rid_ok = await _result(db, user_id=user_id, task_id=task_ids[0], attempt_id=aid, score=10)
++    rid_bad = await _result(db, user_id=user_id, task_id=task_ids[0], attempt_id=aid, score=0)
++    try:
++        course = await _get_course(client, token, course_id)
++        assert course is not None
++        assert course["progress"]["tasks_done"] == 0, (
++            "последний результат — провал, задача не пройдена; "
++            f"получено {course['progress']}"
++        )
++    finally:
++        await _cleanup(db, user_id=user_id, attempt_ids=[aid], result_ids=[rid_ok, rid_bad])
++
++
++@pytest.mark.asyncio
++async def test_cancelled_attempt_result_ignored(db, client):
++    """Результат из аннулированной попытки не считается (единственный фильтр)."""
++    user_id, token = await _create_student(db)
++    course_id, task_ids = await _pick_course_with_tasks(db)
++    await _enroll(db, user_id, course_id)
++    aid = await _open_attempt(db, user_id=user_id, course_id=course_id)
++    rid = await _result(db, user_id=user_id, task_id=task_ids[0], attempt_id=aid, score=10)
++    await db.execute(
++        text("UPDATE attempts SET cancelled_at = NOW() WHERE id = :a"), {"a": aid}
++    )
++    await db.commit()
++    try:
++        course = await _get_course(client, token, course_id)
++        assert course is not None
++        assert course["progress"]["tasks_done"] == 0, course["progress"]
++    finally:
++        await _cleanup(db, user_id=user_id, attempt_ids=[aid], result_ids=[rid])
+diff --git a/tests/test_tsk261_next_item_position.py b/tests/test_tsk261_next_item_position.py
+new file mode 100644
+index 0000000..bdd62e4
+--- /dev/null
++++ b/tests/test_tsk261_next_item_position.py
+@@ -0,0 +1,314 @@
++"""tsk-261 (A4/A5): next-item ищет следующий шаг ОТ ТЕКУЩЕЙ ПОЗИЦИИ ученика.
++
++Дефект приёмки QA 2026-07-16:
++- A5: «не решила задание → перешла на новый блок → "Прошёл материал" → редирект
++  не на следующий блок, а на ПРЕДЫДУЩЕЕ невыполненное задание»;
++- A4: «"Материал пройден" → переходим в раздел 1.5, Задание 1 пропускается»
++  (ожидалось: возврат в список разделов).
++
++Первопричина одна: `resolve_next_item` не знал позицию ученика и всегда отдавал
++ПЕРВЫЙ незавершённый элемент по всему дереву курса.
++
++Строим дерево: root → [child1(2 материала, 1 задание), child2(2 материала)].
++Порядок обхода post-order: child1(мат) → child1(зад) → child2(мат) → root(мат).
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++from app.services.learning_engine_service import LearningEngineService
++
++
++async def _student(db) -> int:
++    email = f"tsk261pos-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name="tsk261pos", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    await db.commit()
++    return u.id
++
++
++async def _token(db, user_id: int) -> str:
++    token, _, _ = await create_session(db, user_id=user_id)
++    await db.commit()
++    return token
++
++
++async def _course(db, title: str) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level, is_required, course_uid) "
++            "VALUES (:t, 'self_guided', false, :uid) RETURNING id"
++        ),
++        {"t": title, "uid": f"tsk261pos-{random.randint(10**8, 10**10)}"},
++    )
++    cid = int(res.scalar_one())
++    await db.commit()
++    return cid
++
++
++async def _material(db, *, course_id: int, order_position: int, title: str) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO materials (course_id, type, content, order_position, title, "
++            " is_active, requirement_level) "
++            "VALUES (:c, 'text', CAST('{}' AS jsonb), :o, :t, true, 'required') RETURNING id"
++        ),
++        {"c": course_id, "o": order_position, "t": title},
++    )
++    mid = int(res.scalar_one())
++    await db.commit()
++    return mid
++
++
++async def _task(db, *, course_id: int, order_position: int) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, "
++            " difficulty_id, order_position, is_active, requirement_level) "
++            "VALUES (:uid, 10, CAST(:tc AS jsonb), :c, "
++            " (SELECT MIN(id) FROM difficulties), :o, true, 'required') RETURNING id"
++        ),
++        {
++            "uid": f"tsk261pos-{random.randint(10**8, 10**10)}",
++            "tc": '{"type": "SA", "stem": "test"}',
++            "c": course_id,
++            "o": order_position,
++        },
++    )
++    tid = int(res.scalar_one())
++    await db.commit()
++    return tid
++
++
++async def _link(db, *, course_id: int, parent_course_id: int, order_number: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
++            "VALUES (:c, :p, :o) ON CONFLICT DO NOTHING"
++        ),
++        {"c": course_id, "p": parent_course_id, "o": order_number},
++    )
++    await db.commit()
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active) "
++            "VALUES (:u, :c, true) ON CONFLICT DO NOTHING"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++    await db.commit()
++
++
++async def _complete_material(db, *, student_id: int, material_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_material_progress (student_id, material_id, status, completed_at) "
++            "VALUES (:s, :m, 'completed', NOW()) "
++            "ON CONFLICT (student_id, material_id) DO UPDATE SET status='completed'"
++        ),
++        {"s": student_id, "m": material_id},
++    )
++    await db.commit()
++
++
++@pytest.fixture
++async def tree(db):
++    """root → [child1(m1,m2,t1), child2(m3,m4)] + собственный материал root(m5)."""
++    user_id = await _student(db)
++    root = await _course(db, "tsk261 root")
++    child1 = await _course(db, "tsk261 child1")
++    child2 = await _course(db, "tsk261 child2")
++    await _link(db, course_id=child1, parent_course_id=root, order_number=1)
++    await _link(db, course_id=child2, parent_course_id=root, order_number=2)
++
++    m1 = await _material(db, course_id=child1, order_position=1, title="c1-m1")
++    m2 = await _material(db, course_id=child1, order_position=2, title="c1-m2")
++    t1 = await _task(db, course_id=child1, order_position=1)
++    m3 = await _material(db, course_id=child2, order_position=1, title="c2-m3")
++    m4 = await _material(db, course_id=child2, order_position=2, title="c2-m4")
++    m5 = await _material(db, course_id=root, order_position=1, title="root-m5")
++
++    await _enroll(db, user_id, root)
++    data = {
++        "user_id": user_id, "root": root, "child1": child1, "child2": child2,
++        "m1": m1, "m2": m2, "t1": t1, "m3": m3, "m4": m4, "m5": m5,
++    }
++    yield data
++
++    # Пользователя НЕ удаляем: create_session пишет в audit_event, а он
++    # append-only (триггер БД) — каскад от users на нём падает. Тестовый юзер
++    # остаётся в dev-БД, как и в остальных тестах (паттерн test_y62_*).
++    await db.execute(text("DELETE FROM student_material_progress WHERE student_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM user_courses WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM materials WHERE course_id = ANY(:ids)"), {"ids": [root, child1, child2]})
++    await db.execute(text("DELETE FROM tasks WHERE course_id = ANY(:ids)"), {"ids": [root, child1, child2]})
++    await db.execute(text("DELETE FROM course_parents WHERE parent_course_id=:r"), {"r": root})
++    await db.execute(text("DELETE FROM courses WHERE id = ANY(:ids)"), {"ids": [child1, child2, root]})
++    await db.commit()
++
++
++@pytest.mark.asyncio
++async def test_a5_no_jump_back_to_earlier_incomplete(db, tree):
++    """A5: с позиции m3 следующий шаг — m4, а НЕ задание t1 из прошлого блока.
++
++    Ученик прошёл m1, m2, оставил t1 нерешённым, ушёл в child2 и отметил m3.
++    До tsk-261 движок возвращал t1 (первый недоделанный по дереву) — ученика
++    отбрасывало назад. Это дословно жалоба QA.
++    """
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    await _complete_material(db, student_id=uid, material_id=tree["m1"])
++    await _complete_material(db, student_id=uid, material_id=tree["m2"])
++    await _complete_material(db, student_id=uid, material_id=tree["m3"])
++
++    # Прежнее поведение (без позиции) — тащит назад на t1.
++    old = await svc.resolve_next_item(db, uid, root_course_id=root)
++    assert old.type == "task" and old.task_id == tree["t1"], (
++        f"фиксируем прежнее поведение: {old}"
++    )
++
++    # С позицией — идём вперёд, к m4.
++    new = await svc.resolve_next_item(
++        db, uid, root_course_id=root, after_material_id=tree["m3"]
++    )
++    assert new.type == "material", new
++    assert new.material_id == tree["m4"], (
++        f"ожидали следующий материал того же блока (m4), получили {new}"
++    )
++
++
++@pytest.mark.asyncio
++async def test_a4_end_of_course_returns_none(db, tree):
++    """A4: позиция — последний элемент обхода (материал корня) → впереди пусто.
++
++    SPW на type=none возвращает ученика в список разделов — ожидаемый QA результат.
++    """
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    for m in ("m1", "m2", "m3", "m4", "m5"):
++        await _complete_material(db, student_id=uid, material_id=tree[m])
++
++    res = await svc.resolve_next_item(
++        db, uid, root_course_id=root, after_material_id=tree["m5"]
++    )
++    assert res.type == "none", f"после последнего элемента впереди ничего нет: {res}"
++
++
++@pytest.mark.asyncio
++async def test_position_in_same_course_goes_to_own_task(db, tree):
++    """С позиции m2 (последний материал child1) следующий шаг — задание t1 того же курса."""
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    await _complete_material(db, student_id=uid, material_id=tree["m1"])
++    await _complete_material(db, student_id=uid, material_id=tree["m2"])
++
++    res = await svc.resolve_next_item(
++        db, uid, root_course_id=root, after_material_id=tree["m2"]
++    )
++    assert res.type == "task" and res.task_id == tree["t1"], res
++
++
++@pytest.mark.asyncio
++async def test_position_task_skips_own_materials(db, tree):
++    """С позиции t1 материалы child1 уже позади → идём в child2 (m3)."""
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    # m1/m2 НЕ отмечены: они позади позиции и не должны тянуть назад.
++    res = await svc.resolve_next_item(
++        db, uid, root_course_id=root, after_task_id=tree["t1"]
++    )
++    assert res.type == "material" and res.material_id == tree["m3"], res
++
++
++@pytest.mark.asyncio
++async def test_unknown_position_falls_back_to_first_incomplete(db, tree):
++    """Позиция вне дерева → прежнее поведение (первый незавершённый с начала)."""
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    res = await svc.resolve_next_item(
++        db, uid, root_course_id=root, after_material_id=999_999_999
++    )
++    assert res.type == "material" and res.material_id == tree["m1"], res
++
++
++@pytest.mark.asyncio
++async def test_api_passes_position_through(db, client, tree):
++    """Проводка эндпоинта: query-параметр after_material_id доходит до движка.
++
++    Юнит-тесты выше зовут сервис напрямую; этот идёт через реальный HTTP-слой —
++    иначе забытый проброс параметра в `api/v1/learning.py` остался бы незамеченным.
++    """
++    uid, root = tree["user_id"], tree["root"]
++    token = await _token(db, uid)
++    await _complete_material(db, student_id=uid, material_id=tree["m1"])
++    await _complete_material(db, student_id=uid, material_id=tree["m2"])
++    await _complete_material(db, student_id=uid, material_id=tree["m3"])
++    headers = {"Authorization": f"Bearer {token}"}
++
++    # Без позиции — тащит назад на невыполненное задание t1.
++    r_old = await client.get(
++        f"/api/v1/learning/next-item?student_id={uid}&root_course_id={root}",
++        headers=headers,
++    )
++    assert r_old.status_code == 200, r_old.text
++    assert r_old.json()["task_id"] == tree["t1"], r_old.json()
++
++    # С позицией — вперёд, на m4.
++    r_new = await client.get(
++        f"/api/v1/learning/next-item?student_id={uid}&root_course_id={root}"
++        f"&after_material_id={tree['m3']}",
++        headers=headers,
++    )
++    assert r_new.status_code == 200, r_new.text
++    body = r_new.json()
++    assert body["type"] == "material" and body["material_id"] == tree["m4"], body
++
++
++@pytest.mark.asyncio
++async def test_blocked_limit_still_detected_forward(db, tree):
++    """Позиционный обход не теряет blocked_limit впереди по курсу."""
++    svc = LearningEngineService()
++    uid, root = tree["user_id"], tree["root"]
++    await _complete_material(db, student_id=uid, material_id=tree["m1"])
++    await _complete_material(db, student_id=uid, material_id=tree["m2"])
++    # Исчерпать лимит по t1: 3 результата с провалом в открытой попытке.
++    res_a = await db.execute(
++        text(
++            "INSERT INTO attempts (user_id, course_id, source_system) "
++            "VALUES (:u, :c, 'spw') RETURNING id"
++        ),
++        {"u": uid, "c": tree["child1"]},
++    )
++    aid = int(res_a.scalar_one())
++    for _ in range(3):
++        await db.execute(
++            text(
++                "INSERT INTO task_results (score, user_id, task_id, attempt_id, submitted_at, "
++                " count_retry, received_at, max_score, source_system, is_correct) "
++                "VALUES (0, :u, :t, :a, NOW(), 0, NOW(), 10, 'spw', false)"
++            ),
++            {"u": uid, "t": tree["t1"], "a": aid},
++        )
++    await db.commit()
++    try:
++        res = await svc.resolve_next_item(
++            db, uid, root_course_id=root, after_material_id=tree["m2"]
++        )
++        assert res.type == "blocked_limit" and res.task_id == tree["t1"], res
++    finally:
++        await db.execute(text("DELETE FROM task_results WHERE attempt_id=:a"), {"a": aid})
++        await db.execute(text("DELETE FROM attempts WHERE id=:a"), {"a": aid})
++        await db.commit()

@@ -28,4 +28,3 @@ Any significant error made by Cursor agents must be:
 For `audit`/`configure` tasks:
 - no open high-severity Cursor-agent mistakes without prevention plan
 - at least one concrete preventive update for each recurring error pattern
-

@@ -25,4 +25,3 @@
 - Require safe retry semantics and duplicate prevention.
 - Include content validation and sanitization policy.
 - Include post-publish verification and reporting steps.
-

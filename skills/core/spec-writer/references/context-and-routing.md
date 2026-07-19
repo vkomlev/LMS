@@ -29,7 +29,7 @@ For implementation, rollout, release, QA, docs, infrastructure, or multi-project
 
 Create or reuse a Root task when the user explicitly asks to do tracked work or uses language such as "сделай", "реализуй", "нужно", "берем в работу", "закрывай", "задача", or "трекер".
 
-Creating `D:/Work/Root/tasks/tsk-NNN-{slug}.md` for an agreed plan is routine agent work, not operator handoff. If the Root CLI is still interactive, create the MD file directly from `D:/Work/Root/Docs/ai/data-model.md`, rebuild `_index.md`, and validate the graph.
+Creating a Root task for an agreed plan is routine agent work, not operator handoff. Use `python -m orchestrator new-task --non-interactive --json --title ... --projects ...`; if you must write the body yourself, reserve the id first with `python -m orchestrator claim-id --kind=tsk`. Never compute `max + 1` from existing task files. Rebuild `_index.md` and validate the graph after task changes.
 
 The resulting spec should reference the existing `tsk-NNN`; it should not ask the operator to create the task.
 

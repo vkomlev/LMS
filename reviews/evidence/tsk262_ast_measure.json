@@ -1,0 +1,229 @@
+{
+  "tasks_total": 153,
+  "refs_broken": [
+    {
+      "task_id": 280,
+      "code": "wp:task:komlev:spiski-massivy-v-python:28",
+      "sample": "1.apple\n2.banana\n3.orange\n"
+    },
+    {
+      "task_id": 581,
+      "code": "wp:task:komlev:zadanie-24-ege-po-informatike-obrabotka-teksta:custom:9009",
+      "sample": "https www.example.com /path/to/page"
+    },
+    {
+      "task_id": 2300,
+      "code": "ext:d4:sdamgia:20260602:76223",
+      "sample": "можно найти с помощью следующей программы: from math import comb ans=sum(comb(4,n-1)*5**(5-n) for n in range(2,6))+sum(4*comb(4,n)*5**(4-n) for n in range(2,5)) print(ans) Приведём решение на языке Py"
+    },
+    {
+      "task_id": 2303,
+      "code": "ext:d4:sdamgia:20260602:26982",
+      "sample": "720 + 576 = 1296"
+    },
+    {
+      "task_id": 2304,
+      "code": "ext:d4:sdamgia:20260602:72566",
+      "sample": "21 · (14 6 -5 6 -6 · 9 · 5 5 ) = 154248381"
+    },
+    {
+      "task_id": 2327,
+      "code": "ext:d4:sdamgia:20260602:58248",
+      "sample": "75 · 5 + 4 · 4 = 391"
+    },
+    {
+      "task_id": 2338,
+      "code": "ext:d4:sdamgia:20260602:37136",
+      "sample": "— 12 + 9 = 21"
+    },
+    {
+      "task_id": 5499,
+      "code": "wp:python-podrostki-tema-6-cikly#q8",
+      "sample": "for i in range(10):"
+    },
+    {
+      "task_id": 5578,
+      "code": "wp:dsm-tema-4-cikly#q8",
+      "sample": "for i in range(10):"
+    },
+    {
+      "task_id": 5612,
+      "code": "wp:dsm-tema-7-funkcii#q7",
+      "sample": "def ploschad(a, b):"
+    },
+    {
+      "task_id": 5622,
+      "code": "wp:dsm-tema-8-proekt#q5",
+      "sample": "if x % 2 == 0:"
+    },
+    {
+      "task_id": 5627,
+      "code": "wp:dsm-tema-8-proekt#q10",
+      "sample": "if x % 3 == 0:"
+    },
+    {
+      "task_id": 5633,
+      "code": "wp:python-podrostki-tema-8-funkcii#q6",
+      "sample": "def privet():"
+    },
+    {
+      "task_id": 5634,
+      "code": "wp:python-podrostki-tema-8-funkcii#q7",
+      "sample": "def udar(uron):"
+    },
+    {
+      "task_id": 5757,
+      "code": "wp:python-podrostki-tema-10-turtle-anim#q6",
+      "sample": "for i in range(36):"
+    },
+    {
+      "task_id": 5843,
+      "code": "authored:chat-boty-tg-vk-max:sobiraem-bot-kviz#q1",
+      "sample": "+="
+    },
+    {
+      "task_id": 6332,
+      "code": "wp:trek-1-bezopasnost-secrets#q2",
+      "sample": ".env"
+    },
+    {
+      "task_id": 6333,
+      "code": "wp:trek-1-bezopasnost-secrets#q3",
+      "sample": ".gitignore"
+    },
+    {
+      "task_id": 6343,
+      "code": "wp:trek-1-praktika-fundament#q3",
+      "sample": ".env"
+    },
+    {
+      "task_id": 6382,
+      "code": "wp:trek-1-sobiraem-bota#q2",
+      "sample": ".env"
+    },
+    {
+      "task_id": 6393,
+      "code": "wp:trek-1-praktika-bot#q1",
+      "sample": ".env"
+    },
+    {
+      "task_id": 6813,
+      "code": "authored:oge-informatika:zadanie-12#q1",
+      "sample": "*.pdf"
+    },
+    {
+      "task_id": 7143,
+      "code": "wp:trek-1-praktika-bot#q4",
+      "sample": ".env"
+    },
+    {
+      "task_id": 9203,
+      "code": "wp:qa-manual-g9-l5#q7",
+      "sample": "SELECT COUNT(*) FROM enrollments WHERE course_id = 5;"
+    },
+    {
+      "task_id": 9214,
+      "code": "wp:qa-manual-g9-l6#q8",
+      "sample": "SELECT name FROM users WHERE id IN (SELECT user_id FROM enrollments);"
+    },
+    {
+      "task_id": 9223,
+      "code": "wp:qa-manual-g9-l7#q7",
+      "sample": "INSERT INTO users (name, email) VALUES ('QA Тест', 'qa@example.com');"
+    }
+  ],
+  "results_total": 60,
+  "counters": {
+    "current_pass": 28,
+    "naive_pass": 22,
+    "proposed_pass": 29,
+    "answer_unparsed": 16
+  },
+  "unparsed_answers": [
+    {
+      "task_id": 5456,
+      "value": "print( За год накопится: {za_god}')"
+    },
+    {
+      "task_id": 5499,
+      "value": "for I in range(9)"
+    },
+    {
+      "task_id": 5499,
+      "value": "for I in range(9):"
+    },
+    {
+      "task_id": 5499,
+      "value": "for i in range(9):"
+    },
+    {
+      "task_id": 5499,
+      "value": "for i in range(9):"
+    },
+    {
+      "task_id": 5499,
+      "value": "for i in range(10):"
+    },
+    {
+      "task_id": 5526,
+      "value": "spisok.append(\"ёж\")."
+    },
+    {
+      "task_id": 5633,
+      "value": "def privet()"
+    },
+    {
+      "task_id": 5633,
+      "value": "def privet()"
+    },
+    {
+      "task_id": 5634,
+      "value": "def udar(uron)"
+    },
+    {
+      "task_id": 5634,
+      "value": "def udar(uron)"
+    },
+    {
+      "task_id": 5757,
+      "value": "for i in range(35):"
+    },
+    {
+      "task_id": 5757,
+      "value": "for i in range(36):"
+    },
+    {
+      "task_id": 6332,
+      "value": ".env"
+    },
+    {
+      "task_id": 6343,
+      "value": ".env"
+    },
+    {
+      "task_id": 6343,
+      "value": ".env"
+    }
+  ],
+  "changes": [
+    {
+      "result_id": 1932,
+      "task_id": 5448,
+      "task_code": "wp:python-podrostki-tema-3-stroki#q7",
+      "user_id": 3,
+      "value": "print(slovo .lower())",
+      "accepted": [
+        "print(slovo.lower())"
+      ],
+      "steps": [
+        "trim",
+        "strip_punctuation",
+        "collapse_spaces"
+      ],
+      "current": false,
+      "naive": true,
+      "proposed": true,
+      "path": "ast"
+    }
+  ]
+}

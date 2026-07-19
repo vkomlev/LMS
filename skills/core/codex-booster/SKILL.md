@@ -16,7 +16,7 @@ description: "Operate and improve Codex within the Cursor-based booster environm
 2. Determine the source case:
 - default source is the current chat if the user did not name another case;
 - extract the concrete incident, affected artifact, and expected behavior.
-3. Load fleet context from [references/fleet-map.md](references/fleet-map.md), routing context from [references/skill-catalog.md](references/skill-catalog.md), and shared booster invariants from [references/booster-shared.md](references/booster-shared.md).
+3. Load fleet context from [references/fleet-map.md](references/fleet-map.md), routing context from [references/skill-catalog.md](references/skill-catalog.md), skill-route registry rules from [references/skill-routing-registry.md](references/skill-routing-registry.md), and shared booster invariants from [references/booster-shared.md](references/booster-shared.md).
 4. Before editing any skill, classify ownership and runtime:
 - canonical source-of-truth;
 - required mirrors/runtime copies;
@@ -87,7 +87,11 @@ verification.
 - use [references/claude-import-checklist.md](references/claude-import-checklist.md);
 - compare live Claude coverage from `C:/Users/user/.claude` against source and Codex runtime before editing;
 - import platform-neutral invariants and adapt platform-specific mechanics through [references/codex-project-binding.md](references/codex-project-binding.md);
+- when importing Claude skill-route gate practice, use [references/skill-routing-registry.md](references/skill-routing-registry.md): the registry is read-only advisory data for Codex, not a Codex pre-write gate;
 - update source-of-truth first, then package runtime and project mirrors.
+15a. When importing ContentAnalyzer bucket decisions from Claude practice, follow
+[references/claude-import-checklist.md](references/claude-import-checklist.md)
+for marker outcomes and legacy processed-only entries.
 16. For rollout, use [references/rollout-ops.md](references/rollout-ops.md) and do dry-run first.
 17. For project-bound generated assets and handoffs, reconcile every requested asset before closure:
 `requested -> generated -> saved in workspace -> inserted or explicitly delegated/rejected/blocked -> published/verified when in scope`.
@@ -119,6 +123,7 @@ Do not report asset work as complete while approved generated files remain orpha
 - `Second-Opinion Gate`
 - `Mirror Parity Check`
 - `Claude Practice Import Map`
+- `Skill Routing Registry Check`
 - `Post-Edit Skill Index Check`
 - `Cursor Error Loop Actions`
 - `Register Update`
@@ -140,3 +145,4 @@ Do not report asset work as complete while approved generated files remain orpha
 - Treat project-bound generated assets as unresolved until every generated file is consumed by the project, explicitly delegated, rejected, or blocked; a PNG on disk is not a completed visual.
 - In `optimize` mode, prefer behavioral equivalence with fewer instructions over verbatim preservation of duplicated wording.
 - In `import-claude` mode, import invariants and verified workflow patterns; do not copy Claude-only permissions, command syntax, hooks, or runtime assumptions without a Codex mapping.
+- Treat Claude `skill_routing.json` as read-only route advice in Codex; do not claim Codex has enforcement unless a Codex-side pre-write/pre-commit mechanism was actually implemented and verified.

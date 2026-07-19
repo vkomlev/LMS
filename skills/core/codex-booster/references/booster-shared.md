@@ -13,6 +13,11 @@ ledger entry after the work.
 2. Log the incident in the right register:
 - Codex skill defect: project-local `docs/ai/ERRORS.md` or `d:/Work/IDE_booster/Docs/ai/ERRORS.md`.
 - Response quality defect: `d:/Work/IDE_booster/Docs/ai/ANSWER_ERRORS.md`.
+- Course-authoring or course-review quality defect: `skills/codex-booster/references/course-quality-errors.md`
+  when the pattern should follow Codex skills, plus project-local `docs/ai/errors.md`
+  when the concrete course/project needs the lesson.
+- Skill improvement chronology: `skills/codex-booster/references/improvement-log.md`
+  for cross-skill imports and RCA summaries that should survive runtime regeneration.
 - Cursor agent defect: project/Cursor register, then route through `cursor-booster`.
 - Claude source defect: Claude register, then import only platform-neutral invariants into Codex.
 3. Run `5 Whys` until the root is `instruction gap`, `context gap`, or `execution gap`.
@@ -87,8 +92,8 @@ Use `D:/Work/Root/agents/` as the shared coordination registry for Claude,
 Codex, and Cursor:
 
 - `ownership.md` defines shared resources and generated mirrors.
-- `_index.md` stores live claims with TTL.
-- `_ledger.md` is append-only history of completed cross-agent actions.
+- `_index.md` shows live claims with TTL, generated from `agents/claims/`.
+- `_ledger.md` shows completed cross-agent actions, generated from `agents/ledger/`.
 - `handoff/` stores specs and transfer artifacts.
 
 Before writing to any shared resource, follow `agents/README.md` Step 0-A. This
@@ -96,9 +101,14 @@ is required for skill trees, global instructions, shared registers, course
 content, WP/LMS publication paths, `.mcp.json`, hooks, and any run of
 `package-skills.py` that changes mirrors.
 
+Use the Root commands, not manual edits: `claim-take` before writing,
+`claim-release` after writing, and `ledger-add --agent codex` for the
+completion record.
+Do not edit `agents/_index.md` or `agents/_ledger.md` directly.
+
 Generated mirrors are never edited directly. For Codex, edit
 `D:/Work/IDE_booster/skills/` or the appropriate source document, then package
-and record the consequences in `_ledger.md`.
+and record the consequences through `ledger-add --agent codex`.
 
 ## Cross-Agent Second Opinion
 

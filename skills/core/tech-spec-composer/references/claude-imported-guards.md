@@ -37,4 +37,3 @@ Include the relevant guard when applicable:
 ## Operator Artifacts
 
 Artifacts meant for a human operator must answer one business question end to end. A file that merely opens, has headers, or has matching row counts is not enough if the operator must mentally join incompatible populations.
-
