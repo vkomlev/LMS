@@ -78,7 +78,10 @@ class ReviewClaimItem(BaseModel):
     max_score: Optional[int] = None
     is_correct: Optional[bool] = None
     answer_json: Optional[Dict[str, Any]] = None
-    task_title: Optional[str] = None
+    task_title: Optional[str] = Field(
+        None,
+        description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",
+    )
     user_name: Optional[str] = None
     course_id: Optional[int] = None
     # tsk-298 Фаза 2: attempt_id нужен веб-порталу для построения URL скачивания
@@ -99,7 +102,10 @@ class PendingReviewItem(BaseModel):
     task_id: int
     user_id: int
     user_name: Optional[str] = None
-    task_title: Optional[str] = Field(None, description="external_uid задания")
+    task_title: Optional[str] = Field(
+        None,
+        description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",
+    )
     course_id: Optional[int] = None
     score: int
     max_score: Optional[int] = None

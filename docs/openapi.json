@@ -24705,7 +24705,7 @@
               }
             ],
             "title": "Task Title",
-            "description": "external_uid задания"
+            "description": "Человекочитаемый заголовок задания (title → очищенный stem → external_uid)"
           },
           "course_id": {
             "anyOf": [
@@ -24969,7 +24969,8 @@
                 "type": "null"
               }
             ],
-            "title": "Task Title"
+            "title": "Task Title",
+            "description": "Человекочитаемый заголовок задания (title → очищенный stem → external_uid)"
           },
           "user_name": {
             "anyOf": [

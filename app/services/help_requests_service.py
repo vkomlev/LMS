@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
+from app.utils.task_title import humanize_task_title
 from app.services.learning_events_service import (
     record_help_request_opened,
     record_help_request_closed,
@@ -52,11 +53,18 @@ def _normalize_due_at(due_at: Any) -> Optional[datetime]:
     return None
 
 
-def _task_title_display(task_id: int, external_uid: Optional[str]) -> str:
-    """Заголовок задания для отображения (MVP)."""
-    if external_uid:
-        return external_uid
-    return f"Задание #{task_id}"
+def _task_title_display(
+    task_id: int,
+    external_uid: Optional[str],
+    title: Optional[str] = None,
+    stem: Optional[str] = None,
+) -> str:
+    """Человекочитаемый заголовок задания для отображения (tsk-298 follow-up).
+
+    Делегирует в общий helper: curated title → очищенный stem → external_uid
+    → «Задание #id». Раньше отдавал сырой external_uid (MVP-заглушка).
+    """
+    return humanize_task_title(task_id, title, stem, external_uid)
 
 
 async def resolve_assigned_teacher(
@@ -335,7 +343,9 @@ async def list_help_requests(
                    hr.priority, hr.due_at,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
-                   c.title AS course_title
+                   c.title AS course_title,
+                   t.task_content->>'title' AS task_title_raw,
+                   t.task_content->>'stem' AS task_stem
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -371,7 +381,12 @@ async def list_help_requests(
             "due_at": due_at_norm,
             "is_overdue": due_at_norm is not None and due_at_norm < now,
             "student_name": row[15] if len(row) > 15 else None,
-            "task_title": _task_title_display(row[6], row[16]) if len(row) > 16 and (row[16] or row[6]) else None,
+            "task_title": _task_title_display(
+                row[6],
+                row[16] if len(row) > 16 else None,
+                row[18] if len(row) > 18 else None,
+                row[19] if len(row) > 19 else None,
+            ),
             "course_title": row[17] if len(row) > 17 else None,
         })
     return (items, total)
@@ -405,7 +420,9 @@ async def get_help_request_detail(
                    hr.priority, hr.due_at,
                    u.full_name AS student_name,
                    t.external_uid AS task_external_uid,
-                   c.title AS course_title
+                   c.title AS course_title,
+                   t.task_content->>'title' AS task_title_raw,
+                   t.task_content->>'stem' AS task_stem
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -473,7 +490,12 @@ async def get_help_request_detail(
         "due_at": due_at_norm,
         "is_overdue": is_overdue,
         "student_name": row[19] if len(row) > 19 else None,
-        "task_title": _task_title_display(row[3], row[20]) if len(row) > 20 and (row[20] or row[3]) else None,
+        "task_title": _task_title_display(
+            row[3],
+            row[20] if len(row) > 20 else None,
+            row[22] if len(row) > 22 else None,
+            row[23] if len(row) > 23 else None,
+        ),
         "course_title": row[21] if len(row) > 21 else None,
         "history": replies,
     }, None)

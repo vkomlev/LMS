@@ -20,6 +20,8 @@ from typing import Any, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.task_title import humanize_task_title
+
 logger = logging.getLogger(__name__)
 
 # Кэш идемпотентности claim: ключ (teacher_id, idempotency_key, "help"|"review") -> (item, token, expires_at, cache_until)
@@ -381,13 +383,21 @@ async def claim_next_review(
     # Догрузить task title и user name для ответа
     r2 = await db.execute(
         text("""
-            SELECT t.external_uid, t.course_id FROM tasks t WHERE t.id = :task_id
+            SELECT t.external_uid, t.course_id,
+                   t.task_content->>'title', t.task_content->>'stem'
+            FROM tasks t WHERE t.id = :task_id
         """),
         {"task_id": task_id},
     )
     trow = r2.fetchone()
-    task_title = trow[0] if trow else None
     course_id_val = trow[1] if trow and len(trow) > 1 else None
+    # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
+    task_title = humanize_task_title(
+        task_id,
+        trow[2] if trow and len(trow) > 2 else None,
+        trow[3] if trow and len(trow) > 3 else None,
+        trow[0] if trow else None,
+    ) if trow else None
     r3 = await db.execute(
         text("SELECT full_name FROM users WHERE id = :uid"),
         {"uid": user_id_val},
@@ -566,7 +576,7 @@ async def claim_review_by_id(
                    OR tr.review_claimed_by = :teacher_id)
             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
                       tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
-                      tr.attempt_id
+                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem'
         """),
         {
             "result_id": result_id,
@@ -586,8 +596,11 @@ async def claim_review_by_id(
 
     (
         rid, task_id, user_id_val, score, submitted_at,
-        max_score, is_correct, answer_json, task_title, course_id_val, attempt_id_val,
+        max_score, is_correct, answer_json, task_external_uid, course_id_val, attempt_id_val,
+        task_title_raw, task_stem,
     ) = urow
+    # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
+    task_title = humanize_task_title(task_id, task_title_raw, task_stem, task_external_uid)
     r3 = await db.execute(
         text("SELECT full_name FROM users WHERE id = :uid"), {"uid": user_id_val}
     )
@@ -1022,7 +1035,9 @@ async def list_pending_reviews(
                    tr.max_score, tr.is_correct, tr.submitted_at,
                    t.external_uid, t.course_id, u.full_name,
                    (tr.review_claim_expires_at IS NOT NULL
-                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed
+                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed,
+                   t.task_content->>'title' AS task_title_raw,
+                   t.task_content->>'stem' AS task_stem
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
@@ -1042,7 +1057,8 @@ async def list_pending_reviews(
             "max_score": row[5],
             "is_correct": row[6],
             "submitted_at": row[7],
-            "task_title": row[8],
+            # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
+            "task_title": humanize_task_title(row[2], row[12], row[13], row[8]),
             "course_id": row[9],
             "user_name": row[10],
             "is_claimed": bool(row[11]),

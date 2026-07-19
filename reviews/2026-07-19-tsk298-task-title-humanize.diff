@@ -1,0 +1,217 @@
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index 4968979..5eb46a2 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -78,7 +78,10 @@ class ReviewClaimItem(BaseModel):
+     max_score: Optional[int] = None
+     is_correct: Optional[bool] = None
+     answer_json: Optional[Dict[str, Any]] = None
+-    task_title: Optional[str] = None
++    task_title: Optional[str] = Field(
++        None,
++        description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",
++    )
+     user_name: Optional[str] = None
+     course_id: Optional[int] = None
+     # tsk-298 Фаза 2: attempt_id нужен веб-порталу для построения URL скачивания
+@@ -99,7 +102,10 @@ class PendingReviewItem(BaseModel):
+     task_id: int
+     user_id: int
+     user_name: Optional[str] = None
+-    task_title: Optional[str] = Field(None, description="external_uid задания")
++    task_title: Optional[str] = Field(
++        None,
++        description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",
++    )
+     course_id: Optional[int] = None
+     score: int
+     max_score: Optional[int] = None
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 63a9aeb..10b44a9 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.help_requests import HelpRequests
+ from app.models.help_request_replies import HelpRequestReplies
++from app.utils.task_title import humanize_task_title
+ from app.services.learning_events_service import (
+     record_help_request_opened,
+     record_help_request_closed,
+@@ -52,11 +53,18 @@ def _normalize_due_at(due_at: Any) -> Optional[datetime]:
+     return None
+ 
+ 
+-def _task_title_display(task_id: int, external_uid: Optional[str]) -> str:
+-    """Заголовок задания для отображения (MVP)."""
+-    if external_uid:
+-        return external_uid
+-    return f"Задание #{task_id}"
++def _task_title_display(
++    task_id: int,
++    external_uid: Optional[str],
++    title: Optional[str] = None,
++    stem: Optional[str] = None,
++) -> str:
++    """Человекочитаемый заголовок задания для отображения (tsk-298 follow-up).
++
++    Делегирует в общий helper: curated title → очищенный stem → external_uid
++    → «Задание #id». Раньше отдавал сырой external_uid (MVP-заглушка).
++    """
++    return humanize_task_title(task_id, title, stem, external_uid)
+ 
+ 
+ async def resolve_assigned_teacher(
+@@ -335,7 +343,9 @@ async def list_help_requests(
+                    hr.priority, hr.due_at,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+-                   c.title AS course_title
++                   c.title AS course_title,
++                   t.task_content->>'title' AS task_title_raw,
++                   t.task_content->>'stem' AS task_stem
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -371,7 +381,12 @@ async def list_help_requests(
+             "due_at": due_at_norm,
+             "is_overdue": due_at_norm is not None and due_at_norm < now,
+             "student_name": row[15] if len(row) > 15 else None,
+-            "task_title": _task_title_display(row[6], row[16]) if len(row) > 16 and (row[16] or row[6]) else None,
++            "task_title": _task_title_display(
++                row[6],
++                row[16] if len(row) > 16 else None,
++                row[18] if len(row) > 18 else None,
++                row[19] if len(row) > 19 else None,
++            ),
+             "course_title": row[17] if len(row) > 17 else None,
+         })
+     return (items, total)
+@@ -405,7 +420,9 @@ async def get_help_request_detail(
+                    hr.priority, hr.due_at,
+                    u.full_name AS student_name,
+                    t.external_uid AS task_external_uid,
+-                   c.title AS course_title
++                   c.title AS course_title,
++                   t.task_content->>'title' AS task_title_raw,
++                   t.task_content->>'stem' AS task_stem
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -473,7 +490,12 @@ async def get_help_request_detail(
+         "due_at": due_at_norm,
+         "is_overdue": is_overdue,
+         "student_name": row[19] if len(row) > 19 else None,
+-        "task_title": _task_title_display(row[3], row[20]) if len(row) > 20 and (row[20] or row[3]) else None,
++        "task_title": _task_title_display(
++            row[3],
++            row[20] if len(row) > 20 else None,
++            row[22] if len(row) > 22 else None,
++            row[23] if len(row) > 23 else None,
++        ),
+         "course_title": row[21] if len(row) > 21 else None,
+         "history": replies,
+     }, None)
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 59b71f2..9bf6dbb 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -20,6 +20,8 @@ from typing import Any, Optional, Tuple
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.utils.task_title import humanize_task_title
++
+ logger = logging.getLogger(__name__)
+ 
+ # Кэш идемпотентности claim: ключ (teacher_id, idempotency_key, "help"|"review") -> (item, token, expires_at, cache_until)
+@@ -381,13 +383,21 @@ async def claim_next_review(
+     # Догрузить task title и user name для ответа
+     r2 = await db.execute(
+         text("""
+-            SELECT t.external_uid, t.course_id FROM tasks t WHERE t.id = :task_id
++            SELECT t.external_uid, t.course_id,
++                   t.task_content->>'title', t.task_content->>'stem'
++            FROM tasks t WHERE t.id = :task_id
+         """),
+         {"task_id": task_id},
+     )
+     trow = r2.fetchone()
+-    task_title = trow[0] if trow else None
+     course_id_val = trow[1] if trow and len(trow) > 1 else None
++    # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
++    task_title = humanize_task_title(
++        task_id,
++        trow[2] if trow and len(trow) > 2 else None,
++        trow[3] if trow and len(trow) > 3 else None,
++        trow[0] if trow else None,
++    ) if trow else None
+     r3 = await db.execute(
+         text("SELECT full_name FROM users WHERE id = :uid"),
+         {"uid": user_id_val},
+@@ -566,7 +576,7 @@ async def claim_review_by_id(
+                    OR tr.review_claimed_by = :teacher_id)
+             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
+                       tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
+-                      tr.attempt_id
++                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem'
+         """),
+         {
+             "result_id": result_id,
+@@ -586,8 +596,11 @@ async def claim_review_by_id(
+ 
+     (
+         rid, task_id, user_id_val, score, submitted_at,
+-        max_score, is_correct, answer_json, task_title, course_id_val, attempt_id_val,
++        max_score, is_correct, answer_json, task_external_uid, course_id_val, attempt_id_val,
++        task_title_raw, task_stem,
+     ) = urow
++    # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
++    task_title = humanize_task_title(task_id, task_title_raw, task_stem, task_external_uid)
+     r3 = await db.execute(
+         text("SELECT full_name FROM users WHERE id = :uid"), {"uid": user_id_val}
+     )
+@@ -1022,7 +1035,9 @@ async def list_pending_reviews(
+                    tr.max_score, tr.is_correct, tr.submitted_at,
+                    t.external_uid, t.course_id, u.full_name,
+                    (tr.review_claim_expires_at IS NOT NULL
+-                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed
++                    AND tr.review_claim_expires_at >= :now_ts) AS is_claimed,
++                   t.task_content->>'title' AS task_title_raw,
++                   t.task_content->>'stem' AS task_stem
+             FROM task_results tr
+             JOIN tasks t ON t.id = tr.task_id
+             LEFT JOIN users u ON u.id = tr.user_id
+@@ -1042,7 +1057,8 @@ async def list_pending_reviews(
+             "max_score": row[5],
+             "is_correct": row[6],
+             "submitted_at": row[7],
+-            "task_title": row[8],
++            # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
++            "task_title": humanize_task_title(row[2], row[12], row[13], row[8]),
+             "course_id": row[9],
+             "user_name": row[10],
+             "is_claimed": bool(row[11]),
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 6fde8c7..835633f 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -24705,7 +24705,7 @@
+               }
+             ],
+             "title": "Task Title",
+-            "description": "external_uid задания"
++            "description": "Человекочитаемый заголовок задания (title → очищенный stem → external_uid)"
+           },
+           "course_id": {
+             "anyOf": [
+@@ -24969,7 +24969,8 @@
+                 "type": "null"
+               }
+             ],
+-            "title": "Task Title"
++            "title": "Task Title",
++            "description": "Человекочитаемый заголовок задания (title → очищенный stem → external_uid)"
+           },
+           "user_name": {
+             "anyOf": [
