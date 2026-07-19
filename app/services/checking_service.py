@@ -29,6 +29,41 @@ class CheckingService:
     вернуть CheckResult без обращения к БД и FastAPI.
     """
 
+    @staticmethod
+    def build_solution_rules(
+        raw: Optional[Dict],
+        fallback_max_score: Optional[int],
+    ) -> SolutionRules:
+        """
+        Строит SolutionRules из JSON-поля tasks.solution_rules.
+
+        tsk-325 (F5): у 1116 импортированных заданий ЕГЭ/Python правило проверки
+        не заведено — solution_rules хранит JSON null (→ Python None) или пусто.
+        Прежний `SolutionRules.model_validate(raw or {})` бросал ошибку на
+        обязательном max_score, из-за чего приём ответа падал 500 (аудит tsk-299).
+
+        Пока правило не заведено — не автопроверяем: возвращаем минимальный
+        валидный объект с max_score из самой задачи (tasks.max_score). Для SA_COM
+        это значит short_answer=None → checking_service вернёт is_correct=None
+        («сверять нечем»), а вызывающий эндпоинт уведёт ответ в ручную проверку,
+        как для SA_COM без эталона (tsk-210). Ответ ученика при этом ПРИНИМАЕТСЯ,
+        приём не падает. F1 заводит правила там, где ответ известен (790 заданий);
+        этот фолбэк — сетка для оставшихся без ответа (Яндекс/Крылов) до их
+        отдельных задач (tsk-100 / tsk-317).
+
+        Args:
+            raw: JSON-значение tasks.solution_rules (None при JSON null / SQL NULL).
+            fallback_max_score: tasks.max_score — используется, когда правило пустое.
+
+        Returns:
+            Валидный SolutionRules (полноценный при непустом raw, деградированный
+            в ручную проверку при пустом).
+        """
+        if not raw:
+            max_score = fallback_max_score if (fallback_max_score or 0) > 0 else 1
+            return SolutionRules(max_score=max_score)
+        return SolutionRules.model_validate(raw)
+
     def check_task(
         self,
         task_content: TaskContent,

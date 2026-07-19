@@ -36,7 +36,6 @@ from app.schemas.checking import (
     CheckFeedback,
 )
 from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
-from app.schemas.solution_rules import SolutionRules
 
 from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
@@ -445,7 +444,16 @@ async def submit_attempt_answers(
 
         # 2.2 Приводим JSON к строгим схемам
         task_content = TaskContent.model_validate(task.task_content)
-        solution_rules = SolutionRules.model_validate(task.solution_rules or {})
+        # tsk-325 (F5): solution_rules может быть JSON null / пусто (1116 импортированных
+        # заданий ЕГЭ/Python, аудит tsk-299 — правило автопроверки не заведено). Прежний
+        # `SolutionRules.model_validate(task.solution_rules or {})` бросал ошибку на
+        # обязательном max_score → приём ответа падал 500. Строим правило через
+        # build_solution_rules: непустое валидируем как раньше, пустое деградирует в
+        # минимальный валидный объект (max_score из задачи) — SA_COM без правил уйдёт в
+        # ручную проверку (is_correct=None) существующим 2.3d, ответ не теряется.
+        solution_rules = checking_service.build_solution_rules(
+            task.solution_rules, task.max_score
+        )
 
         # 2.3 Проверяем ответ
         answer: StudentAnswer = item.answer

@@ -1,0 +1,70 @@
+# tsk-325 (F1+F5): починка null solution_rules у 40% заданий ЕГЭ/Python
+
+- **Дата:** 2026-07-19
+- **Задача:** tsk-325 (P0), находки F1+F5 аудита импорта [tsk-299](../docs/qa/2026-07-19-tsk299-import-audit.md)
+- **Скиллы:** `/fastapi-api-developer` (код F5), `/db-check` (прод-анализ + write F1), `/review-gate`
+- **Артефакт diff:** [2026-07-19-tsk325-f1-f5-null-solution-rules.diff](2026-07-19-tsk325-f1-f5-null-solution-rules.diff)
+
+## Контекст
+1117 активных заданий (40% скоупа) хранят `solution_rules = JSON null`. Приём ответа
+падал 500: `attempts.py:448` делал `SolutionRules.model_validate(task.solution_rules or {})`
+→ `None or {} = {}` → валидация пустого объекта бросала ошибку на обязательном
+`max_score`. Дефект латентный (0 попыток учеников), сработал бы при первом заходе.
+
+## F5 — харднинг (защитная сетка)
+**Изменения:**
+- `app/services/checking_service.py`: новый `CheckingService.build_solution_rules(raw, fallback_max_score)`.
+  При пустом правиле возвращает минимальный валидный `SolutionRules(max_score=…)` вместо краша.
+- `app/api/v1/attempts.py:448`: вызывает хелпер вместо `model_validate(... or {})`. Удалён мёртвый импорт `SolutionRules`.
+
+**Как деградирует:** SA_COM без правил → `checking_service` возвращает `is_correct=None`
+→ существующий 2.3d optimistic-manual (tsk-210) уводит ответ в очередь ручной
+проверки. Ответ ученика **принимается**, приём не падает. Никакого дублирования
+логики — переиспользуется проверенный путь «SA_COM без эталона».
+
+**Полнота (проверено в ревью):** тот же паттерн `model_validate(... or {})` есть ещё
+в 2 местах, оба **уже защищены** и не дают 500:
+- `learning.py:409` (флаг requires_attachment в выдаче состояния) — обёрнут в try/except → `False`.
+- `learning_guest_service.py:145` (гостевые попытки) — обёрнут в try/except → 400, и **0** null-заданий
+  лежат в `public_demo` курсах (недостижимо для гостей). Проверено на проде.
+→ `attempts.py` был единственным крашем-500 (совпадает с выводом аудита).
+
+## F1 — перенос известных ответов (данные)
+**Скрипт:** `scripts/backfill_solution_rules_answer_raw_tsk325.py` (dry-run по умолчанию; `--apply` при `DBCHECK_OK=1`).
+
+**Профиль /db-check — реальный формат answer_raw (read-only MCP, прод):**
+- Все 790 целевых — `SA_COM`, `answer_is_code=null` (не Python-код → code_ast не нужен), `max_score=1`.
+- Три класса ответа: чистые числа/группы чисел/буквенные токены; артефакт скрейпа «— » (13 РешуЕГЭ); неоднозначные.
+
+**Правила маппинга (по данным, без хардкода id):**
+- Очистка: снять ведущий em/en-dash «— » (артефакт), обрезать края, схлопнуть пробелы. Внутренний минус (отрицательное число «24 -22671») сохраняется.
+- Нормализация: `["trim","lower"]` — доминирует у уже работающих SA_COM (813 заданий), минимальная, без ложных зачётов.
+- Маршрут **auto** (accepted_answers): 779 заданий (kompege 496 / polyakov 243 / sdamgia 40).
+- Маршрут **manual** (manual_review_required=true, без accepted): 11 неоднозначных — многочастные «1) … 2) … 3) …» Полякова (8) + проза-мусор РешуЕГЭ (3). Слепой перенос сделал бы их «всегда неверно» — хуже ручной деградации.
+- Сериализация через схему `SolutionRules` — хранимый JSON гарантированно валиден.
+
+**Dry-run на проде (транзакция откачена):**
+```
+Целевых: 790 → auto 779 / manual 11
+null ДО: 1117 → null ПОСЛЕ: 327 (снижение ровно на 790, коллатералей нет)
+auto с 1 accepted = 779 ✓; manual без short_answer = 11 ✓; max_score сходится ✓; все правила валидны схемой ✓
+```
+Идемпотентно (`WHERE solution_rules null`), обратимо (→ null), blast-radius низкий (0 попыток).
+
+## Тесты
+- `tests/test_attempts_null_solution_rules_tsk325.py` — юнит `build_solution_rules` + endpoint POST /answers по заданию с JSON null → **200, не 500** (реальный ASGI + dev-БД).
+- `tests/test_backfill_solution_rules_tsk325.py` — чистые функции классификации/очистки на реальных образцах формата.
+- Регресс: checking/normalization/code_ast/manual_review/requires_attachment/limit/enrollment — зелёные (114 passed; единичный флак `test_y6_escalation_cron` — межтестовая зависимость, проходит изолированно, не связан с правкой).
+- `bandit`: 0 Medium/High (6 Low — стандартный `os.system("chcp")`, паттерн всего репо).
+
+## Cross-project
+Контракт API **не меняется**: тот же URL/метод/request/response, убран лишь непреднамеренный 500. Нет Alembic-миграции, нет изменения public schema, нет нового эндпоинта → `openapi.json` не меняется, mirror в ContentBackbone обновлять **не требуется**.
+
+## Решение review-gate: ПРИНЯТО
+Блокирующих проблем нет ни в одном из 12 измерений. Полнота F5 подтверждена независимой проверкой всех call-site. F1 dry-run верифицирован.
+
+## Осталось (прод, требует go оператора)
+1. Commit + push в `main`.
+2. Деплой F5 (`deploy/vps/deploy.sh` на сервере; alembic — no-op).
+3. F1 `--apply` (`DBCHECK_OK=1`) — 790 заданий.
+4. Живой прод-прогон: задание из 779 — приём проходит + автопроверка корректна; задание из 327 (без ответа) — приём не падает (F5).

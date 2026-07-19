@@ -1,0 +1,733 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index d654fa5..0354bf5 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -36,7 +36,6 @@ from app.schemas.checking import (
+     CheckFeedback,
+ )
+ from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
+-from app.schemas.solution_rules import SolutionRules
+ 
+ from app.services.attempts_service import AttemptsService
+ from app.services.task_results_service import TaskResultsService
+@@ -445,7 +444,16 @@ async def submit_attempt_answers(
+ 
+         # 2.2 Приводим JSON к строгим схемам
+         task_content = TaskContent.model_validate(task.task_content)
+-        solution_rules = SolutionRules.model_validate(task.solution_rules or {})
++        # tsk-325 (F5): solution_rules может быть JSON null / пусто (1116 импортированных
++        # заданий ЕГЭ/Python, аудит tsk-299 — правило автопроверки не заведено). Прежний
++        # `SolutionRules.model_validate(task.solution_rules or {})` бросал ошибку на
++        # обязательном max_score → приём ответа падал 500. Строим правило через
++        # build_solution_rules: непустое валидируем как раньше, пустое деградирует в
++        # минимальный валидный объект (max_score из задачи) — SA_COM без правил уйдёт в
++        # ручную проверку (is_correct=None) существующим 2.3d, ответ не теряется.
++        solution_rules = checking_service.build_solution_rules(
++            task.solution_rules, task.max_score
++        )
+ 
+         # 2.3 Проверяем ответ
+         answer: StudentAnswer = item.answer
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index cff5e3d..4326045 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -29,6 +29,41 @@ class CheckingService:
+     вернуть CheckResult без обращения к БД и FastAPI.
+     """
+ 
++    @staticmethod
++    def build_solution_rules(
++        raw: Optional[Dict],
++        fallback_max_score: Optional[int],
++    ) -> SolutionRules:
++        """
++        Строит SolutionRules из JSON-поля tasks.solution_rules.
++
++        tsk-325 (F5): у 1116 импортированных заданий ЕГЭ/Python правило проверки
++        не заведено — solution_rules хранит JSON null (→ Python None) или пусто.
++        Прежний `SolutionRules.model_validate(raw or {})` бросал ошибку на
++        обязательном max_score, из-за чего приём ответа падал 500 (аудит tsk-299).
++
++        Пока правило не заведено — не автопроверяем: возвращаем минимальный
++        валидный объект с max_score из самой задачи (tasks.max_score). Для SA_COM
++        это значит short_answer=None → checking_service вернёт is_correct=None
++        («сверять нечем»), а вызывающий эндпоинт уведёт ответ в ручную проверку,
++        как для SA_COM без эталона (tsk-210). Ответ ученика при этом ПРИНИМАЕТСЯ,
++        приём не падает. F1 заводит правила там, где ответ известен (790 заданий);
++        этот фолбэк — сетка для оставшихся без ответа (Яндекс/Крылов) до их
++        отдельных задач (tsk-100 / tsk-317).
++
++        Args:
++            raw: JSON-значение tasks.solution_rules (None при JSON null / SQL NULL).
++            fallback_max_score: tasks.max_score — используется, когда правило пустое.
++
++        Returns:
++            Валидн�warning: in the working copy of 'scripts/backfill_solution_rules_answer_raw_tsk325.py', LF will be replaced by CRLF the next time Git touches it
+�й SolutionRules (полноценный при непустом raw, деградированный
++            в ручную проверку при пустом).
++        """
++        if not raw:
++            max_score = fallback_max_score if (fallback_max_score or 0) > 0 else 1
++            return SolutionRules(max_score=max_score)
++        return SolutionRules.model_validate(raw)
++
+     def check_task(
+         self,
+         task_content: TaskContent,
+diff --git a/scripts/backfill_solution_rules_answer_raw_tsk325.py b/scripts/backfill_solution_rules_answer_raw_tsk325.py
+new file mode 100644
+index 0000000..8ee1eb2
+--- /dev/null
++++ b/scripts/backfill_solution_rules_answer_raw_tsk325.py
+@@ -0,0 +1,278 @@
++# -*- coding: utf-8 -*-
++"""tsk-325 (F1): перенести известный ответ answer_raw → solution_rules у заданий ЕГЭ.
++
++ЧТО ДЕЛАЕТ
++790 заданий (КомпЕГЭ 496 / Поляков 251 / РешуЕГЭ 43) имеют solution_rules = JSON
++null, хотя верный ответ уже лежит в task_content.answer_raw (аудит tsk-299).
++Скрипт собирает из answer_raw правило автопроверки короткого ответа (SA_COM) и
++кладёт его в solution_rules. После этого приём ответа по заданию проходит
++автопроверку вместо падения (падение чинит F5, это — данные).
++
++ПОЧЕМУ answer_raw НЕЛЬЗЯ ПЕРЕНОСИТЬ СЛЕПО (главная ловушка задачи)
++Разбор реального формата answer_raw на проде (все 790 — SA_COM, answer_is_code=null,
++max_score=1, читано через MCP read-only) показал три класса:
++  1. Чистые ответы — число (410+205+17), группа чисел через пробел «8433 5»
++     (70+35+9), буквенный токен «АДВБГ»/«ywxz»/«Петя»/«C38412»/«ВЕРХ 1743».
++     Переносятся как есть с текстовой нормализацией.
++  2. Чинибельный артефакт скрейпа — префикс «— » у 13 заданий РешуЕГЭ
++     («— 469784 511»). Ведущий em/en-dash со скрейпа снимается → «469784 511».
++  3. Неоднозначные — многочастный ответ Полякова «1) 28 2) 16 18 3) 11» (8 шт,
++     три подвопроса в одной строке) и мусор РешуЕГЭ («на первый вопрос …»,
++     «номер дома … Ответ: …»). Слепой перенос сделал бы задание «всегда неверно»
++     (ни один ввод ученика не совпал бы) — ХУЖЕ, чем ручная деградация F5.
++     Такие задания уходят в ручную проверку (manual_review_required=true), а не в
++     accepted_answers. Классификация — по данным (regex-признаки), без хардкода id.
++
++Нормализация: текстовая ["trim","lower"] — доминирующая у уже работающих SA_COM
++(813 заданий на проде) и минимальная (без ложных зачётов). Все 790 —
++answer_is_code=null, поэтому code_ast здесь не нужен (см. tsk-262 — он для Python).
++
++Правило сериализуется через саму схему app.schemas.solution_rules.SolutionRules —
++хранимый JSON гарантированно валиден и совпадает по форме с рабочими заданиями.
++
++ИДЕМПОТЕНТНОСТЬ / BLAST-RADIUS
++UPDATE трогает только задания, у которых solution_rules ещё null (WHERE-guard),
++и только из целевой выборки (790). Задания с уже заведённым правилом не
++затрагиваются. 0 попыток учеников по этим заданиям (task_results) — низкий риск.
++Обратимо: solution_rules можно вернуть в null.
++
++Запуск: dry-run по умолчанию (транзакция откатывается); --apply — запись
++(нужен DBCHECK_OK=1 и go оператора, прод-хост 5.42.107.253).
++"""
++from __future__ import annotations
++
++import asyncio
++import json
++import os
++import re
++import sys
++from pathlib import Path
++from typing import Optional, Tuple
++
++import asyncpg
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.schemas.solution_rules import (  # noqa: E402
++    SolutionRules,
++    ShortAnswerRules,
++    ShortAnswerAccepted,
++)
++
++# Ведущий em/en-dash с пробелом — артефакт скрейпа РешуЕГЭ («— 469784 511»).
++_DASH_PREFIX = re.compile(r"^[–—]\s*")
++# Многочастный ответ «1) … 2) … 3) …» — не единый короткий ответ.
++_MULTIPART = re.compile(r"\d\)")
++# Две+ кириллических слова подряд — проза/мусор («на первый вопрос», «номер дома»).
++# «ВЕРХ 1743» не ловится (после слова — цифры, не слово) и остаётся авто-ответом.
++_PROSE = re.compile(r"[а-яё]+\s+[а-яё]+", re.IGNORECASE)
++
++SELECT_TARGETS = """
++SELECT t.id,
++       t.max_score,
++       t.task_content->>'source_kind' AS src,
++       t.task_content->>'answer_raw'  AS answer_raw
++FROM tasks t
++WHERE t.is_active
++  AND (t.solution_rules IS NULL OR jsonb_typeof(t.solution_rules) = 'null')
++  AND t.task_content->>'source_kind' IN ('kompege', 'polyakov', 'sdamgia')
++  AND btrim(COALESCE(t.task_content->>'answer_raw', '')) <> ''
++ORDER BY t.id
++"""
++
++# Идемпотентно: пишем только там, где правило ещё пустое.
++UPDATE_ONE = """
++UPDATE tasks
++SET solution_rules = $2::jsonb
++WHERE id = $1
++  AND (solution_rules IS NULL OR jsonb_typeof(solution_rules) = 'null')
++"""
++
++
++def clean_answer(raw: str) -> str:
++    """Снять артефакт скрейпа (ведущий «— »), обрезать края, схлопнуть пробелы."""
++    s = _DASH_PREFIX.sub("", raw)
++    s = re.sub(r"\s+", " ", s).strip()
++    return s
++
++
++def route_to_manual(cleaned: str) -> bool:
++    """Ответ неоднозначен для автопроверки → в ручную (не в accepted_answers)."""
++    if not cleaned:
++        return True
++    if _MULTIPART.search(cleaned):
++        return True
++    if _PROSE.search(cleaned):
++        return True
++    return False
++
++
++def build_rules(answer_raw: str, max_score: Optional[int]) -> Tuple[dict, str]:
++    """Собрать solution_rules из answer_raw. Возвращает (json-dict, метка маршрута).
++
++    Метка: 'auto' — заведён accepted_answers; 'manual' — ушло в ручную проверку.
++    """
++    ms = max_score if (max_score or 0) > 0 else 1
++    cleaned = clean_answer(answer_raw)
++
++    if route_to_manual(cleaned):
++        rules = SolutionRules(
++            max_score=ms,
++            scoring_mode="all_or_nothing",
++            auto_check=True,
++            manual_review_required=True,
++        )
++        return rules.model_dump(), "manual"
++
++    rules = SolutionRules(
++        max_score=ms,
++        scoring_mode="all_or_nothing",
++        auto_check=True,
++        manual_review_required=False,
++        short_answer=ShortAnswerRules(
++            normalization=["trim", "lower"],
++            accepted_answers=[ShortAnswerAccepted(value=cleaned, score=ms)],
++        ),
++    )
++    return rules.model_dump(), "auto"
++
++
++def _dsn() -> str:
++    """Прод-DSN для learn. Берём из окружения или из .mcp.json (learn_prod_db)."""
++    env = os.environ.get("LEARN_PROD_DSN") or os.environ.get("DATABASE_URL", "")
++    dsn = env.replace("postgresql+asyncpg://", "postgresql://")
++    if "5.42.107.253" not in dsn:
++        # Фолбэк: читаем DSN сервера learn_prod_db из .mcp.json (без пароля в коде).
++        cfg = json.loads((project_root / ".mcp.json").read_text(encoding="utf-8"))
++        servers = cfg.get("mcpServers", cfg)
++        for arg in servers["learn_prod_db"]["args"]:
++            if isinstance(arg, str) and arg.startswith("postgresql://") and "5.42.107.253" in arg:
++                dsn = arg
++                break
++    if "5.42.107.253" not in dsn or "/learn" not in dsn:
++        raise RuntimeError(
++            "Не нашёл прод-DSN learn (5.42.107.253/learn). Передай LEARN_PROD_DSN явно."
++        )
++    return dsn
++
++
++async def main(apply: bool) -> None:
++    conn = await asyncpg.connect(_dsn())
++    try:
++        async with conn.transaction():
++            rows = await conn.fetch(SELECT_TARGETS)
++            total = len(rows)
++            print(f"Целевых заданий (kompege/polyakov/sdamgia, sr=null, answer_raw есть): {total}")
++            if total == 0:
++                raise RuntimeError("кандидатов нет — возможно, уже применено")
++
++            by_route = {"auto": 0, "manual": 0}
++            by_src = {}
++            samples = []
++            payloads: dict[int, str] = {}
++            for r in rows:
++                payload, route = build_rules(r["answer_raw"], r["max_score"])
++                payloads[r["id"]] = json.dumps(payload)
++                by_route[route] += 1
++                by_src.setdefault(r["src"], {"auto": 0, "manual": 0})[route] += 1
++                if len(samples) < 15 or route == "manual":
++                    accepted = None
++                    if route == "auto":
++                        accepted = payload["short_answer"]["accepted_answers"][0]["value"]
++                    samples.append((r["id"], r["src"], route, r["answer_raw"], accepted))
++
++            print(f"Маршрут: auto (accepted_answers) = {by_route['auto']}, "
++                  f"manual (ручная проверка) = {by_route['manual']}")
++            print(f"По источникам: {by_src}")
++            print("\nПримеры до/после (answer_raw → маршрут → accepted):")
++            for tid, src, route, raw, accepted in samples[:25]:
++                after = f"accepted='{accepted}'" if route == "auto" else "manual_review_required=true"
++                print(f"  [{route:6}] id={tid} {src:8} '{raw}' → {after}")
++
++            target_ids = list(payloads.keys())
++            null_before = await conn.fetchval(
++                "SELECT count(*) FROM tasks WHERE is_active "
++                "AND (solution_rules IS NULL OR jsonb_typeof(solution_rules)='null')"
++            )
++            print(f"\nВсего заданий с solution_rules=null ДО: {null_before}")
++
++            updated = 0
++            for tid, pj in payloads.items():
++                res = await conn.execute(UPDATE_ONE, tid, pj)
++                # res вида 'UPDATE 1'
++                updated += int(res.split()[-1])
++
++            # ---- Верификация внутри транзакции (независимым чтением) ----
++            if updated != total:
++                raise AssertionError(f"ожидали обновить {total}, обновлено {updated}")
++
++            still_null_in_targets = await conn.fetchval(
++                "SELECT count(*) FROM tasks WHERE id = ANY($1::int[]) "
++                "AND (solution_rules IS NULL OR jsonb_typeof(solution_rules)='null')",
++                target_ids,
++            )
++            if still_null_in_targets != 0:
++                raise AssertionError(f"после записи остались null в выборке: {still_null_in_targets}")
++
++            null_after = await conn.fetchval(
++                "SELECT count(warning: in the working copy of 'tests/test_attempts_null_solution_rules_tsk325.py', LF will be replaced by CRLF the next time Git touches it
+*) FROM tasks WHERE is_active "
++                "AND (solution_rules IS NULL OR jsonb_typeof(solution_rules)='null')"
++            )
++            print(f"Всего заданий с solution_rules=null ПОСЛЕ: {null_after} "
++                  f"(снижение на {null_before - null_after})")
++            if null_before - null_after != total:
++                raise AssertionError(
++                    f"снижение null ({null_before - null_after}) != числу целей ({total}) — "
++                    "задеты задания вне выборки?"
++                )
++
++            # accepted_answers реально проставлены у auto-заданий.
++            auto_ok = await conn.fetchval(
++                "SELECT count(*) FROM tasks WHERE id = ANY($1::int[]) "
++                "AND jsonb_array_length(COALESCE(solution_rules#>'{short_answer,accepted_answers}','[]'::jsonb)) = 1",
++                target_ids,
++            )
++            manual_ok = await conn.fetchval(
++                "SELECT count(*) FROM tasks WHERE id = ANY($1::int[]) "
++                "AND (solution_rules->>'manual_review_required')::bool IS TRUE "
++                # short_answer у ручных заданий — JSON null (не SQL NULL): ключ есть,
++                # значение null. SQL `IS NULL` для JSON-null ложно, проверяем typeof.
++                "AND jsonb_typeof(solution_rules->'short_answer') = 'null'",
++                target_ids,
++            )
++            print(f"Проверка: auto с 1 accepted = {auto_ok} (ждём {by_route['auto']}); "
++                  f"manual без short_answer = {manual_ok} (ждём {by_route['manual']})")
++            if auto_ok != by_route["auto"]:
++                raise AssertionError(f"auto accepted mismatch: {auto_ok} != {by_route['auto']}")
++            if manual_ok != by_route["manual"]:
++                raise AssertionError(f"manual mismatch: {manual_ok} != {by_route['manual']}")
++
++            # max_score правила совпадает с tasks.max_score у всех целей.
++            ms_mismatch = await conn.fetchval(
++                "SELECT count(*) FROM tasks WHERE id = ANY($1::int[]) "
++                "AND (solution_rules->>'max_score')::int IS DISTINCT FROM max_score",
++                target_ids,
++            )
++            if ms_mismatch != 0:
++                raise AssertionError(f"max_score расходится с задачей у {ms_mismatch} заданий")
++
++            print("\nOK: перенос выполнен, коллатералей нет, правила валидны.")
++            if not apply:
++                raise RuntimeError("DRY-RUN: откатываю (запусти с --apply при DBCHECK_OK=1)")
++        print("\nЗАПИСАНО И ЗАКОММИЧЕНО.")
++    finally:
++        await conn.close()
++
++
++if __name__ == "__main__":
++    try:
++        asyncio.run(main("--apply" in sys.argv))
++    except RuntimeError as exc:
++        print(f"\n{exc}")
++        sys.exit(0 if "DRY-RUN" in str(exc) else 1)
+diff --git a/tests/test_attempts_null_solution_rules_tsk325.py b/tests/test_attempts_null_solution_rules_tsk325.py
+new file mode 100644
+index 0000000..c20f8ce
+--- /dev/null
++++ b/tests/test_attempts_null_solution_rules_tsk325.py
+@@ -0,0 +1,244 @@
++# -*- coding: utf-8 -*-
++"""
++tsk-325 (F5): приём ответа не падает при solution_rules = JSON null.
++
++Первопричина (аудит tsk-299): 1116 импортированных заданий ЕГЭ/Python хранят
++`solution_rules = JSON null`. Прежний код в attempts.py делал
++`SolutionRules.model_validate(task.solution_rules or {})` → `None or {}` = `{}`
++→ валидация пустого объекта бросала ошибку на обязательном max_score → приём
++ответа падал 500. Дефект латентный (0 попыток учеников на проде), но сработал бы
++при первом же заходе.
++
++Фикс: `CheckingService.build_solution_rules` деградирует пустое правило в
++минимальный валидный SolutionRules (max_score из задачи). SA_COM без правил →
++is_correct=None → существующий optimistic-manual (2.3d, tsk-210) уводит ответ в
++ручную проверку. Приём не падает, ответ принимается.
++
++Два уровня:
++1. Юнит — build_solution_rules и документация первопричины (быстро, без БД).
++2. Endpoint — POST /attempts/{id}/answers по заданию с JSON null отвечает 200,
++   а не 500 (бьёт по HTTP-слою, где жил дефект). Работает с dev-БД (Learn.public),
++   подчищает за собой.
++"""
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++
++import pytest
++import pytest_asyncio
++from pydantic import ValidationError
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.core.config import Settings
++from app.api.main import app
++from app.api.deps import get_current_user
++from app.auth.current_user import CurrentUser
++from app.schemas.checking import StudentAnswer, StudentResponse
++from app.schemas.solution_rules import SolutionRules
++from app.schemas.task_content import TaskContent
++from app.services.checking_service import CheckingService
++
++_settings = Settings()
++_cs = CheckingService()
++
++
++# ==================== Юнит: build_solution_rules ====================
++
++
++def test_empty_rules_model_validate_raises_this_is_the_root_cause():
++    """Документирует первопричину: пустое правило (JSON null → {}) не валидируется —
++    именно это роняло приём ответа 500 до фикса."""
++    with pytest.raises(ValidationError):
++        SolutionRules.model_validate({})
++
++
++def test_build_solution_rules_degrades_null_to_valid_object():
++    """JSON null → минимальный валидный SolutionRules с max_score из задачи."""
++    sr = CheckingService.build_solution_rules(None, 5)
++    assert sr.max_score == 5
++    assert sr.short_answer is None
++    assert sr.manual_review_required is False
++    assert sr.requires_attachment is False
++
++
++def test_build_solution_rules_fallback_when_max_score_missing():
++    """max_score задачи отсутствует/некорректен → безопасный фолбэк 1 (модель требует >0)."""
++    assert CheckingService.build_solution_rules(None, None).max_score == 1
++    assert CheckingService.build_solution_rules(None, 0).max_score == 1
++    assert CheckingService.build_solution_rules({}, None).max_score == 1
++
++
++def test_build_solution_rules_keeps_real_rules_intact():
++    """Непустое правило валидируется как раньше — деградация не трогает рабочие задания."""
++    raw = {
++        "max_score": 1,
++        "short_answer": {"normalization": ["trim", "lower"],
++                         "accepted_answers": [{"value": "17", "score": 1}]},
++    }
++    sr = CheckingService.build_solution_rules(raw, 1)
++    assert sr.short_answer is not None
++    assert sr.short_answer.accepted_answers[0].value == "17"
++
++
++def test_degraded_sa_com_goes_to_manual_review():
++    """SA_COM с деградированным правилом → is_correct=None (сверять нечем), не краш."""
++    sr = CheckingService.build_solution_rules(None, 1)
++    res = _cs.check_task(
++        TaskContent.model_validate({"type": "SA_COM", "stem": "x"}),
++        sr,
++        StudentAnswer(type="SA_COM", response=StudentResponse(value="42")),
++    )
++    assert res.is_correct is None
++    assert res.score == 0
++    assert res.max_score == 1
++
++
++# ==================== Endpoint: 200, а не 500 ====================
++# asyncio_mode=auto (pytest.ini) — async-тесты определяются сами, без mark.
++
++_SA_COM_ANSWER = {"type": "SA_COM", "response": {"value": "42"}}
++
++
++def _service_headers() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++@pytest_asyncio.fixture(scope="function")
++async def null_rules_graph():
++    """Курс + SA_COM-задание с solution_rules = JSON null + записанный ученик. Уборка."""
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    ids: dict[str, int] = {}
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        try:
++            ids["course"] = (
++                await s.execute(
++                    text(
++                        "INSERT INTO courses (title, access_level) "
++                        "VALUES ('tsk325 курс', 'self_guided') RETURNING id"
++                    )
++                )
++            ).scalar()
++
++            difficulty_id = (
++                await s.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++            ).scalar()
++            assert difficulty_id is not None, "нет difficulties — задание не собрать"
++
++            # Ключевое: solution_rules = JSON null (ровно как у 1116 заданий на проде),
++            # max_score задан на самой задаче.
++            ids["task"] = (
++                await s.execute(
++                    text(
++                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
++                        "difficulty_id, external_uid, max_attempts, max_score) VALUES "
++                        "(CAST(:tc AS jsonb), CAST('null' AS jsonb), :cid, :did, :uid, :ma, :ms) "
++                        "RETURNING id"
++                    ),
++                    {
++                        "tc": '{"type":"SA_COM","stem":"Введите число"}',
++                        "cid": ids["course"],
++                        "did": difficulty_id,
++                        "uid": "tsk325-null-task",
++                        "ma": 3,
++                        "ms": 1,
++                    },
++                )
++            ).scalar()
++
++            ids["enrolled"] = (
++                await s.execute(
++                    text("INSERT INTO users (full_name) VALUES ('tsk325 записан') RETURNING id")
++                )
++            ).scalar()
++            await s.execute(
++                text(
++                    "INSERT INTO user_courses (user_id, course_id, is_active) "
++                    "VALUES (:u, :c, true)"
++                ),
++                {"u": ids["enrolled"], "c": ids["course"]},
++            )
++            await s.commit()
++            yield ids, s
++        finally:
++            await s.rollback()
++            if "enrolled" in ids:
++                await s.execute(
++                    text("DELETE FROM task_results WHERE user_id = :u"), {"u": ids["enrolled"]}
++                )
++                await s.execute(
++                    text("DELETE FROM attempts WHERE user_id = :u"), {"u": ids["enrolled"]}
++                )
++                await s.execute(
++                    text("DELETE FROM user_courses WHERE user_id = :u"), {"u": ids["enrolled"]}
++                )
++            if "task" in ids:
++                await s.execute(text("DELETE FROM tasks WHERE id = :t"), {"t": ids["task"]})
++            if "enrolled" in ids:
++                await s.execute(text("DELETE FROM users WHERE id = :u"), {"u": ids["enrolled"]})
++            if "course" in ids:
++                await s.execute(text("DELETE FROM courses WHERE id = :c"), {"c": ids["course"]})
++            await s.commit()
++            await engine.dispose()
++
++
++async def _open_attempt_service(client, user_id: int, course_id: int) -> int:
++    resp = await clienwarning: in the working copy of 'tests/test_backfill_solution_rules_tsk325.py', LF will be replaced by CRLF the next time Git touches it
+t.post(
++        "/api/v1/attempts",
++        json={"user_id": user_id, "course_id": course_id, "source_system": "test_tsk325"},
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 201, resp.text
++    return resp.json()["id"]
++
++
++async def test_null_rules_answer_does_not_500(client, null_rules_graph):
++    """Регресс F5: ответ по заданию с solution_rules=null → 200, а не 500.
++
++    До фикса эндпоинт падал на SolutionRules.model_validate({}) (обязательный
++    max_score). После — SA_COM без правил уходит в ручную проверку.
++    """
++    ids, s = null_rules_graph
++    enrolled = ids["enrolled"]
++    attempt_id = await _open_attempt_service(client, enrolled, ids["course"])
++
++    app.dependency_overrides[get_current_user] = lambda: CurrentUser(
++        id=enrolled, is_service=False
++    )
++    try:
++        resp = await client.post(
++            f"/api/v1/attempts/{attempt_id}/answers",
++            json={"items": [{"task_id": ids["task"], "answer": _SA_COM_ANSWER}]},
++        )
++    finally:
++        app.dependency_overrides.pop(get_current_user, None)
++
++    assert resp.status_code == 200, (
++        f"приём ответа по заданию без solution_rules не должен падать: {resp.text}"
++    )
++    body = resp.json()
++    assert body["results"], "ожидался результат проверки"
++    check = body["results"][0]["check_result"]
++    # SA_COM без эталона → optimistic-manual (2.3d, tsk-210): не блокирует поток,
++    # уходит в очередь ручной проверки. Главное — не 500.
++    assert check["max_score"] == 1
++
++    # Результат записан в task_results (ответ принят, не потерян).
++    written = (
++        await s.execute(
++            text("SELECT COUNT(*) FROM task_results WHERE user_id = :u AND task_id = :t"),
++            {"u": enrolled, "t": ids["task"]},
++        )
++    ).scalar()
++    assert written == 1, "ответ должен быть записан в task_results"
+diff --git a/tests/test_backfill_solution_rules_tsk325.py b/tests/test_backfill_solution_rules_tsk325.py
+new file mode 100644
+index 0000000..b1e75f9
+--- /dev/null
++++ b/tests/test_backfill_solution_rules_tsk325.py
+@@ -0,0 +1,114 @@
++# -*- coding: utf-8 -*-
++"""tsk-325 (F1): правила переноса answer_raw → solution_rules (чистые функции).
++
++Проверяют классификатор и очистку из scripts/backfill_solution_rules_answer_raw_tsk325.py
++на реальных образцах формата answer_raw с прода (числа, группы чисел, буквенные
++токены, артефакт «— », многочастные ответы, проза-мусор). БД не трогают.
++"""
++from __future__ import annotations
++
++import os
++import sys
++from pathlib import Path
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++sys.path.insert(0, str(project_root / "scripts"))
++
++import pytest
++
++from backfill_solution_rules_answer_raw_tsk325 import (
++    build_rules,
++    clean_answer,
++    route_to_manual,
++)
++
++
++# ---------- Очистка ----------
++
++@pytest.mark.parametrize("raw, expected", [
++    ("17", "17"),
++    ("  17  ", "17"),
++    ("11 9881", "11 9881"),
++    ("— 469784 511", "469784 511"),   # em-dash артефакт снят
++    ("– 15 976339247", "15 976339247"),  # en-dash тоже
++    ("24 -22671", "24 -22671"),        # внутренний минус (отрицательное) сохранён
++    ("ВЕРХ 1743", "ВЕРХ 1743"),
++])
++def test_clean_answer(raw: str, expected: str) -> None:
++    assert clean_answer(raw) == expected
++
++
++# ---------- Маршрутизация ----------
++
++@pytest.mark.parametrize("raw", [
++    "17", "5435", "11 9881", "8433 5", "— 469784 511",
++    "АДВБГ", "ywxz", "Петя", "C38412", "267A030", "ВЕРХ 1743", "24 -22671",
++])
++def test_clean_answers_go_auto(raw: str) -> None:
++    """Чистые/чинибельные ответы → авто (accepted_answers)."""
++    assert route_to_manual(clean_answer(raw)) is False
++
++
++@pytest.mark.parametrize("raw", [
++    "1) 28 2) 16 18 3) 11",          # многочастный ответ Полякова
++    "1) 9 2) 84 92 3) 93",
++    "на первый вопрос 22262050",      # проза-мусор РешуЕГЭ
++    "на первый вопрос",
++    "номер дома - 171 и номер подъезда - 701 Ответ: 171 701",
++])
++def test_ambiguous_go_manual(raw: str) -> None:
++    """Неоднозначные ответы → ручная проверка, а не «всегда неверно»."""
++    assert route_to_manual(clean_answer(raw)) is True
++
++
++# ---------- Сборка правила ----------
++
++def test_build_auto_rule_shape() -> None:
++    payload, route = build_rules("17", 1)
++    assert route == "auto"
++    assert payload["max_score"] == 1
++    assert payload["auto_check"] is True
++    assert payload["manual_review_required"] is False
++    assert payload["short_answer"]["normalization"] == ["trim", "lower"]
++    acc = payload["short_answer"]["accepted_answers"]
++    assert acc == [{"value": "17", "score": 1}]
++
++
++def test_build_auto_rule_strips_dash_prefix() -> None:
++    payload, route = build_rules("— 469784 511", 1)
++    assert route == "auto"
++    assert payload["short_answer"]["accepted_answers"][0]["value"] == "469784 511"
++
++
++def test_build_manual_rule_shape() -> None:
++    payload, route = build_rules("1) 28 2) 16 18 3) 11", 1)
++    assert route == "manual"
++    assert payload["manual_review_required"] is True
++    assert payload["short_answer"] is None
++    assert payload["max_score"] == 1
++
++
++def test_build_uses_task_max_score() -> None:
++    payload, _ = build_rules("42", 5)
++    assert payload["max_score"] == 5
++    assert payload["short_answer"]["accepted_answers"][0]["score"] == 5
++
++
++def test_build_fallback_max_score() -> None:
++    payload, _ = build_rules("42", None)
++    assert payload["max_score"] == 1
++
++
++def test_produced_rule_validates_against_schema() -> None:
++    """Собранный JSON обязан валидироваться схемой SolutionRules (как хранит прод)."""
++    from app.schemas.solution_rules import SolutionRules
++
++    for raw in ["17", "— 8631 7311", "1) 9 2) 84 92 3) 93", "АДВБГ"]:
++        payload, _ = build_rules(raw, 1)
++        SolutionRules.model_validate(payload)  # не бросает
