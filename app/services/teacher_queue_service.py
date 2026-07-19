@@ -1147,20 +1147,22 @@ async def get_teacher_workload(
     overdue_total = int(row[2] or 0)
     open_help_requests_total = open_manual_help + open_blocked_limit
 
-    # Y-6 pivot: pending review = `checked_at IS NULL` + type-whitelist
-    # `('SA_COM','TA')`. tsk-210: + `is_correct IS TRUE` (паритет с
-    # claim_next_review / count_pending_reviews — не считаем первично-неверные
-    # SA_COM, которые в очередь не выдаются).
+    # tsk-298 (fix): «На проверке» ДОЛЖНО совпадать с фактической очередью
+    # (`/teacher/reviews/pending` / claim-next), иначе счётчик показывает N, а
+    # очередь пуста. Раньше здесь был предикат `type IN ('SA_COM','TA') AND
+    # is_correct IS TRUE`, который считал авто-прошедший SA_COM без обязательной
+    # ручной проверки (`manual_review_required=false`) — очередь его не выдаёт.
+    # Выравниваем на тот же `mandatory_review_sql`, что у очереди (TA ИЛИ
+    # SA_COM с manual_review_required), без опоры на is_correct.
     r2 = await db.execute(
         text(f"""
             SELECT COUNT(*)
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             WHERE tr.checked_at IS NULL
-              AND t.task_content->>'type' IN ('SA_COM', 'TA')
-              AND tr.is_correct IS TRUE
+              AND {mandatory_review_sql('t')}
               AND {REVIEW_ACL_SQL}
-        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов
+        """),  # nosec B608 — mandatory_review_sql/REVIEW_ACL_SQL из закрытого набора литералов
         params,
     )
     pending_manual_reviews_total = int(r2.scalar() or 0)
