@@ -84,6 +84,33 @@ async def _answer_quiz(
     return int(attempt_id)
 
 
+async def _submit_unchecked_result(db, student_id: int, task_id: int) -> int:
+    """Сдан ответ (SA_COM), но ЕЩЁ не проверен преподавателем (`checked_at`
+    NULL) — ровно то состояние, что должно поднимать `pending_review` в
+    дереве прогресса (tsk-336)."""
+    course_id = (
+        await db.execute(text("SELECT course_id FROM tasks WHERE id = :t"), {"t": task_id})
+    ).scalar()
+    attempt_id = (
+        await db.execute(
+            text(
+                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+                "VALUES (:u, :c, :c, 'test') RETURNING id"
+            ),
+            {"u": student_id, "c": course_id},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
+            "  is_correct, submitted_at, received_at, count_retry, checked_at, source_system) "
+            "VALUES (:u, :t, :a, 0, 10, NULL, now(), now(), 0, NULL, 'test')"
+        ),
+        {"u": student_id, "t": task_id, "a": attempt_id},
+    )
+    return int(attempt_id)
+
+
 async def _submit_result(
     db, student_id: int, task_id: int, *, score: int, max_score: int = 10,
 ) -> int:
@@ -1408,3 +1435,186 @@ async def test_batch_task_states_empty_list_is_noop(graph):
     """Пустой список заданий — пустой результат без обращения к БД."""
     ids, db = graph["ids"], graph["db"]
     assert await engine_svc.compute_task_states_batch(db, ids["student"], []) == {}
+
+
+# ─── tsk-336: экран как центр внимания (needs_attention + rollup) ───────────
+
+
+async def test_progress_tree_open_help_request_marks_attention(graph):
+    """Открытая заявка помощи по заданию -> open_help_request_id/type +
+    needs_attention на задании, узел темы и корень поднимают needs_attention
+    по rollup."""
+    ids, db = graph["ids"], graph["db"]
+    hr_id = (
+        await db.execute(
+            text(
+                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+                "auto_created, context_json, priority, created_at, updated_at) "
+                "VALUES ('open', :s, :t, 'manual_help', false, '{}'::jsonb, 100, now(), now()) "
+                "RETURNING id"
+            ),
+            {"s": ids["student"], "t": ids["task_root_a"]},
+        )
+    ).scalar_one()
+    await db.commit()
+    try:
+        data = await manual_progress_service.get_student_progress(
+            db, student_id=ids["student"], course_id=ids["root"]
+        )
+        by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+
+        task = by_key[("task", ids["task_root_a"])]
+        assert task["open_help_request_id"] == hr_id
+        assert task["open_help_request_type"] == "manual_help"
+        assert task["needs_attention"] is True
+
+        other_task = by_key[("task", ids["task_root_b"])]
+        assert other_task["open_help_request_id"] is None
+        assert other_task["needs_attention"] is False
+
+        root_node = by_key[("course", ids["root"])]
+        assert root_node["needs_attention"] is True, "заявка внутри узла -> узел подсвечен"
+        child_node = by_key[("course", ids["child"])]
+        assert child_node["needs_attention"] is False, "у подкурса своих проблемных заданий нет"
+    finally:
+        await db.execute(text("DELETE FROM help_requests WHERE id=:h"), {"h": hr_id})
+        await db.commit()
+
+
+async def test_progress_tree_closed_help_request_does_not_mark_attention(graph):
+    """Закрытая заявка не должна подсвечивать задание — сигнал только по
+    ОТКРЫТЫМ заявкам."""
+    ids, db = graph["ids"], graph["db"]
+    hr_id = (
+        await db.execute(
+            text(
+                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+                "auto_created, context_json, priority, created_at, updated_at, closed_at) "
+                "VALUES ('closed', :s, :t, 'manual_help', false, '{}'::jsonb, 100, now(), now(), now()) "
+                "RETURNING id"
+            ),
+            {"s": ids["student"], "t": ids["task_root_a"]},
+        )
+    ).scalar_one()
+    await db.commit()
+    try:
+        data = await manual_progress_service.get_student_progress(
+            db, student_id=ids["student"], course_id=ids["root"]
+        )
+        by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+        task = by_key[("task", ids["task_root_a"])]
+        assert task["open_help_request_id"] is None
+        assert task["needs_attention"] is False
+    finally:
+        await db.execute(text("DELETE FROM help_requests WHERE id=:h"), {"h": hr_id})
+        await db.commit()
+
+
+async def test_progress_tree_pending_review_marks_attention(graph):
+    """SA_COM-задание со сданным, но не проверенным результатом
+    (`checked_at IS NULL`) -> pending_review + needs_attention. task_child
+    имеет manual_review_required — ровно тот тип, что ждёт ручной проверки."""
+    ids, db = graph["ids"], graph["db"]
+    await _submit_unchecked_result(db, ids["student"], ids["task_child"])
+    await db.commit()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    task = by_key[("task", ids["task_child"])]
+    assert task["pending_review"] is True
+    assert task["needs_attention"] is True
+
+    child_node = by_key[("course", ids["child"])]
+    assert child_node["needs_attention"] is True
+    root_node = by_key[("course", ids["root"])]
+    assert root_node["needs_attention"] is True, "rollup: проблема в подкурсе поднимается до корня"
+
+
+async def test_progress_tree_returned_for_rework_marks_attention(graph):
+    """Непрочитанное inbox-уведомление kind='task_returned_for_rework' с
+    payload.task_id -> returned_for_rework + needs_attention на задании."""
+    ids, db = graph["ids"], graph["db"]
+    await db.execute(
+        text(
+            "INSERT INTO notifications (content, user_id, kind, title, payload, read_at) "
+            "VALUES (:content, :uid, 'task_returned_for_rework', 'Возврат на доработку', "
+            "        CAST(:payload AS jsonb), NULL)"
+        ),
+        {
+            "content": f"{_TAG} возврат на доработку",
+            "uid": ids["student"],
+            "payload": json.dumps({"task_id": ids["task_root_b"]}),
+        },
+    )
+    await db.commit()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    task = by_key[("task", ids["task_root_b"])]
+    assert task["returned_for_rework"] is True
+    assert task["needs_attention"] is True
+
+    other_task = by_key[("task", ids["task_root_a"])]
+    assert other_task["returned_for_rework"] is False
+    assert other_task["needs_attention"] is False
+
+
+async def test_progress_tree_read_rework_notification_does_not_mark_attention(graph):
+    """Прочитанное уведомление (`read_at` заполнен) — сигнал уже погашен."""
+    ids, db = graph["ids"], graph["db"]
+    await db.execute(
+        text(
+            "INSERT INTO notifications (content, user_id, kind, title, payload, read_at) "
+            "VALUES (:content, :uid, 'task_returned_for_rework', 'Возврат на доработку', "
+            "        CAST(:payload AS jsonb), now())"
+        ),
+        {
+            "content": f"{_TAG} возврат на доработку прочитано",
+            "uid": ids["student"],
+            "payload": json.dumps({"task_id": ids["task_root_b"]}),
+        },
+    )
+    await db.commit()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    task = by_key[("task", ids["task_root_b"])]
+    assert task["returned_for_rework"] is False
+    assert task["needs_attention"] is False
+
+
+async def test_progress_tree_blocked_limit_marks_attention_without_extra_signals(graph):
+    """BLOCKED_LIMIT — уже существующий сигнал needs_attention без заявок/
+    уведомлений: просто «много неудачных попыток» НЕ должно давать
+    needs_attention (п.5 tsk-336, шум ≠ сигнал), а вот реальная блокировка
+    лимитом — да."""
+    ids, db = graph["ids"], graph["db"]
+    limit = await engine_svc.get_effective_attempt_limit(db, ids["student"], ids["task_root_a"])
+    for _ in range(limit):
+        await _submit_result(db, ids["student"], ids["task_root_a"], score=0, max_score=10)
+    await db.commit()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    task = by_key[("task", ids["task_root_a"])]
+    assert task["status"] == "BLOCKED_LIMIT"
+    assert task["needs_attention"] is True
+
+    # Меньше попыток, чем лимит (просто "много", но не блокировка) — шум, не сигнал.
+    for _ in range(max(limit - 1, 1)):
+        await _submit_result(db, ids["student"], ids["task_root_b"], score=0, max_score=10)
+    await db.commit()
+    data2 = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    other2 = {(i["item_type"], i["item_id"]): i for i in data2["items"]}[("task", ids["task_root_b"])]
+    assert other2["status"] != "BLOCKED_LIMIT"
+    assert other2["needs_attention"] is False, "несколько неудачных попыток без блокировки — не сигнал"

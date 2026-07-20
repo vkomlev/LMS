@@ -50,15 +50,17 @@ async def _student(db) -> int:
     return u.id
 
 
-async def _task(db) -> int:
+async def _task(db, *, task_type: str = "SA_COM", max_attempts: int | None = None) -> int:
     res = await db.execute(
         text(
-            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
-            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1) RETURNING id"
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
+            "course_id, difficulty_id, max_attempts) "
+            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1, :ma) RETURNING id"
         ),
         {"e": f"t298h-{random.randint(10**8, 10**10)}",
-         "c": json.dumps({"type": "SA_COM", "stem": "x"}),
-         "r": json.dumps({"max_score": 10})},
+         "c": json.dumps({"type": task_type, "stem": "x"}),
+         "r": json.dumps({"max_score": 10}),
+         "ma": max_attempts},
     )
     tid = res.scalar_one()
     await db.commit()
@@ -248,3 +250,182 @@ async def test_override_service_bypass(db, client):
         assert resp.status_code == 200, resp.text
     finally:
         await _cleanup(db, user_ids=[sid], task_ids=[tid])
+
+
+# ── tsk-335: grant_same_again (выдать столько же, сколько было) ─────────────
+
+@pytest.mark.asyncio
+async def test_override_grant_same_again_no_prior_override(db, client):
+    """Без override и без task.max_attempts: база = DEFAULT_MAX_ATTEMPTS=3,
+    первый вызов поднимает эффективный лимит 3 -> 6 (текущий=база, +база)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db)  # max_attempts=NULL -> DEFAULT_MAX_ATTEMPTS
+    try:
+        resp = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["previous_max_attempts_override"] is None
+        assert body["base_attempts_added"] == 3
+        assert body["max_attempts_override"] == 6
+        assert body["already"] is False
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_grant_same_again_uses_task_base_limit(db, client):
+    """task.max_attempts=5 -> база=5; повторный вызов поднимает ЕЩЁ на 5 от
+    текущего эффективного (не от базы), т.е. 5 -> 10 -> 15."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db, max_attempts=5)
+    try:
+        r1 = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["max_attempts_override"] == 10
+        assert r1.json()["base_attempts_added"] == 5
+
+        # Второй вызов вне окна дебаунса (сбрасываем updated_at override в прошлое,
+        # чтобы не зависеть от реального времени ожидания в тесте).
+        await db.execute(
+            text(
+                "UPDATE student_task_limit_override SET updated_at = now() - interval '10 seconds' "
+                "WHERE student_id=:s AND task_id=:t"
+            ),
+            {"s": sid, "t": tid},
+        )
+        await db.commit()
+
+        r2 = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["previous_max_attempts_override"] == 10
+        assert r2.json()["max_attempts_override"] == 15
+        assert r2.json()["base_attempts_added"] == 5
+        assert r2.json()["already"] is False
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_grant_same_again_debounced_double_click(db, client):
+    """Двойной клик в окне дебаунса тем же оператором -> already=true, лимит
+    не удваивается (защита от накрутки, tsk-335 п.3)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db, max_attempts=3)
+    try:
+        r1 = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r1.status_code == 200, r1.text
+        limit_after_first = r1.json()["max_attempts_override"]
+
+        r2 = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["already"] is True
+        assert r2.json()["max_attempts_override"] == limit_after_first
+
+        row = (await db.execute(
+            text("SELECT max_attempts_override FROM student_task_limit_override "
+                 "WHERE student_id=:s AND task_id=:t"),
+            {"s": sid, "t": tid},
+        )).fetchone()
+        assert int(row[0]) == limit_after_first
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_quiz_rejected_explicit(db, client):
+    """Квиз-вопрос всегда ограничен 1 попыткой — explicit override -> 422
+    (раньше тихо принимался и не действовал; закрываем как побочный фикс)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db, task_type="SC_Qw")
+    try:
+        resp = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "max_attempts_override": 5,
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_quiz_rejected_grant_same_again(db, client):
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db, task_type="MC_Qw")
+    try:
+        resp = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_explicit_requires_max_attempts(db, client):
+    """mode=explicit без max_attempts_override -> 422 (валидация схемы)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db)
+    try:
+        resp = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "explicit", "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
+async def test_override_grant_same_again_forbids_explicit_number(db, client):
+    """mode=grant_same_again с явным max_attempts_override -> 422 (два способа
+    задать лимит одним вызовом запрещены, tsk-335 п.6)."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db)
+    try:
+        resp = await client.post(
+            "/api/v1/teacher/task-limits/override",
+            json={"student_id": sid, "task_id": tid, "mode": "grant_same_again",
+                  "max_attempts_override": 5, "updated_by": mid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422, resp.text
+    finally:
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])

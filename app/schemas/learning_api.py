@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # ----- Next item -----
@@ -180,14 +180,50 @@ class HintEventResponse(BaseModel):
 class TaskLimitOverrideRequest(BaseModel):
     student_id: int = Field(..., description="ID студента")
     task_id: int = Field(..., description="ID задания")
-    max_attempts_override: int = Field(..., gt=0, description="Лимит попыток")
+    mode: Literal["explicit", "grant_same_again"] = Field(
+        default="explicit",
+        description=(
+            "explicit — задать точное число (max_attempts_override обязателен; "
+            "путь ручного ввода на /teacher/help-requests и бот). "
+            "grant_same_again — добавить БАЗОВЫЙ лимит задания (tasks.max_attempts "
+            "или DEFAULT_MAX_ATTEMPTS, без учёта текущего override) к текущему "
+            "эффективному лимиту; число считает сервер (tsk-335)."
+        ),
+    )
+    max_attempts_override: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="Обязателен при mode=explicit; запрещён при mode=grant_same_again",
+    )
     reason: Optional[str] = None
     updated_by: int = Field(..., description="ID учителя/методиста")
+
+    @model_validator(mode="after")
+    def _check_mode_fields(self) -> "TaskLimitOverrideRequest":
+        if self.mode == "explicit" and self.max_attempts_override is None:
+            raise ValueError("max_attempts_override обязателен при mode=explicit")
+        if self.mode == "grant_same_again" and self.max_attempts_override is not None:
+            raise ValueError(
+                "max_attempts_override запрещён при mode=grant_same_again — "
+                "число вычисляет сервер"
+            )
+        return self
 
 
 class TaskLimitOverrideResponse(BaseModel):
     ok: bool = True
     student_id: int
     task_id: int
-    max_attempts_override: int
+    max_attempts_override: int = Field(description="Итоговый лимит попыток после операции")
+    previous_max_attempts_override: Optional[int] = Field(
+        default=None, description="Значение до операции; null — override не было"
+    )
+    mode: Literal["explicit", "grant_same_again"] = "explicit"
+    base_attempts_added: Optional[int] = Field(
+        default=None, description="Сколько добавлено к эффективному лимиту (только grant_same_again)"
+    )
+    already: bool = Field(
+        default=False,
+        description="True — сработал дебаунс повторного клика, состояние не менялось",
+    )
     updated_at: datetime

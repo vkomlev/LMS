@@ -206,18 +206,30 @@ async def record_task_limit_override(
     max_attempts_override: int,
     reason: Optional[str],
     updated_by: int,
+    *,
+    mode: str = "explicit",
+    previous_max_attempts_override: Optional[int] = None,
+    base_attempts_added: Optional[int] = None,
 ) -> None:
     """
     Записать событие task_limit_override в learning_events.
     Вызывается после upsert в student_task_limit_override.
+
+    ``mode``/``previous_max_attempts_override``/``base_attempts_added`` — tsk-335,
+    режим «выдать столько же, сколько было» без ручного ввода числа.
     """
     payload: dict[str, Any] = {
         "task_id": task_id,
         "max_attempts_override": max_attempts_override,
         "updated_by": updated_by,
+        "mode": mode,
     }
     if reason is not None:
         payload["reason"] = reason
+    if previous_max_attempts_override is not None:
+        payload["previous_max_attempts_override"] = previous_max_attempts_override
+    if base_attempts_added is not None:
+        payload["base_attempts_added"] = base_attempts_added
 
     await db.execute(
         text("""

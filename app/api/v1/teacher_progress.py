@@ -122,6 +122,35 @@ class ProgressTreeItem(BaseModel):
         default=None, description="Кто поставил ручную отметку (у материалов всегда null)"
     )
     granted_at: Optional[datetime] = None
+    attempts_used: Optional[int] = Field(
+        default=None, description="Задание: сколько попыток уже потрачено"
+    )
+    attempts_limit_effective: Optional[int] = Field(
+        default=None, description="Задание: текущий эффективный лимит попыток"
+    )
+    open_help_request_id: Optional[int] = Field(
+        default=None,
+        description="ID открытой заявки help_requests по заданию (последняя по created_at); null — заявок нет",
+    )
+    open_help_request_type: Optional[Literal["manual_help", "blocked_limit"]] = Field(
+        default=None, description="Тип открытой заявки; null — заявок нет"
+    )
+    pending_review: bool = Field(
+        default=False,
+        description="Задание: последний результат SA_COM/TA сдан и ждёт ручной проверки (checked_at IS NULL)",
+    )
+    returned_for_rework: bool = Field(
+        default=False,
+        description="Задание: есть непрочитанное уведомление 'возвращено на доработку'",
+    )
+    needs_attention: bool = Field(
+        default=False,
+        description=(
+            "Требует внимания: BLOCKED_LIMIT, открытая заявка помощи, ожидает "
+            "ручной проверки, или возвращено на доработку (tsk-336). У узла "
+            "course — OR по всему поддереву"
+        ),
+    )
 
 
 class StudentCourseRef(BaseModel):

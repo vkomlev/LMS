@@ -28,6 +28,9 @@ AUTH_TEST_SESSION_ISSUED = "auth.test.session_issued"
 TEACHER_PROGRESS_GRANTED = "teacher.progress.granted"
 TEACHER_PROGRESS_REVOKED = "teacher.progress.revoked"
 
+# tsk-335 event types (выдача попыток без ручного ввода числа + explicit-путь)
+TEACHER_LIMIT_OVERRIDE = "teacher.limit.overridden"
+
 
 async def log_event(
     db: AsyncSession,

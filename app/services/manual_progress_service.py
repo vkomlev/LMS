@@ -77,6 +77,8 @@ MANUAL_SOURCE = "manual_teacher"
 REVOKE_REASON = "manual_progress_revoked"
 #: Провенанс реального прохождения ученика (дефолт колонки `source`).
 SYSTEM_SOURCE = "system"
+#: Типы заданий с ручной проверкой преподавателем (tsk-336: pending_review).
+MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TA")
 #: Фильтр обхода — тот же, что у учебного движка (см. `compute_course_state`).
 _REQUIREMENT_LEVELS = ("required", "skippable")
 #: Максимальная длина комментария преподавателя (обрезается, а не отклоняется).
@@ -1025,6 +1027,45 @@ async def get_student_progress(
         db, student_id, task_ids, last_results=last_results
     )
 
+    # tsk-336: открытые заявки помощи по заданиям дерева (последняя на задание,
+    # если их несколько) — один батч-запрос на всё дерево, не на задание.
+    help_by_task: dict[int, dict[str, Any]] = {}
+    if task_ids:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT DISTINCT ON (hr.task_id) "
+                    "       hr.task_id, hr.id AS request_id, hr.request_type "
+                    "FROM help_requests hr "
+                    "WHERE hr.student_id = :student_id AND hr.status = 'open' "
+                    "  AND hr.task_id = ANY(:task_ids) "
+                    "ORDER BY hr.task_id, hr.created_at DESC, hr.id DESC"
+                ),
+                {"student_id": student_id, "task_ids": task_ids},
+            )
+        ).mappings().fetchall()
+        help_by_task = {int(r["task_id"]): dict(r) for r in rows}
+
+    # tsk-336: непрочитанные уведомления "возвращено на доработку" по заданиям
+    # дерева. task_id лежит внутри JSONB payload (notifications не хранит его
+    # отдельной колонкой) — фильтр по нему делается в памяти post-filter'ом,
+    # приемлемо для объёма уведомлений одного ученика.
+    rework_task_ids: set[int] = set()
+    if task_ids:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT (payload->>'task_id')::int AS task_id "
+                    "FROM notifications "
+                    "WHERE user_id = :student_id AND read_at IS NULL "
+                    "  AND kind = 'task_returned_for_rework' "
+                    "  AND (payload->>'task_id')::int = ANY(:task_ids)"
+                ),
+                {"student_id": student_id, "task_ids": task_ids},
+            )
+        ).fetchall()
+        rework_task_ids = {int(r[0]) for r in rows}
+
     material_progress: dict[int, dict[str, Any]] = {}
     if material_ids:
         rows = (
@@ -1096,6 +1137,7 @@ async def get_student_progress(
     per_course_items: dict[int, list[dict[str, Any]]] = {cid: [] for cid in tree_ids}
     own_total: dict[int, int] = {cid: 0 for cid in tree_ids}
     own_done: dict[int, int] = {cid: 0 for cid in tree_ids}
+    own_attention: dict[int, bool] = {cid: False for cid in tree_ids}
 
     for cid in tree_ids:
         for m in by_course_materials.get(cid, []):
@@ -1120,6 +1162,13 @@ async def get_student_progress(
                 "manual_grantable": True,
                 "granted_by": None,
                 "granted_at": prog.get("completed_at") if prog else None,
+                "attempts_used": None,
+                "attempts_limit_effective": None,
+                "open_help_request_id": None,
+                "open_help_request_type": None,
+                "pending_review": False,
+                "returned_for_rework": False,
+                "needs_attention": False,
             })
             own_total[cid] += 1
             if m_status in ("COMPLETED", "SKIPPED"):
@@ -1129,6 +1178,23 @@ async def get_student_progress(
             state = task_states[tid]
             last = last_results.get(tid)
             is_manual = bool(last is not None and last.get("source_system") == MANUAL_SOURCE)
+
+            # tsk-336: признаки, требующие внимания преподавателя.
+            hr = help_by_task.get(tid)
+            pending_review = bool(
+                t.get("task_type") in MANUAL_REVIEW_TASK_TYPES
+                and last is not None
+                and last.get("checked_at") is None
+            )
+            returned_for_rework = tid in rework_task_ids
+            needs_attention = (
+                state.state == "BLOCKED_LIMIT"
+                or hr is not None
+                or pending_review
+                or returned_for_rework
+            )
+            own_attention[cid] = own_attention.get(cid, False) or needs_attention
+
             per_course_items[cid].append({
                 "item_type": "task",
                 "item_id": tid,
@@ -1146,6 +1212,13 @@ async def get_student_progress(
                 "manual_grantable": not is_quiz_task(t),
                 "granted_by": (last or {}).get("checked_by") if is_manual else None,
                 "granted_at": (last or {}).get("checked_at") if is_manual else None,
+                "attempts_used": state.attempts_used,
+                "attempts_limit_effective": state.attempts_limit_effective,
+                "open_help_request_id": hr["request_id"] if hr else None,
+                "open_help_request_type": hr["request_type"] if hr else None,
+                "pending_review": pending_review,
+                "returned_for_rework": returned_for_rework,
+                "needs_attention": needs_attention,
             })
             own_total[cid] += 1
             if state.state == "PASSED" or tid in skipped_task_ids:
@@ -1180,6 +1253,15 @@ async def get_student_progress(
             return "NOT_STARTED"
         return "IN_PROGRESS"
 
+    def _rollup_attention(node: int, seen: frozenset[int] = frozenset()) -> bool:
+        """OR требующих внимания заданий по поддереву узла (tsk-336)."""
+        if node in seen:
+            return False
+        seen = seen | {node}
+        if own_attention.get(node, False):
+            return True
+        return any(_rollup_attention(c, seen) for c in children_of.get(node, []))
+
     items: list[dict[str, Any]] = []
     for cid in tree_ids:
         items.append({
@@ -1195,6 +1277,13 @@ async def get_student_progress(
             "manual_grantable": True,
             "granted_by": None,
             "granted_at": None,
+            "attempts_used": None,
+            "attempts_limit_effective": None,
+            "open_help_request_id": None,
+            "open_help_request_type": None,
+            "pending_review": False,
+            "returned_for_rework": False,
+            "needs_attention": _rollup_attention(cid),
         })
         items.extend(per_course_items[cid])
 
