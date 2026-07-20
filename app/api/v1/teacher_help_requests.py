@@ -1,10 +1,10 @@
-﻿"""
-Learning Engine V1, СЌС‚Р°Рї 3.8: API Р·Р°СЏРІРѕРє РЅР° РїРѕРјРѕС‰СЊ РґР»СЏ РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°.
+"""
+Learning Engine V1, этап 3.8: API заявок на помощь для преподавателя/методиста.
 
-GET /api/v1/teacher/help-requests вЂ” СЃРїРёСЃРѕРє Р·Р°СЏРІРѕРє
-GET /api/v1/teacher/help-requests/{request_id} вЂ” РєР°СЂС‚РѕС‡РєР° Р·Р°СЏРІРєРё
-POST /api/v1/teacher/help-requests/{request_id}/close вЂ” Р·Р°РєСЂС‹С‚СЊ Р·Р°СЏРІРєСѓ
-POST /api/v1/teacher/help-requests/{request_id}/reply вЂ” РѕС‚РІРµС‚РёС‚СЊ СЃС‚СѓРґРµРЅС‚Сѓ
+GET /api/v1/teacher/help-requests — список заявок
+GET /api/v1/teacher/help-requests/{request_id} — карточка заявки
+POST /api/v1/teacher/help-requests/{request_id}/close — закрыть заявку
+POST /api/v1/teacher/help-requests/{request_id}/reply — ответить студенту
 """
 from __future__ import annotations
 
@@ -50,16 +50,16 @@ router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests
 logger = logging.getLogger("api.teacher_help_requests")
 
 
-# ----- Р­С‚Р°Рї 3.9: claim-next (РјР°СЂС€СЂСѓС‚ РґРѕ /{request_id}, С‡С‚РѕР±С‹ "claim-next" РЅРµ Р·Р°С…РІР°С‚С‹РІР°Р»СЃСЏ РєР°Рє id) -----
+# ----- Этап 3.9: claim-next (маршрут до /{request_id}, чтобы "claim-next" не захватывался как id) -----
 
 @router.post(
     "/claim-next",
     response_model=HelpRequestClaimNextResponse,
     status_code=status.HTTP_200_OK,
-    summary="Р’Р·СЏС‚СЊ СЃР»РµРґСѓСЋС‰РёР№ РѕС‚РєСЂС‹С‚С‹Р№ help-request (Р°С‚РѕРјР°СЂРЅС‹Р№ claim)",
+    summary="Взять следующий открытый help-request (атомарный claim)",
     responses={
-        200: {"description": "РљРµР№СЃ РІС‹РґР°РЅ РёР»Рё empty=true"},
-        422: {"description": "РќРµРІР°Р»РёРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹"},
+        200: {"description": "Кейс выдан или empty=true"},
+        422: {"description": "Невалидные параметры"},
     },
 )
 async def help_request_claim_next(
@@ -91,13 +91,13 @@ async def help_request_claim_next(
 @router.get(
     "",
     response_model=HelpRequestListResponse,
-    summary="РЎРїРёСЃРѕРє Р·Р°СЏРІРѕРє РЅР° РїРѕРјРѕС‰СЊ (СЃ ACL)",
+    summary="Список заявок на помощь (с ACL)",
 )
 async def help_requests_list(
-    teacher_id: int = Query(..., description="ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"),
+    teacher_id: int = Query(..., description="ID преподавателя/методиста"),
     status_filter: str = Query("open", description="open | closed | all", alias="status"),
     request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
-    sort: str = Query("priority", description="priority | created_at | due_at (СЌС‚Р°Рї 3.9)", alias="sort"),
+    sort: str = Query("priority", description="priority | created_at | due_at (этап 3.9)", alias="sort"),
     overdue: bool = Query(False, description="true — только просроченные (due_at < now), ортогонально типу (tsk-312)"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -109,17 +109,17 @@ async def help_requests_list(
     if status_filter not in ("open", "closed", "all"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="status РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ open, closed РёР»Рё all",
+            detail="status должен быть open, closed или all",
         )
     if request_type_filter not in ("manual_help", "blocked_limit", "all"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="request_type РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ manual_help, blocked_limit РёР»Рё all",
+            detail="request_type должен быть manual_help, blocked_limit или all",
         )
     if sort not in ("priority", "created_at", "due_at"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="sort РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ priority, created_at РёР»Рё due_at",
+            detail="sort должен быть priority, created_at или due_at",
         )
     items, total = await list_help_requests(
         db, teacher_id, status_filter, request_type_filter, limit, offset, sort=sort, overdue=overdue
@@ -133,12 +133,12 @@ async def help_requests_list(
 @router.get(
     "/{request_id}",
     response_model=HelpRequestDetailResponse,
-    summary="РљР°СЂС‚РѕС‡РєР° Р·Р°СЏРІРєРё РЅР° РїРѕРјРѕС‰СЊ",
-    responses={404: {"description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"}, 403: {"description": "РќРµС‚ РґРѕСЃС‚СѓРїР°"}},
+    summary="Карточка заявки на помощь",
+    responses={404: {"description": "Заявка не найдена"}, 403: {"description": "Нет доступа"}},
 )
 async def help_request_detail(
-    request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
-    teacher_id: int = Query(..., description="ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"),
+    request_id: int = Path(..., description="ID заявки"),
+    teacher_id: int = Query(..., description="ID преподавателя/методиста"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
 ) -> HelpRequestDetailResponse:
@@ -146,9 +146,9 @@ async def help_request_detail(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     detail, err = await get_help_request_detail(db, request_id, teacher_id)
     if err == "not_found":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     if err == "forbidden" or detail is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°СЏРІРєРµ")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к заявке")
     detail["history"] = [HelpRequestReplyItem(**h) for h in detail["history"]]
     return HelpRequestDetailResponse(**detail)
 
@@ -157,7 +157,7 @@ async def help_request_detail(
     "/{request_id}/close",
     response_model=HelpRequestCloseResponse,
     status_code=status.HTTP_200_OK,
-    summary="Р—Р°РєСЂС‹С‚СЊ Р·Р°СЏРІРєСѓ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+    summary="Закрыть заявку (идемпотентно)",
     responses={
         404: {"description": "Заявка не найдена"},
         403: {"description": "Нет доступа"},
@@ -165,7 +165,7 @@ async def help_request_detail(
     },
 )
 async def help_request_close(
-    request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+    request_id: int = Path(..., description="ID заявки"),
     body: HelpRequestCloseRequest = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -173,20 +173,20 @@ async def help_request_close(
     if not current_user.is_service and current_user.id != body.closed_by:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if not await help_request_exists(db, request_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     ok = await can_access_help_request(db, request_id, body.closed_by)
     if not ok:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°СЏРІРєРµ")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к заявке")
     data, already, lock_err = await close_help_request(
         db, request_id, body.closed_by, body.resolution_comment, lock_token=body.lock_token
     )
     if lock_err == "lock_conflict":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="РўРѕРєРµРЅ Р±Р»РѕРєРёСЂРѕРІРєРё РЅРµРІР°Р»РёРґРµРЅ РёР»Рё РїСЂРѕСЃСЂРѕС‡РµРЅ",
+            detail="Токен блокировки невалиден или просрочен",
         )
     if data is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     await db.commit()
     return HelpRequestCloseResponse(**data)
 
@@ -195,15 +195,15 @@ async def help_request_close(
     "/{request_id}/release",
     response_model=HelpRequestReleaseResponse,
     status_code=status.HTTP_200_OK,
-    summary="РћСЃРІРѕР±РѕРґРёС‚СЊ Р±Р»РѕРєРёСЂРѕРІРєСѓ Р·Р°СЏРІРєРё (СЌС‚Р°Рї 3.9)",
+    summary="Освободить блокировку заявки (этап 3.9)",
     responses={
-        200: {"description": "released=true РёР»Рё РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ released=false"},
-        404: {"description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"},
-        409: {"description": "РўРѕРєРµРЅ РЅРµ СЃРѕРІРїР°Р» РёР»Рё РєРµР№СЃ Сѓ РґСЂСѓРіРѕРіРѕ РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ"},
+        200: {"description": "released=true или идемпотентно released=false"},
+        404: {"description": "Заявка не найдена"},
+        409: {"description": "Токен не совпал или кейс у другого преподавателя"},
     },
 )
 async def help_request_release(
-    request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+    request_id: int = Path(..., description="ID заявки"),
     body: HelpRequestReleaseRequest = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -211,14 +211,14 @@ async def help_request_release(
     if not current_user.is_service and current_user.id != body.teacher_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     if not await help_request_exists(db, request_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     released, err = await release_help_request_claim(
         db, request_id, body.teacher_id, body.lock_token
     )
     if err == "forbidden":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="РўРѕРєРµРЅ Р±Р»РѕРєРёСЂРѕРІРєРё РЅРµ СЃРѕРІРїР°РґР°РµС‚ РёР»Рё Р·Р°СЏРІРєР° Р·Р°С…РІР°С‡РµРЅР° РґСЂСѓРіРёРј РїСЂРµРїРѕРґР°РІР°С‚РµР»РµРј",
+            detail="Токен блокировки не совпадает или заявка захвачена другим преподавателем",
         )
     await db.commit()
     return HelpRequestReleaseResponse(released=released)
@@ -228,15 +228,15 @@ async def help_request_release(
     "/{request_id}/reply",
     response_model=HelpRequestReplyResponse,
     status_code=status.HTTP_200_OK,
-    summary="РћС‚РІРµС‚РёС‚СЊ СЃС‚СѓРґРµРЅС‚Сѓ (СЃРѕРѕР±С‰РµРЅРёРµ РІ messages, РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ РїРѕ idempotency_key)",
+    summary="Ответить студенту (сообщение в messages, идемпотентно по idempotency_key)",
     responses={
-        404: {"description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"},
-        403: {"description": "РќРµС‚ РґРѕСЃС‚СѓРїР°"},
-        409: {"description": "Р—Р°СЏРІРєР° СѓР¶Рµ Р·Р°РєСЂС‹С‚Р°, РѕС‚РІРµС‚ Р·Р°РїСЂРµС‰С‘РЅ"},
+        404: {"description": "Заявка не найдена"},
+        403: {"description": "Нет доступа"},
+        409: {"description": "Заявка уже закрыта, ответ запрещён"},
     },
 )
 async def help_request_reply(
-    request_id: int = Path(..., description="ID Р·Р°СЏРІРєРё"),
+    request_id: int = Path(..., description="ID заявки"),
     body: HelpRequestReplyRequest = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -253,18 +253,18 @@ async def help_request_reply(
         lock_token=body.lock_token,
     )
     if err == "not_found":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     if err == "forbidden":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="РќРµС‚ РґРѕСЃС‚СѓРїР° Рє Р·Р°СЏРІРєРµ")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нет доступа к заявке")
     if err == "closed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Р—Р°СЏРІРєР° СѓР¶Рµ Р·Р°РєСЂС‹С‚Р°. РћС‚РІРµС‚ РІ Р·Р°РєСЂС‹С‚СѓСЋ Р·Р°СЏРІРєСѓ Р·Р°РїСЂРµС‰С‘РЅ.",
+            detail="Заявка уже закрыта. Ответ в закрытую заявку запрещён.",
         )
     if err == "lock_conflict":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="РўРѕРєРµРЅ Р±Р»РѕРєРёСЂРѕРІРєРё РЅРµРІР°Р»РёРґРµРЅ РёР»Рё РїСЂРѕСЃСЂРѕС‡РµРЅ",
+            detail="Токен блокировки невалиден или просрочен",
         )
     await db.commit()
     return HelpRequestReplyResponse(**data)

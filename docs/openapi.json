@@ -13434,7 +13434,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "Р’Р·СЏС‚СЊ СЃР»РµРґСѓСЋС‰РёР№ РѕС‚РєСЂС‹С‚С‹Р№ help-request (Р°С‚РѕРјР°СЂРЅС‹Р№ claim)",
+        "summary": "Взять следующий открытый help-request (атомарный claim)",
         "operationId": "help_request_claim_next_api_v1_teacher_help_requests_claim_next_post",
         "security": [
           {
@@ -13506,7 +13506,7 @@
         },
         "responses": {
           "200": {
-            "description": "РљРµР№СЃ РІС‹РґР°РЅ РёР»Рё empty=true",
+            "description": "Кейс выдан или empty=true",
             "content": {
               "application/json": {
                 "schema": {
@@ -13516,7 +13516,7 @@
             }
           },
           "422": {
-            "description": "РќРµРІР°Р»РёРґРЅС‹Рµ РїР°СЂР°РјРµС‚СЂС‹"
+            "description": "Невалидные параметры"
           }
         }
       }
@@ -13526,7 +13526,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "РЎРїРёСЃРѕРє Р·Р°СЏРІРѕРє РЅР° РїРѕРјРѕС‰СЊ (СЃ ACL)",
+        "summary": "Список заявок на помощь (с ACL)",
         "operationId": "help_requests_list_api_v1_teacher_help_requests_get",
         "security": [
           {
@@ -13543,10 +13543,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°",
+              "description": "ID преподавателя/методиста",
               "title": "Teacher Id"
             },
-            "description": "ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"
+            "description": "ID преподавателя/методиста"
           },
           {
             "name": "status",
@@ -13578,11 +13578,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "priority | created_at | due_at (СЌС‚Р°Рї 3.9)",
+              "description": "priority | created_at | due_at (этап 3.9)",
               "default": "priority",
               "title": "Sort"
             },
-            "description": "priority | created_at | due_at (СЌС‚Р°Рї 3.9)"
+            "description": "priority | created_at | due_at (этап 3.9)"
           },
           {
             "name": "overdue",
@@ -13697,7 +13697,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "РљР°СЂС‚РѕС‡РєР° Р·Р°СЏРІРєРё РЅР° РїРѕРјРѕС‰СЊ",
+        "summary": "Карточка заявки на помощь",
         "operationId": "help_request_detail_api_v1_teacher_help_requests__request_id__get",
         "security": [
           {
@@ -13714,10 +13714,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID Р·Р°СЏРІРєРё",
+              "description": "ID заявки",
               "title": "Request Id"
             },
-            "description": "ID Р·Р°СЏРІРєРё"
+            "description": "ID заявки"
           },
           {
             "name": "teacher_id",
@@ -13725,10 +13725,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°",
+              "description": "ID преподавателя/методиста",
               "title": "Teacher Id"
             },
-            "description": "ID РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ/РјРµС‚РѕРґРёСЃС‚Р°"
+            "description": "ID преподавателя/методиста"
           },
           {
             "name": "token",
@@ -13791,10 +13791,10 @@
             }
           },
           "404": {
-            "description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"
+            "description": "Заявка не найдена"
           },
           "403": {
-            "description": "РќРµС‚ РґРѕСЃС‚СѓРїР°"
+            "description": "Нет доступа"
           },
           "422": {
             "description": "Validation Error",
@@ -13814,7 +13814,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "Р—Р°РєСЂС‹С‚СЊ Р·Р°СЏРІРєСѓ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+        "summary": "Закрыть заявку (идемпотентно)",
         "operationId": "help_request_close_api_v1_teacher_help_requests__request_id__close_post",
         "security": [
           {
@@ -13831,10 +13831,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID Р·Р°СЏРІРєРё",
+              "description": "ID заявки",
               "title": "Request Id"
             },
-            "description": "ID Р·Р°СЏРІРєРё"
+            "description": "ID заявки"
           },
           {
             "name": "token",
@@ -13933,7 +13933,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "РћСЃРІРѕР±РѕРґРёС‚СЊ Р±Р»РѕРєРёСЂРѕРІРєСѓ Р·Р°СЏРІРєРё (СЌС‚Р°Рї 3.9)",
+        "summary": "Освободить блокировку заявки (этап 3.9)",
         "operationId": "help_request_release_api_v1_teacher_help_requests__request_id__release_post",
         "security": [
           {
@@ -13950,10 +13950,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID Р·Р°СЏРІРєРё",
+              "description": "ID заявки",
               "title": "Request Id"
             },
-            "description": "ID Р·Р°СЏРІРєРё"
+            "description": "ID заявки"
           },
           {
             "name": "token",
@@ -14016,7 +14016,7 @@
         },
         "responses": {
           "200": {
-            "description": "released=true РёР»Рё РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ released=false",
+            "description": "released=true или идемпотентно released=false",
             "content": {
               "application/json": {
                 "schema": {
@@ -14026,10 +14026,10 @@
             }
           },
           "404": {
-            "description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"
+            "description": "Заявка не найдена"
           },
           "409": {
-            "description": "РўРѕРєРµРЅ РЅРµ СЃРѕРІРїР°Р» РёР»Рё РєРµР№СЃ Сѓ РґСЂСѓРіРѕРіРѕ РїСЂРµРїРѕРґР°РІР°С‚РµР»СЏ"
+            "description": "Токен не совпал или кейс у другого преподавателя"
           },
           "422": {
             "description": "Validation Error",
@@ -14049,7 +14049,7 @@
         "tags": [
           "teacher_help_requests"
         ],
-        "summary": "РћС‚РІРµС‚РёС‚СЊ СЃС‚СѓРґРµРЅС‚Сѓ (СЃРѕРѕР±С‰РµРЅРёРµ РІ messages, РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ РїРѕ idempotency_key)",
+        "summary": "Ответить студенту (сообщение в messages, идемпотентно по idempotency_key)",
         "operationId": "help_request_reply_api_v1_teacher_help_requests__request_id__reply_post",
         "security": [
           {
@@ -14066,10 +14066,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID Р·Р°СЏРІРєРё",
+              "description": "ID заявки",
               "title": "Request Id"
             },
-            "description": "ID Р·Р°СЏРІРєРё"
+            "description": "ID заявки"
           },
           {
             "name": "token",
@@ -14142,13 +14142,13 @@
             }
           },
           "404": {
-            "description": "Р—Р°СЏРІРєР° РЅРµ РЅР°Р№РґРµРЅР°"
+            "description": "Заявка не найдена"
           },
           "403": {
-            "description": "РќРµС‚ РґРѕСЃС‚СѓРїР°"
+            "description": "Нет доступа"
           },
           "409": {
-            "description": "Р—Р°СЏРІРєР° СѓР¶Рµ Р·Р°РєСЂС‹С‚Р°, РѕС‚РІРµС‚ Р·Р°РїСЂРµС‰С‘РЅ"
+            "description": "Заявка уже закрыта, ответ запрещён"
           },
           "422": {
             "description": "Validation Error",
@@ -25813,6 +25813,76 @@
               }
             ],
             "title": "Granted At"
+          },
+          "attempts_used": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempts Used",
+            "description": "Задание: сколько попыток уже потрачено"
+          },
+          "attempts_limit_effective": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempts Limit Effective",
+            "description": "Задание: текущий эффективный лимит попыток"
+          },
+          "open_help_request_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Help Request Id",
+            "description": "ID открытой заявки help_requests по заданию (последняя по created_at); null — заявок нет"
+          },
+          "open_help_request_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "manual_help",
+                  "blocked_limit"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Help Request Type",
+            "description": "Тип открытой заявки; null — заявок нет"
+          },
+          "pending_review": {
+            "type": "boolean",
+            "title": "Pending Review",
+            "description": "Задание: последний результат SA_COM/TA сдан и ждёт ручной проверки (checked_at IS NULL)",
+            "default": false
+          },
+          "returned_for_rework": {
+            "type": "boolean",
+            "title": "Returned For Rework",
+            "description": "Задание: есть непрочитанное уведомление 'возвращено на доработку'",
+            "default": false
+          },
+          "needs_attention": {
+            "type": "boolean",
+            "title": "Needs Attention",
+            "description": "Требует внимания: BLOCKED_LIMIT, открытая заявка помощи, ожидает ручной проверки, или возвращено на доработку (tsk-336). У узла course — OR по всему поддереву",
+            "default": false
           }
         },
         "type": "object",
@@ -28052,11 +28122,28 @@
             "title": "Task Id",
             "description": "ID задания"
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "grant_same_again"
+            ],
+            "title": "Mode",
+            "description": "explicit — задать точное число (max_attempts_override обязателен; путь ручного ввода на /teacher/help-requests и бот). grant_same_again — добавить БАЗОВЫЙ лимит задания (tasks.max_attempts или DEFAULT_MAX_ATTEMPTS, без учёта текущего override) к текущему эффективному лимиту; число считает сервер (tsk-335).",
+            "default": "explicit"
+          },
           "max_attempts_override": {
-            "type": "integer",
-            "exclusiveMinimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Max Attempts Override",
-            "description": "Лимит попыток"
+            "description": "Обязателен при mode=explicit; запрещён при mode=grant_same_again"
           },
           "reason": {
             "anyOf": [
@@ -28079,7 +28166,6 @@
         "required": [
           "student_id",
           "task_id",
-          "max_attempts_override",
           "updated_by"
         ],
         "title": "TaskLimitOverrideRequest"
@@ -28101,7 +28187,47 @@
           },
           "max_attempts_override": {
             "type": "integer",
-            "title": "Max Attempts Override"
+            "title": "Max Attempts Override",
+            "description": "Итоговый лимит попыток после операции"
+          },
+          "previous_max_attempts_override": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Max Attempts Override",
+            "description": "Значение до операции; null — override не было"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "explicit",
+              "grant_same_again"
+            ],
+            "title": "Mode",
+            "default": "explicit"
+          },
+          "base_attempts_added": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Attempts Added",
+            "description": "Сколько добавлено к эффективному лимиту (только grant_same_again)"
+          },
+          "already": {
+            "type": "boolean",
+            "title": "Already",
+            "description": "True — сработал дебаунс повторного клика, состояние не менялось",
+            "default": false
           },
           "updated_at": {
             "type": "string",
