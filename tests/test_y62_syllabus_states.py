@@ -94,6 +94,7 @@ async def _pick_root_course(db) -> int:
                 SELECT c.id FROM courses c
                 WHERE c.id NOT IN (SELECT course_id FROM course_parents)
                   AND EXISTS (SELECT 1 FROM tasks t WHERE t.course_id = c.id)
+                ORDER BY c.id
                 LIMIT 1
                 """
             )
@@ -117,6 +118,7 @@ async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
                 JOIN course_parents cp_inner ON cp_inner.parent_course_id = cp_outer.course_id
                 JOIN tasks t ON t.course_id = cp_inner.course_id
                 WHERE cp_outer.parent_course_id NOT IN (SELECT course_id FROM course_parents)
+                ORDER BY cp_outer.parent_course_id, cp_outer.course_id, cp_inner.course_id
                 LIMIT 1
                 """
             )
@@ -131,7 +133,10 @@ async def _pick_task_in_course(db, course_id: int) -> tuple[int, int]:
     """Возвращает (task_id, max_attempts_or_null_as_int)."""
     row = (
         await db.execute(
-            text("SELECT id, COALESCE(max_attempts, 0) FROM tasks WHERE course_id = :c LIMIT 1"),
+            text(
+                "SELECT id, COALESCE(max_attempts, 0) FROM tasks "
+                "WHERE course_id = :c ORDER BY id LIMIT 1"
+            ),
             {"c": course_id},
         )
     ).fetchone()
@@ -155,6 +160,7 @@ async def _pick_root_task_of_type(db, types: tuple[str, ...]) -> tuple[int, int]
                 WHERE t.course_id NOT IN (SELECT course_id FROM course_parents)
                   AND t.is_active = true
                   AND t.task_content->>'type' = ANY(:tp)
+                ORDER BY t.course_id, t.id
                 LIMIT 1
                 """
             ),
@@ -174,6 +180,7 @@ async def _pick_other_root(db, exclude_root_id: int) -> int:
                 SELECT id FROM courses
                 WHERE id != :exc
                   AND id NOT IN (SELECT course_id FROM course_parents)
+                ORDER BY id
                 LIMIT 1
                 """
             ),
@@ -793,7 +800,9 @@ async def _make_quiz_course_task(db) -> tuple[int, int]:
         ).scalar()
     )
     await db.commit()
-    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
+    diff = (
+        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
+    ).scalar()
     tc = (
         '{"type":"SC_Qw","stem":"Что ближе?","scales":["информатика","python"],'
         '"options":[{"id":"a","text":"разгадывать","scores":{"информатика":2}},'
@@ -993,7 +1002,7 @@ async def test_perf_smoke_50_tasks(db, client):
                 JOIN tasks tk ON tk.course_id = t.member_id
                 GROUP BY t.root_id
                 HAVING COUNT(*) >= 50
-                ORDER BY cnt DESC
+                ORDER BY cnt DESC, t.root_id
                 LIMIT 1
                 """
             )

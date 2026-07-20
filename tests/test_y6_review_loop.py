@@ -384,16 +384,15 @@ async def test_y6_regrade_409_not_yet_graded(db, client):
 
 
 @pytest.mark.asyncio
-async def test_y6_escalation_cron_tick_idempotent(db, db_engine):
+async def test_y6_escalation_cron_tick_idempotent(db, db_session_factory):
     """Stage 4: escalation_cron_tick идемпотентный."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
     from app.services import escalation_service
 
-    # Своя фабрика поверх NullPool-движка текущего теста: глобальная
-    # фабрика держит QueuePool, и соединение из прошлого event loop
-    # ломает asyncpg при запуске теста не в изоляции.
-    tick_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+    # Фабрика из conftest: привязана к тому же соединению, что и `db`.
+    # Глобальная фабрика держит QueuePool (соединение из прошлого event loop
+    # ломает asyncpg, tsk-330), а отдельный движок не видит данные теста,
+    # лежащие в незакоммиченной транзакции (tsk-333).
+    tick_factory = db_session_factory
 
     # Создаём pending-record старше 48h без escalated_at marker
     task_id, _course_id, _t = await _pick_root_task(db)

@@ -110,6 +110,8 @@ async def test_email_normalized_to_lowercase(client: AsyncClient, db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.no_tx_isolation  # два ОДНОВРЕМЕННЫХ verify обязаны идти разными
+                              # соединениями — на одном проверять нечего (tsk-333)
 async def test_concurrent_verify_same_email_creates_one_user(client: AsyncClient, db):
     """Race-safety: 2 concurrent verify для same email → exactly 1 user."""
     email = f"race-{os.urandom(4).hex()}@example.com"

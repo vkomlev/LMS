@@ -284,8 +284,20 @@ async def test_t13_delete_across_courses_independent(db):
 
 
 @pytest.mark.asyncio
-async def test_t14_backfill_invariant_on_existing_data(db):
-    """T14. После миграции порядок существующих задач совпадает с id ASC."""
+async def test_t14_backfill_invariant_on_own_course(db):
+    """T14. Правило бэкфилла (id ASC) выполняется для задач, вставленных без позиции.
+
+    Раньше тест сканировал ВСЮ таблицу `tasks` и требовал `order_position ==
+    ROW_NUMBER() ORDER BY id` глобально. Это неверный инвариант: ручное
+    переупорядочивание заданий — рабочая функция продукта (см.
+    `test_tasks_reorder_api.py`), после неё порядок легально расходится с
+    id ASC. Тест был красным на любых реальных данных (~3058 «расхождений»)
+    и не отличал баг от нормальной работы. Проверяем правило на своём курсе
+    (tsk-333; дрейф данных на проде разбирается отдельно в tsk-332).
+    """
+    course_id = await _new_course(db)
+    ids = [await _insert_task(db, course_id, None) for _ in range(5)]
+
     rows = (
         await db.execute(
             text(
@@ -297,19 +309,23 @@ async def test_t14_backfill_invariant_on_existing_data(db):
                                ORDER BY id ASC
                            ) AS pos
                     FROM tasks
-                    WHERE course_id IS NOT NULL
+                    WHERE course_id = :cid
                 )
                 SELECT COUNT(*) AS mismatches
                 FROM tasks t
                 JOIN expected e USING (id, course_id)
                 WHERE t.order_position <> e.pos
                 """
-            )
+            ),
+            {"cid": course_id},
         )
     ).first()
     assert int(rows.mismatches) == 0, (
         "Порядок задач не соответствует backfill-правилу id ASC"
     )
+    assert await _course_positions(db, course_id) == [
+        (task_id, pos) for pos, task_id in enumerate(ids, start=1)
+    ]
 
 
 @pytest.mark.asyncio

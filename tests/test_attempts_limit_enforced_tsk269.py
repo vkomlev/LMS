@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -117,7 +118,9 @@ async def graph():
                         "sr": '{"max_score":1,"correct_options":["b"]}',
                         "cid": ids["reused"],
                         "did": difficulty_id,
-                        "uid": "tsk269-reused",
+                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
+                        # прерванный прогон и валил следующий с UniqueViolation.
+                        "uid": f"tsk269-reused-{uuid.uuid4().hex[:12]}",
                         "ma": DEFAULT_MAX_ATTEMPTS,
                     },
                 )

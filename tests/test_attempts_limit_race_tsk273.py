@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,10 @@ from app.core.config import Settings
 from app.services.attempts_service import AttemptsService
 from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
 
-pytestmark = pytest.mark.asyncio
+# Тест проверяет ГОНКУ: 6 одновременных запросов должны идти по разным
+# соединениям, иначе проверять нечего. Поэтому он вне общей откатываемой
+# транзакции (tsk-333) и чистит за собой сам — фикстурой `simple_graph`.
+pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
 
 _settings = Settings()
 _attempts = AttemptsService()
@@ -94,7 +98,9 @@ async def simple_graph():
                         "sr": '{"max_score":1,"correct_options":["b"]}',
                         "cid": ids["root"],
                         "did": difficulty_id,
-                        "uid": "tsk273-race",
+                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
+                        # прерванный прогон и валил следующий с UniqueViolation.
+                        "uid": f"tsk273-race-{uuid.uuid4().hex[:12]}",
                         "ma": DEFAULT_MAX_ATTEMPTS,
                     },
                 )

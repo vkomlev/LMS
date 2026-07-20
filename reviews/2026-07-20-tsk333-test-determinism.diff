@@ -1,0 +1,480 @@
+diff --git a/pytest.ini b/pytest.ini
+index 3594ca6..f6bda13 100644
+--- a/pytest.ini
++++ b/pytest.ini
+@@ -4,3 +4,5 @@ asyncio_default_fixture_loop_scope = function
+ testpaths = tests
+ python_files = test_*.py
+ python_functions = test_*
++markers =
++    no_tx_isolation: тест работает вне откатываемой транзакции (нужны параллельные соединения: гонки, блокировки, видимость между транзакциями). Обязан чистить за собой сам.
+diff --git a/tests/conftest.py b/tests/conftest.py
+index f1c48e9..b523f70 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -179,23 +179,148 @@ async def db_engine():
+         await engine.dispose()
+ 
+ 
++# Модули, которые сами открывают движок/соединение к БД (`create_async_engine`)
++# в своих фикстурах. Они несовместимы с общей откатываемой транзакцией:
++# данные теста лежат в НЕЗАКОММИЧЕННОЙ транзакции одного соединения, а уборка
++# идёт ДРУГИМ соединением — её `DELETE` встаёт в блокировку и ждёт транзакцию,
++# которая закончится только после теста. Тест ждёт DELETE, DELETE ждёт тест:
++# взаимный клинч, прогон висит без ошибки (tsk-333).
++#
++# Такие модули работают по-старому: реальные коммиты + уборка за собой.
++# Список сверяется тестом `test_tx_isolation_optout.py` — при добавлении
++# `create_async_engine` в новый тестовый модуль он подскажет, что делать.
++SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
++    {
++        "test_attempt_cancel_stage35.py",
++        "test_attempts_enrollment_hole_tsk272.py",
++        "test_attempts_integration_stage4.py",
++        "test_attempts_limit_enforced_tsk269.py",
++        "test_attempts_limit_race_tsk273.py",
++        "test_attempts_null_solution_rules_tsk325.py",
++        "test_attempts_root_course_tsk264.py",
++        "test_hint_events_stage36.py",
++        "test_last_attempt_stage6.py",
++        "test_learning_engine_service.py",
++        "test_materials_bulk_upsert.py",
++        "test_migrations.py",
++        "test_repos_smoke.py",
++        "test_tasks_order_position_api.py",
++        "test_tasks_reorder_api.py",
++        "test_teacher_courses_triggers_smoke.py",
++        "test_teacher_help_requests_overdue_tsk312.py",
++        "test_teacher_help_requests_stage38.py",
++        "test_teacher_help_requests_stage381.py",
++        "test_teacher_next_modes_stage39.py",
++        "test_triggers_smoke.py",
++        "test_tsk088_task_content_hints_preserved.py",
++    }
++)
++
++
++# Модули вне изоляции по ДРУГИМ причинам (не свой движок). Список ручной,
++# сторожем не проверяется — причина у каждого своя, автоматически её не вывести.
++OTHER_OPTOUT_MODULES: dict[str, str] = {
++    # Синхронный тест-скрипт: внутри поднимает свой event loop через
++    # `asyncio.run(...)`, поэтому соединение общей транзакции (созданное в
++    # loop'е pytest-asyncio) в нём непригодно — asyncpg падает с
++    # «attached to a different loop».
++    "test_hints_stage5.py": "свой event loop через asyncio.run",
++}
++
++
++def pytest_collection_modifyitems(items) -> None:
++    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией."""
++    optout = SELF_MANAGED_CONNECTION_MODULES | set(OTHER_OPTOUT_MODULES)
++    for item in items:
++        if Path(str(item.fspath)).name in optout:
++            item.add_marker(pytest.mark.no_tx_isolation)
++
++
++@pytest_asyncio.fixture(scope="function")
++async def db_conn(db_engine, request):
++    """Соединение теста с внешней транзакцией, которая всегда откатывается (tsk-333).
++
++    Тест и ASGI-приложение работают поверх ОДНОГО соединения: сессии
++    открываются с `join_transaction_mode="create_savepoint"`, поэтому их
++    `commit()` закрывает SAVEPOINT, а не внешнюю транзакцию. В конце теста
++    внешняя транзакция откатывается — в БД не остаётся ничего, даже если
++    тест упал до своего `finally: _cleanup(...)`.
++
++    Тесты с маркером `no_tx_isolation` получают `None` и работают по-старому
++    (реальные коммиты + ручная чистка) — это нужно там, где проверяется
++    поведение НЕСКОЛЬКИХ параллельных соединений: гонки, блокировки,
++    видимость между транзакциями. Одно соединение такую проверку обнуляет.
++    """
++    if request.node.get_closest_marker("no_tx_isolation"):
++        yield None
++        return
++
++    conn = await db_engine.connect()
++    trans = await conn.begin()
++    try:
++        yield conn
++    finally:
++        await trans.rollback()
++        await conn.close()
++
++
+ @pytest_asyncio.fixture(scope="function")
+-async def db(db_engine):
+-    """Асинхронная сессия к БД с NullPool; rollback после каждого теста.
++async def db(db_engine, db_conn):
++    """Асинхронная сессия к БД; по умолчанию — внутри откатываемой транзакции.
+ 
+     NullPool гарантирует, что каждый тест получает свежее соединение,
+     не связанное с event loop предыдущего теста.
+     """
+-    async with AsyncSession(db_engine, expire_on_commit=False) as session:
++    if db_conn is None:
++        async with AsyncSession(db_engine, expire_on_commit=False) as session:
++            yield session
++            await session.rollback()
++        return
++
++    async with AsyncSession(
++        db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
++    ) as session:
+         yield session
+-        await session.rollback()
+ 
+ 
+-@pytest.fixture(scope="function", autouse=True)
+-def _override_app_db():
+-    """Изолировать ASGI-запросы от глобального QueuePool между event loop тестов."""
++@pytest_asyncio.fixture(scope="function")
++async def db_session_factory(db_engine, db_conn):
++    """Фабрика сессий для сервисного кода, который открывает сессию сам.
++
++    Например `escalation_cron_tick(session_factory=...)`. Фабрика привязана к
++    тому же соединению, что и `db`, — иначе сервис ходит другим соединением и
++    НЕ ВИДИТ данные теста, лежащие в незакоммиченной транзакции.
++
++    Вне изоляции (`no_tx_isolation`) — фабрика поверх NullPool-движка текущего
++    event loop'а, как было сделано в tsk-330.
++    """
++    from sqlalchemy.ext.asyncio import async_sessionmaker
++
++    if db_conn is None:
++        yield async_sessionmaker(bind=db_engine, expire_on_commit=False)
++        return
++
++    yield async_sessionmaker(
++        bind=db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
++    )
++
+ 
+-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
++@pytest_asyncio.fixture(scope="function", autouse=True)
++async def _override_app_db(db_conn):
++    """Посадить ASGI-запросы на то же соединение, что и фикстура `db`.
++
++    Без этого данные теста не видны приложению (разные соединения), и тест
++    вынужден коммитить в общую БД — источник кросс-тестового загрязнения.
++    Для `no_tx_isolation` поведение прежнее: свой NullPool-движок на запрос.
++    """
++
++    async def override_shared_conn() -> AsyncGenerator[AsyncSession, None]:
++        async with AsyncSession(
++            db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
++        ) as session:
++            yield session
++
++    async def override_own_engine() -> AsyncGenerator[AsyncSession, None]:
+         engine = create_async_engine(_settings.database_url, poolclass=NullPool)
+         try:
+             async with AsyncSession(engine, expire_on_commit=False) as session:
+@@ -203,6 +328,8 @@ def _override_app_db():
+         finally:
+             await engine.dispose()
+ 
++    override_get_db = override_own_engine if db_conn is None else override_shared_conn
++
+     previous_override = app.dependency_overrides.get(get_async_db)
+     app.dependency_overrides[get_async_db] = override_get_db
+     try:
+diff --git a/tests/test_attempts_enrollment_hole_tsk272.py b/tests/test_attempts_enrollment_hole_tsk272.py
+index 7143dbb..df6f363 100644
+--- a/tests/test_attempts_enrollment_hole_tsk272.py
++++ b/tests/test_attempts_enrollment_hole_tsk272.py
+@@ -17,6 +17,7 @@ from __future__ import annotations
+ 
+ import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ import pytest
+@@ -86,7 +87,10 @@ async def fixture_graph():
+                         "sr": '{"max_score":1,"correct_options":["b"]}',
+                         "cid": ids["course"],
+                         "did": difficulty_id,
+-                        "uid": "tsk272-task",
++                        # Уникальный uid на прогон: фиксированный 'tsk272-task'
++                        # переживал прерванный прогон и валил следующий с
++                        # UniqueViolation на tasks_external_uid_key (tsk-333).
++                        "uid": f"tsk272-task-{uuid.uuid4().hex[:12]}",
+                         "ma": 3,
+                     },
+                 )
+diff --git a/tests/test_attempts_limit_enforced_tsk269.py b/tests/test_attempts_limit_enforced_tsk269.py
+index 430ff58..c84ce7e 100644
+--- a/tests/test_attempts_limit_enforced_tsk269.py
++++ b/tests/test_attempts_limit_enforced_tsk269.py
+@@ -30,6 +30,7 @@ from __future__ import annotations
+ 
+ import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ import pytest
+@@ -117,7 +118,9 @@ async def graph():
+                         "sr": '{"max_score":1,"correct_options":["b"]}',
+                         "cid": ids["reused"],
+                         "did": difficulty_id,
+-                        "uid": "tsk269-reused",
++                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
++                        # прерванный прогон и валил следующий с UniqueViolation.
++                        "uid": f"tsk269-reused-{uuid.uuid4().hex[:12]}",
+                         "ma": DEFAULT_MAX_ATTEMPTS,
+                     },
+                 )
+diff --git a/tests/test_attempts_limit_race_tsk273.py b/tests/test_attempts_limit_race_tsk273.py
+index 07181be..0969c5c 100644
+--- a/tests/test_attempts_limit_race_tsk273.py
++++ b/tests/test_attempts_limit_race_tsk273.py
+@@ -22,6 +22,7 @@ from __future__ import annotations
+ import asyncio
+ import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ import pytest
+@@ -42,7 +43,10 @@ from app.core.config import Settings
+ from app.services.attempts_service import AttemptsService
+ from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
+ 
+-pytestmark = pytest.mark.asyncio
++# Тест проверяет ГОНКУ: 6 одновременных запросов должны идти по разным
++# соединениям, иначе проверять нечего. Поэтому он вне общей откатываемой
++# транзакции (tsk-333) и чистит за собой сам — фикстурой `simple_graph`.
++pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
+ 
+ _settings = Settings()
+ _attempts = AttemptsService()
+@@ -94,7 +98,9 @@ async def simple_graph():
+                         "sr": '{"max_score":1,"correct_options":["b"]}',
+                         "cid": ids["root"],
+                         "did": difficulty_id,
+-                        "uid": "tsk273-race",
++                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
++                        # прерванный прогон и валил следующий с UniqueViolation.
++                        "uid": f"tsk273-race-{uuid.uuid4().hex[:12]}",
+                         "ma": DEFAULT_MAX_ATTEMPTS,
+                     },
+                 )
+diff --git a/tests/test_attempts_null_solution_rules_tsk325.py b/tests/test_attempts_null_solution_rules_tsk325.py
+index eb069fc..bab1fd2 100644
+--- a/tests/test_attempts_null_solution_rules_tsk325.py
++++ b/tests/test_attempts_null_solution_rules_tsk325.py
+@@ -24,6 +24,7 @@ from __future__ import annotations
+ 
+ import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ import pytest
+@@ -151,7 +152,9 @@ async def null_rules_graph():
+                         "tc": '{"type":"SA_COM","stem":"Введите число","media":[]}',
+                         "cid": ids["course"],
+                         "did": difficulty_id,
+-                        "uid": "tsk325-null-task",
++                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
++                        # прерванный прогон и валил следующий с UniqueViolation.
++                        "uid": f"tsk325-null-task-{uuid.uuid4().hex[:12]}",
+                         "ma": 3,
+                         "ms": 1,
+                     },
+@@ -175,7 +178,9 @@ async def null_rules_graph():
+                               '["trim","lower"],"accepted_answers":[{"value":"17","score":1}]}}',
+                         "cid": ids["course"],
+                         "did": difficulty_id,
+-                        "uid": "tsk325-auto-task",
++                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
++                        # прерванный прогон и валил следующий с UniqueViolation.
++                        "uid": f"tsk325-auto-task-{uuid.uuid4().hex[:12]}",
+                         "ma": 3,
+                         "ms": 1,
+                     },
+diff --git a/tests/test_attempts_root_course_tsk264.py b/tests/test_attempts_root_course_tsk264.py
+index 058ff55..8f1a366 100644
+--- a/tests/test_attempts_root_course_tsk264.py
++++ b/tests/test_attempts_root_course_tsk264.py
+@@ -22,6 +22,7 @@
+ """
+ import os
+ import sys
++import uuid
+ from pathlib import Path
+ 
+ import pytest
+@@ -131,7 +132,9 @@ async def graph():
+                         "tc": '{"type": "SC_Qw", "question": "tsk264 quiz"}',
+                         "cid": ids["reused"],
+                         "did": difficulty_id,
+-                        "uid": "tsk264-quiz",
++                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
++                        # прерванный прогон и валил следующий с UniqueViolation.
++                        "uid": f"tsk264-quiz-{uuid.uuid4().hex[:12]}",
+                     },
+                 )
+             ).scalar()
+diff --git a/tests/test_auto_register_magic_link.py b/tests/test_auto_register_magic_link.py
+index 6e2d812..2cbe059 100644
+--- a/tests/test_auto_register_magic_link.py
++++ b/tests/test_auto_register_magic_link.py
+@@ -110,6 +110,8 @@ async def test_email_normalized_to_lowercase(client: AsyncClient, db):
+ 
+ 
+ @pytest.mark.asyncio
++@pytest.mark.no_tx_isolation  # два ОДНОВРЕМЕННЫХ verify обязаны идти разными
++                              # соединениями — на одном проверять нечего (tsk-333)
+ async def test_concurrent_verify_same_email_creates_one_user(client: AsyncClient, db):
+     """Race-safety: 2 concurrent verify для same email → exactly 1 user."""
+     email = f"race-{os.urandom(4).hex()}@example.com"
+diff --git a/tests/test_tasks_order_position.py b/tests/test_tasks_order_position.py
+index 0551308..a2f5fad 100644
+--- a/tests/test_tasks_order_position.py
++++ b/tests/test_tasks_order_position.py
+@@ -284,8 +284,20 @@ async def test_t13_delete_across_courses_independent(db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_t14_backfill_invariant_on_existing_data(db):
+-    """T14. После миграции порядок существующих задач совпадает с id ASC."""
++async def test_t14_backfill_invariant_on_own_course(db):
++    """T14. Правило бэкфилла (id ASC) выполняется для задач, вставленных без позиции.
++
++    Раньше тест сканировал ВСЮ таблицу `tasks` и требовал `order_position ==
++    ROW_NUMBER() ORDER BY id` глобально. Это неверный инвариант: ручное
++    переупорядочивание заданий — рабочая функция продукта (см.
++    `test_tasks_reorder_api.py`), после неё порядок легально расходится с
++    id ASC. Тест был красным на любых реальных данных (~3058 «расхождений»)
++    и не отличал баг от нормальной работы. Проверяем правило на своём курсе
++    (tsk-333; дрейф данных на проде разбирается отдельно в tsk-332).
++    """
++    course_id = await _new_course(db)
++    ids = [await _insert_task(db, course_id, None) for _ in range(5)]
++
+     rows = (
+         await db.execute(
+             text(
+@@ -297,19 +309,23 @@ async def test_t14_backfill_invariant_on_existing_data(db):
+                                ORDER BY id ASC
+                            ) AS pos
+                     FROM tasks
+-                    WHERE course_id IS NOT NULL
++                    WHERE course_id = :cid
+                 )
+                 SELECT COUNT(*) AS mismatches
+                 FROM tasks t
+                 JOIN expected e USING (id, course_id)
+                 WHERE t.order_position <> e.pos
+                 """
+-            )
++            ),
++            {"cid": course_id},
+         )
+     ).first()
+     assert int(rows.mismatches) == 0, (
+         "Порядок задач не соответствует backfill-правилу id ASC"
+     )
++    assert await _course_positions(db, course_id) == [
++        (task_id, pos) for pos, task_id in enumerate(ids, start=1)
++    ]
+ 
+ 
+ @pytest.mark.asyncio
+diff --git a/tests/test_y62_syllabus_states.py b/tests/test_y62_syllabus_states.py
+index f95041f..3ec2f6d 100644
+--- a/tests/test_y62_syllabus_states.py
++++ b/tests/test_y62_syllabus_states.py
+@@ -94,6 +94,7 @@ async def _pick_root_course(db) -> int:
+                 SELECT c.id FROM courses c
+                 WHERE c.id NOT IN (SELECT course_id FROM course_parents)
+                   AND EXISTS (SELECT 1 FROM tasks t WHERE t.course_id = c.id)
++                ORDER BY c.id
+                 LIMIT 1
+                 """
+             )
+@@ -117,6 +118,7 @@ async def _pick_root_with_grandchild(db) -> tuple[int, int, int]:
+                 JOIN course_parents cp_inner ON cp_inner.parent_course_id = cp_outer.course_id
+                 JOIN tasks t ON t.course_id = cp_inner.course_id
+                 WHERE cp_outer.parent_course_id NOT IN (SELECT course_id FROM course_parents)
++                ORDER BY cp_outer.parent_course_id, cp_outer.course_id, cp_inner.course_id
+                 LIMIT 1
+                 """
+             )
+@@ -131,7 +133,10 @@ async def _pick_task_in_course(db, course_id: int) -> tuple[int, int]:
+     """Возвращает (task_id, max_attempts_or_null_as_int)."""
+     row = (
+         await db.execute(
+-            text("SELECT id, COALESCE(max_attempts, 0) FROM tasks WHERE course_id = :c LIMIT 1"),
++            text(
++                "SELECT id, COALESCE(max_attempts, 0) FROM tasks "
++                "WHERE course_id = :c ORDER BY id LIMIT 1"
++            ),
+             {"c": course_id},
+         )
+     ).fetchone()
+@@ -155,6 +160,7 @@ async def _pick_root_task_of_type(db, types: tuple[str, ...]) -> tuple[int, int]
+                 WHERE t.course_id NOT IN (SELECT course_id FROM course_parents)
+                   AND t.is_active = true
+                   AND t.task_content->>'type' = ANY(:tp)
++                ORDER BY t.course_id, t.id
+                 LIMIT 1
+                 """
+             ),
+@@ -174,6 +180,7 @@ async def _pick_other_root(db, exclude_root_id: int) -> int:
+                 SELECT id FROM courses
+                 WHERE id != :exc
+                   AND id NOT IN (SELECT course_id FROM course_parents)
++                ORDER BY id
+                 LIMIT 1
+                 """
+             ),
+@@ -793,7 +800,9 @@ async def _make_quiz_course_task(db) -> tuple[int, int]:
+         ).scalar()
+     )
+     await db.commit()
+-    diff = (await db.execute(text("SELECT id FROM difficulties LIMIT 1"))).scalar()
++    diff = (
++        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++    ).scalar()
+     tc = (
+         '{"type":"SC_Qw","stem":"Что ближе?","scales":["информатика","python"],'
+         '"options":[{"id":"a","text":"разгадывать","scores":{"информатика":2}},'
+@@ -993,7 +1002,7 @@ async def test_perf_smoke_50_tasks(db, client):
+                 JOIN tasks tk ON tk.course_id = t.member_id
+                 GROUP BY t.root_id
+                 HAVING COUNT(*) >= 50
+-                ORDER BY cnt DESC
++                ORDER BY cnt DESC, t.root_id
+                 LIMIT 1
+                 """
+             )
+diff --git a/tests/test_y6_review_loop.py b/tests/test_y6_review_loop.py
+index 1d899c3..5751a4e 100644
+--- a/tests/test_y6_review_loop.py
++++ b/tests/test_y6_review_loop.py
+@@ -384,16 +384,15 @@ async def test_y6_regrade_409_not_yet_graded(db, client):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_y6_escalation_cron_tick_idempotent(db, db_engine):
++async def test_y6_escalation_cron_tick_idempotent(db, db_session_factory):
+     """Stage 4: escalation_cron_tick идемпотентный."""
+-    from sqlalchemy.ext.asyncio import async_sessionmaker
+-
+     from app.services import escalation_service
+ 
+-    # Своя фабрика поверх NullPool-движка текущего теста: глобальная
+-    # фабрика держит QueuePool, и соединение из прошлого event loop
+-    # ломает asyncpg при запуске теста не в изоляции.
+-    tick_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
++    # Фабрика из conftest: привязана к тому же соединению, что и `db`.
++    # Глобальная фабрика держит QueuePool (соединение из прошлого event loop
++    # ломает asyncpg, tsk-330), а отдельный движок не видит данные теста,
++    # лежащие в незакоммиченной транзакции (tsk-333).
++    tick_factory = db_session_factory
+ 
+     # Создаём pending-record старше 48h без escalated_at marker
+     task_id, _course_id, _t = await _pick_root_task(db)
