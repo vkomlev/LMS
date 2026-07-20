@@ -341,6 +341,10 @@ app.include_router(teacher_reviews_router, prefix=API_PREFIX)
 from app.api.v1.teacher_assignments import router as teacher_assignments_router
 app.include_router(teacher_assignments_router, prefix=API_PREFIX)
 
+# Штатная правка прогресса ученика преподавателем (tsk-297)
+from app.api.v1.teacher_progress import router as teacher_progress_router
+app.include_router(teacher_progress_router, prefix=API_PREFIX)
+
 # Upsert правил назначения из публикатора (tsk-120, ADR-0042)
 from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
 app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)

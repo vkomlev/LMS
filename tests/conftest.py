@@ -162,19 +162,33 @@ def _cleanup_test_artifacts():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db():
+async def db_engine():
+    """NullPool-движок, привязанный к event loop текущего теста.
+
+    Нужен отдельно от `db` тем тестам, которые дёргают сервисный код,
+    открывающий собственную сессию (например, `escalation_cron_tick`):
+    им передаётся фабрика поверх этого движка вместо глобального
+    `app.db.session.async_session_factory` с QueuePool — иначе
+    соединение из пула, оставшееся от предыдущего теста, переиспользуется
+    в новом loop и asyncpg падает с «attached to a different loop».
+    """
+    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db(db_engine):
     """Асинхронная сессия к БД с NullPool; rollback после каждого теста.
 
     NullPool гарантирует, что каждый тест получает свежее соединение,
     не связанное с event loop предыдущего теста.
     """
-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
-    try:
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            yield session
-            await session.rollback()
-    finally:
-        await engine.dispose()
+    async with AsyncSession(db_engine, expire_on_commit=False) as session:
+        yield session
+        await session.rollback()
 
 
 @pytest.fixture(scope="function", autouse=True)

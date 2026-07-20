@@ -336,6 +336,13 @@ async def set_material_completed(
     """
     Идемпотентный upsert в student_material_progress: status='completed', completed_at=now().
     Возвращает completed_at (текущее значение после upsert).
+
+    tsk-297: при конфликте провенанс переписывается на 'system'. Это путь РЕАЛЬНОГО
+    прохождения материала учеником, и он перебивает ручную отметку преподавателя:
+    иначе после «преподаватель отметил → ученик реально прошёл» строка осталась бы
+    со `source='manual_teacher'`, и снятие ручной отметки удалило бы настоящий
+    прогресс ученика (`manual_progress_service.revoke_material` удаляет строки
+    ровно по этому признаку).
     """
     await db.execute(
         text("""
@@ -344,7 +351,7 @@ async def set_material_completed(
             ON CONFLICT (student_id, material_id)
             DO UPDATE SET status = 'completed', completed_at = COALESCE(
                 student_material_progress.completed_at, now()
-            ), skipped_at = NULL
+            ), skipped_at = NULL, source = 'system'
         """),
         {"student_id": student_id, "material_id": material_id},
     )

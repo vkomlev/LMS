@@ -37,16 +37,24 @@ async def _setup_methodist(db) -> int:
     return u.id
 
 
-async def _create_task(db, *, course_id: int, type_: str) -> int:
+async def _create_task(db, *, course_id: int, type_: str, mandatory: bool = False) -> int:
+    """`mandatory=True` ставит `solution_rules.manual_review_required=true`.
+
+    tsk-247 перевёл ось «обязательная проверка» с `is_correct` на это поле —
+    без него SA_COM не попадает в mandatory-очередь независимо от is_correct.
+    """
     res = await db.execute(
         text(
-            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
-            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
+            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, "
+            "difficulty_id, solution_rules) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1, CAST(:rules AS jsonb)) "
+            "RETURNING id"
         ),
         {
             "ext": f"y42wl-test-{random.randint(10**8, 10**10)}",
             "content": json.dumps({"type": type_, "stem": "test"}),
             "cid": course_id,
+            "rules": json.dumps({"manual_review_required": mandatory}),
         },
     )
     tid = res.scalar_one()
@@ -87,7 +95,7 @@ async def test_pending_manual_reviews_total_excludes_auto_checked(db):
     """
     methodist_id = await _setup_methodist(db)
     student_id = await _create_student(db)
-    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM")
+    sa_com_task = await _create_task(db, course_id=1, type_="SA_COM", mandatory=True)
     mc_task = await _create_task(db, course_id=1, type_="MC")
     try:
         before = await get_teacher_workload(db, teacher_id=methodist_id)

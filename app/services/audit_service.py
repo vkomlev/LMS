@@ -24,6 +24,10 @@ STUDENT_ROLE_AUTO_ASSIGNED = "student.role.auto_assigned"
 AUTH_ROLE_MISSING_SELF_HEALED = "auth.role.missing_self_healed"
 AUTH_TEST_SESSION_ISSUED = "auth.test.session_issued"
 
+# tsk-297 event types (штатная правка прогресса ученика преподавателем)
+TEACHER_PROGRESS_GRANTED = "teacher.progress.granted"
+TEACHER_PROGRESS_REVOKED = "teacher.progress.revoked"
+
 
 async def log_event(
     db: AsyncSession,

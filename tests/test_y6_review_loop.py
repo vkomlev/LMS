@@ -384,9 +384,16 @@ async def test_y6_regrade_409_not_yet_graded(db, client):
 
 
 @pytest.mark.asyncio
-async def test_y6_escalation_cron_tick_idempotent(db):
+async def test_y6_escalation_cron_tick_idempotent(db, db_engine):
     """Stage 4: escalation_cron_tick идемпотентный."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from app.services import escalation_service
+
+    # Своя фабрика поверх NullPool-движка текущего теста: глобальная
+    # фабрика держит QueuePool, и соединение из прошлого event loop
+    # ломает asyncpg при запуске теста не в изоляции.
+    tick_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
 
     # Создаём pending-record старше 48h без escalated_at marker
     task_id, _course_id, _t = await _pick_root_task(db)
@@ -402,11 +409,11 @@ async def test_y6_escalation_cron_tick_idempotent(db):
 
     try:
         # Tick #1
-        summary1 = await escalation_service.escalation_cron_tick()
+        summary1 = await escalation_service.escalation_cron_tick(tick_factory)
         assert summary1["locked"] is True
 
         # Tick #2 сразу после — escalated_at marker уже стоит, candidate=0
-        summary2 = await escalation_service.escalation_cron_tick()
+        summary2 = await escalation_service.escalation_cron_tick(tick_factory)
         assert summary2["locked"] is True
 
         # task_result имеет escalated_at marker

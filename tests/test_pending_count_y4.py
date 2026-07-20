@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import random
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -68,6 +69,26 @@ async def _pick_task_with_course(db) -> tuple[int, int]:
     if row is None:
         pytest.skip("Нет задач в root-курсе")
     return int(row[0]), int(row[1])
+
+
+async def _create_ta_task(db, *, course_id: int) -> int:
+    """TA всегда mandatory (см. tsk-247 MANDATORY_REVIEW_TEMPLATE) — в отличие от
+    `_pick_task_with_course`, которая берёт произвольную задачу без гарантии типа.
+    """
+    res = await db.execute(
+        text(
+            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
+        ),
+        {
+            "ext": f"y4pc-test-{random.randint(10**8, 10**10)}",
+            "content": json.dumps({"type": "TA", "stem": "test"}),
+            "cid": course_id,
+        },
+    )
+    tid = res.scalar_one()
+    await db.commit()
+    return tid
 
 
 async def _create_student(db) -> int:
@@ -145,7 +166,11 @@ async def test_pending_count_zero_for_teacher_without_courses(db, client):
 
 @pytest.mark.asyncio
 async def test_pending_count_sees_own_course_pending(db, client):
-    task_id, course_id = await _pick_task_with_course(db)
+    # tsk-247: очередь считает по mandatory_review_sql (TA / SA_COM+manual_review_required),
+    # а не по is_correct — берём свежую TA-задачу вместо произвольной _pick_task_with_course,
+    # чтобы не зависеть от типа того, что случайно оказалось LIMIT 1 в root-курсе.
+    _existing_task_id, course_id = await _pick_task_with_course(db)
+    task_id = await _create_ta_task(db, course_id=course_id)
     teacher_id, token = await _setup_teacher(db, course_id=course_id)
     student_id = await _create_student(db)
     rid = await _create_pending_tr(db, user_id=student_id, task_id=task_id)
@@ -160,3 +185,5 @@ async def test_pending_count_sees_own_course_pending(db, client):
         assert body["oldest_received_at"] is not None
     finally:
         await _cleanup(db, teacher_id=teacher_id, student_id=student_id, rids=[rid])
+        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": task_id})
+        await db.commit()

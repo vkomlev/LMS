@@ -12,8 +12,19 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_magic_link_send_valid_email(client: AsyncClient):
-    """202 на корректный email (RESEND_API_KEY не задан → письмо не отправляется, но запись сохраняется)."""
+async def test_magic_link_send_valid_email(client: AsyncClient, monkeypatch):
+    """202 на корректный email; фактическая отправка через Resend в юнит-тест не входит.
+
+    Реальный `RESEND_API_KEY` в dev `.env` шлёт письмо на @example.com и получает
+    422 от Resend (домен не верифицирован под sandbox) — RuntimeError из
+    background task всплывает в ASGITransport и валит тест. Дальше в этом файле
+    (happy path verify, replay, expired) отправка не участвует вовсе — там важен
+    только сам факт создания токена, поэтому не отправлять её здесь безопасно.
+    """
+    from app.api.v1.auth import magic_link as magic_link_router
+
+    monkeypatch.setattr(magic_link_router._settings, "resend_api_key", "")
+
     resp = await client.post(
         "/api/v1/auth/magic-link/send",
         json={"email": "testuser@example.com"},
