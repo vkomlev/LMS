@@ -28,6 +28,7 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.db.session import async_session_factory
@@ -43,15 +44,25 @@ _ESCALATION_LOCK_KEY = 0x59365453  # ascii "Y6TS"
 _scheduler: Optional[AsyncIOScheduler] = None
 
 
-async def escalation_cron_tick() -> dict:
-    """Один проход cron'а. Возвращает summary для логов / тестов."""
+async def escalation_cron_tick(
+    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
+) -> dict:
+    """Один проход cron'а. Возвращает summary для логов / тестов.
+
+    `session_factory` — точка подмены источника сессий. В проде не
+    передаётся: APScheduler зовёт tick без аргументов и берётся глобальная
+    фабрика поверх QueuePool. Тесты передают NullPool-фабрику, привязанную
+    к своему event loop, иначе соединение из пула прошлого теста
+    переиспользуется в новом loop (asyncpg: «attached to a different loop»).
+    """
+    factory = session_factory or async_session_factory
     settings = Settings()
     timeout_hours = int(settings.escalation_timeout_hours)
     rate_limit_per_day = int(settings.methodist_rate_limit_per_day_per_course)
 
     summary = {"locked": False, "candidates": 0, "escalated": 0}
 
-    async with async_session_factory() as db:
+    async with factory() as db:
         # Transaction-scoped advisory lock (non-blocking): один worker — один tick.
         # xact-lock освобождается автоматически при commit/rollback/обрыве
         # соединения, поэтому утечка lock'а в пул соединений невозможна
