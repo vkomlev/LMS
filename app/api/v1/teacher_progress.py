@@ -75,6 +75,13 @@ class ProgressBulkResponse(BaseModel):
     tasks_affected: int
     materials_affected: int
     skipped_already: int
+    skipped_quiz: int = Field(
+        default=0,
+        description=(
+            "Квиз-вопросы дерева, пропущенные при массовом зачёте: их нельзя "
+            "зачесть вручную (диагностика). У операции снятия всегда 0"
+        ),
+    )
 
 
 class ProgressTreeItem(BaseModel):
@@ -102,6 +109,14 @@ class ProgressTreeItem(BaseModel):
     manual: Optional[bool] = Field(
         default=None,
         description="True — отметка поставлена вручную; у узлов курса всегда null",
+    )
+    manual_grantable: bool = Field(
+        default=True,
+        description=(
+            "False — ручной зачёт этому элементу запрещён (квиз-вопрос SC_Qw/MC_Qw: "
+            "диагностика, ученик проходит её сам). Кнопку зачёта скрывать по этому "
+            "флагу; снятие уже стоящей отметки он не ограничивает"
+        ),
     )
     granted_by: Optional[int] = Field(
         default=None, description="Кто поставил ручную отметку (у материалов всегда null)"
@@ -218,7 +233,11 @@ async def grant_task(
     db: AsyncSession = Depends(get_bare_db),
     current_user: CurrentUser = Depends(_PROGRESS_GATE),
 ) -> ProgressItemResponse:
-    """Идемпотентно отметить задание пройденным (синтетическая попытка + результат)."""
+    """Идемпотентно отметить задание пройденным (синтетическая попытка + результат).
+
+    422 для квиз-вопросов (``SC_Qw``/``MC_Qw``): их проходит сам ученик, см.
+    `manual_progress_service.ensure_task_grantable`.
+    """
     course_id = await _course_of_task(db, task_id)
     await manual_progress_service.ensure_can_edit_progress(
         db, current_user, student_id, course_id
@@ -323,7 +342,10 @@ async def grant_course(
     db: AsyncSession = Depends(get_bare_db),
     current_user: CurrentUser = Depends(_PROGRESS_GATE),
 ) -> ProgressBulkResponse:
-    """Зачесть все задания и материалы дерева узла (фильтр обязательности — как у движка)."""
+    """Зачесть все задания и материалы дерева узла (фильтр обязательности — как у движка).
+
+    Квиз-вопросы пропускаются (``skipped_quiz``), а не роняют операцию.
+    """
     await manual_progress_service.ensure_can_edit_progress(
         db, current_user, student_id, course_id
     )

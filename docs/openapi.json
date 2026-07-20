@@ -15220,7 +15220,7 @@
           "teacher_progress"
         ],
         "summary": "Зачесть задание ученику",
-        "description": "Идемпотентно отметить задание пройденным (синтетическая попытка + результат).",
+        "description": "Идемпотентно отметить задание пройденным (синтетическая попытка + результат).\n\n422 для квиз-вопросов (``SC_Qw``/``MC_Qw``): их проходит сам ученик, см.\n`manual_progress_service.ensure_task_grantable`.",
         "operationId": "grant_task_api_v1_teacher_students__student_id__progress_tasks__task_id__post",
         "security": [
           {
@@ -15676,7 +15676,7 @@
           "teacher_progress"
         ],
         "summary": "Массово зачесть всё дерево узла",
-        "description": "Зачесть все задания и материалы дерева узла (фильтр обязательности — как у движка).",
+        "description": "Зачесть все задания и материалы дерева узла (фильтр обязательности — как у движка).\n\nКвиз-вопросы пропускаются (``skipped_quiz``), а не роняют операцию.",
         "operationId": "grant_course_api_v1_teacher_students__student_id__progress_courses__course_id__post",
         "security": [
           {
@@ -25628,6 +25628,12 @@
           "skipped_already": {
             "type": "integer",
             "title": "Skipped Already"
+          },
+          "skipped_quiz": {
+            "type": "integer",
+            "title": "Skipped Quiz",
+            "description": "Квиз-вопросы дерева, пропущенные при массовом зачёте: их нельзя зачесть вручную (диагностика). У операции снятия всегда 0",
+            "default": 0
           }
         },
         "type": "object",
@@ -25777,6 +25783,12 @@
             ],
             "title": "Manual",
             "description": "True — отметка поставлена вручную; у узлов курса всегда null"
+          },
+          "manual_grantable": {
+            "type": "boolean",
+            "title": "Manual Grantable",
+            "description": "False — ручной зачёт этому элементу запрещён (квиз-вопрос SC_Qw/MC_Qw: диагностика, ученик проходит её сам). Кнопку зачёта скрывать по этому флагу; снятие уже стоящей отметки он не ограничивает",
+            "default": true
           },
           "granted_by": {
             "anyOf": [

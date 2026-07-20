@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -382,6 +382,153 @@ class LearningEngineService:
             last_is_correct=last_is_correct,
             last_checked_at=last_checked_at,
         )
+
+    async def compute_task_states_batch(
+        self,
+        db: AsyncSession,
+        student_id: int,
+        task_ids: List[int],
+        *,
+        last_results: Optional[dict[int, Any]] = None,
+    ) -> dict[int, TaskStateResult]:
+        """Пакетная версия `compute_task_state` для дерева заданий (review tsk-297, находка S3-3).
+
+        `get_student_progress` (карточка ученика у преподавателя,
+        `manual_progress_service.py`) раньше звал `compute_task_state` в цикле
+        по каждому заданию дерева — там ~5 запросов на задание (тип задания,
+        override лимита, `tasks.max_attempts`, счёт попыток, последний
+        результат). На курсе из 172 заданий это ~860 запросов на одно открытие
+        карточки. Здесь та же семантика статусов (см. docstring
+        `compute_task_state`), но ДВА запроса на весь `task_ids` — плюс
+        переиспользование уже загруженного вызывающим `last_results`.
+
+        Ограничение (сознательное, не молчаливое): считается ТОЛЬКО ветка
+        `root_course_id=None` — как и у единственного вызывающего на сегодня,
+        который зовёт движок без `root_course_id`, то есть попытки считаются
+        по ВСЕМ корням задания (см. docstring `compute_task_state`, tsk-264).
+        Если появится вызывающий с конкретным `root_course_id` — расширять
+        по образцу `compute_task_state` (там квиз игнорирует переданный
+        корень), а не тянуть эту функцию молча.
+
+        Args:
+            db: сессия БД.
+            student_id: ID студента.
+            task_ids: задания дерева; пустой список -> пустой dict без
+                обращения к БД.
+            last_results: опционально — уже загруженный вызывающим последний
+                результат по каждому заданию (`task_id -> mapping` с колонками
+                `attempt_id, submitted_at, score, max_score, answer_json,
+                is_correct, checked_at`). Не передан — загружается здесь же
+                отдельным запросом (тогда всего запросов не 2, а 3).
+
+        Returns:
+            `task_id -> TaskStateResult`, поэлементно эквивалентно
+            `compute_task_state(db, student_id, tid)` для тех же `task_ids`.
+        """
+        if not task_ids:
+            return {}
+
+        ids = list(task_ids)
+
+        # 1) Тип задания (квиз -> лимит 1, вне очереди) + лимит из override/
+        #    tasks.max_attempts — тем же приоритетом, что и get_effective_attempt_limit.
+        limit_rows = (
+            await db.execute(
+                text(
+                    "SELECT t.id, t.task_content->>'type' AS ttype, t.max_attempts, "
+                    "       o.max_attempts_override "
+                    "FROM tasks t "
+                    "LEFT JOIN student_task_limit_override o "
+                    "       ON o.task_id = t.id AND o.student_id = :student_id "
+                    "WHERE t.id = ANY(:ids)"
+                ),
+                {"student_id": student_id, "ids": ids},
+            )
+        ).fetchall()
+
+        limits: dict[int, int] = {}
+        for tid, ttype, max_attempts, override in limit_rows:
+            tid = int(tid)
+            if ttype in QUIZ_TASK_TYPES:
+                limits[tid] = QUIZ_MAX_ATTEMPTS
+            elif override is not None:
+                limits[tid] = int(override)
+            elif max_attempts is not None:
+                limits[tid] = int(max_attempts)
+            else:
+                limits[tid] = DEFAULT_MAX_ATTEMPTS
+
+        # 2) attempts_used — root_course_id=None у вызывающего, поэтому считаем
+        #    ВСЕ попытки задания (см. ограничение в docstring).
+        count_rows = (
+            await db.execute(
+                text(
+                    "SELECT tr.task_id, COUNT(*) "
+                    "FROM task_results tr "
+                    "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                    "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
+                    "GROUP BY tr.task_id"
+                ),
+                {"student_id": student_id, "ids": ids},
+            )
+        ).fetchall()
+        attempts_used: dict[int, int] = {int(tid): int(cnt) for tid, cnt in count_rows}
+
+        # 3) Последний результат по заданию — переиспользуем, если вызывающий
+        #    уже его загрузил (get_student_progress грузит это для флага `manual`).
+        if last_results is None:
+            last_rows = (
+                await db.execute(
+                    text(
+                        "SELECT DISTINCT ON (tr.task_id) "
+                        "       tr.task_id, a.id AS attempt_id, tr.submitted_at, tr.score, "
+                        "       tr.max_score, tr.answer_json, tr.is_correct, tr.checked_at "
+                        "FROM task_results tr "
+                        "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                        "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
+                        "ORDER BY tr.task_id, tr.submitted_at DESC, tr.id DESC"
+                    ),
+                    {"student_id": student_id, "ids": ids},
+                )
+            ).mappings().fetchall()
+            last_results = {int(r["task_id"]): r for r in last_rows}
+
+        results: dict[int, TaskStateResult] = {}
+        for tid in ids:
+            limit = limits.get(tid, DEFAULT_MAX_ATTEMPTS)
+            used = attempts_used.get(tid, 0)
+            row = last_results.get(tid)
+
+            if row is None:
+                results[tid] = TaskStateResult(
+                    state="OPEN" if used == 0 else "IN_PROGRESS",
+                    attempts_used=used,
+                    attempts_limit_effective=limit,
+                )
+                continue
+
+            last_score = int(row["score"]) if row["score"] is not None else 0
+            last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
+            last_answer_json = row["answer_json"] if isinstance(row["answer_json"], dict) else None
+            common = dict(
+                last_attempt_id=int(row["attempt_id"]),
+                last_score=last_score,
+                last_max_score=last_max_score,
+                last_finished_at=row["submitted_at"],
+                attempts_used=used,
+                attempts_limit_effective=limit,
+                last_answer_json=last_answer_json,
+                last_is_correct=row["is_correct"],
+                last_checked_at=row["checked_at"],
+            )
+            if last_max_score > 0 and (last_score / last_max_score) >= PASS_THRESHOLD_RATIO:
+                results[tid] = TaskStateResult(state="PASSED", **common)
+            elif used >= limit:
+                results[tid] = TaskStateResult(state="BLOCKED_LIMIT", **common)
+            else:
+                results[tid] = TaskStateResult(state="FAILED", **common)
+
+        return results
 
     async def compute_course_state(
         self,

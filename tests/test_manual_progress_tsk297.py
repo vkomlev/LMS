@@ -12,11 +12,13 @@
 * зачтённое SA_COM не падает в очередь ручной проверки (``checked_at`` заполнен);
 * teacher правит только своих; methodist/admin — bypass;
 * массовая операция покрывает всё поддерево и идемпотентна;
-* снятие отметки материала не трогает строку с ``source='system'``.
+* снятие отметки материала не трогает строку с ``source='system'``;
+* КВИЗ (``SC_Qw``/``MC_Qw``) вручную зачесть нельзя — 422 на единичной операции,
+  пропуск в массовой; снятие при этом остаётся разрешённым (находка ревью S3-2).
 
 Граф фикстуры:
     root ──> child
-    root: task_root_a, task_root_b (SA), material_root
+    root: task_root_a, task_root_b (SA), task_quiz (SC_Qw), material_root
     child: task_child (SA_COM с ручной проверкой), material_child
 """
 from __future__ import annotations
@@ -25,6 +27,7 @@ import json
 import random
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import text
 
 from app.models.users import Users
@@ -40,6 +43,79 @@ from app.services.learning_engine_service import LearningEngineService
 engine_svc = LearningEngineService()
 
 _TAG = "tsk297"
+
+
+async def _answer_quiz(
+    db, student_id: int, task_id: int, scale_scores: dict | None = None
+) -> int:
+    """Реальный ответ ученика на квиз: попытка + результат со шкалами.
+
+    Именно то, что ручной зачёт подделать НЕ может (у него нет `scale_scores`) и
+    ради чего квиз закрыт от зачёта. Пишем напрямую в БД, а не через
+    `POST /attempts/{id}/answers`: тесту нужен факт результата, а не тракт приёма.
+    """
+    course_id = (
+        await db.execute(text("SELECT course_id FROM tasks WHERE id = :t"), {"t": task_id})
+    ).scalar()
+    attempt_id = (
+        await db.execute(
+            text(
+                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+                "VALUES (:u, :c, :c, 'test') RETURNING id"
+            ),
+            {"u": student_id, "c": course_id},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
+            "  is_correct, submitted_at, received_at, count_retry, checked_at, "
+            "  source_system, scale_scores) "
+            "VALUES (:u, :t, :a, 10, 10, true, now(), now(), 0, now(), 'test', "
+            "        CAST(:ss AS jsonb))"
+        ),
+        {
+            "u": student_id,
+            "t": task_id,
+            "a": attempt_id,
+            "ss": json.dumps(scale_scores or {"информатика": 2, "python": 0}),
+        },
+    )
+    return int(attempt_id)
+
+
+async def _submit_result(
+    db, student_id: int, task_id: int, *, score: int, max_score: int = 10,
+) -> int:
+    """Реальный результат по заданию (не квиз): попытка + task_result напрямую в БД.
+
+    Как `_answer_quiz`, но без `scale_scores` — для SA/SA_COM заданий в тесте
+    эквивалентности batch/поэлементного расчёта (review tsk-297, находка S3-3).
+    """
+    course_id = (
+        await db.execute(text("SELECT course_id FROM tasks WHERE id = :t"), {"t": task_id})
+    ).scalar()
+    attempt_id = (
+        await db.execute(
+            text(
+                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
+                "VALUES (:u, :c, :c, 'test') RETURNING id"
+            ),
+            {"u": student_id, "c": course_id},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
+            "  is_correct, submitted_at, received_at, count_retry, checked_at, source_system) "
+            "VALUES (:u, :t, :a, :sc, :mx, :ok, now(), now(), 0, now(), 'test')"
+        ),
+        {
+            "u": student_id, "t": task_id, "a": attempt_id,
+            "sc": score, "mx": max_score, "ok": score >= max_score,
+        },
+    )
+    return int(attempt_id)
 
 
 async def _new_user(db, role: str | None, name: str) -> tuple[int, str]:
@@ -100,9 +176,20 @@ async def graph(db):
             course_id: int, uid: str, *, type_: str = "SA", manual: bool = False,
             order_position: int = 1,
         ) -> int:
-            rules = {"max_score": 10}
+            rules: dict = {"max_score": 10}
             if manual:
                 rules["manual_review_required"] = True
+            content: dict = {"type": type_, "stem": f"{_TAG} условие"}
+            if type_ in ("SC_Qw", "MC_Qw"):
+                # Квиз описываем как настоящий (варианты + шкалы), а не одним
+                # полем type: гейт смотрит только на тип, но тест не должен
+                # опираться на заведомо невалидное по `TaskContent` задание.
+                content["scales"] = ["информатика", "python"]
+                content["options"] = [
+                    {"id": "a", "text": "вариант А", "scores": {"информатика": 2, "python": 0}},
+                    {"id": "b", "text": "вариант Б", "scores": {"информатика": 0, "python": 2}},
+                ]
+                rules["quiz"] = {"mode": "single" if type_ == "SC_Qw" else "multiple"}
             return (
                 await db.execute(
                     text(
@@ -112,7 +199,7 @@ async def graph(db):
                         ":uid, 10, :op) RETURNING id"
                     ),
                     {
-                        "tc": json.dumps({"type": type_, "stem": f"{_TAG} условие"}),
+                        "tc": json.dumps(content),
                         "sr": json.dumps(rules),
                         "cid": course_id,
                         "did": difficulty_id,
@@ -144,6 +231,9 @@ async def graph(db):
         )
         ids["task_root_a"] = await new_task(ids["root"], "root-a", order_position=1)
         ids["task_root_b"] = await new_task(ids["root"], "root-b", order_position=2)
+        ids["task_quiz"] = await new_task(
+            ids["root"], "quiz", type_="SC_Qw", order_position=3
+        )
         ids["material_child"] = await new_material(ids["child"], f"{_TAG} материал подкурса")
         ids["material_root"] = await new_material(ids["root"], f"{_TAG} материал корня")
 
@@ -184,7 +274,11 @@ async def graph(db):
     finally:
         await db.rollback()
         user_ids = [ids.get(k) for k in ("student", "teacher", "other", "methodist") if k in ids]
-        task_ids = [ids[k] for k in ("task_child", "task_root_a", "task_root_b") if k in ids]
+        task_ids = [
+            ids[k]
+            for k in ("task_child", "task_root_a", "task_root_b", "task_quiz")
+            if k in ids
+        ]
         material_ids = [ids[k] for k in ("material_child", "material_root") if k in ids]
         course_ids = [ids[k] for k in ("root", "child") if k in ids]
         if user_ids:
@@ -684,12 +778,24 @@ async def test_bulk_operations_refresh_course_state(graph):
     await manual_progress_service.grant_course_subtree(
         db, student_id=ids["student"], course_id=ids["root"], granted_by=ids["teacher"]
     )
+    # Квиз массовый зачёт пропускает (его нельзя зачесть вручную), поэтому без
+    # реального ответа курс завершённым не станет — здесь проверяется пересчёт
+    # состояния, а не сам запрет.
+    quiz_attempt = await _answer_quiz(db, ids["student"], ids["task_quiz"])
+    await manual_progress_service._refresh_course_state(  # noqa: SLF001
+        db, ids["student"], ids["root"]
+    )
     await db.commit()
     assert await course_state() == "COMPLETED", (
         "после массового зачёта курс не отмечен завершённым — ученик увидит 100%, "
         "но курс останется незавершённым"
     )
 
+    # Реальный ответ на квиз массовое снятие не трогает (и не должно) — убираем
+    # его отдельно, чтобы проверить откат именно ручной части.
+    await db.execute(
+        text("UPDATE attempts SET cancelled_at = now() WHERE id = :a"), {"a": quiz_attempt}
+    )
     await manual_progress_service.revoke_course_subtree(
         db, student_id=ids["student"], course_id=ids["root"], revoked_by=ids["teacher"]
     )
@@ -816,6 +922,13 @@ async def test_course_node_status_rolls_up_subtree(graph):
         db, student_id=ids["student"], course_id=ids["root"], granted_by=ids["teacher"]
     )
     await db.commit()
+    # Ещё НЕ COMPLETED: в корне лежит квиз, а его массовый зачёт пропускает —
+    # вручную квиз зачесть нельзя (tsk-297, S3-2). Узел закрывается только после
+    # того, как ученик реально ответит на квиз.
+    assert await root_node_status() == "IN_PROGRESS"
+
+    await _answer_quiz(db, ids["student"], ids["task_quiz"])
+    await db.commit()
     assert await root_node_status() == "COMPLETED"
 
 
@@ -854,6 +967,9 @@ async def test_progress_read_does_not_escalate(graph, monkeypatch):
     await manual_progress_service.grant_course_subtree(
         db, student_id=ids["student"], course_id=ids["root"], granted_by=ids["teacher"]
     )
+    # Квиз зачесть нельзя — доводим курс до COMPLETED реальным ответом, иначе
+    # у эскалации не будет повода сработать и проверка станет вакуумной.
+    await _answer_quiz(db, ids["student"], ids["task_quiz"])
     await db.commit()
 
     calls: list[int] = []
@@ -1077,3 +1193,218 @@ async def test_audit_events_written(graph):
     granted_details = next(r[1] for r in rows if r[0] == "teacher.progress.granted")
     assert granted_details["student_id"] == ids["student"]
     assert granted_details["bulk"] is False
+
+
+# ─── Квиз-вопросы: ручной зачёт запрещён (tsk-297, находка ревью S3-2) ───────
+#
+# Квиз (SC_Qw/MC_Qw) — диагностика, а не учебное задание, которое ученик мог
+# «освоить вне платформы». Синтетический результат зачёта не несёт scale_scores,
+# из-за чего зачёт (а) закрывал бы ученику реальный ответ — приём отклоняет 409
+# повторный ответ при наличии результата в неотменённой попытке, и (б) ломал бы
+# подбор курса правилом trigger_event='quiz_scale' (argmax по нулевым шкалам).
+
+
+async def test_quiz_grant_rejected(graph):
+    """Ручной зачёт квиза отклоняется 422, а не создаёт синтетический результат."""
+    ids, db = graph["ids"], graph["db"]
+
+    with pytest.raises(HTTPException) as exc:
+        await manual_progress_service.grant_task(
+            db, student_id=ids["student"], task_id=ids["task_quiz"],
+            granted_by=ids["teacher"],
+        )
+    assert exc.value.status_code == 422
+    assert "квиз" in exc.value.detail.lower()
+
+    rows = (
+        await db.execute(
+            text("SELECT count(*) FROM task_results WHERE user_id = :u AND task_id = :t"),
+            {"u": ids["student"], "t": ids["task_quiz"]},
+        )
+    ).scalar()
+    assert rows == 0, "отклонённый зачёт не должен оставлять результат"
+
+
+async def test_quiz_stays_answerable_after_rejected_grant(graph):
+    """Суть запрета: после отказа ученик по-прежнему может реально ответить.
+
+    Именно это ломал зачёт — результат в неотменённой попытке заставлял приём
+    ответа (`POST /attempts/{id}/answers`, шаг 2.3a) вернуть 409, и снять это
+    можно было только снятием зачёта.
+    """
+    ids, db = graph["ids"], graph["db"]
+
+    with pytest.raises(HTTPException):
+        await manual_progress_service.grant_task(
+            db, student_id=ids["student"], task_id=ids["task_quiz"],
+            granted_by=ids["teacher"],
+        )
+
+    # Тот же предикат, что у гейта приёма ответа: пусто — значит 409 не сработает.
+    blocking = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM task_results tr "
+                "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "WHERE tr.user_id = :u AND tr.task_id = :t LIMIT 1"
+            ),
+            {"u": ids["student"], "t": ids["task_quiz"]},
+        )
+    ).first()
+    assert blocking is None, "после отказа приём ответа на квиз обязан оставаться открыт"
+
+    state = await engine_svc.compute_task_state(db, ids["student"], ids["task_quiz"])
+    assert state.state == "OPEN"
+
+
+async def test_quiz_grant_rejected_via_api(graph, client):
+    """Через HTTP отказ приходит тем же 422 с внятным русским detail."""
+    ids = graph["ids"]
+    resp = await client.post(
+        f"/api/v1/teacher/students/{ids['student']}/progress/tasks/{ids['task_quiz']}",
+        headers={"Authorization": f"Bearer {graph['tokens']['teacher']}"},
+        json={},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "квиз" in resp.json()["detail"].lower()
+
+
+async def test_bulk_grant_skips_quiz_without_failing(graph):
+    """Массовый зачёт пропускает квиз, а не падает 422 на всём дереве."""
+    ids, db = graph["ids"], graph["db"]
+    res = await manual_progress_service.grant_course_subtree(
+        db, student_id=ids["student"], course_id=ids["root"], granted_by=ids["teacher"]
+    )
+    await db.commit()
+
+    assert res["skipped_quiz"] == 1, "квиз дерева обязан попасть в отдельный счётчик"
+    assert res["tasks_affected"] == 3, "остальные 3 задания зачтены, квиз их не блокирует"
+
+    quiz_state = await engine_svc.compute_task_state(db, ids["student"], ids["task_quiz"])
+    assert quiz_state.state == "OPEN", "квиз остался непройденным"
+    for key in ("task_root_a", "task_root_b", "task_child"):
+        state = await engine_svc.compute_task_state(db, ids["student"], ids[key])
+        assert state.state == "PASSED", f"{key} не зачтён из-за соседнего квиза"
+
+
+async def test_quiz_revoke_is_allowed(graph):
+    """Снятие зачёта квиза НЕ запрещено — иначе старые зачёты было бы не убрать.
+
+    Запрет закрывает только новый путь (grant). Обратимость уже поставленного
+    важнее симметрии: на момент правки на проде таких зачётов не было, но
+    операция обязана оставаться доступной.
+    """
+    ids, db = graph["ids"], graph["db"]
+    res = await manual_progress_service.revoke_task(
+        db, student_id=ids["student"], task_id=ids["task_quiz"], revoked_by=ids["teacher"]
+    )
+    await db.commit()
+    assert res["already"] is True, "снятия не было — идемпотентный ответ, а не 422"
+
+
+async def test_progress_tree_marks_quiz_not_grantable(graph):
+    """Дерево прогресса помечает квиз `manual_grantable=False` — SPW прячет кнопку."""
+    ids, db = graph["ids"], graph["db"]
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+
+    assert by_key[("task", ids["task_quiz"])]["manual_grantable"] is False
+    assert by_key[("task", ids["task_root_a"])]["manual_grantable"] is True
+    assert by_key[("material", ids["material_root"])]["manual_grantable"] is True
+    assert by_key[("course", ids["root"])]["manual_grantable"] is True
+
+
+async def test_quiz_scale_scores_survive_only_real_answer(graph):
+    """Шкалы копятся только с реального ответа — то, что зачёт подделать не мог.
+
+    Проверяем инвариант, ради которого запрет и введён: правило
+    ``trigger_event='quiz_scale'`` считает argmax по накопленным
+    ``scale_scores``, и зачтённый квиз внёс бы в него нули.
+    """
+    ids, db = graph["ids"], graph["db"]
+
+    await _answer_quiz(db, ids["student"], ids["task_quiz"], {"информатика": 3, "python": 1})
+    await db.commit()
+
+    stored = (
+        await db.execute(
+            text(
+                "SELECT tr.scale_scores FROM task_results tr "
+                "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "WHERE tr.user_id = :u AND tr.task_id = :t"
+            ),
+            {"u": ids["student"], "t": ids["task_quiz"]},
+        )
+    ).scalars().all()
+    assert stored == [{"информатика": 3, "python": 1}]
+    assert all(s is not None for s in stored), "шкалы не должны теряться"
+
+
+# ─── Пакетный расчёт статусов (review tsk-297, находка S3-3) ───────────────
+
+
+async def test_batch_task_states_match_individual_compute(graph):
+    """`compute_task_states_batch` эквивалентен `compute_task_state` в цикле.
+
+    N+1 на карточке ученика (`get_student_progress` дёргал `compute_task_state`
+    по каждому заданию дерева — ~5 запросов на задание, ~860 на курсе из 172
+    заданий) заменён на batch: 2 запроса на всё дерево + переиспользование
+    уже загруженного `last_results`. Тест — не по одному состоянию, а по
+    СМЕШАННОМУ дереву (passed/failed/blocked_limit/open+skipped), чтобы
+    исключить совпадение по одной ветке if/elif.
+    """
+    ids, db = graph["ids"], graph["db"]
+
+    # PASSED: один результат с ratio >= 0.5.
+    await _submit_result(db, ids["student"], ids["task_root_a"], score=10, max_score=10)
+    # FAILED: одна неудачная попытка, лимит (3 по умолчанию) не исчерпан.
+    await _submit_result(db, ids["student"], ids["task_child"], score=0, max_score=10)
+    # BLOCKED_LIMIT: все 3 попытки по умолчанию исчерпаны, PASSED не было.
+    for _ in range(3):
+        await _submit_result(db, ids["student"], ids["task_root_b"], score=0, max_score=10)
+    # OPEN + отдельно отмечен skipped (student_task_progress) — задание без
+    # единого результата, но учтено пройденным при свёртке узла.
+    await learning_events_service.set_task_skipped(db, ids["student"], ids["task_quiz"])
+    await db.commit()
+
+    task_ids = [ids["task_root_a"], ids["task_root_b"], ids["task_child"], ids["task_quiz"]]
+
+    individual = {
+        tid: await engine_svc.compute_task_state(db, ids["student"], tid)
+        for tid in task_ids
+    }
+    batch = await engine_svc.compute_task_states_batch(db, ids["student"], task_ids)
+
+    # Сверяем, что смешанное дерево действительно накрывает разные состояния —
+    # иначе тест мог бы пройти и при сломанной batch-ветке одного из case'ов.
+    assert {s.state for s in individual.values()} == {"PASSED", "FAILED", "BLOCKED_LIMIT", "OPEN"}
+
+    for tid in task_ids:
+        exp, got = individual[tid], batch[tid]
+        assert got.state == exp.state, f"task {tid}: state разошёлся"
+        assert got.attempts_used == exp.attempts_used, f"task {tid}: attempts_used разошёлся"
+        assert got.attempts_limit_effective == exp.attempts_limit_effective, (
+            f"task {tid}: attempts_limit_effective разошёлся"
+        )
+        assert got.last_score == exp.last_score, f"task {tid}: last_score разошёлся"
+        assert got.last_max_score == exp.last_max_score, f"task {tid}: last_max_score разошёлся"
+        assert got.last_attempt_id == exp.last_attempt_id, f"task {tid}: last_attempt_id разошёлся"
+        assert got.last_is_correct == exp.last_is_correct, f"task {tid}: last_is_correct разошёлся"
+
+    # И то же самое — эквивалентность видна и на уровне публичного API карточки.
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_id = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    for tid in task_ids:
+        assert by_id[("task", tid)]["status"] == individual[tid].state, (
+            f"task {tid}: карточка ученика разошлась с поэлементным расчётом движка"
+        )
+
+
+async def test_batch_task_states_empty_list_is_noop(graph):
+    """Пустой список заданий — пустой результат без обращения к БД."""
+    ids, db = graph["ids"], graph["db"]
+    assert await engine_svc.compute_task_states_batch(db, ids["student"], []) == {}
