@@ -1,0 +1,286 @@
+# -*- coding: utf-8 -*-
+"""tsk-319 (F6): досинхронизировать 56 недостающих Крылов-заданий (варианты 1/5/11/16).
+
+ЧТО ДЕЛАЕТ
+Аудит tsk-299 (F6) сравнил LMS (36 заданий Крылова, все — варианты 1/5/11/16)
+с ContentBackbone `external_tasks` для этих же 4 вариантов и обнаружил, что
+там реально 93 задания, а не 36 — LMS содержит только подмножество, пришедшее
+через Telegram-merge (tsk-105 promote), не полный охват "от корки до корки".
+Оператор решил (tsk-319, 2026-07-20) досинхронизировать разрыв — 56 заданий
+(93 CB минус 36 уже в LMS; варианты 2-20 кроме 1/5/11/16 по-прежнему вне
+скоупа, решение не пересматривается).
+
+ИСТОЧНИК ТЕКСТА — НЕ CB (та же причина, что в tsk-317)
+CB `external_tasks.task` для этих вариантов содержит OCR-стемы того же PDF:
+для чистой прозы OCR приемлемый, но для заданий с встроенными таблицами
+(графы/коды Фано/программы МТ) — искажён. Стемы 56 заданий транскрибированы
+НАПРЯМУЮ со страниц PDF (`ContentBackbone/tests/fixtures/external_tasks/pdf/
+Крылов. ЕГЭ по информатике 2026.pdf`) четырьмя параллельными агентами (по
+одному на вариант), каждый рендерил страницы через pdftoppm и переписывал
+условие глазами (не через OCR-библиотеки). Ответы — из той же верифицированной
+таблицы «ОТВЕТЫ», что и в tsk-317 (3 независимых источника сверки).
+
+ПОБОЧНАЯ НАХОДКА ПРИ ПОДГОТОВКЕ ЭТОГО ИМПОРТА
+Повторная сверка колонок таблицы ответов (страница 247, задания 19-24/26/27)
+на большем разрешении вскрыла, что столбец задания 20 — составной (2 числа,
+не 1), задание 21 — одиночный (было спутано в одном месте, см.
+fix_krylov_v11t26_wrong_answer_tsk317.py — тот же класс ошибки, пойман и
+исправлен ДО записи в этом скрипте благодаря структурному sanity-check:
+текст задания 20 всегда просит "два наименьших значения", задание 21 —
+"минимальное значение" (1 число). Формат ответа per-task теперь берётся из
+этого структурного признака, а не только из таблицы.
+
+КАРТИНКИ (7 шт., только там, где рисунок/таблица — часть условия, не файл-
+приложение): v1t4, v1t12, v5t1, v5t2, v5t4, v11t4, v16t12. Кроп со страниц
+PDF, залиты в CAS/S3 (той же функцией, что и в tsk-317), публичная
+доступность подтверждена. v16t4 и v16t1/v11t1/v11t2 — картинки НЕ нужны или
+недоступны (см. ниже "остаётся вне скоупа").
+
+FILE-GATED (21 из 56) — тот же класс, что и 9 из tsk-317: задания 3, 9, 10,
+17, 18, 22, 24, 26, 27 используют файл-приложение с сайта ege.plus под кодом
+доступа с голограммы бумажного издания — недоступен нам. Ответ восстановлен
+и верен, автопроверка работает, но ученик не сможет решить задание
+самостоятельно без файла — задокументированная деградация.
+
+ОСТАЁТСЯ ВНЕ СКОУПА ЭТОГО ПРОХОДА (не выдумано, зафиксировано для будущего)
+- v16t1, v11t1, v11t2, v11t11, v5t7, v5t8, v5t9, v5t26 и т.п. — CB САМ не
+  извлёк эти задания из PDF (пробел в самом CB, не в LMS); в этом импорте
+  используются только те 56, что реально запрошены оператором как разрыв
+  между CB(93) и LMS(36) для этих 4 вариантов — расширение охвата дальше CB
+  не производилось без отдельного решения оператора.
+
+Запуск: dry-run по умолчанию; --apply при DBCHECK_OK=1.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+import asyncpg
+
+if sys.platform == "win32":
+    os.system("chcp 65001 >nul 2>&1")
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+project_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project_root))
+
+from app.schemas.solution_rules import (  # noqa: E402
+    SolutionRules,
+    ShortAnswerRules,
+    ShortAnswerAccepted,
+)
+
+DATA_PATH = Path(
+    r"C:\Users\user\AppData\Local\Temp\claude\D--Work-LMS"
+    r"\2aba766b-f3f4-4df2-b320-fd915d5c23f5\scratchpad\krylov\import_data_all.json"
+)
+
+# task_number_ege -> course_id (детерминированная карта, подтверждена по 27
+# номерам через существующие ЕГЭ-задания в БД; 1:1, без хардкода per-variant).
+COURSE_BY_TASK_NUM = {
+    1: 140, 2: 148, 3: 138, 4: 155, 5: 156, 6: 157, 7: 158, 8: 159, 9: 160,
+    10: 141, 11: 162, 12: 163, 13: 139, 14: 142, 15: 143, 16: 144, 17: 145,
+    18: 146, 19: 147, 20: 147, 21: 147, 22: 149, 23: 150, 24: 151, 25: 152,
+    26: 153, 27: 154,
+}
+
+# Составные ответы (несколько чисел через пробел) — collapse_spaces устойчивее
+# к лишним пробелам при вводе; конвенция как в tsk-317.
+MULTI_VALUE_TASK_NUMS = {17, 18, 20, 25, 26, 27}
+
+
+def difficulty_for(task_num: int) -> int:
+    if task_num <= 2:
+        return 2
+    if task_num <= 15:
+        return 3
+    return 4
+
+
+def build_payload(value: str, max_score: int, multi: bool) -> dict:
+    normalization = ["trim", "lower", "collapse_spaces"] if multi else ["trim", "lower"]
+    rules = SolutionRules(
+        max_score=max_score,
+        scoring_mode="all_or_nothing",
+        auto_check=True,
+        manual_review_required=False,
+        short_answer=ShortAnswerRules(
+            normalization=normalization,
+            accepted_answers=[ShortAnswerAccepted(value=value, score=max_score)],
+        ),
+    )
+    return rules.model_dump()
+
+
+def _dsn() -> str:
+    env = os.environ.get("LEARN_PROD_DSN") or os.environ.get("DATABASE_URL", "")
+    dsn = env.replace("postgresql+asyncpg://", "postgresql://")
+    if "5.42.107.253" not in dsn:
+        cfg = json.loads((project_root / ".mcp.json").read_text(encoding="utf-8"))
+        servers = cfg.get("mcpServers", cfg)
+        for arg in servers["learn_prod_db"]["args"]:
+            if isinstance(arg, str) and arg.startswith("postgresql://") and "5.42.107.253" in arg:
+                dsn = arg
+                break
+    if "5.42.107.253" not in dsn or "/learn" not in dsn:
+        raise RuntimeError(
+            "Не нашёл прод-DSN learn (5.42.107.253/learn). Передай LEARN_PROD_DSN явно."
+        )
+    return dsn
+
+
+async def main(apply: bool) -> None:
+    items = json.loads(DATA_PATH.read_text(encoding="utf-8"))
+    if len(items) != 56:
+        raise RuntimeError(f"ожидал 56 записей в {DATA_PATH}, нашёл {len(items)}")
+
+    for it in items:
+        it["external_uid"] = f"crylov:v{it['variant']}t{it['task_num']}"
+        it["course_id"] = COURSE_BY_TASK_NUM[it["task_num"]]
+        it["difficulty_id"] = difficulty_for(it["task_num"])
+        stem = it["stem"]
+        if "image_anchor" in it:
+            anchor = it["image_anchor"]
+            if stem.count(anchor) != 1:
+                raise RuntimeError(
+                    f"{it['external_uid']}: анкер картинки встречается "
+                    f"{stem.count(anchor)} раз (нужно 1): {anchor!r}"
+                )
+            stem = stem.replace(anchor, it["image_replacement"], 1)
+        it["final_stem"] = stem
+
+    conn = await asyncpg.connect(_dsn())
+    try:
+        async with conn.transaction():
+            # ---- Guard: ни один external_uid ещё не существует ----
+            uids = [it["external_uid"] for it in items]
+            existing = await conn.fetch(
+                "SELECT external_uid FROM tasks WHERE external_uid = ANY($1::text[])", uids
+            )
+            if existing:
+                raise RuntimeError(
+                    f"{len(existing)} external_uid уже существуют (повторный запуск?): "
+                    f"{[r['external_uid'] for r in existing]}"
+                )
+
+            # ---- order_position: max(course) + 10*index, без гонок внутри курса ----
+            course_ids = sorted({it["course_id"] for it in items})
+            max_pos_rows = await conn.fetch(
+                "SELECT course_id, COALESCE(MAX(order_position),0) AS max_pos "
+                "FROM tasks WHERE course_id = ANY($1::int[]) GROUP BY course_id",
+                course_ids,
+            )
+            max_pos = {r["course_id"]: r["max_pos"] for r in max_pos_rows}
+            next_offset: dict[int, int] = {}
+
+            print(f"Целевых новых заданий: {len(items)}")
+            print("Примеры (external_uid, course_id, value, file_gated, has_image):")
+            for it in items[:10]:
+                print(
+                    f"  {it['external_uid']:16} course={it['course_id']:3} "
+                    f"value='{it['value']}' file_gated={it['file_gated']} "
+                    f"img={'image_sha' in it}"
+                )
+            print(f"  ... и ещё {len(items) - 10}")
+
+            inserted = 0
+            for it in items:
+                course_id = it["course_id"]
+                offset = next_offset.get(course_id, 0) + 10
+                next_offset[course_id] = offset
+                order_position = max_pos.get(course_id, 0) + offset
+
+                multi = it["task_num"] in MULTI_VALUE_TASK_NUMS
+                solution_rules = build_payload(it["value"], 1, multi)
+
+                task_content = {
+                    "type": "SA_COM",
+                    "stem": it["final_stem"],
+                    "has_hints": False,
+                    "hints_text": [],
+                    "hints_video": [],
+                    "media": None,
+                    "variant_number": it["variant"],
+                    "task_number_ege": it["task_num"],
+                    "source_kind": None,
+                    "source_url": None,
+                    "answer_raw": None,
+                    "external_uid": it["external_uid"],
+                    "merged_from": None,
+                }
+
+                await conn.execute(
+                    """
+                    INSERT INTO tasks
+                        (external_uid, max_score, task_content, course_id, difficulty_id,
+                         solution_rules, order_position, is_active, requirement_level)
+                    VALUES ($1, 1, $2::jsonb, $3, $4, $5::jsonb, $6, true, 'required')
+                    """,
+                    it["external_uid"],
+                    json.dumps(task_content),
+                    course_id,
+                    it["difficulty_id"],
+                    json.dumps(solution_rules),
+                    order_position,
+                )
+                inserted += 1
+
+            if inserted != len(items):
+                raise AssertionError(f"ожидали вставить {len(items)}, вставлено {inserted}")
+
+            # ---- Верификация ----
+            rows = await conn.fetch(
+                "SELECT external_uid, solution_rules, task_content->>'stem' AS stem, course_id "
+                "FROM tasks WHERE external_uid = ANY($1::text[])",
+                uids,
+            )
+            if len(rows) != len(items):
+                raise AssertionError(f"после записи найдено {len(rows)} из {len(items)}")
+
+            no_answer = [
+                r["external_uid"] for r in rows
+                if json.loads(r["solution_rules"])
+                .get("short_answer", {})
+                .get("accepted_answers") in (None, [])
+            ]
+            if no_answer:
+                raise AssertionError(f"без accepted_answers: {no_answer}")
+
+            expected_img_uids = {
+                it["external_uid"] for it in items if "image_sha" in it
+            }
+            img_ok = {
+                r["external_uid"] for r in rows
+                if "/api/v1/media/" in (r["stem"] or "")
+            }
+            if img_ok != expected_img_uids:
+                raise AssertionError(
+                    f"картинки разошлись: ожидали {expected_img_uids}, нашли {img_ok}"
+                )
+
+            total_crylov = await conn.fetchval(
+                "SELECT count(*) FROM tasks WHERE external_uid LIKE 'crylov:%'"
+            )
+            print(f"\nOK: вставлено {inserted} заданий, картинки у {len(img_ok)}/7 подтверждены.")
+            print(f"Всего Крылов-заданий в LMS ПОСЛЕ: {total_crylov} (ждали 36+56=92)")
+            if total_crylov != 92:
+                raise AssertionError(f"ожидали 92 Крылов-задания всего, нашли {total_crylov}")
+
+            if not apply:
+                raise RuntimeError("DRY-RUN: откатываю (запусти с --apply при DBCHECK_OK=1)")
+        print("\nЗАПИСАНО И ЗАКОММИЧЕНО.")
+    finally:
+        await conn.close()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main("--apply" in sys.argv))
+    except RuntimeError as exc:
+        print(f"\n{exc}")
+        sys.exit(0 if "DRY-RUN" in str(exc) else 1)
