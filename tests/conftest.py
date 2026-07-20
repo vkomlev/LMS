@@ -179,29 +179,156 @@ async def db_engine():
         await engine.dispose()
 
 
+# Модули, которые сами открывают движок/соединение к БД (`create_async_engine`)
+# в своих фикстурах. Они несовместимы с общей откатываемой транзакцией:
+# данные теста лежат в НЕЗАКОММИЧЕННОЙ транзакции одного соединения, а уборка
+# идёт ДРУГИМ соединением — её `DELETE` встаёт в блокировку и ждёт транзакцию,
+# которая закончится только после теста. Тест ждёт DELETE, DELETE ждёт тест:
+# взаимный клинч, прогон висит без ошибки (tsk-333).
+#
+# Такие модули работают по-старому: реальные коммиты + уборка за собой.
+# Список сверяется тестом `test_tx_isolation_optout.py` — при добавлении
+# `create_async_engine` в новый тестовый модуль он подскажет, что делать.
+SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+    {
+        "test_attempt_cancel_stage35.py",
+        "test_attempts_enrollment_hole_tsk272.py",
+        "test_attempts_integration_stage4.py",
+        "test_attempts_limit_enforced_tsk269.py",
+        "test_attempts_limit_race_tsk273.py",
+        "test_attempts_null_solution_rules_tsk325.py",
+        "test_attempts_root_course_tsk264.py",
+        "test_hint_events_stage36.py",
+        "test_last_attempt_stage6.py",
+        "test_learning_engine_service.py",
+        "test_materials_bulk_upsert.py",
+        "test_migrations.py",
+        "test_repos_smoke.py",
+        "test_tasks_order_position_api.py",
+        "test_tasks_reorder_api.py",
+        "test_teacher_courses_triggers_smoke.py",
+        "test_teacher_help_requests_overdue_tsk312.py",
+        "test_teacher_help_requests_stage38.py",
+        "test_teacher_help_requests_stage381.py",
+        "test_teacher_next_modes_stage39.py",
+        "test_triggers_smoke.py",
+        "test_tsk088_task_content_hints_preserved.py",
+    }
+)
+
+
+# Модули вне изоляции по ДРУГИМ причинам (не свой движок). Список ручной,
+# сторожем не проверяется — причина у каждого своя, автоматически её не вывести.
+OTHER_OPTOUT_MODULES: dict[str, str] = {
+    # Синхронный тест-скрипт: внутри поднимает свой event loop через
+    # `asyncio.run(...)`, поэтому соединение общей транзакции (созданное в
+    # loop'е pytest-asyncio) в нём непригодно — asyncpg падает с
+    # «attached to a different loop».
+    "test_hints_stage5.py": "свой event loop через asyncio.run",
+}
+
+
+def pytest_collection_modifyitems(items) -> None:
+    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией."""
+    optout = SELF_MANAGED_CONNECTION_MODULES | set(OTHER_OPTOUT_MODULES)
+    for item in items:
+        if Path(str(item.fspath)).name in optout:
+            item.add_marker(pytest.mark.no_tx_isolation)
+
+
 @pytest_asyncio.fixture(scope="function")
-async def db(db_engine):
-    """Асинхронная сессия к БД с NullPool; rollback после каждого теста.
+async def db_conn(db_engine, request):
+    """Соединение теста с внешней транзакцией, которая всегда откатывается (tsk-333).
+
+    Тест и ASGI-приложение работают поверх ОДНОГО соединения: сессии
+    открываются с `join_transaction_mode="create_savepoint"`, поэтому их
+    `commit()` закрывает SAVEPOINT, а не внешнюю транзакцию. В конце теста
+    внешняя транзакция откатывается — в БД не остаётся ничего, даже если
+    тест упал до своего `finally: _cleanup(...)`.
+
+    Тесты с маркером `no_tx_isolation` получают `None` и работают по-старому
+    (реальные коммиты + ручная чистка) — это нужно там, где проверяется
+    поведение НЕСКОЛЬКИХ параллельных соединений: гонки, блокировки,
+    видимость между транзакциями. Одно соединение такую проверку обнуляет.
+    """
+    if request.node.get_closest_marker("no_tx_isolation"):
+        yield None
+        return
+
+    conn = await db_engine.connect()
+    trans = await conn.begin()
+    try:
+        yield conn
+    finally:
+        await trans.rollback()
+        await conn.close()
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db(db_engine, db_conn):
+    """Асинхронная сессия к БД; по умолчанию — внутри откатываемой транзакции.
 
     NullPool гарантирует, что каждый тест получает свежее соединение,
     не связанное с event loop предыдущего теста.
     """
-    async with AsyncSession(db_engine, expire_on_commit=False) as session:
+    if db_conn is None:
+        async with AsyncSession(db_engine, expire_on_commit=False) as session:
+            yield session
+            await session.rollback()
+        return
+
+    async with AsyncSession(
+        db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    ) as session:
         yield session
-        await session.rollback()
 
 
-@pytest.fixture(scope="function", autouse=True)
-def _override_app_db():
-    """Изолировать ASGI-запросы от глобального QueuePool между event loop тестов."""
+@pytest_asyncio.fixture(scope="function")
+async def db_session_factory(db_engine, db_conn):
+    """Фабрика сессий для сервисного кода, который открывает сессию сам.
 
-    async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    Например `escalation_cron_tick(session_factory=...)`. Фабрика привязана к
+    тому же соединению, что и `db`, — иначе сервис ходит другим соединением и
+    НЕ ВИДИТ данные теста, лежащие в незакоммиченной транзакции.
+
+    Вне изоляции (`no_tx_isolation`) — фабрика поверх NullPool-движка текущего
+    event loop'а, как было сделано в tsk-330.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    if db_conn is None:
+        yield async_sessionmaker(bind=db_engine, expire_on_commit=False)
+        return
+
+    yield async_sessionmaker(
+        bind=db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
+    )
+
+
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def _override_app_db(db_conn):
+    """Посадить ASGI-запросы на то же соединение, что и фикстура `db`.
+
+    Без этого данные теста не видны приложению (разные соединения), и тест
+    вынужден коммитить в общую БД — источник кросс-тестового загрязнения.
+    Для `no_tx_isolation` поведение прежнее: свой NullPool-движок на запрос.
+    """
+
+    async def override_shared_conn() -> AsyncGenerator[AsyncSession, None]:
+        async with AsyncSession(
+            db_conn, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        ) as session:
+            yield session
+
+    async def override_own_engine() -> AsyncGenerator[AsyncSession, None]:
         engine = create_async_engine(_settings.database_url, poolclass=NullPool)
         try:
             async with AsyncSession(engine, expire_on_commit=False) as session:
                 yield session
         finally:
             await engine.dispose()
+
+    override_get_db = override_own_engine if db_conn is None else override_shared_conn
 
     previous_override = app.dependency_overrides.get(get_async_db)
     app.dependency_overrides[get_async_db] = override_get_db

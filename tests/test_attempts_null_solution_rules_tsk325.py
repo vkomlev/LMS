@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -151,7 +152,9 @@ async def null_rules_graph():
                         "tc": '{"type":"SA_COM","stem":"Введите число","media":[]}',
                         "cid": ids["course"],
                         "did": difficulty_id,
-                        "uid": "tsk325-null-task",
+                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
+                        # прерванный прогон и валил следующий с UniqueViolation.
+                        "uid": f"tsk325-null-task-{uuid.uuid4().hex[:12]}",
                         "ma": 3,
                         "ms": 1,
                     },
@@ -175,7 +178,9 @@ async def null_rules_graph():
                               '["trim","lower"],"accepted_answers":[{"value":"17","score":1}]}}',
                         "cid": ids["course"],
                         "did": difficulty_id,
-                        "uid": "tsk325-auto-task",
+                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
+                        # прерванный прогон и валил следующий с UniqueViolation.
+                        "uid": f"tsk325-auto-task-{uuid.uuid4().hex[:12]}",
                         "ma": 3,
                         "ms": 1,
                     },

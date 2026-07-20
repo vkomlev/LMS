@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,10 @@ async def fixture_graph():
                         "sr": '{"max_score":1,"correct_options":["b"]}',
                         "cid": ids["course"],
                         "did": difficulty_id,
-                        "uid": "tsk272-task",
+                        # Уникальный uid на прогон: фиксированный 'tsk272-task'
+                        # переживал прерванный прогон и валил следующий с
+                        # UniqueViolation на tasks_external_uid_key (tsk-333).
+                        "uid": f"tsk272-task-{uuid.uuid4().hex[:12]}",
                         "ma": 3,
                     },
                 )

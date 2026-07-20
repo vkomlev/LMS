@@ -22,6 +22,7 @@
 """
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -131,7 +132,9 @@ async def graph():
                         "tc": '{"type": "SC_Qw", "question": "tsk264 quiz"}',
                         "cid": ids["reused"],
                         "did": difficulty_id,
-                        "uid": "tsk264-quiz",
+                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
+                        # прерванный прогон и валил следующий с UniqueViolation.
+                        "uid": f"tsk264-quiz-{uuid.uuid4().hex[:12]}",
                     },
                 )
             ).scalar()
