@@ -147,6 +147,20 @@ async def get_or_create_help_request(
     await record_help_request_opened(
         db, student_id, new_id, event_id, task_id, course_id
     )
+    if assigned is not None:
+        # tsk-348 follow-up: раньше учитель узнавал о заявке ТОЛЬКО через
+        # pending-count (число в бейдже/боте) — негде было прочитать, что
+        # именно случилось, и перейти к заявке одним кликом. Inbox-запись
+        # даёт реальную ленту (как у ученика) + CTA-переход.
+        await inbox_service.create_for_user(
+            db,
+            user_id=assigned,
+            kind="help_request_opened",
+            title="Новый вопрос от ученика",
+            content=msg_truncated or "Ученик запросил помощь по заданию.",
+            payload={"request_id": int(new_id), "task_id": task_id, "student_id": student_id},
+            created_by=student_id,
+        )
     return (int(new_id), True)
 
 
@@ -223,6 +237,16 @@ async def get_or_create_blocked_limit_help_request(
     await record_attempt_limit_reached(
         db, student_id, new_id, task_id, attempts_used, attempts_limit_effective, course_id
     )
+    if assigned is not None:
+        await inbox_service.create_for_user(
+            db,
+            user_id=assigned,
+            kind="help_request_opened",
+            title="Ученик заблокирован лимитом попыток",
+            content=f"Использовано попыток: {attempts_used}/{attempts_limit_effective}.",
+            payload={"request_id": int(new_id), "task_id": task_id, "student_id": student_id},
+            created_by=None,
+        )
     return (int(new_id), True, False)
 
 
@@ -606,14 +630,14 @@ async def close_help_request(
     """
     r = await db.execute(
         text("""
-            SELECT id, status, student_id FROM help_requests WHERE id = :request_id
+            SELECT id, status, student_id, task_id FROM help_requests WHERE id = :request_id
         """),
         {"request_id": request_id},
     )
     row = r.fetchone()
     if row is None:
         return (None, None, None)
-    hid, current_status, student_id = row[0], row[1], row[2]
+    hid, current_status, student_id, task_id = row[0], row[1], row[2], row[3]
 
     err = await check_help_request_lock(db, request_id, closed_by, lock_token)
     if err is not None:
@@ -660,7 +684,7 @@ async def close_help_request(
             kind="help_request_closed",
             title="Ваш вопрос закрыт учителем",
             content=comment_truncated or "Учитель отметил вопрос как решённый.",
-            payload={"request_id": request_id, "resolution_comment": comment_truncated},
+            payload={"request_id": request_id, "task_id": task_id, "resolution_comment": comment_truncated},
             created_by=closed_by,
         )
     return ({
@@ -730,14 +754,14 @@ async def reply_help_request(
     """
     r = await db.execute(
         text("""
-            SELECT id, student_id, status, thread_id FROM help_requests WHERE id = :request_id
+            SELECT id, student_id, status, thread_id, task_id FROM help_requests WHERE id = :request_id
         """),
         {"request_id": request_id},
     )
     row = r.fetchone()
     if row is None:
         return (None, "not_found")
-    hid, student_id, req_status, thread_id = row[0], row[1], row[2], row[3]
+    hid, student_id, req_status, thread_id, task_id = row[0], row[1], row[2], row[3], row[4]
 
     if req_status == "closed":
         return (None, "closed")
@@ -832,7 +856,7 @@ async def reply_help_request(
         kind="help_request_replied",
         title="Учитель ответил на ваш вопрос",
         content=body_trimmed,
-        payload={"request_id": request_id, "thread_id": thread_id, "message_id": msg.id},
+        payload={"request_id": request_id, "task_id": task_id, "thread_id": thread_id, "message_id": msg.id},
         created_by=teacher_id,
     )
 
