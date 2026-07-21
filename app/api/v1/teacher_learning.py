@@ -14,7 +14,7 @@ from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.schemas.learning_api import TaskLimitOverrideRequest, TaskLimitOverrideResponse
 from app.schemas.task_content import QUIZ_TASK_TYPES
-from app.services import audit_service
+from app.services import audit_service, inbox_service
 from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
 from app.services.learning_events_service import record_task_limit_override
 from app.services.teacher_queue_service import teacher_can_override_limit
@@ -176,6 +176,22 @@ async def task_limit_override(
                 "base_attempts_added": base_added,
                 "reason": reason,
             },
+        )
+        # tsk-348: разблокировка лимита попыток раньше не давала ученику
+        # никакого сигнала — только новая попытка молча становилась доступна.
+        # Через тот же inbox, что уже опрашивает UnreadBadge в SPW.
+        await inbox_service.create_for_user(
+            db,
+            user_id=body.student_id,
+            kind="task_limit_override",
+            title="Учитель разблокировал задание",
+            content=reason or "Вам доступны дополнительные попытки по заданию.",
+            payload={
+                "task_id": body.task_id,
+                "max_attempts_override": new_limit,
+                "mode": body.mode,
+            },
+            created_by=body.updated_by,
         )
 
     r = await db.execute(

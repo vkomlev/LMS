@@ -1,0 +1,526 @@
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 76293de..55b0644 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -25,6 +25,7 @@ from app.schemas.teacher_help_requests import (
+     HelpRequestCloseResponse,
+     HelpRequestReplyRequest,
+     HelpRequestReplyResponse,
++    HelpRequestPendingCountResponse,
+ )
+ from app.schemas.teacher_next_modes import (
+     HelpRequestClaimNextRequest,
+@@ -40,6 +41,7 @@ from app.services.help_requests_service import (
+     help_request_exists,
+     close_help_request,
+     reply_help_request,
++    get_help_requests_pending_count,
+ )
+ from app.services.teacher_queue_service import (
+     claim_next_help_request,
+@@ -88,6 +90,22 @@ async def help_request_claim_next(
+     )
+ 
+ 
++@router.get(
++    "/pending-count",
++    response_model=HelpRequestPendingCountResponse,
++    summary="Количество открытых заявок помощи, назначенных на преподавателя (tsk-348)",
++)
++async def help_requests_pending_count(
++    teacher_id: int = Query(..., description="ID преподавателя"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> HelpRequestPendingCountResponse:
++    if not current_user.is_service and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    count, oldest = await get_help_requests_pending_count(db, teacher_id)
++    return HelpRequestPendingCountResponse(count=count, oldest_created_at=oldest)
++
++
+ @router.get(
+     "",
+     response_model=HelpRequestListResponse,
+diff --git a/app/api/v1/teacher_learning.py b/app/api/v1/teacher_learning.py
+index cd6012b..bff173c 100644
+--- a/app/api/v1/teacher_learning.py
++++ b/app/api/v1/teacher_learning.py
+@@ -14,7 +14,7 @@ from app.api.deps import get_bare_db, get_current_user
+ from app.auth.current_user import CurrentUser
+ from app.schemas.learning_api import TaskLimitOverrideRequest, TaskLimitOverrideResponse
+ from app.schemas.task_content import QUIZ_TASK_TYPES
+-from app.services import audit_service
++from app.services import audit_service, inbox_service
+ from app.services.learning_engine_service import DEFAULT_MAX_ATTEMPTS
+ from app.services.learning_events_service import record_task_limit_override
+ from app.services.teacher_queue_service import teacher_can_override_limit
+@@ -177,6 +177,22 @@ async def task_limit_override(
+                 "reason": reason,
+             },
+         )
++        # tsk-348: разблокировка лимита попыток раньше не давала ученику
++        # никакого сигнала — только новая попытка молча становилась доступна.
++        # Через тот же inbox, что уже опрашивает UnreadBadge в SPW.
++        await inbox_service.create_for_user(
++            db,
++            user_id=body.student_id,
++            kind="task_limit_override",
++            title="Учитель разблокировал задание",
++            content=reason or "Вам доступны дополнительные попытки по заданию.",
++            payload={
++                "task_id": body.task_id,
++                "max_attempts_override": new_limit,
++                "mode": body.mode,
++            },
++            created_by=body.updated_by,
++        )
+ 
+     r = await db.execute(
+         text("""
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index bcd4c8b..4df2faa 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -110,3 +110,18 @@ class HelpRequestReplyResponse(BaseModel):
+     thread_id: Optional[int] = None
+     request_status: HelpRequestStatus = "open"
+     deduplicated: bool = False
++
++
++# ----- GET pending-count (tsk-348) -----
++
++class HelpRequestPendingCountResponse(BaseModel):
++    """Количество открытых заявок помощи (manual_help + blocked_limit), назначенных на преподавателя.
++
++    Источник TG_LMS bot-поллера (tsk-348 — до этого поллер отслеживал только
++    очередь ручной проверки заданий, help_requests не видел вообще) и
++    веб-бейджа учителя в SPW.
++    """
++    count: int = Field(..., description="Количество открытых заявок, назначенных на преподавателя")
++    oldest_created_at: Optional[datetime] = Field(
++        None, description="MIN(created_at) среди открытых заявок; null при count=0"
++    )
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index fc6e224..ab8d2ff 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -26,6 +26,7 @@ from app.services.learning_events_service import (
+     record_help_request_replied,
+     record_attempt_limit_reached,
+ )
++from app.services import inbox_service
+ from app.services.messages_service import MessagesService
+ from app.services.student_teacher_links_service import StudentTeacherLinksService
+ from app.services.teacher_courses_service import TeacherCoursesService
+@@ -225,6 +226,34 @@ async def get_or_create_blocked_limit_help_request(
+     return (int(new_id), True, False)
+ 
+ 
++async def get_help_requests_pending_count(
++    db: AsyncSession,
++    teacher_id: int,
++) -> Tuple[int, Optional[datetime]]:
++    """Количество открытых заявок помощи (manual_help + blocked_limit),
++    назначенных на преподавателя, + oldest created_at.
++
++    tsk-348: используется TG_LMS bot-поллером и веб-бейджем учителя в SPW.
++    До этой заявки поллер отслеживал только очередь ручной проверки заданий
++    (`teacher_queue_service.get_pending_count` / task_results) — help_requests
++    вообще не опрашивались, из-за чего живой запрос помощи от ученика оставался
++    незамеченным. Прямой фильтр по assigned_teacher_id — та же «своя» очередь,
++    что видит преподаватель в разделе «Вопросы студентов».
++    """
++    r = await db.execute(
++        text("""
++            SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest
++            FROM help_requests
++            WHERE status = 'open' AND assigned_teacher_id = :teacher_id
++        """),
++        {"teacher_id": teacher_id},
++    )
++    row = r.fetchone()
++    if row is None:
++        return (0, None)
++    return (int(row[0] or 0), row[1])
++
++
+ async def help_request_exists(db: AsyncSession, request_id: int) -> bool:
+     """Проверка существования заявки по id (без ACL)."""
+     r = await db.execute(
+@@ -622,6 +651,18 @@ async def close_help_request(
+         },
+     )
+     await record_help_request_closed(db, student_id, request_id, closed_by, resolution_comment)
++    if closed_by is not None:
++        # tsk-348: только явное закрытие учителем (не системное авто-закрытие
++        # tsk-339, когда ученик решил задачу сам, — там пуш не нужен).
++        await inbox_service.create_for_user(
++            db,
++            user_id=student_id,
++            kind="help_request_closed",
++            title="Ваш вопрос закрыт учителем",
++            content=comment_truncated or "Учитель отметил вопрос как решённый.",
++            payload={"request_id": request_id, "resolution_comment": comment_truncated},
++            created_by=closed_by,
++        )
+     return ({
+         "request_id": request_id,
+         "status": "closed",
+@@ -780,6 +821,21 @@ async def reply_help_request(
+         await record_help_request_closed(db, student_id, request_id, teacher_id, None)
+         final_status = "closed"
+ 
++    # tsk-348: reply_help_request раньше отправлял только `messages`-запись
++    # (видна ученику лишь если он сам откроет переписку — pull). Дублируем
++    # в inbox (`notifications`), который уже опрашивает существующий
++    # /me/notifications/unread-count + UnreadBadge в SPW — push без нового
++    # эндпоинта/компонента на стороне ученика.
++    await inbox_service.create_for_user(
++        db,
++        user_id=student_id,
++        kind="help_request_replied",
++        title="Учитель ответил на ваш вопрос",
++        content=body_trimmed,
++        payload={"request_id": request_id, "thread_id": thread_id, "message_id": msg.id},
++        created_by=teacher_id,
++    )
++
+     return ({
+         "request_id": request_id,
+         "message_id": msg.id,
+diff --git a/docs/openapi.json b/docs/openapi.json
+index e983e24..f7f6156 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -13521,6 +13521,106 @@
+         }
+       }
+     },
++    "/api/v1/teacher/help-requests/pending-count": {
++      "get": {
++        "tags": [
++          "teacher_help_requests"
++        ],
++        "summary": "Количество открытых заявок помощи, назначенных на преподавателя (tsk-348)",
++        "operationId": "help_requests_pending_count_api_v1_teacher_help_requests_pending_count_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "teacher_id",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID преподавателя",
++              "title": "Teacher Id"
++            },
++            "description": "ID преподавателя"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HelpRequestPendingCountResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/teacher/help-requests": {
+       "get": {
+         "tags": [
+@@ -22336,6 +22436,34 @@
+         "title": "HelpRequestListResponse",
+         "description": "Ответ списка заявок."
+       },
++      "HelpRequestPendingCountResponse": {
++        "properties": {
++          "count": {
++            "type": "integer",
++            "title": "Count",
++            "description": "Количество открытых заявок, назначенных на преподавателя"
++          },
++          "oldest_created_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Oldest Created At",
++            "description": "MIN(created_at) среди открытых заявок; null при count=0"
++          }
++        },
++        "type": "object",
++        "required": [
++          "count"
++        ],
++        "title": "HelpRequestPendingCountResponse",
++        "description": "Количество открытых заявок помощи (manual_help + blocked_limit), назначенных на преподавателя.\n\nИсточник TG_LMS bot-поллера (tsk-348 — до этого поллер отслеживал только\nочередь ручной проверки заданий, help_requests не видел вообще) и\nвеб-бейджа учителя в SPW."
++      },
+       "HelpRequestReleaseRequest": {
+         "properties": {
+           "teacher_id": {
+diff --git a/tests/test_help_requests_pending_count_tsk348.py b/tests/test_help_requests_pending_count_tsk348.py
+new file mode 100644
+index 0000000..e4a8047
+--- /dev/null
++++ b/tests/test_help_requests_pending_count_tsk348.py
+@@ -0,0 +1,184 @@
++"""Integration HTTP-тесты tsk-348.
++
++1) GET /api/v1/teacher/help-requests/pending-count — новый эндпоинт для
++   TG_LMS bot-поллера и веб-бейджа учителя (раньше help_requests вообще
++   не были видны ни одному push-механизму — только review-очередь).
++2) inbox-уведомление ученику при reply / явном close / task-limit override
++   (раньше эти действия учителя не давали ученику никакого push-сигнала —
++   только пассивный `messages`-тред, который нужно было открыть самому).
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++async def _setup_teacher(db):
++    teacher = Users(
++        email=f"tsk348-tch-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="tsk348-tch", tg_id=None,
++    )
++    db.add(teacher)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, teacher.id, "email", teacher.email)
++    token, _, _ = await create_session(db, user_id=teacher.id)
++    await db.commit()
++    return teacher.id, token
++
++
++async def _create_student(db) -> int:
++    u = Users(
++        email=f"tsk348-stud-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="tsk348-stud", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await db.commit()
++    return u.id
++
++
++async def _pick_task(db) -> int:
++    row = (await db.execute(text("SELECT id FROM tasks LIMIT 1"))).fetchone()
++    if row is None:
++        pytest.skip("Нет задач в БД")
++    return int(row[0])
++
++
++async def _seed_help_request(db, *, teacher_id: int, student_id: int, task_id: int,
++                              request_type: str = "manual_help", status: str = "open") -> int:
++    r = await db.execute(
++        text("""
++            INSERT INTO help_requests
++            (status, request_type, auto_created, context_json, student_id, task_id,
++             assigned_teacher_id, created_at, updated_at, priority)
++            VALUES (:status, :rt, false, '{}'::jsonb, :student_id, :task_id,
++                    :teacher_id, now(), now(), 100)
++            RETURNING id
++        """),
++        {"status": status, "rt": request_type, "student_id": student_id,
++         "task_id": task_id, "teacher_id": teacher_id},
++    )
++    rid = r.scalar_one()
++    await db.commit()
++    return int(rid)
++
++
++async def _cleanup(db, *, teacher_id: int, student_id: int, request_ids: list[int]):
++    if request_ids:
++        await db.execute(text("DELETE FROM help_request_replies WHERE request_id = ANY(:r)"), {"r": request_ids})
++        await db.execute(text("DELETE FROM help_requests WHERE id = ANY(:r)"), {"r": request_ids})
++    await db.execute(text("DELETE FROM notifications WHERE user_id IN (:t, :s)"), {"t": teacher_id, "s": student_id})
++    await db.execute(text("DELETE FROM messages WHERE sender_id IN (:t, :s) OR recipient_id IN (:t, :s)"), {"t": teacher_id, "s": student_id})
++    await db.execute(text("DELETE FROM user_session WHERE user_id IN (:t, :s)"), {"t": teacher_id, "s": student_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id IN (:t, :s)"), {"t": teacher_id, "s": student_id})
++    await db.commit()
++
++
++@pytest.mark.asyncio
++async def test_pending_count_requires_auth(client):
++    resp = await client.get("/api/v1/teacher/help-requests/pending-count?teacher_id=1")
++    assert resp.status_code == 401
++
++
++@pytest.mark.asyncio
++async def test_pending_count_wrong_teacher_id_403(db, client):
++    teacher_id, token = await _setup_teacher(db)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id + 9999}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403
++    finally:
++        await _cleanup(db, teacher_id=teacher_id, student_id=teacher_id, request_ids=[])
++
++
++@pytest.mark.asyncio
++async def test_pending_count_counts_open_help_requests_both_types(db, client):
++    """tsk-348: раньше этот эндпоинт вообще не существовал — заявки помощи
++    были невидимы ни боту, ни вебу. count должен видеть и manual_help,
++    и blocked_limit, и не видеть закрытые/чужие."""
++    teacher_id, token = await _setup_teacher(db)
++    student_id = await _create_student(db)
++    task_id = await _pick_task(db)
++    rid_manual = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id, request_type="manual_help")
++    rid_blocked = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id, request_type="blocked_limit")
++    rid_closed = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id, status="closed")
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        body = resp.json()
++        assert body["count"] == 2
++        assert body["oldest_created_at"] is not None
++    finally:
++        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid_manual, rid_blocked, rid_closed])
++
++
++@pytest.mark.asyncio
++async def test_reply_creates_inbox_notification_for_student(db, client):
++    """tsk-348: раньше reply создавал только messages-запись (pull) —
++    ученик не получал никакого push, пока сам не откроет переписку."""
++    teacher_id, token = await _setup_teacher(db)
++    student_id = await _create_student(db)
++    task_id = await _pick_task(db)
++    rid = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id)
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": teacher_id, "message": "Проверьте цикл — там опечатка."},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++        row = (
++            await db.execute(
++                text("SELECT kind, read_at FROM notifications WHERE user_id = :u AND kind = 'help_request_replied'"),
++                {"u": student_id},
++            )
++        ).fetchone()
++        assert row is not None, "reply_help_request должен создать inbox-уведомление ученику"
++        assert row[1] is None  # непрочитанное
++    finally:
++        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_explicit_close_notifies_student_but_system_close_does_not(db, client):
++    """tsk-348: явное закрытие учителем — пуш ученику; системный auto-close
++    (closed_by=None, tsk-339) — без пуша, это не действие учителя."""
++    teacher_id, token = await _setup_teacher(db)
++    student_id = await _create_student(db)
++    task_id = await _pick_task(db)
++    rid_explicit = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id)
++    rid_system = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id)
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid_explicit}/close",
++            json={"closed_by": teacher_id, "resolution_comment": "Решили вместе"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200
++
++        from app.services.help_requests_service import close_help_request
++        await close_help_request(db, rid_system, closed_by=None)
++        await db.commit()
++
++        rows = (
++            await db.execute(
++                text("SELECT payload->>'request_id' FROM notifications WHERE user_id = :u AND kind = 'help_request_closed'"),
++                {"u": student_id},
++            )
++        ).fetchall()
++        notified_ids = {int(r[0]) for r in rows}
++        assert str(rid_explicit) in {r[0] for r in rows} or rid_explicit in notified_ids
++        assert rid_system not in notified_ids
++    finally:
++        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid_explicit, rid_system])

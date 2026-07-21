@@ -25,6 +25,7 @@ from app.schemas.teacher_help_requests import (
     HelpRequestCloseResponse,
     HelpRequestReplyRequest,
     HelpRequestReplyResponse,
+    HelpRequestPendingCountResponse,
 )
 from app.schemas.teacher_next_modes import (
     HelpRequestClaimNextRequest,
@@ -40,6 +41,7 @@ from app.services.help_requests_service import (
     help_request_exists,
     close_help_request,
     reply_help_request,
+    get_help_requests_pending_count,
 )
 from app.services.teacher_queue_service import (
     claim_next_help_request,
@@ -86,6 +88,22 @@ async def help_request_claim_next(
         lock_token=lock_token,
         lock_expires_at=lock_expires_at,
     )
+
+
+@router.get(
+    "/pending-count",
+    response_model=HelpRequestPendingCountResponse,
+    summary="Количество открытых заявок помощи, назначенных на преподавателя (tsk-348)",
+)
+async def help_requests_pending_count(
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> HelpRequestPendingCountResponse:
+    if not current_user.is_service and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    count, oldest = await get_help_requests_pending_count(db, teacher_id)
+    return HelpRequestPendingCountResponse(count=count, oldest_created_at=oldest)
 
 
 @router.get(

@@ -110,3 +110,18 @@ class HelpRequestReplyResponse(BaseModel):
     thread_id: Optional[int] = None
     request_status: HelpRequestStatus = "open"
     deduplicated: bool = False
+
+
+# ----- GET pending-count (tsk-348) -----
+
+class HelpRequestPendingCountResponse(BaseModel):
+    """Количество открытых заявок помощи (manual_help + blocked_limit), назначенных на преподавателя.
+
+    Источник TG_LMS bot-поллера (tsk-348 — до этого поллер отслеживал только
+    очередь ручной проверки заданий, help_requests не видел вообще) и
+    веб-бейджа учителя в SPW.
+    """
+    count: int = Field(..., description="Количество открытых заявок, назначенных на преподавателя")
+    oldest_created_at: Optional[datetime] = Field(
+        None, description="MIN(created_at) среди открытых заявок; null при count=0"
+    )

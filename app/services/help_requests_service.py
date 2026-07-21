@@ -26,6 +26,7 @@ from app.services.learning_events_service import (
     record_help_request_replied,
     record_attempt_limit_reached,
 )
+from app.services import inbox_service
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services.teacher_courses_service import TeacherCoursesService
@@ -223,6 +224,34 @@ async def get_or_create_blocked_limit_help_request(
         db, student_id, new_id, task_id, attempts_used, attempts_limit_effective, course_id
     )
     return (int(new_id), True, False)
+
+
+async def get_help_requests_pending_count(
+    db: AsyncSession,
+    teacher_id: int,
+) -> Tuple[int, Optional[datetime]]:
+    """Количество открытых заявок помощи (manual_help + blocked_limit),
+    назначенных на преподавателя, + oldest created_at.
+
+    tsk-348: используется TG_LMS bot-поллером и веб-бейджем учителя в SPW.
+    До этой заявки поллер отслеживал только очередь ручной проверки заданий
+    (`teacher_queue_service.get_pending_count` / task_results) — help_requests
+    вообще не опрашивались, из-за чего живой запрос помощи от ученика оставался
+    незамеченным. Прямой фильтр по assigned_teacher_id — та же «своя» очередь,
+    что видит преподаватель в разделе «Вопросы студентов».
+    """
+    r = await db.execute(
+        text("""
+            SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest
+            FROM help_requests
+            WHERE status = 'open' AND assigned_teacher_id = :teacher_id
+        """),
+        {"teacher_id": teacher_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        return (0, None)
+    return (int(row[0] or 0), row[1])
 
 
 async def help_request_exists(db: AsyncSession, request_id: int) -> bool:
@@ -622,6 +651,18 @@ async def close_help_request(
         },
     )
     await record_help_request_closed(db, student_id, request_id, closed_by, resolution_comment)
+    if closed_by is not None:
+        # tsk-348: только явное закрытие учителем (не системное авто-закрытие
+        # tsk-339, когда ученик решил задачу сам, — там пуш не нужен).
+        await inbox_service.create_for_user(
+            db,
+            user_id=student_id,
+            kind="help_request_closed",
+            title="Ваш вопрос закрыт учителем",
+            content=comment_truncated or "Учитель отметил вопрос как решённый.",
+            payload={"request_id": request_id, "resolution_comment": comment_truncated},
+            created_by=closed_by,
+        )
     return ({
         "request_id": request_id,
         "status": "closed",
@@ -779,6 +820,21 @@ async def reply_help_request(
         )
         await record_help_request_closed(db, student_id, request_id, teacher_id, None)
         final_status = "closed"
+
+    # tsk-348: reply_help_request раньше отправлял только `messages`-запись
+    # (видна ученику лишь если он сам откроет переписку — pull). Дублируем
+    # в inbox (`notifications`), который уже опрашивает существующий
+    # /me/notifications/unread-count + UnreadBadge в SPW — push без нового
+    # эндпоинта/компонента на стороне ученика.
+    await inbox_service.create_for_user(
+        db,
+        user_id=student_id,
+        kind="help_request_replied",
+        title="Учитель ответил на ваш вопрос",
+        content=body_trimmed,
+        payload={"request_id": request_id, "thread_id": thread_id, "message_id": msg.id},
+        created_by=teacher_id,
+    )
 
     return ({
         "request_id": request_id,
