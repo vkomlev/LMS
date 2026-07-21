@@ -25767,6 +25767,18 @@
             ],
             "title": "Title"
           },
+          "full_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Title",
+            "description": "Задание: полное условие (stem), без обрезки под ширину строки (в отличие от `title`) — для всплывающей подсказки при наведении. У материалов/узлов курса всегда null (их title уже не обрезан)."
+          },
           "status": {
             "type": "string",
             "title": "Status",

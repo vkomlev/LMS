@@ -885,6 +885,48 @@ async def test_progress_tree_marks_manual_items(graph):
     assert granted_material["status"] == "COMPLETED"
     assert granted_material["manual"] is True
 
+
+async def test_progress_tree_full_title_not_truncated(graph):
+    """tsk-341: `full_title` — то же условие, но БЕЗ обрезки под ширину строки.
+
+    Фрагмент `title` (80 симв.) часто не даёт понять, что за задание — экран
+    прогресса показывает `full_title` во всплывающей подсказке при наведении.
+    """
+    ids, db = graph["ids"], graph["db"]
+    long_stem = "Длинное условие задания. " * 10  # 260 симв. — длиннее TITLE_MAX_LEN=80
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = jsonb_set(task_content, '{stem}', "
+            "to_jsonb(CAST(:s AS text))) WHERE id = :t"
+        ),
+        {"s": long_stem, "t": ids["task_root_a"]},
+    )
+    await db.commit()
+
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    task = {(i["item_type"], i["item_id"]): i for i in data["items"]}[("task", ids["task_root_a"])]
+
+    assert task["title"].endswith("…"), "короткий title обязан быть обрезан с многоточием"
+    assert len(task["title"]) <= 81
+    assert task["full_title"] is not None
+    assert not task["full_title"].endswith("…"), "260 симв. укладывается в HINT_MAX_LEN=500 целиком"
+    assert task["full_title"].strip() == long_stem.strip()
+    assert len(task["full_title"]) > len(task["title"])
+
+
+async def test_progress_tree_material_and_course_full_title_is_none(graph):
+    """`full_title` — только у заданий; материалы/узлы курса его не заполняют
+    (их `title` и так не обрезан)."""
+    ids, db = graph["ids"], graph["db"]
+    data = await manual_progress_service.get_student_progress(
+        db, student_id=ids["student"], course_id=ids["root"]
+    )
+    by_key = {(i["item_type"], i["item_id"]): i for i in data["items"]}
+    assert by_key[("material", ids["material_root"])]["full_title"] is None
+    assert by_key[("course", ids["root"])]["full_title"] is None
+
     untouched_material = by_key[("material", ids["material_child"])]
     assert untouched_material["status"] == "NOT_STARTED"
 

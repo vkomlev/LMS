@@ -67,7 +67,7 @@ from app.services import audit_service
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.teacher_queue_service import teacher_course_acl
-from app.utils.task_title import humanize_task_title
+from app.utils.task_title import HINT_MAX_LEN, humanize_task_title
 
 logger = logging.getLogger(__name__)
 
@@ -1157,6 +1157,7 @@ async def get_student_progress(
                 "course_id": cid,
                 "parent_course_id": cid,
                 "title": m["title"],
+                "full_title": None,
                 "status": m_status,
                 "manual": bool(prog is not None and prog.get("source") == MANUAL_SOURCE),
                 "manual_grantable": True,
@@ -1202,6 +1203,13 @@ async def get_student_progress(
                 "parent_course_id": cid,
                 "title": humanize_task_title(
                     tid, t.get("tc_title"), t.get("tc_stem"), t.get("external_uid")
+                ),
+                # tsk-341: то же самое, но без обрезки под ширину строки — для
+                # всплывающей подсказки при наведении (короткий title часто не
+                # даёт понять, что это за задание).
+                "full_title": humanize_task_title(
+                    tid, t.get("tc_title"), t.get("tc_stem"), t.get("external_uid"),
+                    max_len=HINT_MAX_LEN,
                 ),
                 "status": state.state,
                 "manual": is_manual,
@@ -1271,6 +1279,7 @@ async def get_student_progress(
             # У запрошенного корня родителя в этом дереве нет.
             "parent_course_id": None if cid == course_id else parent_of.get(cid),
             "title": course_titles.get(cid),
+            "full_title": None,
             "status": _course_status(cid),
             "manual": None,
             # Массовый зачёт узла разрешён всегда: квизы внутри он пропускает сам.

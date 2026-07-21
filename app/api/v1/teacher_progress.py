@@ -99,6 +99,14 @@ class ProgressTreeItem(BaseModel):
         description="Узел, которому элемент принадлежит; null у запрошенного корня",
     )
     title: Optional[str] = None
+    full_title: Optional[str] = Field(
+        default=None,
+        description=(
+            "Задание: полное условие (stem), без обрезки под ширину строки "
+            "(в отличие от `title`) — для всплывающей подсказки при наведении. "
+            "У материалов/узлов курса всегда null (их title уже не обрезан)."
+        ),
+    )
     status: str = Field(
         description=(
             "Задание: OPEN | IN_PROGRESS | FAILED | PASSED | BLOCKED_LIMIT. "
