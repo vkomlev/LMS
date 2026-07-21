@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.help_requests import HelpRequests
 from app.models.help_request_replies import HelpRequestReplies
-from app.utils.task_title import humanize_task_title
+from app.utils.task_title import HINT_MAX_LEN, TITLE_MAX_LEN, humanize_task_title
 from app.services.learning_events_service import (
     record_help_request_opened,
     record_help_request_closed,
@@ -58,13 +58,19 @@ def _task_title_display(
     external_uid: Optional[str],
     title: Optional[str] = None,
     stem: Optional[str] = None,
+    *,
+    max_len: int = TITLE_MAX_LEN,
 ) -> str:
     """Человекочитаемый заголовок задания для отображения (tsk-298 follow-up).
 
     Делегирует в общий helper: curated title → очищенный stem → external_uid
     → «Задание #id». Раньше отдавал сырой external_uid (MVP-заглушка).
+
+    ``max_len=HINT_MAX_LEN`` (tsk-342) — полное условие для карточки заявки
+    (учителю нужен весь контекст задачи, чтобы ответить), а не короткий
+    фрагмент для списка/шапки.
     """
-    return humanize_task_title(task_id, title, stem, external_uid)
+    return humanize_task_title(task_id, title, stem, external_uid, max_len=max_len)
 
 
 async def resolve_assigned_teacher(
@@ -507,6 +513,16 @@ async def get_help_request_detail(
             row[20] if len(row) > 20 else None,
             row[22] if len(row) > 22 else None,
             row[23] if len(row) > 23 else None,
+        ),
+        # tsk-342: полное условие задания (не обрезка в 80 симв., а под
+        # разумный предел карточки) — учителю нужен весь контекст, чтобы
+        # ответить на заявку помощи, не только фрагмент в шапке.
+        "task_full_title": _task_title_display(
+            row[3],
+            row[20] if len(row) > 20 else None,
+            row[22] if len(row) > 22 else None,
+            row[23] if len(row) > 23 else None,
+            max_len=HINT_MAX_LEN,
         ),
         "course_title": row[21] if len(row) > 21 else None,
         "history": replies,

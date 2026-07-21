@@ -59,6 +59,14 @@ class HelpRequestReplyItem(BaseModel):
 
 class HelpRequestDetailResponse(HelpRequestListItem):
     """Карточка заявки (список + доп. поля и история)."""
+    task_full_title: Optional[str] = Field(
+        default=None,
+        description=(
+            "Полное условие задания (не обрезка в 80 симв., как `task_title`, "
+            "а под разумный предел карточки) — учителю нужен весь контекст, "
+            "чтобы ответить на заявку помощи."
+        ),
+    )
     message: Optional[str] = None
     closed_at: Optional[datetime] = None
     closed_by: Optional[int] = None

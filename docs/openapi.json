@@ -22069,6 +22069,18 @@
             "description": "Просрочена ли по due_at",
             "default": false
           },
+          "task_full_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Full Title",
+            "description": "Полное условие задания (не обрезка в 80 симв., как `task_title`, а под разумный предел карточки) — учителю нужен весь контекст, чтобы ответить на заявку помощи."
+          },
           "message": {
             "anyOf": [
               {

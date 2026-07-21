@@ -158,6 +158,48 @@ async def test_help_request_detail_student_name_is_full_name(db, client):
 
 
 @pytest.mark.asyncio
+async def test_help_request_detail_task_full_title_not_truncated(db, client):
+    """tsk-342: `task_full_title` — полное условие задания, не обрезанный
+    в 80 симв. `task_title` из шапки. Учителю нужен весь контекст, чтобы
+    ответить на заявку помощи."""
+    mid, token = await _user_with_session(db, "methodist")
+    sid = await _student(db)
+    tid = await _task(db)
+    long_stem = "Условие задачи целиком. " * 10  # 250 симв. — длиннее TITLE_MAX_LEN=80
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = jsonb_set(task_content, '{stem}', "
+            "to_jsonb(CAST(:s AS text))) WHERE id = :t"
+        ),
+        {"s": long_stem, "t": tid},
+    )
+    r = await db.execute(
+        text(
+            "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+            "auto_created, context_json, priority, created_at, updated_at) "
+            "VALUES ('open', :s, :t, 'manual_help', false, '{}'::jsonb, 100, now(), now()) RETURNING id"
+        ),
+        {"s": sid, "t": tid},
+    )
+    hr_id = r.scalar_one()
+    await db.commit()
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/{hr_id}?teacher_id={mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["task_title"].endswith("…"), "короткий task_title обязан быть обрезан"
+        assert body["task_full_title"] == long_stem.strip()
+        assert len(body["task_full_title"]) > len(body["task_title"])
+    finally:
+        await db.execute(text("DELETE FROM help_requests WHERE id=:h"), {"h": hr_id})
+        await db.commit()
+        await _cleanup(db, user_ids=[mid, sid], task_ids=[tid])
+
+
+@pytest.mark.asyncio
 async def test_override_methodist_allowed(db, client):
     """Методист (ACL bypass) может переопределить лимит."""
     mid, token = await _user_with_session(db, "methodist")
