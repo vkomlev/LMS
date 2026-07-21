@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional, Any, Dict, List, Sequence, Tuple
-from sqlalchemy import select
+from typing import Optional, Any, Dict, List, Sequence, Set, Tuple
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tasks import Tasks
@@ -219,6 +219,9 @@ class TasksService(BaseService[Tasks]):
                  action ∈ {"created", "updated"}.
         """
         results: List[Tuple[str, str, int]] = []
+        # tsk-345: курсы, где после этого батча order_position может нарушать
+        # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
+        courses_needing_reorder: Set[int] = set()
 
         for data in items:
             external_uid = data["external_uid"]
@@ -260,7 +263,16 @@ class TasksService(BaseService[Tasks]):
                 # используем наш переопределенный create для валидации
                 task = await self.create(db, obj_in)
                 results.append((external_uid, "created", task.id))
+                if data.get("order_position") is None:
+                    # Триггер поставил MAX+1 (в конец курса) — если задача не
+                    # HARD/PROJECT-уровня, это ломает межгрупповой порядок (tsk-345).
+                    courses_needing_reorder.add(data["course_id"])
             else:
+                # Запоминаем состояние ДО перезаписи — для решения, нужен ли реордер.
+                existing_course_id = existing.course_id
+                existing_difficulty_id = existing.difficulty_id
+                existing_type = (existing.task_content or {}).get("type")
+
                 # UPDATE — перезаписываем основные поля из импорта
                 obj_in = {
                     "course_id": data["course_id"],
@@ -273,14 +285,105 @@ class TasksService(BaseService[Tasks]):
                 }
                 # UPDATE: order_position пробрасываем ТОЛЬКО при явном значении.
                 # None в payload означает «поле не передано, позицию не менять».
-                if data.get("order_position") is not None:
+                explicit_order_position = data.get("order_position") is not None
+                if explicit_order_position:
                     obj_in["order_position"] = data["order_position"]
                 # используем наш переопределенный update для валидации
                 task = await self.update(db, existing, obj_in)
                 results.append((external_uid, "updated", task.id))
 
+                if not explicit_order_position:
+                    new_type = (data.get("task_content") or {}).get("type")
+                    reclassified = (
+                        data["difficulty_id"] != existing_difficulty_id
+                        or new_type != existing_type
+                    )
+                    if reclassified:
+                        # Переклассификация (напр. THEORY-перетег tsk-318) без
+                        # явной позиции — тот же класс дефекта, что и MAX+1 при
+                        # CREATE: задача осталась на старом месте не той группы.
+                        courses_needing_reorder.add(existing_course_id)
+                        courses_needing_reorder.add(data["course_id"])
+
+        for course_id in courses_needing_reorder:
+            await self._reorder_tasks_by_difficulty(db, course_id)
+        if courses_needing_reorder:
+            await db.commit()
+
         return results
-    
+
+    async def _reorder_tasks_by_difficulty(
+        self, db: AsyncSession, course_id: int
+    ) -> int:
+        """
+        Пересортировать ``order_position`` задач курса по правилу
+        THEORY→EASY→NORMAL→HARD→PROJECT (``difficulty_id`` ASC), внутри уровня —
+        по типу (SC/MC → TA/SA → SA_COM).
+
+        Относительный порядок внутри группы (одинаковые difficulty_id + тип)
+        сохраняется — тайбрейк по текущему ``order_position``, а не по ``id``,
+        чтобы не откатывать ручной drag-and-drop реордер методиста
+        (``POST /courses/{id}/tasks/reorder``).
+
+        Отключает ``trg_set_task_order_position`` на время UPDATE через
+        session-variable ``app.skip_task_order_trigger`` (``is_local=true`` —
+        см. ``TasksRepository.reorder_tasks``, docs/database-triggers-contract.md
+        §15), НЕ через ``ALTER TABLE ... DISABLE TRIGGER``: последнее берёт
+        ACCESS EXCLUSIVE лок на всю таблицу ``tasks`` (простаивают live-запросы
+        студентов по ВСЕМ курсам на время лока, не только по этому course_id).
+
+        Вызывается автоматически из :meth:`bulk_upsert` для курсов, где батч
+        мог сломать межгрупповой порядок (tsk-345): новая задача получила
+        ``order_position`` автоматически (MAX+1 от триггера) либо существующая
+        задача была переклассифицирована (``difficulty_id``/``type``) без явной
+        позиции. Идемпотентно — на уже отсортированном курсе не меняет ничего.
+
+        :return: количество задач, у которых изменился order_position.
+        """
+        await db.execute(
+            text("SELECT set_config('app.skip_task_order_trigger', 'true', true)")
+        )
+        result = await db.execute(
+            text(
+                """
+                WITH new_order AS (
+                    SELECT
+                        id,
+                        ROW_NUMBER() OVER (
+                            ORDER BY
+                                difficulty_id ASC,
+                                CASE task_content->>'type'
+                                    WHEN 'SC' THEN 1
+                                    WHEN 'MC' THEN 1
+                                    WHEN 'TA' THEN 2
+                                    WHEN 'SA' THEN 2
+                                    WHEN 'SA_COM' THEN 3
+                                    ELSE 99
+                                END ASC,
+                                order_position ASC NULLS LAST,
+                                id ASC
+                        ) AS new_op
+                    FROM tasks
+                    WHERE course_id = :course_id
+                )
+                UPDATE tasks t
+                SET order_position = n.new_op
+                FROM new_order n
+                WHERE t.id = n.id
+                  AND t.course_id = :course_id
+                  AND (t.order_position IS DISTINCT FROM n.new_op)
+                """
+            ),
+            {"course_id": course_id},
+        )
+        # is_local=true истекает только на COMMIT/ROLLBACK транзакции; сбрасываем
+        # явно, чтобы не «протечь» в следующую операцию этой же транзакции,
+        # если между реордером и коммитом окажется ещё один INSERT/UPDATE.
+        await db.execute(
+            text("SELECT set_config('app.skip_task_order_trigger', 'false', true)")
+        )
+        return result.rowcount
+
     async def validate_task_import(
             self,
             db: AsyncSession,
