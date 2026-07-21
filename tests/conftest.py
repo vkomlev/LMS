@@ -198,6 +198,7 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         "test_attempts_limit_race_tsk273.py",
         "test_attempts_null_solution_rules_tsk325.py",
         "test_attempts_root_course_tsk264.py",
+        "test_help_request_autoclose_tsk339.py",
         "test_hint_events_stage36.py",
         "test_last_attempt_stage6.py",
         "test_learning_engine_service.py",

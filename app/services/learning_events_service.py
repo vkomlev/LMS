@@ -272,7 +272,7 @@ async def record_help_request_closed(
     db: AsyncSession,
     student_id: int,
     request_id: int,
-    closed_by: int,
+    closed_by: Optional[int],
     resolution_comment: Optional[str] = None,
 ) -> None:
     """Записать событие help_request_closed в learning_events."""

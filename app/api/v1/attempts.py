@@ -43,7 +43,7 @@ from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
-from app.services import assignment_rules_service, teacher_queue_service
+from app.services import assignment_rules_service, help_requests_service, teacher_queue_service
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
@@ -782,6 +782,35 @@ async def submit_attempt_answers(
             )
             # Восстановить сессию: иначе aborted-транзакция сломает запись
             # следующего task_result в этом же цикле.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+        # 2.4c tsk-339: если ответ решил задание (PASSED) — закрыть открытую
+        # заявку blocked_limit по нему. Блокировка снялась не через выдачу
+        # лимита учителем (tsk-335, там закрытие явное), а тем, что ученик
+        # справился сам — без этого шага заявка висела бы в очереди навсегда
+        # (найдено живым прогоном tsk-335/336, 9 стухших заявок на проде).
+        # Soft-fail по тому же паттерну, что 2.4b: не ломает учебный поток.
+        try:
+            state_after = await learning_engine_service.compute_task_state(
+                db, student_id=attempt.user_id, task_id=task.id,
+            )
+            if state_after.state == "PASSED":
+                closed = await help_requests_service.close_blocked_limit_if_resolved(
+                    db,
+                    student_id=attempt.user_id,
+                    task_id=task.id,
+                    resolution_comment="Задание решено учеником самостоятельно",
+                )
+                if closed is not None:
+                    await db.commit()
+        except Exception:
+            logger.warning(
+                "tsk-339: auto-close blocked_limit failed: attempt=%s task=%s",
+                attempt.id, task.id, exc_info=True,
+            )
             try:
                 await db.rollback()
             except Exception:

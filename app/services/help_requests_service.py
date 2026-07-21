@@ -546,7 +546,7 @@ async def check_help_request_lock(
 async def close_help_request(
     db: AsyncSession,
     request_id: int,
-    closed_by: int,
+    closed_by: Optional[int],
     resolution_comment: Optional[str] = None,
     lock_token: Optional[str] = None,
 ) -> Tuple[Optional[dict[str, Any]], Optional[bool], Optional[str]]:
@@ -554,6 +554,10 @@ async def close_help_request(
     Закрыть заявку. Возвращает (data_dict, already_closed, error).
     error: None | "lock_conflict" (этап 3.9, при невалидном lock_token).
     data_dict: request_id, status, closed_at, updated_at. Если заявка не найдена — (None, None, None).
+
+    ``closed_by=None`` — системное закрытие (tsk-339: задание решено учеником
+    самостоятельно, без действия учителя); `check_help_request_lock` в этом
+    случае не участвует (без `lock_token` возвращает None сразу).
     """
     r = await db.execute(
         text("""
@@ -609,6 +613,48 @@ async def close_help_request(
         "updated_at": now,
         "already_closed": False,
     }, False, None)
+
+
+async def close_blocked_limit_if_resolved(
+    db: AsyncSession,
+    student_id: int,
+    task_id: int,
+    resolution_comment: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """
+    tsk-339: если по паре (student_id, task_id) есть открытая заявка
+    `blocked_limit` — закрыть её системно (``closed_by=None``).
+
+    Вызывается после того, как задание перешло в PASSED НЕ через выдачу лимита
+    учителем (tsk-335, там закрытие явное — `useCloseBlockedLimitRequest`), а
+    тем, что ученик всё же решил его сам: блокировка снялась естественно,
+    заявка больше не отражает реальное состояние. Без этого шага заявка висела
+    в очереди «из них лимит» бессрочно — найдено живым прогоном tsk-335/336
+    (9 подтверждённых стухших заявок на проде на момент находки).
+
+    Возвращает результат `close_help_request`, либо None, если открытой
+    заявки не было (частый случай — не считать его ошибкой).
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": student_id, "k2": task_id},
+    )
+    row = (
+        await db.execute(
+            text(
+                "SELECT id FROM help_requests "
+                "WHERE student_id = :student_id AND task_id = :task_id "
+                "  AND status = 'open' AND request_type = 'blocked_limit'"
+            ),
+            {"student_id": student_id, "task_id": task_id},
+        )
+    ).fetchone()
+    if row is None:
+        return None
+    data, _already_closed, _err = await close_help_request(
+        db, int(row[0]), closed_by=None, resolution_comment=resolution_comment,
+    )
+    return data
 
 
 async def reply_help_request(
