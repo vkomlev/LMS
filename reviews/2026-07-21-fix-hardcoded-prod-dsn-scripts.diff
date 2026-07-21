@@ -1,0 +1,118 @@
+diff --git a/scripts/backfill_close_stale_blocked_limit_tsk339.py b/scripts/backfill_close_stale_blocked_limit_tsk339.py
+index 610fe07..c1cb0e0 100644
+--- a/scripts/backfill_close_stale_blocked_limit_tsk339.py
++++ b/scripts/backfill_close_stale_blocked_limit_tsk339.py
+@@ -9,15 +9,24 @@
+ 
+ Режим: без --apply — только проверка (сверяет текущее состояние с ожидаемым,
+ ничего не пишет). Пишет ТОЛЬКО при --apply.
++
++DSN берётся ТОЛЬКО из переменной окружения LEARN_PROD_DSN (не хардкодится и не
++пишется в файл): LEARN_PROD_DSN=... python scripts/backfill_close_stale_blocked_limit_tsk339.py
+ """
+ from __future__ import annotations
+ 
+ import argparse
+ import asyncio
++import os
+ 
+ import asyncpg
+ 
+-DSN = "postgresql://lms_prod:%251MVd16z~h8I%3Df@5.42.107.253:5432/learn"
++DSN = os.environ.get("LEARN_PROD_DSN")
++if not DSN:
++    raise RuntimeError(
++        "Не задана переменная окружения LEARN_PROD_DSN "
++        "(прод-DSN роли lms_prod). Секрет в коде не хардкодится."
++    )
+ 
+ # (help_request_id, student_id, task_id) — подтверждено read-only сверкой 2026-07-21.
+ STALE_REQUESTS: list[tuple[int, int, int]] = [
+diff --git a/scripts/fix_stem_markdown_bold_tsk212.py b/scripts/fix_stem_markdown_bold_tsk212.py
+index face341..0fc998f 100644
+--- a/scripts/fix_stem_markdown_bold_tsk212.py
++++ b/scripts/fix_stem_markdown_bold_tsk212.py
+@@ -30,7 +30,7 @@
+   bold в тронутых) → commit, иначе rollback;
+ - курс 561 (архив legacy) по умолчанию ПРОПУСКАЕТСЯ (--include-561 чтобы включить).
+ 
+-Прод-подключение задано явно (хост 5.42.107.253, роль lms_prod). Запуск --apply —
++Прод-подключение: хост/роль явно, пароль — из env LEARN_PROD_DB_PASSWORD. Запуск --apply —
+ под хуком db_write_gate.py: префикс `DBCHECK_OK=1` (протокол /db-check пройден).
+ 
+ Запуск (из корня LMS):
+@@ -42,6 +42,7 @@ from __future__ import annotations
+ 
+ import argparse
+ import json
++import os
+ import re
+ import sys
+ from datetime import date
+@@ -52,13 +53,20 @@ import psycopg2.extras
+ 
+ PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ 
+-# --- Прод-подключение (явно, без URL-кодирования) -----------------------------
++# --- Прод-подключение (явно, без URL-кодирования; пароль только из env) -------
++_PROD_PASSWORD = os.environ.get("LEARN_PROD_DB_PASSWORD")
++if not _PROD_PASSWORD:
++    raise RuntimeError(
++        "Не задана переменная окружения LEARN_PROD_DB_PASSWORD "
++        "(пароль роли lms_prod). Секрет в коде не хардкодится."
++    )
++
+ PROD = dict(
+     host="5.42.107.253",
+     port=5432,
+     dbname="learn",
+     user="lms_prod",
+-    password="%1MVd16z~h8I=f",
++    password=_PROD_PASSWORD,
+ )
+ 
+ # --- Зеркало предиката "настоящий парный bold на границе слова" (совпадает с Python) --
+diff --git a/scripts/fix_stem_markdown_italic_tsk215.py b/scripts/fix_stem_markdown_italic_tsk215.py
+index b9eb2e1..91ec947 100644
+--- a/scripts/fix_stem_markdown_italic_tsk215.py
++++ b/scripts/fix_stem_markdown_italic_tsk215.py
+@@ -35,7 +35,7 @@ glob/маски `*2025*`, ASCII-арт, KaTeX-степени. Поэтому ф
+   тронутых) → commit, иначе rollback;
+ - курс 561 (архив) по умолчанию пропускается (--include-561 чтобы включить).
+ 
+-Прод-подключение задано явно (хост 5.42.107.253, роль lms_prod). Запуск --apply — под
++Прод-подключение: хост/роль явно, пароль — из env LEARN_PROD_DB_PASSWORD. Запуск --apply — под
+ хуком db_write_gate.py: префикс `DBCHECK_OK=1` (протокол /db-check пройден).
+ 
+ Запуск (из корня LMS):
+@@ -46,6 +46,7 @@ from __future__ import annotations
+ 
+ import argparse
+ import json
++import os
+ import re
+ import sys
+ from datetime import date
+@@ -56,13 +57,20 @@ import psycopg2.extras
+ 
+ PROJECT_ROOT = Path(__file__).resolve().parent.parent
+ 
+-# --- Прод-подключение (явно, без URL-кодирования) -----------------------------
++# --- Прод-подключение (явно, без URL-кодирования; пароль только из env) -------
++_PROD_PASSWORD = os.environ.get("LEARN_PROD_DB_PASSWORD")
++if not _PROD_PASSWORD:
++    raise RuntimeError(
++        "Не задана переменная окружения LEARN_PROD_DB_PASSWORD "
++        "(пароль роли lms_prod). Секрет в коде не хардкодится."
++    )
++
+ PROD = dict(
+     host="5.42.107.253",
+     port=5432,
+     dbname="learn",
+     user="lms_prod",
+-    password="%1MVd16z~h8I=f",
++    password=_PROD_PASSWORD,
+ )
+ 
+ # --- Зеркало SQL-предиката «настоящий одиночный курсив на границе слова» -------

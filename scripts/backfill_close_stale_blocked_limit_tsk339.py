@@ -9,15 +9,24 @@
 
 Режим: без --apply — только проверка (сверяет текущее состояние с ожидаемым,
 ничего не пишет). Пишет ТОЛЬКО при --apply.
+
+DSN берётся ТОЛЬКО из переменной окружения LEARN_PROD_DSN (не хардкодится и не
+пишется в файл): LEARN_PROD_DSN=... python scripts/backfill_close_stale_blocked_limit_tsk339.py
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 
 import asyncpg
 
-DSN = "postgresql://lms_prod:%251MVd16z~h8I%3Df@5.42.107.253:5432/learn"
+DSN = os.environ.get("LEARN_PROD_DSN")
+if not DSN:
+    raise RuntimeError(
+        "Не задана переменная окружения LEARN_PROD_DSN "
+        "(прод-DSN роли lms_prod). Секрет в коде не хардкодится."
+    )
 
 # (help_request_id, student_id, task_id) — подтверждено read-only сверкой 2026-07-21.
 STALE_REQUESTS: list[tuple[int, int, int]] = [

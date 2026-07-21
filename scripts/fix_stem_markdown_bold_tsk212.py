@@ -30,7 +30,7 @@
   bold в тронутых) → commit, иначе rollback;
 - курс 561 (архив legacy) по умолчанию ПРОПУСКАЕТСЯ (--include-561 чтобы включить).
 
-Прод-подключение задано явно (хост 5.42.107.253, роль lms_prod). Запуск --apply —
+Прод-подключение: хост/роль явно, пароль — из env LEARN_PROD_DB_PASSWORD. Запуск --apply —
 под хуком db_write_gate.py: префикс `DBCHECK_OK=1` (протокол /db-check пройден).
 
 Запуск (из корня LMS):
@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import date
@@ -52,13 +53,20 @@ import psycopg2.extras
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# --- Прод-подключение (явно, без URL-кодирования) -----------------------------
+# --- Прод-подключение (явно, без URL-кодирования; пароль только из env) -------
+_PROD_PASSWORD = os.environ.get("LEARN_PROD_DB_PASSWORD")
+if not _PROD_PASSWORD:
+    raise RuntimeError(
+        "Не задана переменная окружения LEARN_PROD_DB_PASSWORD "
+        "(пароль роли lms_prod). Секрет в коде не хардкодится."
+    )
+
 PROD = dict(
     host="5.42.107.253",
     port=5432,
     dbname="learn",
     user="lms_prod",
-    password="%1MVd16z~h8I=f",
+    password=_PROD_PASSWORD,
 )
 
 # --- Зеркало предиката "настоящий парный bold на границе слова" (совпадает с Python) --
