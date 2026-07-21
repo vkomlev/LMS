@@ -86,9 +86,19 @@ ssh -tt lms-spw-vds "sudo -u app bash -c 'cd /opt/lms && PYTHONIOENCODING=utf-8 
   dev-БД (`localhost/Learn`) — оставлено как есть (безвредно, приводит dev в консистентность
   с прод для тех же 50 заданий), не откачивалось.
 
-## Не входит в этот apply
+## Follow-up: yandex-задание (id=3759) — тоже исправлено
 
 Задание id=3759 (`wp_nav:7:017606ca`, курс 158, source `education.yandex.ru/ege/training/7/task/1`)
-— страница SPA, обычный HTTP не отдаёт условие (проверено WebFetch: только каркас
-приложения). Нужен authenticated API (метод tsk-100, `/api/v5/gpttr get_task_by_id`) или
-Claude in Chrome под учёткой Виктора — отдельный follow-up, 0 attempts/results, риска нет.
+не вошло в основной batch (SPA, обычный HTTP отдаёт только каркас приложения — подтверждено
+WebFetch). Прямой вызов `/api/v5/gpttr get_task_by_id` по методу tsk-100 дал 404 (`examTaskId`
+из URL — это не тот `task_id`, что ожидает этот метод; видимо, другая внутренняя схема для
+позиционных `/training/N/task/M` маршрутов, не для «подборок»). Восстановлено через живой
+браузер: `Claude in Chrome` под учёткой Виктора → открыт `/ege/inf`, клик «Задание 7» →
+«Решать» → извлечён `examTaskId=d5e3d14e-2d2c-42a6-9cbe-8c848c4a4c6f` из URL открывшейся
+вкладки → текст условия взят прямо из отрендеренного DOM (`<p>Картинка занимает 840 бит...`),
+формат совпадает с другими yandex-заданиями в БД (`<p>...</p>`, без katex-обёртки в отличие от
+kompege/sdamgia). Скрипт: [scripts/fix_yandex_task3759_tsk356.py](../scripts/fix_yandex_task3759_tsk356.py).
+Применено на проде через `/db-check` (dry-run → apply → независимая верификация MCP) — `AFTER`
+подтверждён отдельным read-only запросом.
+
+**Итог: 51 из 51 задания восстановлено.**
