@@ -1,0 +1,651 @@
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 0dffe0a..b4e0dc4 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ 
+-from typing import Optional, Any, Dict, List, Sequence, Tuple
+-from sqlalchemy import select
++from typing import Optional, Any, Dict, List, Sequence, Set, Tuple
++from sqlalchemy import select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.tasks import Tasks
+@@ -219,6 +219,9 @@ class TasksService(BaseService[Tasks]):
+                  action ∈ {"created", "updated"}.
+         """
+         results: List[Tuple[str, str, int]] = []
++        # tsk-345: курсы, где после этого батча order_position может нарушать
++        # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
++        courses_needing_reorder: Set[int] = set()
+ 
+         for data in items:
+             external_uid = data["external_uid"]
+@@ -260,7 +263,16 @@ class TasksService(BaseService[Tasks]):
+                 # используем наш переопределенный create для валидации
+                 task = await self.create(db, obj_in)
+                 results.append((external_uid, "created", task.id))
++                if data.get("order_position") is None:
++                    # Триггер поставил MAX+1 (в конец курса) — если задача не
++                    # HARD/PROJECT-уровня, это ломает межгрупповой порядок (tsk-345).
++                    courses_needing_reorder.add(data["course_id"])
+             else:
++                # Запоминаем состояние ДО перезаписи — для решения, нужен ли реордер.
++                existing_course_id = existing.course_id
++                existing_difficulty_id = existing.difficulty_id
++                existing_type = (existing.task_content or {}).get("type")
++
+                 # UPDATE — перезаписываем основные поля из импорта
+                 obj_in = {
+                     "course_id": data["course_id"],
+@@ -273,14 +285,105 @@ class TasksService(BaseService[Tasks]):
+                 }
+                 # UPDATE: order_position пробрасываем ТОЛЬКО при явном значении.
+                 # None в payload означает «поле не передано, позицию не менять».
+-                if data.get("order_position") is not None:
++                explicit_order_position = data.get("order_position") is not None
++                if explicit_order_position:
+                     obj_in["order_position"] = data["order_position"]
+                 # используем наш переопределенный update для валидации
+                 task = await self.update(db, existing, obj_in)
+                 results.append((external_uid, "updated", task.id))
+ 
++                if not explicit_order_position:
++                    new_type = (data.get("task_content") or {}).get("type")
++                    reclassified = (
++                        data["difficulty_id"] != existing_difficulty_id
++                        or new_type != existing_type
++                    )
++                    if reclassified:
++                        # Переклассификация (напр. THEORY-перетег tsk-318) без
++                        # явной позиции — тот же класс дефекта, что и MAX+1 при
++                        # CREATE: задача осталась на старом месте не той группы.
++                        courses_needing_reorder.add(existing_course_id)
++                        courses_needing_reorder.add(data["course_id"])
++
++        for course_id in courses_needing_reorder:
++            await self._reorder_tasks_by_difficulty(db, course_id)
++        if courses_needing_reorder:
++            await db.commit()
++
+         return results
+-    
++
++    async def _reorder_tasks_by_difficulty(
++        self, db: AsyncSession, course_id: int
++    ) -> int:
++        """
++        Пересортировать ``order_position`` задач курса по правилу
++        THEORY→EASY→NORMAL→HARD→PROJECT (``difficulty_id`` ASC), внутри уровня —
++        по типу (SC/MC → TA/SA → SA_COM).
++
++        Относительный порядок внутри группы (одинаковые difficulty_id + тип)
++        сохраняется — тайбрейк по текущему ``order_position``, а не по ``id``,
++        чтобы не откатывать ручной drag-and-drop реордер методиста
++        (``POST /courses/{id}/tasks/reorder``).
++
++        Отключает ``trg_set_task_order_position`` на время UPDATE через
++        session-variable ``app.skip_task_order_trigger`` (``is_local=true`` —
++        см. ``TasksRepository.reorder_tasks``, docs/database-triggers-contract.md
++        §15), НЕ через ``ALTER TABLE ... DISABLE TRIGGER``: последнее берёт
++        ACCESS EXCLUSIVE лок на всю таблицу ``tasks`` (простаивают live-запросы
++        студентов по ВСЕМ курсам на время лока, не только по этому course_id).
++
++        Вызывается автоматически из :meth:`bulk_upsert` для курсов, где батч
++        мог сломать межгрупповой порядок (tsk-345): новая задача получила
++        ``order_position`` автоматически (MAX+1 от триггера) либо существующая
++        задача была переклассифицирована (``difficulty_id``/``type``) без явной
++        позиции. Идемпотентно — на уже отсортированном курсе не меняет ничего.
++
++        :return: количество задач, у которых изменился order_position.
++        """
++        await db.execute(
++            text("SELECT set_config('app.skip_task_order_trigger', 'true', true)")
++        )
++        result = await db.execute(
++            text(
++                """
++                WITH new_order AS (
++                    SELECT
++                        id,
++                        ROW_NUMBER() OVER (
++                            ORDER BY
++                                difficulty_id ASC,
++                                CASE task_content->>'type'
++                                    WHEN 'SC' THEN 1
++                                    WHEN 'MC' THEN 1
++                                    WHEN 'TA' THEN 2
++                                    WHEN 'SA' THEN 2
++                                    WHEN 'SA_COM' THEN 3
++                                    ELSE 99
++                                END ASC,
++                                order_position ASC NULLS LAST,
++                                id ASC
++                        ) AS new_op
++                    FROM tasks
++                    WHERE course_id = :course_id
++                )
++                UPDATE tasks t
++                SET order_position = n.new_op
++                FROM new_order n
++                WHERE t.id = n.id
++                  AND t.course_id = :course_id
++                  AND (t.order_position IS DISTINCT FROM n.new_op)
++                """
++            ),
++            {"course_id": course_id},
++        )
++        # is_local=true истекает только на COMMIT/ROLLBACK транзакции; сбрасываем
++        # явно, чтобы не «протечь» в следующую операцию этой же транзакции,
++        # если между реордером и коммитом окажется ещё один INSERT/UPDATE.
++        await db.execute(
++            text("SELECT set_config('app.skip_task_order_trigger', 'false', true)")
++        )
++        return result.rowcount
++
+     async def validate_task_import(
+             self,
+             db: AsyncSession,
+diff --git a/scripts/reorder_courses_by_difficulty_tsk345.py b/scripts/reorder_courses_by_difficulty_tsk345.py
+new file mode 100644
+index 0000000..91d5e77
+--- /dev/null
++++ b/scripts/reorder_courses_by_difficulty_tsk345.py
+@@ -0,0 +1,163 @@
++"""tsk-345 — разовый бэкфилл order_position для ЕГЭ-курсов (номерные «Задание N»,
++courses 138-165), сломанных импортами ПОСЛЕ разового reorder-скрипта миграции
++этапа 1.7 (2026-05-21, scripts/reorder_tasks_by_difficulty_type.py).
++
++Отличие от исторического скрипта:
++- Работает по явному диапазону course_id (по умолчанию 138-165), а не по ВСЕЙ
++  таблице tasks — узкий blast radius для точечного фикса, не системной миграции.
++- Тайбрейк внутри группы (difficulty_id + type) — ТЕКУЩИЙ order_position, а не
++  id: сохраняет уже видимый учениками/методистами относительный порядок внутри
++  сложности (в т.ч. ручной drag-and-drop реордер), меняет только межгрупповые
++  границы THEORY→EASY→NORMAL→HARD→PROJECT.
++- Та же ROW_NUMBER-логика теперь живёт постоянно в
++  app/services/tasks_service.py::TasksService._reorder_tasks_by_difficulty
++  (durable-фикс, вызывается автоматически из bulk_upsert) — этот скрипт нужен
++  только чтобы разово починить уже накопленный на проде разъезд.
++- Отключает trg_set_task_order_position через session-variable
++  app.skip_task_order_trigger (SELECT set_config(..., true) — is_local),
++  НЕ через ALTER TABLE ... DISABLE TRIGGER: последнее берёт ACCESS EXCLUSIVE
++  лок на ВСЮ таблицу tasks (блокирует live-запросы студентов по всем курсам,
++  не только по перечисленным). Тот же паттерн, что TasksRepository.reorder_tasks.
++
++Запуск (на прод-сервере, .env с прод DSN):
++    python scripts/reorder_courses_by_difficulty_tsk345.py                    # dry-run
++    python scripts/reorder_courses_by_difficulty_tsk345.py --apply            # COMMIT
++    python scripts/reorder_courses_by_difficulty_tsk345.py --course-min 138 --course-max 165
++"""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import sys
++from pathlib import Path
++
++from dotenv import load_dotenv
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++load_dotenv(project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++
++ORDER_BY_EXPR = """
++    PARTITION BY course_id
++    ORDER BY
++        difficulty_id ASC,
++        CASE task_content->>'type'
++            WHEN 'SC' THEN 1
++            WHEN 'MC' THEN 1
++            WHEN 'TA' THEN 2
++            WHEN 'SA' THEN 2
++            WHEN 'SA_COM' THEN 3
++            ELSE 99
++        END ASC,
++        order_position ASC NULLS LAST,
++        id ASC
++"""
++
++
++async def main(apply: bool, course_min: int, course_max: int) -> int:
++    mode = "APPLY (COMMIT)" if apply else "DRY-RUN (ROLLBACK)"
++    print(f"=== tsk-345: reorder courses {course_min}-{course_max} — {mode} ===\n")
++
++    async with async_session_factory() as db:
++        n_courses = (await db.execute(
++            text(
++                "SELECT COUNT(DISTINCT course_id) FROM tasks "
++                "WHERE course_id BETWEEN :lo AND :hi"
++            ),
++            {"lo": course_min, "hi": course_max},
++        )).scalar()
++        n_tasks = (await db.execute(
++            text("SELECT COUNT(*) FROM tasks WHERE course_id BETWEEN :lo AND :hi"),
++            {"lo": course_min, "hi": course_max},
++        )).scalar()
++        print(f"BEFORE: courses_in_range={n_courses} tasks_in_range={n_tasks}")
++
++        # Контрольная задача из живой находки (2026-07-21): должна уехать
++        # после EASY/NORMAL своего курса.
++        before_2059 = (await db.execute(text(
++            "SELECT course_id, order_position, difficulty_id FROM tasks WHERE id = 2059"
++        ))).mappings().first()
++        if before_2059:
++            print(f"BEFORE id=2059: {dict(before_2059)}")
++
++        await db.execute(
++            text("SELECT set_config('app.skip_task_order_trigger', 'true', true)")
++        )
++        result = await db.execute(text(f"""
++            WITH new_order AS (
++                SELECT
++                    id,
++                    ROW_NUMBER() OVER ({ORDER_BY_EXPR.strip()}) AS new_op
++                FROM tasks
++                WHERE course_id BETWEEN :lo AND :hi
++            )
++            UPDATE tasks t
++            SET order_position = n.new_op
++            FROM new_order n
++            WHERE t.id = n.id
++              AND (t.order_position IS DISTINCT FROM n.new_op)
++        """), {"lo": course_min, "hi": course_max})
++        print(f"UPDATE rowcount = {result.rowcount}")
++
++        # Верификация: уникальность order_position внутри course_id (координация с tsk-337).
++        dupes = (await db.execute(text("""
++            SELECT course_id, order_position, COUNT(*) AS n
++            FROM tasks
++            WHERE course_id BETWEEN :lo AND :hi
++            GROUP BY course_id, order_position
++            HAVING COUNT(*) > 1
++        """), {"lo": course_min, "hi": course_max})).fetchall()
++        if dupes:
++            print(f"\nОШИБКА: коллизии order_position после реордера: {len(dupes)} — ROLLBACK")
++            await db.rollback()
++            return 1
++        print("\norder_position уникален внутри course_id — OK (0 коллизий)")
++
++        # Верификация: межгрупповой порядок THEORY..PROJECT не нарушен.
++        violations = (await db.execute(text("""
++            SELECT course_id, COUNT(*) AS n FROM (
++                SELECT course_id, order_position, difficulty_id,
++                    LAG(difficulty_id) OVER (
++                        PARTITION BY course_id ORDER BY order_position ASC NULLS LAST
++                    ) AS prev_difficulty
++                FROM tasks WHERE course_id BETWEEN :lo AND :hi
++            ) x
++            WHERE prev_difficulty IS NOT NULL AND difficulty_id < prev_difficulty
++            GROUP BY course_id
++        """), {"lo": course_min, "hi": course_max})).fetchall()
++        if violations:
++            print(f"\nОШИБКА: межгрупповые нарушения остались в {len(violations)} курсах — ROLLBACK")
++            await db.rollback()
++            return 1
++        print("межгрупповой порядок THEORY->EASY->NORMAL->HARD->PROJECT — OK (0 нарушений)")
++
++        after_2059 = (await db.execute(text(
++            "SELECT course_id, order_position, difficulty_id FROM tasks WHERE id = 2059"
++        ))).mappings().first()
++        if after_2059:
++            print(f"\nAFTER id=2059: {dict(after_2059)}")
++
++        if apply:
++            await db.commit()
++            print("\nCOMMIT — изменения сохранены.")
++        else:
++            await db.rollback()
++            print("\nROLLBACK — dry-run, изменения откатаны.")
++
++    return 0
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--apply", action="store_true", help="Выполнить COMMIT.")
++    ap.add_argument("--course-min", type=int, default=138)
++    ap.add_argument("--course-max", type=int, default=165)
++    args = ap.parse_args()
++    sys.exit(asyncio.run(main(
++        apply=args.apply, course_min=args.course_min, course_max=args.course_max,
++    )))
+diff --git a/tests/conftest.py b/tests/conftest.py
+index ed0fb2f..7421639 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -207,6 +207,7 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         "test_repos_smoke.py",
+         "test_tasks_order_position_api.py",
+         "test_tasks_reorder_api.py",
++        "test_tsk345_reorder_by_difficulty.py",
+         "test_teacher_courses_triggers_smoke.py",
+         "test_teacher_help_requests_overdue_tsk312.py",
+         "test_teacher_help_requests_stage38.py",
+diff --git a/tests/test_tsk345_reorder_by_difficulty.py b/tests/test_tsk345_reorder_by_difficulty.py
+new file mode 100644
+index 0000000..61036d5
+--- /dev/null
++++ b/tests/test_tsk345_reorder_by_difficulty.py
+@@ -0,0 +1,315 @@
++"""tsk-345: durable-фикс — bulk_upsert больше не ломает межгрупповой порядок
++THEORY→EASY→NORMAL→HARD→PROJECT при новых импортах и переклассификации.
++
++Корневая причина: `trg_set_task_order_position` при CREATE без явного
++order_position ставит MAX+1 (в конец курса) независимо от difficulty_id/type,
++а UPDATE без явного order_position не трогает позицию вовсе — переклассификация
++задания (напр. THEORY-перетег tsk-318) оставляет его в чужой группе.
++
++Фикс: `TasksService.bulk_upsert` отслеживает курсы, где CREATE получил
++order_position через авто-триггер либо UPDATE сменил difficulty_id/type без
++явной позиции, и в конце батча пересортировывает эти курсы через
++`_reorder_tasks_by_difficulty` (тот же ROW_NUMBER-паттерн, что и
++scripts/reorder_tasks_by_difficulty_type.py, миграция этапа 1.7).
++
++Стратегия: `TasksService.bulk_upsert` коммитит внутри (BaseRepository create/
++update commit=True) — `db` fixture savepoint-rollback это не откатывает.
++Зеркало test_tasks_reorder_api.py: autouse cleanup по title='test_tsk345_reorder'.
++"""
++from __future__ import annotations
++
++from typing import Any
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++from app.core.config import Settings
++from app.services.tasks_service import TasksService
++
++_settings = Settings()
++
++_SOLUTION_RULES: dict[str, Any] = {"type": "SC", "correct_options": ["a"], "max_score": 1}
++
++
++def _task_content(task_type: str = "SA_COM") -> dict[str, Any]:
++    if task_type == "SA_COM":
++        return {"type": "SA_COM", "stem": "x", "accepted_answers": ["1"]}
++    return {
++        "type": task_type,
++        "stem": "x",
++        "options": [{"id": "a", "text": "1"}, {"id": "b", "text": "2"}],
++    }
++
++
++@pytest_asyncio.fixture(scope="function", autouse=True)
++async def _cleanup_test_tsk345_courses():
++    """bulk_upsert коммитит внутри — чистим тестовые курсы после каждого теста."""
++    yield
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        async with AsyncSession(engine, expire_on_commit=False) as session:
++            async with session.begin():
++                await session.execute(
++                    text(
++                        "DELETE FROM tasks WHERE course_id IN ("
++                        "  SELECT id FROM courses WHERE title = 'test_tsk345_reorder'"
++                        ")"
++                    )
++                )
++                await session.execute(
++                    text("DELETE FROM courses WHERE title = 'test_tsk345_reorder'")
++                )
++    finally:
++        await engine.dispose()
++
++
++async def _new_course(db) -> int:
++    row = (
++        await db.execute(
++            text(
++                """
++                INSERT INTO courses (title, description, access_level, is_required)
++                VALUES ('test_tsk345_reorder', 'test', 'self_guided', false)
++                RETURNING id
++                """
++            )
++        )
++    ).first()
++    await db.flush()
++    return int(row.id)
++
++
++async def _ordered_uids(db, course_id: int) -> list[str]:
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT external_uid FROM tasks
++                WHERE course_id = :cid
++                ORDER BY order_position NULLS LAST, id
++                """
++            ),
++            {"cid": course_id},
++        )
++    ).all()
++    return [r.external_uid for r in rows]
++
++
++@pytest.mark.asyncio
++async def test_new_import_after_established_order_stays_sorted(db):
++    """Регресс tsk-345: НОВОЕ задание, добавленное ПОСЛЕ того как курс уже
++    отсортирован, не должно уезжать в конец курса, если его сложность ниже —
++    ровно так задание 2059 (NORMAL) осталось перед EASY-заданиями."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    # Курс уже отсортирован: THEORY, затем NORMAL (имитирует состояние после
++    # разового reorder-скрипта миграции этапа 1.7).
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345-THEORY",
++                "course_id": course_id,
++                "difficulty_id": 1,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            },
++            {
++                "external_uid": "T345-NORMAL",
++                "course_id": course_id,
++                "difficulty_id": 3,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            },
++        ],
++    )
++    assert await _ordered_uids(db, course_id) == ["T345-THEORY", "T345-NORMAL"]
++
++    # Новый импорт добавляет EASY-задание БЕЗ order_position (как реальные
++    # импорты KompEGE/Крылов/sdamgia после 2026-05-21) — триггер поставил бы
++    # его в конец (после NORMAL), что и было живым дефектом.
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345-EASY",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            }
++        ],
++    )
++
++    assert await _ordered_uids(db, course_id) == [
++        "T345-THEORY",
++        "T345-EASY",
++        "T345-NORMAL",
++    ]
++
++
++@pytest.mark.asyncio
++async def test_reclassify_without_position_reorders(db):
++    """Регресс tsk-318: переклассификация difficulty_id через UPDATE без явного
++    order_position (тот же паттерн, что THEORY-перетег 135 заданий) не должна
++    оставлять задание в чужой группе."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345R-EASY-1",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            },
++            {
++                "external_uid": "T345R-EASY-2",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            },
++        ],
++    )
++    assert await _ordered_uids(db, course_id) == ["T345R-EASY-1", "T345R-EASY-2"]
++
++    # Перетегируем первое задание в THEORY, order_position НЕ передаём —
++    # ровно паттерн tsk-318.
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345R-EASY-1",
++                "course_id": course_id,
++                "difficulty_id": 1,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            }
++        ],
++    )
++
++    # THEORY (1) должно стоять перед оставшимся EASY (2).
++    assert await _ordered_uids(db, course_id) == ["T345R-EASY-1", "T345R-EASY-2"]
++    theory_difficulty = (
++        await db.execute(
++            text("SELECT difficulty_id FROM tasks WHERE external_uid = :u"),
++            {"u": "T345R-EASY-1"},
++        )
++    ).scalar()
++    assert theory_difficulty == 1
++
++
++@pytest.mark.asyncio
++async def test_explicit_position_not_reordered_around(db):
++    """CREATE с явным order_position — намерение вызывающего, реордер по
++    сложности его не трогает (сохраняем контракт T16 из tsk-004)."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345E-NORMAL",
++                "course_id": course_id,
++                "difficulty_id": 3,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            }
++        ],
++    )
++    # EASY-задание явно ставим на позицию 1 (перед NORMAL) — валидный явный запрос.
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345E-EASY",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++                "order_position": 1,
++            }
++        ],
++    )
++
++    assert await _ordered_uids(db, course_id) == ["T345E-EASY", "T345E-NORMAL"]
++
++
++@pytest.mark.asyncio
++async def test_trigger_stays_active_after_bulk_upsert_reorder(db):
++    """Реордер временно выключает триггеры на UPDATE — после batch они должны
++    остаться включёнными (зеркало BR6 test_tasks_reorder_api.py)."""
++    course_id = await _new_course(db)
++    service = TasksService()
++
++    # CREATE без order_position → внутренний реордер сработает.
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345TRG-1",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++            }
++        ],
++    )
++
++    trigger_enabled = (
++        await db.execute(
++            text(
++                """
++                SELECT tgenabled FROM pg_trigger
++                WHERE tgname = 'trg_set_task_order_position'
++                """
++            )
++        )
++    ).scalar()
++    assert trigger_enabled in ("O", b"O"), "триггер должен остаться включённым (tgenabled='O')"
++
++    # Живая проверка: GUC-флаг реордера не «протёк» за пределы вызова —
++    # следующий INSERT в ЭТОМ ЖЕ (незакоммиченном во внешней транзакции теста)
++    # соединении по-прежнему обрабатывается триггером, а не молча игнорируется.
++    skip_flag = (
++        await db.execute(text("SELECT current_setting('app.skip_task_order_trigger', true)"))
++    ).scalar()
++    assert skip_flag in (None, "false"), (
++        f"app.skip_task_order_trigger должен быть сброшен после реордера, а не '{skip_flag}'"
++    )
++
++    # Живая проверка: новый CREATE с явной позицией всё ещё сдвигает соседей
++    # силами триггера (а не силами реордера, для этого курса не нужного).
++    await service.bulk_upsert(
++        db,
++        [
++            {
++                "external_uid": "T345TRG-2",
++                "course_id": course_id,
++                "difficulty_id": 2,
++                "task_content": _task_content(),
++                "solution_rules": _SOLUTION_RULES,
++                "max_score": 1,
++                "order_position": 1,
++            }
++        ],
++    )
++    assert await _ordered_uids(db, course_id) == ["T345TRG-2", "T345TRG-1"]
