@@ -1,0 +1,1274 @@
+{
+ "_comment": "tsk-362 — аудит: что записано 231 непроверяемому заданию. auto — ответ взят с сайта-источника (kompege/sdamgia/kpolyakov) или из авторизованного API Яндекса, либо у близнеца внутри LMS с тем же условием; origin показывает, откуда. Каждый ответ прошёл сверку по двум признакам (дословный фрагмент условия + значимые числа). manual — правило с обязательной ручной проверкой: ответ не найден или он многозначный. skip — опросники.",
+ "auto": {
+  "2935": {
+   "value": "962",
+   "origin": "polyakov:7854",
+   "via": "external_uid",
+   "course_id": 162
+  },
+  "2936": {
+   "value": "343",
+   "origin": "polyakov:7857",
+   "via": "external_uid",
+   "course_id": 162
+  },
+  "2937": {
+   "value": "33",
+   "origin": "polyakov:7926",
+   "via": "external_uid",
+   "course_id": 162
+  },
+  "2938": {
+   "value": "319862",
+   "origin": "polyakov:4406",
+   "via": "external_uid",
+   "course_id": 162
+  },
+  "2947": {
+   "value": "13",
+   "origin": "kompege:13",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2948": {
+   "value": "2687",
+   "origin": "kompege:16325",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2949": {
+   "value": "469034148",
+   "origin": "kompege:17868",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2950": {
+   "value": "10",
+   "origin": "kompege:17869",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2951": {
+   "value": "2029",
+   "origin": "kompege:17870",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2952": {
+   "value": "1024",
+   "origin": "kompege:21709",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2953": {
+   "value": "2001",
+   "origin": "kompege:21900",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2954": {
+   "value": "3367",
+   "origin": "kompege:23752",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2955": {
+   "value": "11",
+   "origin": "twin:2085",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2956": {
+   "value": "4",
+   "origin": "kompege:246",
+   "via": "external_uid",
+   "course_id": 142
+  },
+  "2991": {
+   "value": "16",
+   "origin": "yandex:ebdb9a1e-1e94-4af0-8ce6-003009385c7d",
+   "via": "external_uid",
+   "course_id": 139
+  },
+  "2997": {
+   "value": "34",
+   "origin": "yandex:4be8eb33-506c-4c17-88a9-9e214b8f1f51",
+   "via": "stem",
+   "course_id": 147
+  },
+  "2998": {
+   "value": "96726",
+   "origin": "sdamgia:83164",
+   "via": "stem",
+   "course_id": 157
+  },
+  "3000": {
+   "value": "246960",
+   "origin": "yandex:a23593f7-9ba4-422d-89f0-587d3bbacbb6",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3002": {
+   "value": "6",
+   "origin": "kompege:5139",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3005": {
+   "value": "33408",
+   "origin": "kompege:26285",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3014": {
+   "value": "zyxw",
+   "origin": "kompege:1",
+   "via": "stem",
+   "course_id": 148
+  },
+  "3017": {
+   "value": "707",
+   "origin": "yandex:79093caa-18f3-4e6f-80d5-7e4135f2741a",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3023": {
+   "value": "5",
+   "origin": "yandex:8b48a42c-7141-46ee-bdd7-30c11ea92d99",
+   "via": "stem",
+   "course_id": 158
+  },
+  "3024": {
+   "value": "20",
+   "origin": "yandex:0aebbdc8-7167-41bd-a6c8-a3ee9d3f58e6",
+   "via": "stem",
+   "course_id": 157
+  },
+  "3025": {
+   "value": "zxwy",
+   "origin": "yandex:4b22ad8f-1eea-4f4f-9f2e-00d45f1a56d9",
+   "via": "stem",
+   "course_id": 148
+  },
+  "3027": {
+   "value": "163",
+   "origin": "kompege:25361",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3031": {
+   "value": "144",
+   "origin": "kompege:25360",
+   "via": "stem",
+   "course_id": 150
+  },
+  "3034": {
+   "value": "257",
+   "origin": "kompege:25350",
+   "via": "stem",
+   "course_id": 162
+  },
+  "3038": {
+   "value": "8400",
+   "origin": "kompege:25342",
+   "via": "stem",
+   "course_id": 138
+  },
+  "3058": {
+   "value": "42",
+   "origin": "twin:4560",
+   "via": null,
+   "course_id": 160
+  },
+  "3060": {
+   "value": "251",
+   "origin": "kompege:23743",
+   "via": "stem",
+   "course_id": 157
+  },
+  "3097": {
+   "value": "52",
+   "origin": "yandex:150e8d92-f069-48fc-8fc9-19abe03284de#24",
+   "via": "stem",
+   "course_id": 151
+  },
+  "3098": {
+   "value": "11",
+   "origin": "yandex:150e8d92-f069-48fc-8fc9-19abe03284de#15",
+   "via": "stem",
+   "course_id": 143
+  },
+  "3104": {
+   "value": "19",
+   "origin": "kompege:4",
+   "via": "stem",
+   "course_id": 156
+  },
+  "3107": {
+   "value": "129",
+   "origin": "polyakov:7048",
+   "via": "stem",
+   "course_id": 139
+  },
+  "3110": {
+   "value": "16",
+   "origin": "kompege:6",
+   "via": "stem",
+   "course_id": 158
+  },
+  "3114": {
+   "value": "129",
+   "origin": "polyakov:7048",
+   "via": "stem",
+   "course_id": 139
+  },
+  "3119": {
+   "value": "736",
+   "origin": "kompege:27615",
+   "via": "stem",
+   "course_id": 138
+  },
+  "3120": {
+   "value": "402",
+   "origin": "kompege:25239",
+   "via": "stem",
+   "course_id": 163
+  },
+  "3121": {
+   "value": "901",
+   "origin": "sdamgia:81793",
+   "via": "stem",
+   "course_id": 160
+  },
+  "3123": {
+   "value": "12",
+   "origin": "twin:2122",
+   "via": "stem",
+   "course_id": 143
+  },
+  "3124": {
+   "value": "86",
+   "origin": "kompege:49",
+   "via": "stem",
+   "course_id": 156
+  },
+  "3136": {
+   "value": "49",
+   "origin": "polyakov:7442",
+   "via": "stem",
+   "course_id": 140
+  },
+  "3155": {
+   "value": "30",
+   "origin": "kompege:63",
+   "via": "tg_link",
+   "course_id": 147
+  },
+  "3156": {
+   "value": "61",
+   "origin": "sdamgia:58322",
+   "via": "tg_link",
+   "course_id": 160
+  },
+  "3157": {
+   "value": "19",
+   "origin": "kompege:4",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3169": {
+   "value": "2809",
+   "origin": "twin:2401",
+   "via": null,
+   "course_id": 143
+  },
+  "3171": {
+   "value": "3367",
+   "origin": "kompege:23752",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3189": {
+   "value": "2",
+   "origin": "polyakov:1717",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3192": {
+   "value": "731",
+   "origin": "kompege:5899",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3198": {
+   "value": "49",
+   "origin": "polyakov:7442",
+   "via": "tg_link",
+   "course_id": 140
+  },
+  "3201": {
+   "value": "1000",
+   "origin": "kompege:48",
+   "via": "tg_link",
+   "course_id": 155
+  },
+  "3203": {
+   "value": "319862",
+   "origin": "polyakov:4406",
+   "via": "tg_link",
+   "course_id": 138
+  },
+  "3210": {
+   "value": "11",
+   "origin": "kompege:307",
+   "via": "tg_link",
+   "course_id": 143
+  },
+  "3218": {
+   "value": "12",
+   "origin": "twin:2122",
+   "via": "tg_link",
+   "course_id": 143
+  },
+  "3219": {
+   "value": "20",
+   "origin": "sdamgia:75240",
+   "via": "tg_link",
+   "course_id": 138
+  },
+  "3229": {
+   "value": "8",
+   "origin": "twin:3703",
+   "via": null,
+   "course_id": 158
+  },
+  "3230": {
+   "value": "3",
+   "origin": "polyakov:8064",
+   "via": "stem",
+   "course_id": 158
+  },
+  "3234": {
+   "value": "16",
+   "origin": "kompege:6",
+   "via": "tg_link",
+   "course_id": 158
+  },
+  "3238": {
+   "value": "343",
+   "origin": "polyakov:7857",
+   "via": "tg_link",
+   "course_id": 162
+  },
+  "3241": {
+   "value": "24017",
+   "origin": "kompege:23562",
+   "via": "tg_link",
+   "course_id": 144
+  },
+  "3245": {
+   "value": "35",
+   "origin": "polyakov:141",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3265": {
+   "value": "yzx",
+   "origin": "kompege:72",
+   "via": "tg_link",
+   "course_id": 148
+  },
+  "3268": {
+   "value": "16",
+   "origin": "yandex:ebdb9a1e-1e94-4af0-8ce6-003009385c7d",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3272": {
+   "value": "502",
+   "origin": "kompege:12088",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3273": {
+   "value": "120",
+   "origin": "kompege:12451",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3274": {
+   "value": "20",
+   "origin": "kompege:18955",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3276": {
+   "value": "32",
+   "origin": "kompege:350",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3277": {
+   "value": "129",
+   "origin": "polyakov:7048",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3278": {
+   "value": "zyxw",
+   "origin": "kompege:1",
+   "via": "tg_link",
+   "course_id": 148
+  },
+  "3279": {
+   "value": "9",
+   "origin": "kompege:206",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3283": {
+   "value": "1728",
+   "origin": "twin:3533",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3285": {
+   "value": "er",
+   "origin": "twin:2685",
+   "via": "tg_link",
+   "course_id": 145
+  },
+  "3286": {
+   "value": "66",
+   "origin": "kompege:20809",
+   "via": "tg_link",
+   "course_id": 143
+  },
+  "3288": {
+   "value": "139",
+   "origin": "yandex:c01534c6-0b3e-4da7-9d99-6c8d759babaf#9",
+   "via": "tg_link",
+   "course_id": 160
+  },
+  "3299": {
+   "value": "264",
+   "origin": "kompege:21604",
+   "via": "tg_link",
+   "course_id": 150
+  },
+  "3302": {
+   "value": "159",
+   "origin": "polyakov:6350",
+   "via": "tg_link",
+   "course_id": 157
+  },
+  "3303": {
+   "value": "238",
+   "origin": "polyakov:5438",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3304": {
+   "value": "20",
+   "origin": "polyakov:7017",
+   "via": "tg_link",
+   "course_id": 139
+  },
+  "3305": {
+   "value": "201",
+   "origin": "polyakov:4163",
+   "via": "tg_link",
+   "course_id": 163
+  },
+  "3308": {
+   "value": "617",
+   "origin": "polyakov:2380",
+   "via": "tg_link",
+   "course_id": 146
+  },
+  "3310": {
+   "value": "2275735",
+   "origin": "polyakov:5918",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3311": {
+   "value": "2",
+   "origin": "polyakov:1717",
+   "via": "tg_link",
+   "course_id": 156
+  },
+  "3313": {
+   "value": "2029",
+   "origin": "kompege:17870",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3314": {
+   "value": "469034148",
+   "origin": "kompege:17868",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3315": {
+   "value": "13",
+   "origin": "kompege:13",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3317": {
+   "value": "999975",
+   "origin": "twin:3608",
+   "via": null,
+   "course_id": 142
+  },
+  "3319": {
+   "value": "36",
+   "origin": "yandex:31d08c52-c86e-4487-b7e4-6f7435f63344#8",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3320": {
+   "value": "4500",
+   "origin": "kompege:17622",
+   "via": "tg_link",
+   "course_id": 138
+  },
+  "3321": {
+   "value": "23",
+   "origin": "kompege:114",
+   "via": "tg_link",
+   "course_id": 155
+  },
+  "3322": {
+   "value": "4053",
+   "origin": "kompege:265",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3323": {
+   "value": "17800",
+   "origin": "kompege:2054",
+   "via": "tg_link",
+   "course_id": 138
+  },
+  "3324": {
+   "value": "14",
+   "origin": "kompege:32",
+   "via": "tg_link",
+   "course_id": 140
+  },
+  "3325": {
+   "value": "36",
+   "origin": "kompege:28",
+   "via": "tg_link",
+   "course_id": 140
+  },
+  "3326": {
+   "value": "48",
+   "origin": "kompege:7",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3328": {
+   "value": "91893",
+   "origin": "kompege:21893",
+   "via": "tg_link",
+   "course_id": 158
+  },
+  "3330": {
+   "value": "zyxw",
+   "origin": "kompege:1",
+   "via": "tg_link",
+   "course_id": 148
+  },
+  "3335": {
+   "value": "469034148",
+   "origin": "kompege:17868",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3337": {
+   "value": "2029",
+   "origin": "kompege:17870",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3339": {
+   "value": "16",
+   "origin": "kompege:27",
+   "via": "tg_link",
+   "course_id": 140
+  },
+  "3341": {
+   "value": "46",
+   "origin": "kompege:26",
+   "via": "tg_link",
+   "course_id": 140
+  },
+  "3348": {
+   "value": "1922",
+   "origin": "kompege:21895",
+   "via": "tg_link",
+   "course_id": 160
+  },
+  "3349": {
+   "value": "38306",
+   "origin": "kompege:21703",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3350": {
+   "value": "720",
+   "origin": "kompege:21894",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3351": {
+   "value": "2001",
+   "origin": "kompege:21900",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3352": {
+   "value": "19",
+   "origin": "kompege:21421",
+   "via": "tg_link",
+   "course_id": 151
+  },
+  "3358": {
+   "value": "1024",
+   "origin": "kompege:21709",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3359": {
+   "value": "29",
+   "origin": "kompege:20905",
+   "via": "tg_link",
+   "course_id": 143
+  },
+  "3360": {
+   "value": "66",
+   "origin": "kompege:20809",
+   "via": "tg_link",
+   "course_id": 143
+  },
+  "3361": {
+   "value": "6406",
+   "origin": "kompege:19240",
+   "via": "tg_link",
+   "course_id": 159
+  },
+  "3363": {
+   "value": "1",
+   "origin": "kompege:21408",
+   "via": "tg_link",
+   "course_id": 160
+  },
+  "3367": {
+   "value": "62",
+   "origin": "kompege:21714",
+   "via": "tg_link",
+   "course_id": 147
+  },
+  "3368": {
+   "value": "1591",
+   "origin": "kompege:21707",
+   "via": "tg_link",
+   "course_id": 163
+  },
+  "3371": {
+   "value": "41",
+   "origin": "kompege:17861",
+   "via": "tg_link",
+   "course_id": 158
+  },
+  "3372": {
+   "value": "44",
+   "origin": "kompege:17860",
+   "via": "tg_link",
+   "course_id": 157
+  },
+  "3377": {
+   "value": "174034068",
+   "origin": "kompege:21420",
+   "via": "tg_link",
+   "course_id": 150
+  },
+  "3379": {
+   "value": "2687",
+   "origin": "kompege:16325",
+   "via": "tg_link",
+   "course_id": 142
+  },
+  "3380": {
+   "value": "12",
+   "origin": "sdamgia:47016",
+   "via": "tg_link",
+   "course_id": 147
+  },
+  "3399": {
+   "value": "21",
+   "origin": "kompege:20965",
+   "via": "tg_link",
+   "course_id": 147
+  },
+  "3410": {
+   "value": "7",
+   "origin": "kompege:10103",
+   "via": "tg_link",
+   "course_id": 149
+  },
+  "3411": {
+   "value": "17",
+   "origin": "kompege:4708",
+   "via": "tg_link",
+   "course_id": 149
+  },
+  "3443": {
+   "value": "88",
+   "origin": "kompege:17556",
+   "via": "stem",
+   "course_id": 143
+  }
+ },
+ "manual": {
+  "2988": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "ext:calib:yandex:tier1:20260525:5a55834b-8221-4fe0-bdb9-f5b356188024:19"
+  },
+  "2989": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "ext:calib:yandex:tier1:20260525:a97d888a-5402-4044-bb08-35bcc66f9ec7:19"
+  },
+  "2990": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "ext:calib:yandex:tier1:20260525:a97d888a-5402-4044-bb08-35bcc66f9ec7:13"
+  },
+  "2992": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 145,
+   "external_uid": "ext:calib:yandex:tier1:20260525:a97d888a-5402-4044-bb08-35bcc66f9ec7:17"
+  },
+  "2993": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 152,
+   "external_uid": "ext:calib:yandex:tier1:20260525:b24b2dd9-52dc-42a7-b9f8-766c46e4c737:25"
+  },
+  "2994": {
+   "reason": "источник ответа не найден",
+   "course_id": 160,
+   "external_uid": "ext:calib:yandex:tier1:20260525:b24b2dd9-52dc-42a7-b9f8-766c46e4c737:9"
+  },
+  "2999": {
+   "reason": "ответ источника многозначный ([['491', '7']])",
+   "course_id": 153,
+   "external_uid": "tg:ege:983"
+  },
+  "3001": {
+   "reason": "источник ответа не найден",
+   "course_id": 143,
+   "external_uid": "tg:ege:981"
+  },
+  "3004": {
+   "reason": "ответ источника многозначный (471672 912\\n75241 98298)",
+   "course_id": 154,
+   "external_uid": "tg:ege:977"
+  },
+  "3010": {
+   "reason": "ответ источника многозначный (98 20)",
+   "course_id": 153,
+   "external_uid": "tg:ege:971"
+  },
+  "3011": {
+   "reason": "источник ответа не найден",
+   "course_id": 143,
+   "external_uid": "tg:ege:970"
+  },
+  "3012": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:969"
+  },
+  "3015": {
+   "reason": "источник ответа не найден",
+   "course_id": 154,
+   "external_uid": "tg:ege:966"
+  },
+  "3016": {
+   "reason": "ответ источника многозначный ([['186', '9']])",
+   "course_id": 153,
+   "external_uid": "tg:ege:965"
+  },
+  "3020": {
+   "reason": "ответ источника многозначный ([[['3300440', '575'], ['3300598', '545'], ['3300858', '5555')",
+   "course_id": 152,
+   "external_uid": "tg:ege:961"
+  },
+  "3021": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:960"
+  },
+  "3022": {
+   "reason": "источник ответа не найден",
+   "course_id": 163,
+   "external_uid": "tg:ege:959"
+  },
+  "3026": {
+   "reason": "источник ответа не найден",
+   "course_id": 153,
+   "external_uid": "tg:ege:955"
+  },
+  "3032": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:948"
+  },
+  "3033": {
+   "reason": "источник ответа не найден",
+   "course_id": 163,
+   "external_uid": "tg:ege:947"
+  },
+  "3035": {
+   "reason": "источник ответа не найден",
+   "course_id": 153,
+   "external_uid": "tg:ege:944"
+  },
+  "3036": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 156,
+   "external_uid": "tg:ege:943"
+  },
+  "3042": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 145,
+   "external_uid": "tg:ege:934"
+  },
+  "3055": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:918"
+  },
+  "3056": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:917"
+  },
+  "3057": {
+   "reason": "источник ответа не найден",
+   "course_id": 162,
+   "external_uid": "tg:ege:916"
+  },
+  "3059": {
+   "reason": "источник ответа не найден",
+   "course_id": 159,
+   "external_uid": "tg:ege:914"
+  },
+  "3080": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:893"
+  },
+  "3081": {
+   "reason": "источник ответа не найден",
+   "course_id": 142,
+   "external_uid": "tg:ege:892"
+  },
+  "3083": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:890"
+  },
+  "3084": {
+   "reason": "источник ответа не найден",
+   "course_id": 141,
+   "external_uid": "tg:ege:889"
+  },
+  "3087": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:886"
+  },
+  "3096": {
+   "reason": "источник ответа не найден",
+   "course_id": 153,
+   "external_uid": "tg:ege:875"
+  },
+  "3105": {
+   "reason": "источник ответа не найден",
+   "course_id": 160,
+   "external_uid": "tg:ege:865"
+  },
+  "3106": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "tg:ege:864"
+  },
+  "3108": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:860"
+  },
+  "3112": {
+   "reason": "источник ответа не найден",
+   "course_id": 162,
+   "external_uid": "tg:ege:856"
+  },
+  "3122": {
+   "reason": "источник ответа не найден",
+   "course_id": 138,
+   "external_uid": "tg:ege:845"
+  },
+  "3127": {
+   "reason": "источник ответа не найден",
+   "course_id": 151,
+   "external_uid": "tg:ege:840"
+  },
+  "3128": {
+   "reason": "источник ответа не найден",
+   "course_id": 151,
+   "external_uid": "tg:ege:839"
+  },
+  "3129": {
+   "reason": "источник ответа не найден",
+   "course_id": 142,
+   "external_uid": "tg:ege:838"
+  },
+  "3153": {
+   "reason": "источник ответа не найден",
+   "course_id": 151,
+   "external_uid": "tg:ege:800"
+  },
+  "3154": {
+   "reason": "источник ответа не найден",
+   "course_id": 151,
+   "external_uid": "tg:ege:799"
+  },
+  "3168": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 153,
+   "external_uid": "tg:ege:744"
+  },
+  "3170": {
+   "reason": "ответ источника многозначный (2362 1205)",
+   "course_id": 146,
+   "external_uid": "tg:ege:742"
+  },
+  "3177": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:733"
+  },
+  "3194": {
+   "reason": "источник ответа не найден",
+   "course_id": 138,
+   "external_uid": "tg:ege:711"
+  },
+  "3212": {
+   "reason": "источник ответа не найден",
+   "course_id": 140,
+   "external_uid": "tg:ege:683"
+  },
+  "3248": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:633"
+  },
+  "3270": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:603"
+  },
+  "3275": {
+   "reason": "источник ответа не найден",
+   "course_id": 138,
+   "external_uid": "tg:ege:598"
+  },
+  "3280": {
+   "reason": "ответ источника многозначный (1324795 264959\\n1324801 1151\\n1324903 2543\\n1325015 265003\\n)",
+   "course_id": 152,
+   "external_uid": "tg:ege:593"
+  },
+  "3281": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "tg:ege:592"
+  },
+  "3282": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:591"
+  },
+  "3284": {
+   "reason": "ответ источника многозначный ([[['10309', '48373'], ['13583', '37553'], ['8833', '58619'],)",
+   "course_id": 152,
+   "external_uid": "tg:ege:584"
+  },
+  "3287": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:581"
+  },
+  "3289": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "tg:ege:579"
+  },
+  "3290": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "tg:ege:575"
+  },
+  "3291": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "tg:ege:574"
+  },
+  "3292": {
+   "reason": "источник ответа не найден",
+   "course_id": 162,
+   "external_uid": "tg:ege:573"
+  },
+  "3293": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 153,
+   "external_uid": "tg:ege:571"
+  },
+  "3294": {
+   "reason": "источник ответа не найден",
+   "course_id": 160,
+   "external_uid": "tg:ege:570"
+  },
+  "3295": {
+   "reason": "источник ответа не найден",
+   "course_id": 138,
+   "external_uid": "tg:ege:569"
+  },
+  "3296": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 145,
+   "external_uid": "tg:ege:568"
+  },
+  "3297": {
+   "reason": "источник ответа не найден",
+   "course_id": 151,
+   "external_uid": "tg:ege:567"
+  },
+  "3298": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:566"
+  },
+  "3300": {
+   "reason": "источник ответа не найден",
+   "course_id": 144,
+   "external_uid": "tg:ege:560"
+  },
+  "3301": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 145,
+   "external_uid": "tg:ege:559"
+  },
+  "3306": {
+   "reason": "ответ источника многозначный (71879 70609)",
+   "course_id": 160,
+   "external_uid": "tg:ege:553"
+  },
+  "3307": {
+   "reason": "ответ источника многозначный (1) 13 2) 24 47 3) 46)",
+   "course_id": 147,
+   "external_uid": "tg:ege:545"
+  },
+  "3309": {
+   "reason": "источник ответа не найден",
+   "course_id": 148,
+   "external_uid": "tg:ege:543"
+  },
+  "3316": {
+   "reason": "источник ответа не найден",
+   "course_id": 150,
+   "external_uid": "tg:ege:533"
+  },
+  "3318": {
+   "reason": "источник ответа не найден",
+   "course_id": 163,
+   "external_uid": "tg:ege:530"
+  },
+  "3329": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "tg:ege:518"
+  },
+  "3332": {
+   "reason": "ответ близнеца многозначный (['an nsn'])",
+   "course_id": 145,
+   "external_uid": "tg:ege:515"
+  },
+  "3333": {
+   "reason": "ответ источника многозначный (2697&299986167)",
+   "course_id": 154,
+   "external_uid": "tg:ege:514"
+  },
+  "3338": {
+   "reason": "ответ источника многозначный (32865 70666\\n144062 61170)",
+   "course_id": 154,
+   "external_uid": "tg:ege:508"
+  },
+  "3340": {
+   "reason": "ответ источника многозначный (52326 635)",
+   "course_id": 153,
+   "external_uid": "tg:ege:506"
+  },
+  "3342": {
+   "reason": "ответ источника многозначный (1040 57)",
+   "course_id": 153,
+   "external_uid": "tg:ege:504"
+  },
+  "3343": {
+   "reason": "источник ответа не найден",
+   "course_id": 162,
+   "external_uid": "tg:ege:503"
+  },
+  "3355": {
+   "reason": "ответ источника многозначный (3&625350)",
+   "course_id": 154,
+   "external_uid": "tg:ege:491"
+  },
+  "3356": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 154,
+   "external_uid": "tg:ege:490"
+  },
+  "3370": {
+   "reason": "ответ источника многозначный (351261495 183235\\n3212614035 1675855\\n3412614645 1780185\\n37)",
+   "course_id": 152,
+   "external_uid": "tg:ege:473"
+  },
+  "3373": {
+   "reason": "ответ источника многозначный (500014 250009\\n500038 495289\\n500040 1170359\\n500054 250029\\)",
+   "course_id": 152,
+   "external_uid": "tg:ege:468"
+  },
+  "3374": {
+   "reason": "ответ источника многозначный (1125003 467\\n1125006 97\\n1125009 17\\n1125011 3187\\n1125012 1)",
+   "course_id": 152,
+   "external_uid": "tg:ege:467"
+  },
+  "3378": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:462"
+  },
+  "3394": {
+   "reason": "источник ответа не найден",
+   "course_id": 147,
+   "external_uid": "tg:ege:445"
+  },
+  "3408": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:426"
+  },
+  "3409": {
+   "reason": "источник ответа не найден",
+   "course_id": 149,
+   "external_uid": "tg:ege:425"
+  },
+  "3412": {
+   "reason": "ответ источника многозначный (1204 502)",
+   "course_id": 146,
+   "external_uid": "tg:ege:422"
+  },
+  "3413": {
+   "reason": "ответ источника многозначный (4507 3066)",
+   "course_id": 146,
+   "external_uid": "tg:ege:421"
+  },
+  "3414": {
+   "reason": "ответ источника многозначный (2671 419)",
+   "course_id": 146,
+   "external_uid": "tg:ege:420"
+  },
+  "3418": {
+   "reason": "источник ответа не найден",
+   "course_id": 163,
+   "external_uid": "tg:ege:407"
+  },
+  "3447": {
+   "reason": "источник ответа не найден",
+   "course_id": 139,
+   "external_uid": "tg:ege:338"
+  },
+  "3455": {
+   "reason": "источник ответа не найден",
+   "course_id": 153,
+   "external_uid": "tg:ege:277"
+  },
+  "3456": {
+   "reason": "источник ответа не найден",
+   "course_id": 146,
+   "external_uid": "tg:ege:260"
+  },
+  "3461": {
+   "reason": "источник ответа не найден",
+   "course_id": 146,
+   "external_uid": "tg:ege:223"
+  },
+  "3462": {
+   "reason": "близнецы с разными ответами",
+   "course_id": 146,
+   "external_uid": "tg:ege:221"
+  },
+  "3463": {
+   "reason": "источник ответа не найден",
+   "course_id": 146,
+   "external_uid": "tg:ege:220"
+  },
+  "3468": {
+   "reason": "источник ответа не найден",
+   "course_id": 146,
+   "external_uid": "tg:ege:66"
+  },
+  "4818": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "lms:c156:vvod:5_2"
+  },
+  "4819": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "lms:c156:vvod:5_3"
+  },
+  "4820": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "lms:c156:vvod:5_4"
+  },
+  "4821": {
+   "reason": "источник ответа не найден",
+   "course_id": 156,
+   "external_uid": "lms:c156:vvod:5_5"
+  },
+  "4834": {
+   "reason": "источник ответа не найден",
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:03"
+  },
+  "4917": {
+   "reason": "источник ответа не найден",
+   "course_id": 159,
+   "external_uid": "lms:c159:vvod:03"
+  }
+ },
+ "skip": {
+  "5266": "опросник-профилировщик, верного ответа нет",
+  "5317": "опросник-профилировщик, верного ответа нет",
+  "5320": "опросник-профилировщик, верного ответа нет"
+ }
+}

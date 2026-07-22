@@ -77,6 +77,10 @@ WHERE t.is_active
   AND coalesce(jsonb_array_length(t.solution_rules->'correct_options'), 0) = 0
   AND coalesce(t.solution_rules->>'text_answer', '') = ''
   AND t.solution_rules->'custom_scoring_config' IS NOT DISTINCT FROM 'null'::jsonb
+  -- Опросники-профилировщики (тип SC_Qw, блок `quiz` со шкалами) верного ответа не
+  -- имеют по замыслу: они подбирают ученику курс, а не проверяют знание. Для них
+  -- пустое правило — норма, а не дефект (tsk-362).
+  AND jsonb_typeof(t.solution_rules->'quiz') IS DISTINCT FROM 'object'
 ORDER BY t.course_id, t.id
 """
 
