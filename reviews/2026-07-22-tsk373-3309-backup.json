@@ -1,0 +1,52 @@
+[
+ {
+  "id": 2080,
+  "external_uid": "ext:d4:polyakov:20260602:7239",
+  "course_id": 148,
+  "order_position": 53,
+  "is_active": true,
+  "task_content": {
+   "code": null,
+   "stem": "<html><body><div class=\"polyakov-task\">*Обозначим через a%b остаток от деления натурального числа a на натуральное число b, а через a//b – целую часть от деления a на b. Алгоритм вычисления значения функции F(n), где n – натуральное число, задан следующими соотношениями:<br/><pre>F(n) = 0, если n = 0,<br/>F(n) = F(n // 10) + n % 10, если n &gt; 0 и n чётно;<br/>F(n) = F(n // 10), если n &gt; 0 и n нечётно.<br/></pre>Определите количество значений n, таких что 10<sup>9</sup> ≤ n ≤ 5·10<sup>9</sup>, для которых F(n) = 0.</div></body></html>",
+   "tags": null,
+   "type": "SA_COM",
+   "media": null,
+   "title": null,
+   "prompt": null,
+   "options": null,
+   "has_hints": true,
+   "course_uid": "wp:zadanie-2-ege-po-informatike-tablitsy-istinnosti",
+   "hints_text": [],
+   "hints_video": [
+    "https://vk.com/video-53400615_456239282"
+   ],
+   "difficulty_code": null
+  }
+ },
+ {
+  "id": 3309,
+  "external_uid": "tg:ege:543",
+  "course_id": 148,
+  "order_position": 72,
+  "is_active": true,
+  "task_content": {
+   "code": null,
+   "stem": "<p>Задание 2_7239 (Поляков). Уровень сложный.</p>\n<p>Логическая функция F задаётся выражением a ≡ b ∨ c ≡ b.<br>На рисунке приведён частично заполненный фрагмент таблицы истинности функции F, содержащий неповторяющиеся строки. Определите, какому столбцу таблицы истинности функции F соответствует каждая из переменных a, b, c.</p>",
+   "tags": null,
+   "type": "SA_COM",
+   "media": null,
+   "title": null,
+   "prompt": null,
+   "options": null,
+   "has_hints": true,
+   "course_uid": "wp:zadanie-2-ege-po-informatike-tablitsy-istinnosti",
+   "hints_text": [],
+   "hints_video": [
+    "https://vk.com/video-53400615_456239282"
+   ],
+   "difficulty_code": null,
+   "source_tg_global_uid": "tg_parser:1701256430:543",
+   "manual_review_required": true
+  }
+ }
+]
