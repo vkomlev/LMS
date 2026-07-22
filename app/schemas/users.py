@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
 
 class UserCreate(BaseModel):
@@ -61,6 +61,20 @@ class UserRead(BaseModel):
     full_name: Optional[str] = Field(None, description="Полное имя пользователя", examples=["Иван Иванов", None])
     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[123456789, None])
     created_at: datetime = Field(..., description="Дата и время регистрации пользователя", examples=["2026-01-26T14:21:50.221Z"])
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def _blank_email_as_none(cls, value: object) -> object:
+        """Считать пустую строку в users.email отсутствием почты.
+
+        tsk-363: одна такая строка в БД роняла весь ответ списка
+        пользователей 500-й ошибкой на валидации EmailStr, а не только
+        собственную запись. Источник течи закрыт в vk_oauth_service,
+        валидатор защищает выдачу от исторических строк.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     model_config = ConfigDict(
         from_attributes=True,

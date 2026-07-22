@@ -1,0 +1,53 @@
+diff --git a/app/schemas/users.py b/app/schemas/users.py
+index 34d2402..2b510c6 100644
+--- a/app/schemas/users.py
++++ b/app/schemas/users.py
+@@ -1,7 +1,7 @@
+ from __future__ import annotations
+ from typing import Optional
+ from datetime import datetime
+-from pydantic import BaseModel, EmailStr, ConfigDict, Field
++from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
+ 
+ 
+ class UserCreate(BaseModel):
+@@ -62,6 +62,20 @@ class UserRead(BaseModel):
+     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[123456789, None])
+     created_at: datetime = Field(..., description="Дата и время регистрации пользователя", examples=["2026-01-26T14:21:50.221Z"])
+ 
++    @field_validator("email", mode="before")
++    @classmethod
++    def _blank_email_as_none(cls, value: object) -> object:
++        """Считать пустую строку в users.email отсутствием почты.
++
++        tsk-363: одна такая строка в БД роняла весь ответ списка
++        пользователей 500-й ошибкой на валидации EmailStr, а не только
++        собственную запись. Источник течи закрыт в vk_oauth_service,
++        валидатор защищает выдачу от исторических строк.
++        """
++        if isinstance(value, str) and not value.strip():
++            return None
++        return value
++
+     model_config = ConfigDict(
+         from_attributes=True,
+         json_schema_extra={
+diff --git a/app/services/auth/vk_oauth_service.py b/app/services/auth/vk_oauth_service.py
+index 05fa820..c2aabdb 100644
+--- a/app/services/auth/vk_oauth_service.py
++++ b/app/services/auth/vk_oauth_service.py
+@@ -104,9 +104,11 @@ async def fetch_vk_userinfo(access_token: str) -> dict:
+         logger.error("VK userinfo no user_id, response: %s", data)
+         raise ValueError("VK user_id not found in userinfo response")
+ 
+-    email = user.get("email")
+-    if email:
+-        email = email.strip().lower() or None
++    # tsk-363: VK может вернуть email пустой строкой. Приводим её к None —
++    # иначе '' уходит в users.email, роняет ответ /api/v1/users/ (EmailStr)
++    # и занимает слот в users_email_unique_partial, блокируя следующую
++    # VK-регистрацию без почты.
++    email = (user.get("email") or "").strip().lower() or None
+ 
+     first = (user.get("first_name") or "").strip()
+     last = (user.get("last_name") or "").strip()

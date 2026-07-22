@@ -104,9 +104,11 @@ async def fetch_vk_userinfo(access_token: str) -> dict:
         logger.error("VK userinfo no user_id, response: %s", data)
         raise ValueError("VK user_id not found in userinfo response")
 
-    email = user.get("email")
-    if email:
-        email = email.strip().lower() or None
+    # tsk-363: VK может вернуть email пустой строкой. Приводим её к None —
+    # иначе '' уходит в users.email, роняет ответ /api/v1/users/ (EmailStr)
+    # и занимает слот в users_email_unique_partial, блокируя следующую
+    # VK-регистрацию без почты.
+    email = (user.get("email") or "").strip().lower() or None
 
     first = (user.get("first_name") or "").strip()
     last = (user.get("last_name") or "").strip()
