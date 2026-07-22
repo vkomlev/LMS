@@ -1,0 +1,107 @@
+[
+ {
+  "id": 2383,
+  "external_uid": "ext:d4:sdamgia:20260602:27771",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "Ре­ше­ние"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2384,
+  "external_uid": "ext:d4:sdamgia:20260602:58527",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "Ре­ше­ние"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2385,
+  "external_uid": "ext:d4:sdamgia:20260602:47016",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "Ре­ше­ние"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ }
+]

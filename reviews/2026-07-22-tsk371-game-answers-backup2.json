@@ -1,0 +1,227 @@
+[
+ {
+  "id": 2383,
+  "external_uid": "ext:d4:sdamgia:20260602:27771",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "2324324445"
+     },
+     {
+      "score": 1,
+      "value": "23 24 32 44 45"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "2324324445"
+ },
+ {
+  "id": 2384,
+  "external_uid": "ext:d4:sdamgia:20260602:58527",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "22 35"
+     },
+     {
+      "score": 1,
+      "value": "2235"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "22 35"
+ },
+ {
+  "id": 2385,
+  "external_uid": "ext:d4:sdamgia:20260602:47016",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "10 11"
+     },
+     {
+      "score": 1,
+      "value": "1011"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "10 11"
+ },
+ {
+  "id": 3765,
+  "external_uid": "wp_nav:19:4a37bac6",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "14"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "14"
+ },
+ {
+  "id": 3766,
+  "external_uid": "wp_nav:19:dfc65c27",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "5"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "5"
+ },
+ {
+  "id": 3767,
+  "external_uid": "wp_nav:19:0e1ba954",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "5"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "5"
+ }
+]

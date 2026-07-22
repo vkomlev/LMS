@@ -1,0 +1,515 @@
+[
+ {
+  "id": 2273,
+  "external_uid": "ext:d4:sdamgia:20260602:48435",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "18 341"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2291,
+  "external_uid": "ext:d4:sdamgia:20260602:56505",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "233 024 691"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2299,
+  "external_uid": "ext:d4:sdamgia:20260602:69886",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "19 868"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2308,
+  "external_uid": "ext:d4:sdamgia:20260602:55635",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "2187"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2309,
+  "external_uid": "ext:d4:sdamgia:20260602:51987",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "3864"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2327,
+  "external_uid": "ext:d4:sdamgia:20260602:58248",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "75 · 5 + 4 · 4 = 391"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2332,
+  "external_uid": "ext:d4:sdamgia:20260602:58315",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "— 265 371"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2352,
+  "external_uid": "ext:d4:sdamgia:20260602:48437",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "298 999 705"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2354,
+  "external_uid": "ext:d4:sdamgia:20260602:48464",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "259 060 409"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 2367,
+  "external_uid": "ext:d4:sdamgia:20260602:72596",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower",
+     "strip_punctuation",
+     "collapse_spaces"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "1 986"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": null
+ },
+ {
+  "id": 3788,
+  "external_uid": "wp_nav:26:9540535a",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "229"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "229"
+ },
+ {
+  "id": 3791,
+  "external_uid": "wp_nav:26:5c97d786",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "ы"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "ы"
+ },
+ {
+  "id": 3795,
+  "external_uid": "wp_nav:26:44fe1242",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "5669"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "5669"
+ },
+ {
+  "id": 3797,
+  "external_uid": "wp_nav:26:566d72a1",
+  "solution_rules": {
+   "quiz": null,
+   "max_score": 1,
+   "penalties": {
+    "wrong_answer": 0,
+    "extra_wrong_mc": 0,
+    "missing_answer": 0
+   },
+   "auto_check": true,
+   "text_answer": null,
+   "scoring_mode": "all_or_nothing",
+   "short_answer": {
+    "regex": null,
+    "use_regex": false,
+    "normalization": [
+     "trim",
+     "lower"
+    ],
+    "accepted_answers": [
+     {
+      "score": 1,
+      "value": "1432"
+     }
+    ]
+   },
+   "partial_rules": [],
+   "correct_options": [],
+   "requires_attachment": false,
+   "custom_scoring_config": null,
+   "manual_review_required": false
+  },
+  "answer_raw": "1432"
+ }
+]
