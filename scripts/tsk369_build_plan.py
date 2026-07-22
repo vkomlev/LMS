@@ -111,10 +111,26 @@ def weak_is_confirmed(rec: dict, item: dict, lms_answer: str | None) -> tuple[bo
     return (answers_agree or ratio >= 0.75), evidence
 
 
-def main(items_path: Path, fetched_dir: Path, out_path: Path) -> None:
+def main(items_path: Path, fetched_dir: Path, out_path: Path,
+         confirmed_path: Path | None = None) -> None:
+    # Ручное подтверждение оператора: принимается, только если рядом записано, ЧЕМ именно
+    # проверена принадлежность файла (сверка данных, пересчёт ответа). Файл лежит в
+    # reviews/ и коммитится вместе с отчётом — это аудит, а не молчаливый обход гейта.
+    confirmed: dict[int, dict] = {}
+    if confirmed_path and confirmed_path.exists():
+        raw = json.loads(confirmed_path.read_text(encoding="utf-8"))
+        confirmed = {int(k): v for k, v in raw.items() if k.isdigit()}
+
     items = {i["id"]: i for i in json.loads(items_path.read_text(encoding="utf-8"))}
+    # Порядок чтения = приоритет: первая запись про задание побеждает. Ручной ключ
+    # оператора и локальный архив идут раньше автоматических источников — иначе прежний,
+    # ошибочный ID из шапки условия так и остался бы победителем (обжиг: у 3177 в шапке
+    # значился 27360 вместо 23760, и автоматическая запись перекрывала исправленную).
+    priority = ["fetched_operator.json", "fetched_archive.json", "fetched_probe.json"]
+    paths = [fetched_dir / n for n in priority if (fetched_dir / n).exists()]
+    paths += [p for p in sorted(fetched_dir.glob("fetched_*.json")) if p.name not in priority]
     records: list[dict] = []
-    for path in sorted(fetched_dir.glob("fetched_*.json")):
+    for path in paths:
         records.extend(json.loads(path.read_text(encoding="utf-8")))
     answers = asyncio.run(load_answers(sorted(items)))
 
@@ -137,7 +153,9 @@ def main(items_path: Path, fetched_dir: Path, out_path: Path) -> None:
         files += [f for f in rec.get("files", []) if f.get("reuse") and f.get("sha_ext")]
         reason = None
         evidence: dict = {}
-        if rec.get("verdict") == "weak" and files:
+        if tid in confirmed and files:
+            evidence = {"operator_confirmed": confirmed[tid].get("reason")}
+        elif rec.get("verdict") == "weak" and files:
             ok, evidence = weak_is_confirmed(rec, item, answers.get(tid))
             if not ok:
                 reason = ("сверка: weak, второй признак не сработал "
@@ -201,5 +219,7 @@ if __name__ == "__main__":
     ap.add_argument("--items", required=True)
     ap.add_argument("--fetched", required=True, help="каталог с fetched_*.json")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--confirmed", help="JSON с подтверждениями оператора (reviews/...)")
     a = ap.parse_args()
-    main(Path(a.items), Path(a.fetched), Path(a.out))
+    main(Path(a.items), Path(a.fetched), Path(a.out),
+         Path(a.confirmed) if a.confirmed else None)

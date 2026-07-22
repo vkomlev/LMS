@@ -329,8 +329,16 @@ GETTERS = {"kompege": src_kompege, "sdamgia": src_sdamgia,
 
 
 def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
-         ids: list[int] | None = None) -> None:
+         ids: list[int] | None = None, mapping: dict[int, tuple[str, str]] | None = None) -> None:
     items = json.loads(items_path.read_text(encoding="utf-8"))
+    if mapping:
+        # Источник, указанный оператором вручную: в шапке условия бывает опечатка в
+        # номере задания («27360» вместо «23760»), и автоматический разбор уходит не туда.
+        # Сверка после подмены остаётся прежней — ручной ключ её не отменяет.
+        items = [i for i in items if i["id"] in mapping]
+        for i in items:
+            i["source"], i["source_id"] = mapping[i["id"]]
+            i["via"] = "operator"
     if ids:
         items = [i for i in items if i["id"] in set(ids)]
     files_dir = out_dir / "files"
@@ -401,7 +409,7 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
         marks = "".join(f" {f['ext']}/{f['size']}b" for f in got)
         print(f"  [{rec['verdict']:14}] id={it['id']} {src}:{sid} ext_ok={rec['ext_ok']}{marks}")
 
-    suffix = f"{only or 'all'}" + ("_add" if ids else "")
+    suffix = ("operator" if mapping else f"{only or 'all'}") + ("_add" if ids and not mapping else "")
     out_path = out_dir / f"fetched_{suffix}.json"
     out_path.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\nИтого: {stats}")
@@ -442,10 +450,18 @@ if __name__ == "__main__":
     ap.add_argument("--only", help="ограничить одним источником (kompege/sdamgia/polyakov/yandex)")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--ids", help="только эти id заданий, через запятую (добор)")
+    ap.add_argument("--map", dest="mapping", nargs="+",
+                    help="ручной ключ источника от оператора: id:источник:id_в_источнике")
     ap.add_argument("--reverify", nargs="+", help="пересчитать вердикты в готовых файлах")
     a = ap.parse_args()
     if a.reverify:
         reverify(Path(a.items), a.reverify)
     else:
         ids = [int(x) for x in a.ids.split(",")] if a.ids else None
-        main(Path(a.items), Path(a.out_dir), a.only, a.limit, ids)
+        mapping = None
+        if a.mapping:
+            mapping = {}
+            for pair in a.mapping:
+                tid, src, sid = pair.split(":", 2)
+                mapping[int(tid)] = (src, sid)
+        main(Path(a.items), Path(a.out_dir), a.only, a.limit, ids, mapping)
