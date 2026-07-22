@@ -1,0 +1,534 @@
+[
+ {
+  "id": 3036,
+  "external_uid": "tg:ege:943",
+  "source_kind": "kompege",
+  "header_number": "5",
+  "header_id": "216",
+  "answer_lms": "9",
+  "answer_lms_all": [
+   "9"
+  ],
+  "answer_kompege_by_id": "2",
+  "native": {
+   "kind": "kompege",
+   "answer_src": "2",
+   "same_answer": false,
+   "src_head": "Обозначим через m&n поразрядную конъюнкцию неотрицательных целых чисел m и n. Так, например, 14&5 = 1110 2 &0101 2 = 0100 2 = 4 . Определите наименьшее натуральное число A, такое что выражение x & 26 ≠ 0 ∨ x & 13 ≠ 0 → x",
+   "verdict": "different",
+   "lcs": 17,
+   "jaccard": 0.0,
+   "numbers_src_cover": 0.14
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3056,
+  "external_uid": "tg:ege:917",
+  "source_kind": "kompege",
+  "header_number": "13",
+  "header_id": "23749",
+  "answer_lms": "191191255254",
+  "answer_lms_all": [
+   "191191255254"
+  ],
+  "answer_kompege_by_id": "257",
+  "native": {
+   "kind": "kompege",
+   "answer_src": "257",
+   "same_answer": false,
+   "src_head": "На предприятии каждой изготовленной детали присваивают серийный номер, состоящий из 2783 символов. В базе данных каждый серийный номер занимает одинаковое и минимально возможное целое число байт. При этом используется по",
+   "verdict": "different",
+   "lcs": 7,
+   "jaccard": 0.0,
+   "numbers_src_cover": 0.0
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3058,
+  "external_uid": "tg:ege:915",
+  "source_kind": "kompege",
+  "header_number": "9",
+  "header_id": "23746",
+  "answer_lms": "901",
+  "answer_lms_all": [
+   "901"
+  ],
+  "answer_kompege_by_id": "5058",
+  "native": {
+   "kind": "kompege",
+   "answer_src": "5058",
+   "same_answer": false,
+   "src_head": "Все пятибуквенные слова, составленные из букв С, Т, Р, О, К, А, записаны в алфавитном порядке и пронумерованы. Вот начало списка: 1. ААААА 2. ААААК 3. ААААО 4. ААААР 5. ААААС 6. ААААТ …… Определите, под каким номером в э",
+   "verdict": "different",
+   "lcs": 10,
+   "jaccard": 0.0,
+   "numbers_src_cover": null
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3107,
+  "external_uid": "tg:ege:861",
+  "source_kind": "polyakov",
+  "header_number": "13",
+  "header_id": "7048",
+  "answer_lms": "129",
+  "answer_lms_all": [
+   "129"
+  ],
+  "answer_kompege_by_id": "7810",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "129",
+   "same_answer": true,
+   "src_head": "* М. Ишимов В терминологии сетей TCP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая - к адресу узла в этой сети. Адрес сети получается в резул",
+   "verdict": "same",
+   "lcs": 528,
+   "jaccard": 0.953,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3114,
+  "external_uid": "tg:ege:854",
+  "source_kind": "polyakov",
+  "header_number": "13",
+  "header_id": "7048",
+  "answer_lms": "129",
+  "answer_lms_all": [
+   "129"
+  ],
+  "answer_kompege_by_id": "7810",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "129",
+   "same_answer": true,
+   "src_head": "* М. Ишимов В терминологии сетей TCP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая - к адресу узла в этой сети. Адрес сети получается в резул",
+   "verdict": "same",
+   "lcs": 528,
+   "jaccard": 0.953,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3136,
+  "external_uid": "tg:ege:829",
+  "source_kind": "polyakov",
+  "header_number": "1",
+  "header_id": "7442",
+  "answer_lms": "49",
+  "answer_lms_all": [
+   "49"
+  ],
+  "answer_kompege_by_id": "5\\n1",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "49",
+   "same_answer": true,
+   "src_head": "* И. Карпачев На рисунке справа схема дорог Н-ского района изображена в виде графа, в таблице содержатся сведения о длинах этих дорог в километрах . Так как таблицу и схему рисовали независимо друг от друга, то нумерация",
+   "verdict": "same",
+   "lcs": 356,
+   "jaccard": 0.931,
+   "numbers_src_cover": null
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3177,
+  "external_uid": "tg:ege:733",
+  "source_kind": "kompege",
+  "header_number": "22",
+  "header_id": "27360",
+  "answer_lms": "12",
+  "answer_lms_all": [
+   "12"
+  ],
+  "answer_kompege_by_id": "113",
+  "native": {
+   "kind": "kompege",
+   "answer_src": "113",
+   "same_answer": false,
+   "src_head": "Исполнитель преобразует число на экране. У исполнителя есть три команды, которые обозначены латинскими буквами: A. Прибавить 1 B. Умножить на 3 C. Умножить на 2 Программа для исполнителя – это последовательность команд. ",
+   "verdict": "different",
+   "lcs": 16,
+   "jaccard": 0.0,
+   "numbers_src_cover": 0.0
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3194,
+  "external_uid": "tg:ege:711",
+  "source_kind": null,
+  "header_number": "3",
+  "header_id": "7613",
+  "answer_lms": "848098",
+  "answer_lms_all": [
+   "848098"
+  ],
+  "answer_kompege_by_id": "294",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "848098",
+   "same_answer": true,
+   "src_head": "* И. Карпачёв В файле 3-148.xls приведён фрагмент базы данных «Детские товары» о поставках товаров в магазины районов города. База данных состоит из четырёх таблиц. Таблица «Движение товаров» содержит записи о поставках ",
+   "verdict": "same",
+   "lcs": 185,
+   "jaccard": 0.178,
+   "numbers_src_cover": 0.33,
+   "same_by": "текст + ответ (числа не сошлись)"
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3198,
+  "external_uid": "tg:ege:707",
+  "source_kind": "polyakov",
+  "header_number": "1",
+  "header_id": "7442",
+  "answer_lms": "49",
+  "answer_lms_all": [
+   "49"
+  ],
+  "answer_kompege_by_id": "5\\n1",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "49",
+   "same_answer": true,
+   "src_head": "* И. Карпачев На рисунке справа схема дорог Н-ского района изображена в виде графа, в таблице содержатся сведения о длинах этих дорог в километрах . Так как таблицу и схему рисовали независимо друг от друга, то нумерация",
+   "verdict": "same",
+   "lcs": 356,
+   "jaccard": 0.931,
+   "numbers_src_cover": null
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3203,
+  "external_uid": "tg:ege:702",
+  "source_kind": "polyakov",
+  "header_number": "3",
+  "header_id": "4406",
+  "answer_lms": "319862",
+  "answer_lms_all": [
+   "319862"
+  ],
+  "answer_kompege_by_id": "915",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "319862",
+   "same_answer": true,
+   "src_head": "А. Рогов В файле 3-40.xls приведён фрагмент базы фрагмент базы данных «Города и страны», описывающей различные страны, города и языки. База данных состоит из трех таблиц. Таблица «Страны» код, название, континент, регион",
+   "verdict": "same",
+   "lcs": 796,
+   "jaccard": 0.962,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3230,
+  "external_uid": "tg:ege:658",
+  "source_kind": "polyakov",
+  "header_number": "7",
+  "header_id": "8064",
+  "answer_lms": "3",
+  "answer_lms_all": [
+   "3"
+  ],
+  "answer_kompege_by_id": "10",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "3",
+   "same_answer": true,
+   "src_head": "* О. Лысенков Петя преобразует Ultra HD видео 3840×2160 пикселей в формат Full HD 1920×1080 . Известно, что видео кодируется покадрово без применения технологий сжатия изображения. Никакие параметры видео, кроме размера ",
+   "verdict": "same",
+   "lcs": 493,
+   "jaccard": 0.938,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3238,
+  "external_uid": "tg:ege:645",
+  "source_kind": "polyakov",
+  "header_number": "11",
+  "header_id": "7857",
+  "answer_lms": "343",
+  "answer_lms_all": [
+   "343"
+  ],
+  "answer_kompege_by_id": "19439",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "343",
+   "same_answer": true,
+   "src_head": "*Предприятие выпускает партии изделий. Каждая партия получает уникальный код, состоящий из 30 символов, среди которых могут быть заглавные латинские буквы и цифры. Все изделия в партии получают последовательные номера от",
+   "verdict": "same",
+   "lcs": 872,
+   "jaccard": 0.978,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3241,
+  "external_uid": "tg:ege:642",
+  "source_kind": "kompege",
+  "header_number": "16",
+  "header_id": "23532",
+  "answer_lms": "24017",
+  "answer_lms_all": [
+   "24017"
+  ],
+  "answer_kompege_by_id": "15525",
+  "native": {
+   "kind": "kompege",
+   "answer_src": "15525",
+   "same_answer": false,
+   "src_head": "В.Лашин В файле приведён фрагмент базы данных «Кондитерские изделия» о поставках конфет и печенья в магазины районов города. База данных состоит из трёх таблиц. Заголовок таблицы имеет следующий вид: Таблица «Товар» соде",
+   "verdict": "different",
+   "lcs": 8,
+   "jaccard": 0.0,
+   "numbers_src_cover": 0.0
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3245,
+  "external_uid": "tg:ege:636",
+  "source_kind": "polyakov",
+  "header_number": "5",
+  "header_id": "141",
+  "answer_lms": "35",
+  "answer_lms_all": [
+   "35"
+  ],
+  "answer_kompege_by_id": "12",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "35",
+   "same_answer": true,
+   "src_head": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится двоичная запись числа N. 2. К этой записи дописываются справа ещё два разряда по следующему правилу: а ",
+   "verdict": "same",
+   "lcs": 631,
+   "jaccard": 0.975,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3277,
+  "external_uid": "tg:ege:596",
+  "source_kind": "polyakov",
+  "header_number": "13",
+  "header_id": "7048",
+  "answer_lms": "129",
+  "answer_lms_all": [
+   "129"
+  ],
+  "answer_kompege_by_id": "7810",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "129",
+   "same_answer": true,
+   "src_head": "* М. Ишимов В терминологии сетей TCP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая - к адресу узла в этой сети. Адрес сети получается в резул",
+   "verdict": "same",
+   "lcs": 528,
+   "jaccard": 0.953,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3302,
+  "external_uid": "tg:ege:558",
+  "source_kind": "polyakov",
+  "header_number": "6",
+  "header_id": "6350",
+  "answer_lms": "159",
+  "answer_lms_all": [
+   "159"
+  ],
+  "answer_kompege_by_id": "4",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "159",
+   "same_answer": true,
+   "src_head": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдоль положительного направления оси ординат, хвост опущен. При ",
+   "verdict": "same",
+   "lcs": 1209,
+   "jaccard": 0.984,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3303,
+  "external_uid": "tg:ege:557",
+  "source_kind": "polyakov",
+  "header_number": "5",
+  "header_id": "5438",
+  "answer_lms": "238",
+  "answer_lms_all": [
+   "238"
+  ],
+  "answer_kompege_by_id": "729",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "238",
+   "same_answer": true,
+   "src_head": "А. Сардарян На вход алгоритма подаётся два натуральных числа N и M. Алгоритм строит по ним новое число R следующим образом. 1 Вычисляется произведение P 1 всех ненулевых чётных цифр чисел N и M. 2 Вычисляется произведени",
+   "verdict": "same",
+   "lcs": 349,
+   "jaccard": 0.526,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3305,
+  "external_uid": "tg:ege:554",
+  "source_kind": "polyakov",
+  "header_number": "12",
+  "header_id": "4163",
+  "answer_lms": "201",
+  "answer_lms_all": [
+   "201"
+  ],
+  "answer_kompege_by_id": "89 466709 ",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "201",
+   "same_answer": true,
+   "src_head": "Е. Джобс Исполнитель Редактор получает на вход строку цифр и преобразовывает её. Редактор может выполнять две команды, в обеих командах v и w обозначают цепочки символов. 1. заменить v, w 2. нашлось v Первая команда заме",
+   "verdict": "same",
+   "lcs": 659,
+   "jaccard": 0.961,
+   "numbers_src_cover": 1.0
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3308,
+  "external_uid": "tg:ege:544",
+  "source_kind": "polyakov",
+  "header_number": "18",
+  "header_id": "2380",
+  "answer_lms": "617",
+  "answer_lms_all": [
+   "617"
+  ],
+  "answer_kompege_by_id": "1733",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "617",
+   "same_answer": true,
+   "src_head": "Дана последовательность вещественных чисел. Из неё необходимо выбрать несколько подряд идущих чисел так, чтобы каждое следующее число было больше предыдущего. Определите, какую максимальную сумму могут иметь выбранные чи",
+   "verdict": "same",
+   "lcs": 339,
+   "jaccard": 0.792,
+   "numbers_src_cover": 0.33,
+   "same_by": "текст + ответ (числа не сошлись)"
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3309,
+  "external_uid": "tg:ege:543",
+  "source_kind": "polyakov",
+  "header_number": "2",
+  "header_id": "7239",
+  "answer_lms": "xzwy",
+  "answer_lms_all": [
+   "xzwy"
+  ],
+  "answer_kompege_by_id": "33",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "20155393",
+   "same_answer": false,
+   "src_head": "*Обозначим через a%b остаток от деления натурального числа a на натуральное число b, а через a//b – целую часть от деления a на b. Алгоритм вычисления значения функции F n , где n – натуральное число, задан следующими со",
+   "verdict": "different",
+   "lcs": 11,
+   "jaccard": 0.0,
+   "numbers_src_cover": 0.0
+  },
+  "verdict": "свой источник: задача другая"
+ },
+ {
+  "id": 3310,
+  "external_uid": "tg:ege:542",
+  "source_kind": "polyakov",
+  "header_number": "14",
+  "header_id": "5918",
+  "answer_lms": "2275735",
+  "answer_lms_all": [
+   "2275735"
+  ],
+  "answer_kompege_by_id": "70 12",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "2275735",
+   "same_answer": true,
+   "src_head": "М. Ишимов Операнды арифметического выражения записаны в системе счисления с основанием 16: 8569x 16 + 12x48 16 В записи чисел переменной x обозначена неизвестная цифра из алфавита 16-ричной системы счисления. Определите ",
+   "verdict": "same",
+   "lcs": 430,
+   "jaccard": 0.773,
+   "numbers_src_cover": 0.75
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3343,
+  "external_uid": "tg:ege:503",
+  "source_kind": "polyakov",
+  "header_number": "11",
+  "header_id": "7926",
+  "answer_lms": "33",
+  "answer_lms_all": [
+   "33"
+  ],
+  "answer_kompege_by_id": "30",
+  "native": {
+   "kind": "polyakov",
+   "answer_src": "33",
+   "same_answer": true,
+   "src_head": "ЕГКР-2024 На предприятии каждой изготовленной детали присваивается серийный номер, состоящий из 377 символов. В базе данных для хранения каждого серийного номера отведено одинаковое и минимально возможное число байт. При",
+   "verdict": "same",
+   "lcs": 477,
+   "jaccard": 0.739,
+   "numbers_src_cover": 0.75
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ },
+ {
+  "id": 3418,
+  "external_uid": "tg:ege:407",
+  "source_kind": "sdamgia",
+  "header_number": "12",
+  "header_id": "28550",
+  "answer_lms": "6",
+  "answer_lms_all": [
+   "6"
+  ],
+  "answer_kompege_by_id": "118223",
+  "native": {
+   "kind": "sdamgia",
+   "answer_src": "6",
+   "same_answer": true,
+   "src_head": "Тип 12 № 28550 Раздел кодификатора ФИПИ: 1.6.2 Вычислимость. Эквивалентность алгоритмических моделей Выполнение алгоритмов для исполнителей. Исполнитель Редактор i Исполнитель Редактор получает на вход строку цифр и прео",
+   "verdict": "same",
+   "lcs": 295,
+   "jaccard": 0.224,
+   "numbers_src_cover": 0.25,
+   "same_by": "текст + ответ (числа не сошлись)"
+  },
+  "verdict": "свой источник: задача та же, ответ тот же"
+ }
+]

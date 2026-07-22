@@ -54,16 +54,34 @@ def norm(s: str) -> str:
     return s
 
 
+# Источник, названный в шапке условия рядом с номером задачи. Проверяется по первым
+# 400 символам: дальше начинается само условие, где «Поляков» может встретиться по делу.
+FOREIGN_SRC_RE = re.compile(r"поляков|решу\s*егэ|сдамгиа|sdamgia|яндекс", re.I)
+
+
 def kompege_id(external_uid: str, source_kind: str | None,
                source_task_id: str | None, stem: str) -> str | None:
-    """ID задачи у kompege по трём признакам, см. докстринг."""
+    """ID задачи у kompege по трём признакам, см. докстринг.
+
+    Номер из шапки — САМЫЙ слабый из трёх: у партии `tg:ege` рядом с номером написан и
+    источник, и там сплошь «(Поляков)» и «(Решу ЕГЭ)». Такой ID принадлежит их базе, а не
+    kompege, и запрос по нему возвращает постороннюю задачу — из 23 «расхождений ответа»
+    [[tsk-373]] 17 оказались именно этим (дефекта в LMS нет, сверка шла не на тот сайт).
+    Поэтому чужой источник — и записанный в `source_kind`, и просто названный в шапке —
+    отменяет разбор номера из шапки.
+    """
     if source_kind == "kompege" and source_task_id and source_task_id.isdigit():
         return source_task_id
+    if source_kind and source_kind != "kompege":
+        return None
     parts = (external_uid or "").split(":")
     if len(parts) >= 5 and parts[0] == "ext" and parts[2] == "kompege" and parts[4].isdigit():
         return parts[4]
     if (external_uid or "").startswith("tg:"):
-        m = re.search(r"Задание\s+\d+[_ ](\d+)k?\b", strip_html(stem or ""))
+        text = strip_html(stem or "")
+        if FOREIGN_SRC_RE.search(text[:400]):
+            return None
+        m = re.search(r"Задание\s+\d+[_ ](\d+)k?\b", text)
         if m:
             return m.group(1)
     return None
