@@ -199,16 +199,54 @@ def sdamgia_trim_header(text: str) -> str:
     return re.sub(r"^\s*Тип \d+ № \d+\s*", "", text).strip()
 
 
-def src_sdamgia(task_id: str) -> tuple[str, str | None, list[dict]]:
-    h = fetch(f"https://inf-ege.sdamgia.ru/problem?id={task_id}")
+def sdamgia_block(html: str, task_id: str, lms_stem: str = "") -> str:
+    """Кусок страницы, относящийся ИМЕННО к нужной задаче.
+
+    `problem?id=N` у «Решу ЕГЭ» нередко отдаёт не одну задачу, а связку: задания 19–21
+    про камни печатаются тройкой (`prob_maindiv` + два `submaindiv`), и у каждой свой
+    блок «Ответ». Хуже того, **ID в LMS указывает на первую задачу связки, а само задание
+    в LMS бывает вторым или третьим**: у 2385 по ID 47016 (тип 19) лежит наша задача типа
+    20 — её ответ `1011`, а первый ответ на странице `12` относится к соседней.
+
+    Поэтому блок выбирается ПО ТЕКСТУ условия LMS (дословный фрагмент из середины), и
+    только если текста нет — по шапке «Тип N № <task_id>», и лишь затем первым блоком.
+    """
+    parts = re.split(r'(?=<div[^>]*class="prob_maindiv")', html)
+    blocks = [p for p in parts if "prob_maindiv" in p[:200]] or parts
+
+    if lms_stem:
+        # Искать надо по ХВОСТУ условия — по самому вопросу. Середина у связки 19-21 общая
+        # (описание игры повторяется в каждой задаче), и поиск по ней находит все три блока.
+        text = prose(lms_stem)
+        for frag in (text[-140:-20] if len(text) > 200 else "", middle_slice(text)):
+            if not frag:
+                continue
+            hits = [p for p in blocks if frag in prose(strip_html(p[:60000]))]
+            if len(hits) == 1:
+                return hits[0]
+            if len(hits) > 1:
+                # Вложенные блоки: связка целиком тоже содержит фрагмент — берём самый узкий.
+                return min(hits, key=len)
+
+    for part in blocks:
+        if re.search(rf"№\s*{re.escape(task_id)}\b", strip_html(part[:4000])):
+            return part
+    return blocks[0] if blocks else html
+
+
+def src_sdamgia(task_id: str, lms_stem: str = "", oge: bool = False) -> tuple[str, str | None, list[dict]]:
+    # ОГЭ живёт на отдельном домене того же движка: разметка и разбор совпадают.
+    host = "https://inf-oge.sdamgia.ru" if oge else "https://inf-ege.sdamgia.ru"
+    h = fetch(f"{host}/problem?id={task_id}")
+    block = sdamgia_block(h, task_id, lms_stem)
     answer = None
-    m = re.search(r'<div class="answer"[^>]*>(.{0,300}?)</div>', h, re.S)
+    m = re.search(r'<div class="answer"[^>]*>(.{0,300}?)</div>', block, re.S)
     if m:
         m2 = re.search(r"Ответ:?\s*(.+)", strip_html(m.group(1)))
         if m2:
             answer = m2.group(1).strip().rstrip(".")
-    m = re.search(r'class="prob_maindiv"[^>]*>(.{0,60000}?)<div class="answer"', h, re.S)
-    block = m.group(1) if m else h
+    m = re.search(r'class="prob_maindiv"[^>]*>(.{0,60000}?)<div class="answer"', block, re.S)
+    block = m.group(1) if m else block
     text = strip_html(block)
     text = sdamgia_trim_header(text)
     cut = re.search(r"\bРешение\b", text)
@@ -217,7 +255,7 @@ def src_sdamgia(task_id: str) -> tuple[str, str | None, list[dict]]:
     files = []
     for href in re.findall(r'href="([^"]+)"', block):
         if "get_file?id=" in href or Path(href).suffix.lower().lstrip(".") in ALLOWED_EXT - {"png", "jpg", "jpeg", "gif", "svg", "webp"}:
-            url = href if href.startswith("http") else "https://inf-ege.sdamgia.ru" + href
+            url = href if href.startswith("http") else host + href
             files.append({"url": url, "name": ""})
     return text, answer, files
 
@@ -362,6 +400,9 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
         try:
             if src == "yandex":
                 text, answer, files = src_yandex(str(sid), it["stem"])
+            elif src == "sdamgia":
+                # Условие нужно, чтобы выбрать нужную задачу из связки 19-21 на странице.
+                text, answer, files = src_sdamgia(str(sid), it["stem"])
             else:
                 text, answer, files = GETTERS[src](str(sid))
             time.sleep(PAUSE_SEC)
