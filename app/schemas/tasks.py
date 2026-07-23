@@ -166,6 +166,13 @@ class TaskUpsertItem(BaseModel):
       - CREATE-ветка: явное число → триггер сдвинет соседей; NULL/None → MAX+1.
       - UPDATE-ветка: явное число → переместить; None → позицию НЕ менять.
         См. tasks_service.bulk_upsert.
+
+    `requirement_level`:
+      - поле НЕ передано: CREATE ставит `required`, UPDATE уровень НЕ меняет
+        (tsk-377 — иначе переиздание задания сбрасывало уровень методиста);
+      - поле передано явно: применяется и на CREATE, и на UPDATE.
+      Эндпоинт сериализует элементы с `exclude_unset=True`, поэтому «не
+      передано» и «передано required» — разные случаи.
     """
     external_uid: str
     course_id: int

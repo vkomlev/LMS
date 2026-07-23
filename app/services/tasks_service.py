@@ -217,6 +217,10 @@ class TasksService(BaseService[Tasks]):
 
         Валидирует task_content и solution_rules перед сохранением.
 
+        Семантика «поле не передано» (ключа нет в словаре) — «не менять» —
+        действует для ``order_position`` и ``requirement_level`` (tsk-377).
+        Остальные поля UPDATE перезаписывает значением из payload.
+
         :param db: асинхронная сессия БД.
         :param items: список словарей с полями задачи
                       (external_uid, course_id, difficulty_id, task_content,
@@ -310,8 +314,27 @@ class TasksService(BaseService[Tasks]):
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
                     "is_active": data.get("is_active", True),
-                    "requirement_level": data.get("requirement_level", "required"),
                 }
+                # UPDATE: уровень обязательности перезаписываем ТОЛЬКО при явной
+                # передаче — «ключа нет в payload» значит «не менять» (tsk-377),
+                # та же семантика, что у order_position ниже. Ни один конвейер
+                # поля не шлёт (TaskPayload в ContentBackbone, парсер Google
+                # Sheets), а схема API подставляла дефолт `required` — поэтому
+                # любое переиздание молча возвращало задание в основной поток
+                # ученика (так эродировала простановка tsk-112). Отличить «не
+                # передали» от «передали required» позволяет `exclude_unset=True`
+                # на эндпоинте (api/v1/tasks_extra.py).
+                if "requirement_level" in data:
+                    obj_in["requirement_level"] = data["requirement_level"]
+                elif existing_course_id != data["course_id"] and await self._is_hard_twin_course(
+                    db, existing_course_id
+                ):
+                    # Исключение: задание ВЫХОДИТ из блока сложных (переклассификация
+                    # HARD → более лёгкий уровень уводит его обратно в номерной курс).
+                    # `recommended` там поставил блок, а не методист (tsk-347), поэтому
+                    # уровень снимается вместе с блоком — иначе задание вернулось бы в
+                    # основной курс, но осталось вне зачёта и вне next-item.
+                    obj_in["requirement_level"] = "required"
                 # UPDATE: order_position пробрасываем ТОЛЬКО при явном значении.
                 # None в payload означает «поле не передано, позицию не менять».
                 explicit_order_position = data.get("order_position") is not None
@@ -404,6 +427,28 @@ class TasksService(BaseService[Tasks]):
             if int(course_id) in all_course_ids:
                 twin_course_ids.add(int(course_id))
         return twins, twin_course_ids
+
+    async def _is_hard_twin_course(self, db: AsyncSession, course_id: int) -> bool:
+        """Является ли курс подкурсом сложных заданий (tsk-347).
+
+        Проверка по данным (``course_uid LIKE 'lms:tsk347:hard:%'``), а не по
+        списку id в коде — заведут блок сложных ещё одному курсу, править сервис
+        не нужно. Вызывается только при переезде задания между курсами, поэтому
+        на обычной доливке лишнего запроса нет.
+
+        :param course_id: id курса, в котором задание лежало ДО этого импорта.
+        :return: True, если курс — подкурс сложных.
+        """
+        row = (
+            await db.execute(
+                text(
+                    "SELECT 1 FROM courses "
+                    "WHERE id = :course_id AND course_uid LIKE :prefix || '%'"
+                ),
+                {"course_id": course_id, "prefix": HARD_TWIN_UID_PREFIX},
+            )
+        ).first()
+        return row is not None
 
     async def _reorder_tasks_by_difficulty(
         self, db: AsyncSession, course_id: int

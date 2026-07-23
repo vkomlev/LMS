@@ -29783,7 +29783,7 @@
           "task_content"
         ],
         "title": "TaskUpsertItem",
-        "description": "Один элемент для массового upsert'а задачи.\nПоля соответствуют структуре TaskCreate, плюс обязательный external_uid.\n\n`order_position`:\n  - CREATE-ветка: явное число → триггер сдвинет соседей; NULL/None → MAX+1.\n  - UPDATE-ветка: явное число → переместить; None → позицию НЕ менять.\n    См. tasks_service.bulk_upsert."
+        "description": "Один элемент для массового upsert'а задачи.\nПоля соответствуют структуре TaskCreate, плюс обязательный external_uid.\n\n`order_position`:\n  - CREATE-ветка: явное число → триггер сдвинет соседей; NULL/None → MAX+1.\n  - UPDATE-ветка: явное число → переместить; None → позицию НЕ менять.\n    См. tasks_service.bulk_upsert.\n\n`requirement_level`:\n  - поле НЕ передано: CREATE ставит `required`, UPDATE уровень НЕ меняет\n    (tsk-377 — иначе переиздание задания сбрасывало уровень методиста);\n  - поле передано явно: применяется и на CREATE, и на UPDATE.\n  Эндпоинт сериализует элементы с `exclude_unset=True`, поэтому «не\n  передано» и «передано required» — разные случаи."
       },
       "TaskValidateRequest": {
         "properties": {

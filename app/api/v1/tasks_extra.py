@@ -315,7 +315,12 @@ async def bulk_upsert_tasks_endpoint(
     """
     raw_results = await tasks_service.bulk_upsert(
         db,
-        items=[item.model_dump() for item in payload.items],
+        # exclude_unset: «поле не передали» ≠ «передали значение по умолчанию».
+        # Без этого сервис не мог отличить одно от другого и при UPDATE
+        # возвращал `requirement_level` в дефолтный `required` на каждом
+        # переиздании задания (tsk-377). Поля, которые клиент прислал явно,
+        # в словаре остаются и перезаписываются как раньше.
+        items=[item.model_dump(exclude_unset=True) for item in payload.items],
     )
 
     results = [

@@ -213,7 +213,13 @@ class MaterialsService(BaseService[Materials]):
         return await self.repo.get_stats_by_course(db, course_id)
 
     def _material_unchanged(self, existing: Materials, item: MaterialsBulkUpsertItem) -> bool:
-        """Сравнение снимка полей (для статуса unchanged без лишнего UPDATE)."""
+        """Сравнение снимка полей (для статуса unchanged без лишнего UPDATE).
+
+        `requirement_level` участвует в сравнении только если клиент прислал
+        поле явно (tsk-377): иначе материал с уровнем методиста считался бы
+        изменённым на каждом переиздании — при том что UPDATE уровень уже не
+        трогает, и статус `updated` был бы неправдой.
+        """
         if existing.title != item.title:
             return False
         if (existing.description or "") != (item.description or ""):
@@ -224,7 +230,10 @@ class MaterialsService(BaseService[Materials]):
             return False
         if bool(existing.is_active) != bool(item.is_active):
             return False
-        if (existing.requirement_level or "required") != item.requirement_level:
+        if (
+            "requirement_level" in item.model_fields_set
+            and (existing.requirement_level or "required") != item.requirement_level
+        ):
             return False
         if item.order_position is not None and existing.order_position != item.order_position:
             return False
@@ -371,12 +380,21 @@ class MaterialsService(BaseService[Materials]):
                         "caption": item.caption,
                         "order_position": item.order_position,
                         "is_active": item.is_active,
-                        "requirement_level": item.requirement_level,
                         "external_uid": item.external_uid,
                     }
+                    # Уровень обязательности при UPDATE перезаписываем ТОЛЬКО
+                    # при явной передаче (tsk-377): payload-модели конвейеров
+                    # поля не имеют (MaterialPayload в ContentBackbone), а схема
+                    # подставляет дефолт `required` — без этой развилки любое
+                    # переиздание материала сбрасывало уровень методиста.
+                    # `model_fields_set` здесь — ровно ключи входного JSON:
+                    # сервис валидирует сырые словари сам (см. эндпоинт).
+                    level_given = "requirement_level" in item.model_fields_set
                     row_key = (cid, ext)
                     existing = existing_map.get(row_key)
                     if existing:
+                        if level_given:
+                            payload_data["requirement_level"] = item.requirement_level
                         if self._material_unchanged(existing, item):
                             db_by_key[key] = MaterialsBulkUpsertResultItem(
                                 course_id=cid,
@@ -395,7 +413,13 @@ class MaterialsService(BaseService[Materials]):
                                 material_id=existing.id,
                             )
                     else:
-                        new_m = await self.repo.create(db, payload_data, commit=False)
+                        # CREATE: уровень ставим всегда — не передан, значит
+                        # дефолт схемы `required` (поведение прежнее).
+                        new_m = await self.repo.create(
+                            db,
+                            {**payload_data, "requirement_level": item.requirement_level},
+                            commit=False,
+                        )
                         existing_map[row_key] = new_m
                         db_by_key[key] = MaterialsBulkUpsertResultItem(
                             course_id=cid,

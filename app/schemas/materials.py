@@ -184,7 +184,15 @@ class MaterialsBulkUpsertItem(BaseModel):
         description="Позиция в курсе; None — поведение как при CRUD (триггер БД)",
     )
 
-    requirement_level: RequirementLevel = "required"
+    requirement_level: RequirementLevel = Field(
+        "required",
+        description=(
+            "Уровень обязательности. Поле не передано: при создании ставится "
+            "`required`, при обновлении уровень НЕ меняется (tsk-377 — иначе "
+            "переиздание материала сбрасывало уровень методиста). Передано "
+            "явно — применяется в обоих случаях."
+        ),
+    )
 
     @field_validator("external_uid", mode="before")
     @classmethod
