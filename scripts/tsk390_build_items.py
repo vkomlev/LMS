@@ -66,7 +66,14 @@ WITH scope AS (
          t.task_content->>'source_url'    AS source_url,
          ( ((t.task_content->>'stem')||' '||coalesce(t.task_content->>'attached_file_paths','')||' '
             ||coalesce(t.task_content->>'media','')||' '||coalesce(t.task_content->>'code',''))
-            ~* '[0-9a-f]{64}\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)' ) AS has_data_file
+            ~* '[0-9a-f]{64}\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)'
+           -- Файл бывает приложен ПРЯМОЙ внешней ссылкой (авторские задания курса ведут на
+           -- victor-komlev.ru/wp-content/uploads/...). Ученику она работает так же. Без этой
+           -- ветки 17 авторских заданий попали в кандидаты зря, и одной группе привязался
+           -- ЧУЖОЙ файл (03.ods с sdamgia вместо авторского 3.ods) — откачено, tsk-390.
+           OR (t.task_content->>'stem')
+              ~* 'href="https?://[^"]+\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)"'
+         ) AS has_data_file
   FROM tasks t
   JOIN courses c ON c.id = t.course_id
   WHERE t.is_active

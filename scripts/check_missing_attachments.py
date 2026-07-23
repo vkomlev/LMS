@@ -89,6 +89,14 @@ WHERE t.is_active
         (t.task_content->>'stem') || ' ' || coalesce(t.task_content->>'attached_file_paths','')
         ~* '/api/v1/media/[0-9a-f]{{64}}\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)'
       )
+  -- Файл бывает приложен и ПРЯМОЙ внешней ссылкой (авторские задания курса ссылаются на
+  -- victor-komlev.ru/wp-content/uploads/...). Для ученика она работает так же, поэтому
+  -- задание с ней НЕ считается нерешаемым. Без этого условия чек требовал бы тащить копию
+  -- в CAS там, где файл уже есть, — так и вышло в tsk-390 с 17 авторскими заданиями.
+  AND NOT (
+        (t.task_content->>'stem')
+        ~* 'href="https?://[^"]+\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)"'
+      )
 ORDER BY t.course_id, t.id
 """
 
