@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import re
+from collections import Counter
 from typing import List, Optional, Set, Dict
 
 from app.schemas.task_content import TaskContent, TaskType
@@ -105,6 +106,8 @@ class CheckingService:
             return self._check_quiz(task_content, solution_rules, answer)
         if task_type in ("SA", "SA_COM"):
             return self._check_short_answer(task_content, solution_rules, answer)
+        if task_type == "TBL_COM":
+            return self._check_table_answer(task_content, solution_rules, answer)
         if task_type == "TA":
             return self._check_text_answer(task_content, solution_rules, answer)
 
@@ -655,6 +658,247 @@ class CheckingService:
             details=details,
             feedback=feedback,
         )
+
+    # ---------- Проверка TBL_COM (табличный ответ) ----------
+
+    def _check_table_answer(
+        self,
+        task_content: TaskContent,
+        solution_rules: SolutionRules,
+        answer: StudentAnswer,
+    ) -> CheckResult:
+        """
+        Проверка табличного ответа (TBL_COM, tsk-366).
+
+        Ответ ученика и эталон разбираются на ЯЧЕЙКИ по пробельным символам, и
+        сравниваются ячейка с ячейкой. Благодаря этому «10 2786», «10  2786» и
+        «10\\n2786» — один и тот же ответ: ученику больше не нужно угадывать
+        разделитель, ради чего тип и заведён.
+
+        Правила берутся из того же блока `short_answer`, что у SA/SA_COM: эталон
+        в `accepted_answers`, шаги нормализации применяются к каждой ячейке
+        отдельно. Поэтому перевод существующего задания из SA_COM в TBL_COM —
+        смена типа без правки правил, и проверка от этого может только
+        расшириться, но не сузиться (см. тест-инвариант в
+        tests/test_checking_table_tbl_com_tsk366.py).
+
+        Настройки: `solution_rules.table.row_order_matters` (по умолчанию True —
+        порядок рядов важен) и общий `solution_rules.scoring_mode`
+        (`all_or_nothing` по умолчанию — как на ЕГЭ; `partial` даёт балл
+        пропорционально числу верных рядов).
+        """
+        value_raw = answer.response.value or ""
+        missing_answer = not value_raw.strip()
+
+        # Паритет с SA_COM (tsk-230): обязательная ручная проверка — без авто-вердикта.
+        if solution_rules.manual_review_required:
+            return CheckResult(
+                is_correct=None,
+                score=0,
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=None,
+            )
+
+        rules: Optional[ShortAnswerRules] = solution_rules.short_answer
+
+        if not rules or (not rules.accepted_answers and not (rules.use_regex and rules.regex)):
+            # Эталона нет — сверять нечем, ведём себя как SA_COM без правил.
+            penalty = solution_rules.penalties.missing_answer if missing_answer else 0
+            return CheckResult(
+                is_correct=None,
+                score=max(0, 0 - penalty),
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=None,
+            )
+
+        if missing_answer:
+            final_score = max(0, 0 - solution_rules.penalties.missing_answer)
+            return CheckResult(
+                is_correct=False,
+                score=final_score,
+                max_score=solution_rules.max_score,
+                details=CheckResultDetails(matched_short_answer=None),
+                feedback=self._generate_feedback_table(
+                    is_correct=False,
+                    base_score=0,
+                    max_score=solution_rules.max_score,
+                    cells_given=0,
+                    columns=self._table_columns(task_content),
+                ),
+            )
+
+        columns = self._table_columns(task_content)
+        order_matters = (
+            solution_rules.table.row_order_matters if solution_rules.table else True
+        )
+        cells = self._table_cells(value_raw, rules.normalization)
+
+        base_score = 0
+        matched_value: Optional[str] = None
+
+        # Регулярное выражение — паритет с SA: применяется к ответу, сведённому
+        # к канонической однострочной записи (ячейки через один пробел).
+        if rules.use_regex and rules.regex:
+            try:
+                if re.compile(rules.regex).fullmatch(" ".join(cells)):
+                    base_score = solution_rules.max_score
+                    matched_value = value_raw
+            except re.error:
+                pass
+
+        if base_score < solution_rules.max_score:
+            for accepted in rules.accepted_answers:
+                expected = self._table_cells(accepted.value, rules.normalization)
+                score = self._score_table(
+                    cells=cells,
+                    expected=expected,
+                    full_score=accepted.score,
+                    columns=columns,
+                    order_matters=order_matters,
+                    partial=solution_rules.scoring_mode == "partial",
+                )
+                if score > base_score:
+                    base_score = score
+                    matched_value = accepted.value
+
+        is_correct = base_score == solution_rules.max_score if base_score > 0 else False
+
+        penalty = 0
+        if solution_rules.penalties and base_score == 0:
+            penalty += solution_rules.penalties.wrong_answer
+        final_score = max(0, base_score - penalty)
+
+        return CheckResult(
+            is_correct=is_correct,
+            score=final_score,
+            max_score=solution_rules.max_score,
+            details=CheckResultDetails(matched_short_answer=matched_value),
+            feedback=self._generate_feedback_table(
+                is_correct=is_correct,
+                base_score=base_score,
+                max_score=solution_rules.max_score,
+                cells_given=len(cells),
+                columns=columns,
+            ),
+        )
+
+    @staticmethod
+    def _table_columns(task_content: TaskContent) -> int:
+        """Число столбцов в ряду: из раскладки задания, по умолчанию 2."""
+        if task_content.table and task_content.table.columns > 0:
+            return task_content.table.columns
+        return 2
+
+    @classmethod
+    def _table_cells(cls, value: str, steps: List[str]) -> List[str]:
+        """
+        Разбирает табличный ответ на нормализованные ячейки.
+
+        Разделитель — ЛЮБАЯ последовательность пробельных символов, поэтому
+        пробел, несколько пробелов, табуляция и перевод строки равнозначны.
+        Шаги нормализации применяются к каждой ячейке отдельно.
+
+        Пустые после нормализации ячейки отбрасываются. Это не косметика: при
+        `strip_punctuation` одиноко стоящая запятая («1 , 2») превращается в
+        пустую ячейку и сдвинула бы всю таблицу — ответ, который SA_COM засчитал
+        бы, стал бы неверным. Отбрасывание держит обещание «проверка TBL_COM не
+        строже проверки SA_COM на тех же правилах».
+        """
+        cells = [cls._normalize_text(cell, steps) for cell in value.split()]
+        return [cell for cell in cells if cell != ""]
+
+    @staticmethod
+    def _score_table(
+        cells: List[str],
+        expected: List[str],
+        full_score: int,
+        columns: int,
+        order_matters: bool,
+        partial: bool,
+    ) -> int:
+        """
+        Считает балл за таблицу относительно одного эталона.
+
+        Args:
+            cells: Ячейки ответа ученика (нормализованные).
+            expected: Ячейки эталона (нормализованные).
+            full_score: Балл за полное совпадение с этим эталоном.
+            columns: Число столбцов в ряду (нужно, когда порядок рядов не важен
+                или считается частичный балл).
+            order_matters: Важен ли порядок рядов.
+            partial: Режим частичного балла (`scoring_mode='partial'`).
+
+        Returns:
+            Начисленный балл (0..full_score).
+        """
+        def rows(flat: List[str]) -> List[tuple[str, ...]]:
+            step = max(1, columns)
+            return [tuple(flat[i:i + step]) for i in range(0, len(flat), step)]
+
+        if not expected:
+            return 0
+
+        if order_matters:
+            exact = cells == expected
+        else:
+            exact = Counter(rows(cells)) == Counter(rows(expected))
+
+        if exact:
+            return full_score
+        if not partial:
+            return 0
+
+        # Частичный балл: доля совпавших рядов эталона.
+        expected_rows = rows(expected)
+        student_rows = rows(cells)
+        if order_matters:
+            hit = sum(
+                1
+                for i, row in enumerate(expected_rows)
+                if i < len(student_rows) and student_rows[i] == row
+            )
+        else:
+            common = Counter(student_rows) & Counter(expected_rows)
+            hit = sum(common.values())
+        return int(full_score * hit / len(expected_rows))
+
+    def _generate_feedback_table(
+        self,
+        is_correct: bool,
+        base_score: int,
+        max_score: int,
+        cells_given: int,
+        columns: int,
+    ) -> Optional[CheckFeedback]:
+        """
+        Обратная связь по табличному ответу.
+
+        При неверном ответе дополнительно сообщаем, сколько значений система
+        разобрала. Ученику это нужно, чтобы отличить ошибку в вычислениях от
+        ошибки ввода — раньше он не видел ни того, ни другого.
+        """
+        if is_correct:
+            general = "Отлично! Ваш ответ правильный."
+        elif base_score > 0:
+            general = (
+                f"Ваш ответ частично правильный. Набрано {base_score} из {max_score} баллов."
+            )
+        elif cells_given == 0:
+            general = "Ответ пуст. Введите значения таблицы."
+        else:
+            rows_hint = ""
+            if columns > 1 and cells_given % columns != 0:
+                rows_hint = (
+                    f" В ряду должно быть {columns} значения, а всего значений "
+                    f"{cells_given} — ряды заполнены не до конца."
+                )
+            general = (
+                f"Ответ неверен. Система разобрала {cells_given} значений.{rows_hint}"
+            )
+
+        return CheckFeedback(general=general, by_option=None)
 
     @classmethod
     def _matches_short_answer(

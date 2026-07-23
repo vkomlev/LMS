@@ -62,7 +62,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.current_user import CurrentUser
-from app.schemas.task_content import QUIZ_TASK_TYPES
+from app.schemas.task_content import (
+    QUIZ_TASK_TYPES,
+    MANUAL_REVIEW_TASK_TYPES as _MANUAL_REVIEW_TASK_TYPES,
+)
 from app.services import audit_service
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
@@ -78,7 +81,8 @@ REVOKE_REASON = "manual_progress_revoked"
 #: Провенанс реального прохождения ученика (дефолт колонки `source`).
 SYSTEM_SOURCE = "system"
 #: Типы заданий с ручной проверкой преподавателем (tsk-336: pending_review).
-MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TA")
+#: Реэкспорт единого списка из схемы, чтобы whitelist не разъезжался (tsk-366).
+MANUAL_REVIEW_TASK_TYPES = _MANUAL_REVIEW_TASK_TYPES
 #: Фильтр обхода — тот же, что у учебного движка (см. `compute_course_state`).
 _REQUIREMENT_LEVELS = ("required", "skippable")
 #: Максимальная длина комментария преподавателя (обрезается, а не отклоняется).

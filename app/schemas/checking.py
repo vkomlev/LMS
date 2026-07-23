@@ -24,7 +24,7 @@ def _normalize_answer_type(v: Any) -> TaskType:
             "Алиас будет удалён в будущей версии."
         )
         return "SA_COM"
-    if v not in ("SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"):
+    if v not in ("SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"):
         raise ValueError(f"Недопустимый тип ответа: {v!r}")
     return v
 
@@ -36,6 +36,8 @@ class StudentResponse(BaseModel):
     Для разных типов задач используются разные поля:
     - SC/MC: selected_option_ids;
     - SA/SA_COM: value; для типов с комментарием (SA_COM и т.п.) — опционально comment;
+    - TBL_COM: value — таблица одной строкой: ячейки ряда через пробел, ряды через
+      перевод строки (любые пробельные символы допустимы, сравнение поячеечное);
     - TA: text.
     """
 
@@ -46,8 +48,11 @@ class StudentResponse(BaseModel):
     )
     value: Optional[str] = Field(
         default=None,
-        description="Краткий текстовый/числовой ответ (SA/SA_COM).",
-        examples=["42", "Python", None],
+        description=(
+            "Краткий текстовый/числовой ответ (SA/SA_COM) либо табличный ответ "
+            "(TBL_COM): ячейки ряда через пробел, ряды через перевод строки."
+        ),
+        examples=["42", "Python", "10 2786\n12 3140", None],
     )
     text: Optional[str] = Field(
         default=None,

@@ -57,6 +57,10 @@ class ShortAnswerAccepted(BaseModel):
 class ShortAnswerRules(BaseModel):
     """
     Правила проверки короткого ответа (SA/SA_COM).
+
+    tsk-366: тот же блок обслуживает табличный ответ TBL_COM — эталон лежит в
+    `accepted_answers` строкой (ячейки через пробел, ряды через перевод строки),
+    а шаги нормализации применяются к КАЖДОЙ ячейке отдельно.
     """
 
     normalization: List[NormalizationStep] = Field(
@@ -99,6 +103,34 @@ class ShortAnswerRules(BaseModel):
         default=None,
         description="Регулярное выражение для проверки ответа (если use_regex = true).",
         examples=[None, r"^\d+$", r"^[A-Z][a-z]+$"],
+    )
+
+
+class TableAnswerRules(BaseModel):
+    """
+    Настройки сравнения табличного ответа (TBL_COM, tsk-366).
+
+    Сам эталон и шаги нормализации живут в общем блоке `short_answer` — том же,
+    что у SA/SA_COM. Это осознанно: 210 заданий уже хранят табличный ответ строкой
+    в `accepted_answers` и работают, поэтому перевод в TBL_COM обязан быть сменой
+    ТИПА, а не переписыванием правил. Здесь — только то, чего у короткого ответа нет.
+
+    Режим начисления баллов отдельным полем не заводится: для этого уже есть
+    `SolutionRules.scoring_mode` (`all_or_nothing` по умолчанию — как на реальном
+    ЕГЭ, где №25 оценивается в 1 балл целиком; `partial` даёт балл пропорционально
+    числу верных рядов).
+    """
+
+    row_order_matters: bool = Field(
+        default=True,
+        description=(
+            "Важен ли порядок рядов. True (по умолчанию) — ответ сверяется как "
+            "последовательность: в №25 ряды упорядочены условием, в №26 порядок "
+            "задан смыслом. False — ряды сверяются как мультимножество (порядок "
+            "любой, но количество повторов значимо); ячейки ВНУТРИ ряда при этом "
+            "всё равно упорядочены, потому что столбцы разные по смыслу."
+        ),
+        examples=[True, False],
     )
 
 
@@ -254,6 +286,15 @@ class SolutionRules(BaseModel):
     short_answer: Optional[ShortAnswerRules] = Field(
         default=None,
         description="Правила проверки короткого ответа (SA/SA_COM).",
+    )
+
+    # Для табличного ответа (TBL_COM); эталон берётся из short_answer
+    table: Optional[TableAnswerRules] = Field(
+        default=None,
+        description=(
+            "Настройки сравнения табличного ответа (TBL_COM, tsk-366). Отсутствие "
+            "блока = поведение по умолчанию (порядок рядов важен)."
+        ),
     )
 
     # Для развёрнутого ответа

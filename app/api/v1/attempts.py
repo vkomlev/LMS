@@ -35,7 +35,7 @@ from app.schemas.checking import (
     CheckResult,
     CheckFeedback,
 )
-from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
+from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES, COMMENT_TASK_TYPES
 
 from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
@@ -645,8 +645,9 @@ async def submit_attempt_answers(
         #
         # Если попытка истекла по времени — не подменяем (overdue → честный
         # FAILED, как для остальных типов).
+        #   - TBL_COM (tsk-366) — тот же тип «с комментарием», ведёт себя как SA_COM.
         optimistic_manual = task_content.type == "TA" or (
-            task_content.type == "SA_COM" and check_result.is_correct is None
+            task_content.type in COMMENT_TASK_TYPES and check_result.is_correct is None
         )
         if optimistic_manual and not attempt.time_expired:
             check_result = CheckResult(

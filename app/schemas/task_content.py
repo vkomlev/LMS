@@ -5,11 +5,28 @@ from typing import Dict, List, Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"]
+TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"]
 
 # Типы квиз-вопросов со шкалами (tsk-122, ADR-0003): без «правильного» варианта,
 # за каждый выбор начисляются баллы по шкалам.
 QUIZ_TASK_TYPES: tuple[str, ...] = ("SC_Qw", "MC_Qw")
+
+# Типы с кратким ответом в поле `value` и правилами в `solution_rules.short_answer`
+# (tsk-366: TBL_COM — тот же блок правил, но сравнение поячеечное).
+SHORT_ANSWER_TASK_TYPES: tuple[str, ...] = ("SA", "SA_COM", "TBL_COM")
+
+# Типы «с комментарием»: ученик прикладывает пояснение/код и файл, преподаватель
+# может пересмотреть ответ вручную. TBL_COM заведён по образцу SA_COM (tsk-366),
+# поэтому везде, где whitelist перечисляет SA_COM, он идёт рядом.
+COMMENT_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM")
+
+# Типы, чьи ответы проходят через очередь ручной проверки преподавателя
+# (обязательную при manual_review_required, опциональную — вторичным просмотром).
+MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM", "TA")
+
+# Типы с табличным ответом (tsk-366): значения разделены пробельными символами —
+# ячейки в ряду пробелом, ряды переводом строки.
+TABLE_TASK_TYPES: tuple[str, ...] = ("TBL_COM",)
 
 
 class TaskMedia(BaseModel):
@@ -75,6 +92,41 @@ class TaskOption(BaseModel):
     )
 
 
+class TaskTableLayout(BaseModel):
+    """
+    Раскладка табличного ответа (TBL_COM, tsk-366).
+
+    Живёт в `task_content`, а НЕ в правилах проверки, потому что это то, что
+    клиент обязан показать ученику: сколько столбцов в ряду и как они называются.
+    `solution_rules` клиенту не отдаётся (защита от слива ответа), поэтому
+    раскладка обязана лежать здесь.
+
+    Число СТОЛБЦОВ раскрывать безопасно: оно задано условием задачи («выпишите
+    число и результат деления»). Число РЯДОВ намеренно не хранится — в задании
+    №25 ЕГЭ количество найденных чисел само по себе часть ответа, и фиксированная
+    сетка выдала бы его ученику.
+    """
+
+    columns: int = Field(
+        default=2,
+        ge=1,
+        le=9,
+        description=(
+            "Количество столбцов в ряду ответа. Задано условием задачи, "
+            "показывается ученику. Ограничение 9 — практический предел таблицы ЕГЭ."
+        ),
+        examples=[1, 2, 3],
+    )
+    column_titles: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Подписи столбцов для сетки ввода (опционально). Длина должна совпадать "
+            "с `columns`."
+        ),
+        examples=[["число", "результат деления"], None],
+    )
+
+
 class TaskContent(BaseModel):
     """
     Структура JSON-поля tasks.task_content.
@@ -86,8 +138,8 @@ class TaskContent(BaseModel):
 
     type: TaskType = Field(
         ...,
-        description="Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw.",
-        examples=["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"],
+        description="Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw | TBL_COM.",
+        examples=["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"],
     )
     code: Optional[str] = Field(
         default=None,
@@ -153,6 +205,15 @@ class TaskContent(BaseModel):
             ],
             None,
         ],
+    )
+
+    table: Optional[TaskTableLayout] = Field(
+        default=None,
+        description=(
+            "Раскладка табличного ответа (TBL_COM, tsk-366): сколько столбцов в ряду "
+            "и как они подписаны. Для остальных типов не используется. Отсутствие "
+            "блока у TBL_COM означает раскладку по умолчанию (2 столбца)."
+        ),
     )
 
     scales: Optional[List[str]] = Field(
@@ -223,8 +284,16 @@ class TaskContent(BaseModel):
         - SC/MC: должны быть как минимум 2 варианта;
         - SC_Qw/MC_Qw: минимум 2 варианта + объявление scales + scores с ключами из scales;
         - SA/TA: options не обязательны.
+        - TBL_COM: подписи столбцов, если заданы, должны совпадать по числу со `columns`.
         - Проверка уникальности options[].id.
         """
+        if self.table and self.table.column_titles is not None:
+            if len(self.table.column_titles) != self.table.columns:
+                raise ValueError(
+                    f"table.column_titles содержит {len(self.table.column_titles)} подписей "
+                    f"при table.columns={self.table.columns} — числа должны совпадать."
+                )
+
         if self.type in ("SC", "MC"):
             if not self.options or len(self.options) < 2:
                 raise ValueError(

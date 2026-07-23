@@ -8,7 +8,12 @@ import logging
 from typing import Dict, List, Optional, Tuple, Any, get_args
 from urllib.parse import urlparse, parse_qs
 
-from app.schemas.task_content import TaskContent, TaskOption, TaskType
+from app.schemas.task_content import (
+    TaskContent,
+    TaskOption,
+    TaskType,
+    SHORT_ANSWER_TASK_TYPES,
+)
 from app.schemas.solution_rules import (
     SolutionRules,
     PenaltiesRules,
@@ -151,7 +156,11 @@ class SheetsParserService:
         # Парсим тип задачи
         assert task_type is not None  # required=True raises before this point.
         task_type_upper = task_type.upper().strip()
-        if task_type_upper not in ("SC", "MC", "SA", "SA_COM", "TA"):
+        # tsk-366: TBL_COM объявляется генератором ЯВНО — тип не выводится из вида
+        # ответа. Ответ «два числа через пробел» бывает и у обычного SA_COM (вывод
+        # программы в одну строку), и автоопределение перевело бы такие задания в
+        # таблицу ошибочно (принцип tsk-325/tsk-370: не додумывать за источник).
+        if task_type_upper not in ("SC", "MC", "SA", "SA_COM", "TBL_COM", "TA"):
             raise DomainError(
                 detail=f"Неподдерживаемый тип задачи: {task_type}",
                 status_code=400,
@@ -239,8 +248,8 @@ class SheetsParserService:
             "penalties": PenaltiesRules(),  # Дефолтные значения
         }
         
-        # Для SA/SA_COM парсим accepted_answers
-        if task_type_parsed in ("SA", "SA_COM"):
+        # Для SA/SA_COM/TBL_COM парсим accepted_answers (общий блок правил, tsk-366)
+        if task_type_parsed in SHORT_ANSWER_TASK_TYPES:
             accepted_answers = self._parse_accepted_answers(row, column_mapping, max_score)
             if accepted_answers:
                 solution_rules_data["short_answer"] = ShortAnswerRules(
@@ -442,7 +451,7 @@ class SheetsParserService:
                     pass
         
         # Дефолтные значения по типу задачи
-        if task_type in ("SA", "SA_COM"):
+        if task_type in SHORT_ANSWER_TASK_TYPES:
             return self.settings.default_points_short_answer
         return 10  # Дефолт для SC/MC/TA
 

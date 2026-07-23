@@ -614,7 +614,7 @@ async def get_pending_review_results(
         conditions = [
             TaskResults.checked_at.is_(None),
             TaskResults.is_correct.isnot(None),
-            sa_text("tasks.task_content->>'type' = 'SA_COM'"),
+            sa_text("tasks.task_content->>'type' IN ('SA_COM','TBL_COM')"),
             sa_text(
                 "COALESCE((tasks.solution_rules->>'manual_review_required')::boolean, false) = false"
             ),

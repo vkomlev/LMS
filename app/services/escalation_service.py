@@ -86,7 +86,7 @@ async def escalation_cron_tick(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
-                  AND t.task_content->>'type' IN ('SA_COM','TA')
+                  AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
                   -- tsk-210: эскалируем только первично-верные pending (ждут
                   -- вторичной проверки учителя). SA_COM с is_correct=FALSE —
                   -- честный FAILED, не pending. TA всегда is_correct=TRUE.
