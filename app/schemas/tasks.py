@@ -173,6 +173,13 @@ class TaskUpsertItem(BaseModel):
       - поле передано явно: применяется и на CREATE, и на UPDATE.
       Эндпоинт сериализует элементы с `exclude_unset=True`, поэтому «не
       передано» и «передано required» — разные случаи.
+
+    `difficulty_provenance` (tsk-381) — чем обоснован `difficulty_id`:
+      - поле передано: записывается как есть;
+      - поле НЕ передано, а `difficulty_id` меняется: происхождение
+        СБРАСЫВАЕТСЯ в NULL. Старое обоснование описывало прежнее значение и
+        после смены стало бы ложью — «неизвестно» честнее;
+      - поле НЕ передано и `difficulty_id` не меняется: остаётся как было.
     """
     external_uid: str
     course_id: int
@@ -183,6 +190,7 @@ class TaskUpsertItem(BaseModel):
     is_active: bool = True
     requirement_level: RequirementLevel = "required"
     order_position: int | None = None
+    difficulty_provenance: dict[str, Any] | None = None
 
 
 class TaskBulkUpsertRequest(BaseModel):

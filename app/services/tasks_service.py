@@ -221,6 +221,11 @@ class TasksService(BaseService[Tasks]):
         действует для ``order_position`` и ``requirement_level`` (tsk-377).
         Остальные поля UPDATE перезаписывает значением из payload.
 
+        Исключение — ``difficulty_provenance`` (tsk-381): если обоснование не
+        передали, а ``difficulty_id`` изменился, происхождение сбрасывается в
+        NULL. Сохранить его значило бы оставить поле, которое уверенно
+        описывает уже не то значение.
+
         :param db: асинхронная сессия БД.
         :param items: список словарей с полями задачи
                       (external_uid, course_id, difficulty_id, task_content,
@@ -292,6 +297,9 @@ class TasksService(BaseService[Tasks]):
                     "is_active": data.get("is_active", True),
                     "requirement_level": data.get("requirement_level", "required"),
                     "order_position": data.get("order_position"),
+                    # tsk-381: без явного обоснования уровень остаётся
+                    # неподтверждённым — это честнее выдуманного происхождения.
+                    "difficulty_provenance": data.get("difficulty_provenance"),
                 }
                 # используем наш переопределенный create для валидации
                 task = await self.create(db, obj_in)
@@ -324,6 +332,16 @@ class TasksService(BaseService[Tasks]):
                 # ученика (так эродировала простановка tsk-112). Отличить «не
                 # передали» от «передали required» позволяет `exclude_unset=True`
                 # на эндпоинте (api/v1/tasks_extra.py).
+                # tsk-381: происхождение оценки сложности не должно пережить
+                # смену самой оценки — иначе поле будет уверенно врать о том,
+                # чем обосновано текущее значение. Явно переданное обоснование
+                # применяется всегда; при молчаливой смене уровня импортом
+                # происхождение сбрасывается в «неизвестно».
+                if "difficulty_provenance" in data:
+                    obj_in["difficulty_provenance"] = data["difficulty_provenance"]
+                elif data["difficulty_id"] != existing_difficulty_id:
+                    obj_in["difficulty_provenance"] = None
+
                 if "requirement_level" in data:
                     obj_in["requirement_level"] = data["requirement_level"]
                 elif existing_course_id != data["course_id"] and await self._is_hard_twin_course(

@@ -117,6 +117,15 @@ class Tasks(Base):
         nullable=False,
         comment="Content requirement level: skippable, recommended, required",
     )
+    difficulty_provenance: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Происхождение difficulty_id (tsk-381): "
+            "{canon: 1|2|3, source, evidence, decided_at, task}. "
+            "NULL = значение ничем не подтверждено"
+        ),
+    )
 
     course: Mapped["Courses"] = relationship(
         "Courses",
