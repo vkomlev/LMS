@@ -272,12 +272,31 @@ def src_polyakov(task_id: str) -> tuple[str, str | None, list[dict]]:
     block = m.group(1) if m else h
     chunks = re.findall(r"changeImageFilePath\(\s*'(.*?)'\s*\)", block, re.S)
     text = strip_html(" ".join(chunks)) if chunks else strip_html(block)
+    # Файл-ссылки внутри changeImageFilePath даны относительно НЕ /school/ege/, а базы из
+    # скрытого поля filePath (JS переписывает `a href="X"` → filePath.value + X). Без этого
+    # префикса ссылка ведёт в 404 (`/school/ege/ege-txt/…` вместо `/cms/files/ege-txt/…`) —
+    # именно поэтому polyakov не отдал ни одного файла ни в tsk-369, ни в первом прогоне
+    # tsk-390. Значение обычно «../../cms/files/» (tsk-390).
+    fp = re.search(r'id=[\'"]filePath[\'"][^>]*value=[\'"]([^\'" >]+)', h)
+    file_base = fp.group(1) if fp else ""
+    page_base = "https://kpolyakov.spb.ru/school/ege/"
     files = []
+    seen_urls: set[str] = set()
     for src_block in ([*chunks, block] if chunks else [block]):
         for href in re.findall(r'href=\\?"([^"\\]+)"', src_block):
             if Path(href).suffix.lower().lstrip(".") in ALLOWED_EXT - {"png", "jpg", "jpeg", "gif", "svg", "webp"}:
-                url = href if href.startswith("http") else urllib.parse.urljoin(
-                    "https://kpolyakov.spb.ru/school/ege/", href)
+                if href.startswith("http"):
+                    url = href
+                else:
+                    # JS префиксует только относительные пути, не начинающиеся с ':' (маркер
+                    # «путь уже абсолютный»); повторяем эту логику перед разрешением base.
+                    rel = href if href.startswith(":") else file_base + href
+                    url = urllib.parse.urljoin(page_base, rel.lstrip(":"))
+                # Один и тот же href встречается и в chunks, и в block — без дедупликации
+                # ученик увидит ссылку на файл дважды (tsk-390).
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
                 files.append({"url": url, "name": Path(href).name})
     return text, answer, files
 

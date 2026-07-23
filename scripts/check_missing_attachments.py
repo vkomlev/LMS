@@ -14,11 +14,17 @@
    со­сто­ит»). Без их снятия поиск теряет целую партию: первичный разбор насчитал
    108 заданий вместо 224 ровно поэтому.
 
-2. **«Файл есть» = ссылка в условии.** Ученику файл виден только ссылкой `/api/v1/media/`
-   внутри `stem`: клиент SPW рисует условие как HTML и поле `attached_file_paths` не
-   читает. Поэтому непустой `attached_file_paths` сам по себе НЕ считается наличием
-   файла — он лишь машинный учёт импорта ContentBackbone, и такое задание попадёт
-   в находки со специальной пометкой.
+2. **«Файл есть» = ссылка на файл ДАННЫХ в условии.** Ученику файл виден только ссылкой
+   `/api/v1/media/` внутри `stem`: клиент SPW рисует условие как HTML и поле
+   `attached_file_paths` не читает. Поэтому непустой `attached_file_paths` сам по себе НЕ
+   считается наличием файла — он лишь машинный учёт импорта ContentBackbone, и такое
+   задание попадёт в находки со специальной пометкой.
+
+   Причём ссылка обязана вести на файл ДАННЫХ (xlsx|xls|ods|csv|txt|odt|docx|doc|zip).
+   Проверка «есть любая /api/v1/media/» была слишком мягкой: у заданий №3 «базы данных»
+   в условии лежат PNG-картинки таблицы, и чек считал их за файл, хотя посчитать по
+   картинке нельзя — нужен xls. Так мимо чека прошли 2131/2132/2134/2135 (tsk-390,
+   тот же класс, что каталожная партия КомпЕГЭ с 4 PNG вместо xlsx в tsk-350).
 
 3. **`task_content.media` не считается вовсе.** Это поле пусто у всех 6303 активных
    заданий (`[]` либо отсутствует) — механизм не используется ни одним импортом.
@@ -70,7 +76,7 @@ FILE_GATE_RE = (
     r"в текстовом файле)"
 )
 
-SQL_MISSING_ATTACHMENT = f"""
+SQL_MISSING_ATTACHMENT = rf"""
 SELECT t.id, t.course_id, t.external_uid,
        t.task_content->>'type' AS task_type,
        coalesce(jsonb_array_length(t.task_content->'attached_file_paths'), 0) AS meta_paths,
@@ -79,7 +85,10 @@ FROM tasks t
 WHERE t.is_active
   AND lower(replace(regexp_replace(t.task_content->>'stem', '<[^>]+>', ' ', 'g'), chr(173), ''))
       ~ '{FILE_GATE_RE}'
-  AND (t.task_content->>'stem') NOT LIKE '%/api/v1/media/%'
+  AND NOT (
+        (t.task_content->>'stem') || ' ' || coalesce(t.task_content->>'attached_file_paths','')
+        ~* '/api/v1/media/[0-9a-f]{{64}}\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)'
+      )
 ORDER BY t.course_id, t.id
 """
 

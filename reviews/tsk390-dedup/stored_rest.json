@@ -1,0 +1,87 @@
+{
+ "stored": [
+  {
+   "sha_ext": "00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt",
+   "size": 5023,
+   "http": "HTTP 200, Content-Length=5023",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "02f97a1f53bf1873931272b0dd8404f743d362ecb718af5e28237530d5dc7e7d.txt",
+   "size": 90,
+   "http": "HTTP 200, Content-Length=90"
+  },
+  {
+   "sha_ext": "1eccf55698b714774325884fdb6c94c83bae8adccec6ce199cff9d58c3559997.txt",
+   "size": 156107,
+   "http": "HTTP 200, Content-Length=156107"
+  },
+  {
+   "sha_ext": "30de3f8295b23703263de59bb2ff1c8c62d4b225bb0b6ad2eb7c5b5673b3a5b1.txt",
+   "size": 27667,
+   "http": "HTTP 200, Content-Length=27667"
+  },
+  {
+   "sha_ext": "8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt",
+   "size": 14119,
+   "http": "HTTP 200, Content-Length=14119",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9777a7d1d24fa91276bcf6eccf674525eb2038a92d702fdf5f6ab370acff7379.txt",
+   "size": 10828,
+   "http": "HTTP 200, Content-Length=10828"
+  },
+  {
+   "sha_ext": "984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx",
+   "size": 340484,
+   "http": "HTTP 200, Content-Length=340484",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9c57224ef55d626bc785863be73ae13ed82e485ba9652639f8af6fe3d2f106ae.txt",
+   "size": 31727,
+   "http": "HTTP 200, Content-Length=31727"
+  },
+  {
+   "sha_ext": "9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt",
+   "size": 3752,
+   "http": "HTTP 200, Content-Length=3752",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "ad384a43e7e3df1b9e49d09147becc19f001514ad4e5738ca49359268f75a76c.txt",
+   "size": 36036,
+   "http": "HTTP 200, Content-Length=36036",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "c5b803abc78a2d7ca939211618281b27567614881b2abd60e60af9db49aa306d.ods",
+   "size": 10285,
+   "http": "HTTP 200, Content-Length=10285"
+  },
+  {
+   "sha_ext": "ec59ee5f5de2f14cb0e8133ba29986bc4287d95f6d0f334920d014dba70d8460.txt",
+   "size": 31263,
+   "http": "HTTP 200, Content-Length=31263"
+  },
+  {
+   "sha_ext": "f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt",
+   "size": 376351,
+   "http": "HTTP 200, Content-Length=376351",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx",
+   "size": 11282,
+   "http": "HTTP 200, Content-Length=11282",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "ffe801693aa8bd13843a382f32f81f3c62b17a1144a5675027e779e049985ff3.ods",
+   "size": 132250,
+   "http": "HTTP 200, Content-Length=132250"
+  }
+ ],
+ "failed": []
+}

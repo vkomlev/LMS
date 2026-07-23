@@ -77,9 +77,15 @@ async def main(plan_path: Path, stored_path: Path, backup_path: Path, apply: boo
         if missing_rows:
             raise RuntimeError(f"не нашёл активных заданий: {missing_rows}")
 
-        already = [i for i in ids if MEDIA_BASE in (rows[i]["stem"] or "")]
+        # Идемпотентность — ПОФАЙЛОВО, а не по любой media-ссылке. У заданий 3 «базы данных»
+        # в stem уже лежат PNG-картинки таблицы (это НЕ файл-данные): грубая проверка
+        # «MEDIA_BASE in stem» зря пропускала бы их, оставив ученика без xlsx для расчёта
+        # (tsk-390: 2131/2132/2134/2135). Пропускаем задание, только если ВСЕ его
+        # планируемые файлы (по sha_ext) уже стоят в условии — тогда это реальный повтор.
+        already = [t["id"] for t in ready
+                   if all(f["sha_ext"] in (rows[t["id"]]["stem"] or "") for f in t["files"])]
         if already:
-            print(f"  уже со ссылкой (пропускаю, повторный запуск?): {already}")
+            print(f"  все файлы уже привязаны (пропускаю, повторный запуск?): {already}")
             ready = [t for t in ready if t["id"] not in already]
             ids = [t["id"] for t in ready]
         if not ready:

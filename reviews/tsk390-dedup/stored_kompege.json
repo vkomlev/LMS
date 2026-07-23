@@ -1,0 +1,472 @@
+{
+ "stored": [
+  {
+   "sha_ext": "00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt",
+   "size": 5023,
+   "http": "HTTP 200, Content-Length=5023",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "03d8b2101d2f908bdf72aa665847b24d585b4fd5269a86f75cd5b803676c16de.xlsx",
+   "size": 9403,
+   "http": "HTTP 200, Content-Length=9403",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "04f97327fcbefd7522dce089479f471687eea7e0ccb7a632e256e859a7b726d1.xls",
+   "size": 30720,
+   "http": "HTTP 200, Content-Length=30720",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "079321a6a927f74970a70fbd510b5058ac28afa39c89b2d8bdcbc78a63818aaa.txt",
+   "size": 999044,
+   "http": "HTTP 200, Content-Length=999044",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "10c4bad158419866293012d8d085b63844adf5af3fe0acc52ef053f9f7abfea4.xls",
+   "size": 119296,
+   "http": "HTTP 200, Content-Length=119296",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "12cea6e1e3e4457eae4f52feeab7cd462ce2285dabb5b98fac086411c3dd85fc.xlsx",
+   "size": 8354,
+   "http": "HTTP 200, Content-Length=8354",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "1c13857c45d777530c2a6d4197f1ac0019ee03bd47cb4c34fe89981137b6de88.txt",
+   "size": 6794,
+   "http": "HTTP 200, Content-Length=6794",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "1e435c56b00a241127d1431181f6a26b9412a6c9070ba52dead163bb56215c5e.xls",
+   "size": 55808,
+   "http": "HTTP 200, Content-Length=55808",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "210c441fe26230b573c0aa610535105cf61020e8794b12e719bb7aa276f7e2f9.txt",
+   "size": 10241326,
+   "http": "HTTP 200, Content-Length=10241326",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "2522bb7c02efe8c89ee43d6806301ae9c8a73736735d4925793bdd5455a248d1.xls",
+   "size": 21504,
+   "http": "HTTP 200, Content-Length=21504",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "25c78c1c54f7df5916729277784ac491b8d2a6a7db11ac7968479e8bec0aec7d.xlsx",
+   "size": 93054,
+   "http": "HTTP 200, Content-Length=93054",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "2eae9a370040c4a9038fa81ef4ff1a0274af2b9d3820c9b87ce79c0c80954d7e.xls",
+   "size": 27648,
+   "http": "HTTP 200, Content-Length=27648",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "3ec1f3372e4279d59e97227e86074de667ebd43a6d662170a30ea8830df1db01.xls",
+   "size": 602624,
+   "http": "HTTP 200, Content-Length=602624",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "3feec4c13189263762fc26308f8b84d8107d39f3701c54140168153e9e95d1e5.txt",
+   "size": 13587,
+   "http": "HTTP 200, Content-Length=13587",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "47c7ab420dde3c5426ab1e13b9a7063c52f7a95d6595737cd734a3443ccb57f3.xls",
+   "size": 155648,
+   "http": "HTTP 200, Content-Length=155648",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "48e3bf216c04d73f4fe9f4a9f29fc0beb1050b7944456468c1aed1cc6cdceaff.ods",
+   "size": 22207,
+   "http": "HTTP 200, Content-Length=22207",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "4e6322244da44f78d6ab7bc97965e0e4f4c2213ae58f74144d64e9b7eb949a77.txt",
+   "size": 1000325,
+   "http": "HTTP 200, Content-Length=1000325",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "4fcf4d46d7834b4b22181ab5937026cf55a14a4196b1d1455150c5388cd88a5b.xls",
+   "size": 37376,
+   "http": "HTTP 200, Content-Length=37376",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "501744ce25001afe6d0763a52e8ec03e9faa5a2aed9c5d04f9708d4295616bcb.xls",
+   "size": 29184,
+   "http": "HTTP 200, Content-Length=29184",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "50322b4a398948c09be8f37d84d56b249e476d98cbb6e6ecdd1fdd5fe853666a.txt",
+   "size": 100000,
+   "http": "HTTP 200, Content-Length=100000",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "5300e010973c6ae62c7a21e5378aac8ad360db64b574f436e2ff02f154ec0673.xlsx",
+   "size": 10662,
+   "http": "HTTP 200, Content-Length=10662",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "5d4504ee34f60bbded4922b0f93b98f9ae4c0df9184a39aaca5df0d3d638343e.xls",
+   "size": 55808,
+   "http": "HTTP 200, Content-Length=55808",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "5dd8fe68d02e3035a392fc43bcb6f7130e9ecdb5bbdc700478fb1aea510ab0f2.xlsx",
+   "size": 76133,
+   "http": "HTTP 200, Content-Length=76133",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "70ba11aac49a1e795ecf69fab96bd0795c065de216dd507ba4664696b21dd7f4.xls",
+   "size": 33280,
+   "http": "HTTP 200, Content-Length=33280",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "78452d776d40f89a43d7544fe91c097a7b884a823bfa4c0dc414b8d4dab71398.xlsx",
+   "size": 9762,
+   "http": "HTTP 200, Content-Length=9762",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "7ad15b3dd21c6cd93049425eb7e4c0d038dda32196b1a3ee8f39b28f6168024a.xlsx",
+   "size": 235033,
+   "http": "HTTP 200, Content-Length=235033",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "7aeca5642d3853ed93d7891fa54224445d101ccadd40f2356eea5c548d82a987.xls",
+   "size": 602624,
+   "http": "HTTP 200, Content-Length=602624",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "7e904561a4cba88df4a5859f33307ad92ff343d0973e6cc3599554df4bcddd26.txt",
+   "size": 1000000,
+   "http": "HTTP 200, Content-Length=1000000",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "7fde359bea87e8542d8620782a901e72522564c35ab916cda91b61dfa7065577.xls",
+   "size": 30720,
+   "http": "HTTP 200, Content-Length=30720",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "809ba016000177b69dae37e364b233f74b7406cae0e030b641bc5080c9e7be51.xls",
+   "size": 31232,
+   "http": "HTTP 200, Content-Length=31232",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt",
+   "size": 1000000,
+   "http": "HTTP 200, Content-Length=1000000",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "80e0f9c00a053adbfeb546773d2ff87236c443867edbc0e04c75abd3be913706.xls",
+   "size": 155136,
+   "http": "HTTP 200, Content-Length=155136",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "825d7c932bc1bc2e2038423fda08605628b7977692265d6a708b5d77b35601ce.txt",
+   "size": 1000000,
+   "http": "HTTP 200, Content-Length=1000000",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "84378584dc665d8040186f5152dea7626222cb2876603bb51b3f8d01555e69ee.xlsx",
+   "size": 10824,
+   "http": "HTTP 200, Content-Length=10824",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "853635bb43967f7c0e4610a48e731ab27c31e7fe199f961dbdd208585553288c.xls",
+   "size": 28672,
+   "http": "HTTP 200, Content-Length=28672",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "8634b01ddee7da7904023aacfa3d1050541fe7c75a6b4afd096fc72328216a48.txt",
+   "size": 1000022,
+   "http": "HTTP 200, Content-Length=1000022",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "86e62fdeb950ab100f8bf6728a7cdb81fdd8054d95af6c114320a131f79c87fb.txt",
+   "size": 951217,
+   "http": "HTTP 200, Content-Length=951217",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt",
+   "size": 14119,
+   "http": "HTTP 200, Content-Length=14119",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "8e5fa68cd88d4e62d2b453afbd5744e89fa3017cc06cbbe08e1e6ac591d65bbe.docx",
+   "size": 27217,
+   "http": "HTTP 200, Content-Length=27217",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9167e53d9a754dcb3babbb45aa678251cba5fa5052ef78d226a3e94b6cee51c7.xls",
+   "size": 36864,
+   "http": "HTTP 200, Content-Length=36864",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "97387c73424d81b5393c5119ad48eff4092741a7ffd65cfb97cc13151f92368b.xlsx",
+   "size": 8780,
+   "http": "HTTP 200, Content-Length=8780",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "982b22b2c1ccab1e1b52abce4d6b4b59af3da0f41895d79ec9b952e4e228ac65.txt",
+   "size": 436131,
+   "http": "HTTP 200, Content-Length=436131",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx",
+   "size": 340484,
+   "http": "HTTP 200, Content-Length=340484",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "98b9766d8cdd1c261c4b9064e622158d314fd04a15bc28017fc0f146a8a26adb.xls",
+   "size": 23040,
+   "http": "HTTP 200, Content-Length=23040",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9945d3f35c4127768bfe4090fa36d65254e96f4226ec6a0805767601cd69bcf7.xlsx",
+   "size": 10394,
+   "http": "HTTP 200, Content-Length=10394",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9b82460fa3a0963d468093c47f6f844c71f7b074a70b5336637e23abb099fa7d.xls",
+   "size": 119296,
+   "http": "HTTP 200, Content-Length=119296",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt",
+   "size": 3752,
+   "http": "HTTP 200, Content-Length=3752",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "a03db4618b5e868bcb3b1d02b0742f26bd33322829cade9ebdfa574d8accd5b8.xls",
+   "size": 605184,
+   "http": "HTTP 200, Content-Length=605184",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "a522c957b6cd3bbbd8addd7c0387890471991832c437f79c7197916c6d171b71.xlsx",
+   "size": 212889,
+   "http": "HTTP 200, Content-Length=212889",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt",
+   "size": 1000132,
+   "http": "HTTP 200, Content-Length=1000132",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "a87f59e852d5c7531d9ad6a6bc6a12db350aaa978c0ddc50e7e5350473a400d3.txt",
+   "size": 4885,
+   "http": "HTTP 200, Content-Length=4885",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "aab5a2e56358a87bbfc75598497d036f2ad6c51bdcfa7909ee4ad27ea3c98e5e.xls",
+   "size": 52224,
+   "http": "HTTP 200, Content-Length=52224",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "abf0efdaa06a102bff72c120a937be2ae7fcb94e5a942d2d06dad4fd162dbc81.xls",
+   "size": 24576,
+   "http": "HTTP 200, Content-Length=24576",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "b183ab5fae37715ddcd19ffe726a1d663a3755ec9c068d839d41374b6799ac1a.xls",
+   "size": 28160,
+   "http": "HTTP 200, Content-Length=28160",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "b86898af8a279fd1bad152b28a3f84826ec4f415fe76042e2eca3f072124c48d.xls",
+   "size": 7168,
+   "http": "HTTP 200, Content-Length=7168",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "bbc2972f83de6e870f02e5a6da76d861fb5b237ca27863b5efa38edefabb0bd1.xls",
+   "size": 9088,
+   "http": "HTTP 200, Content-Length=9088",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "bd9f439bdcd2bf109321ad7780bcbcd1252352dc0b6538b693d90655257bf0ec.xls",
+   "size": 23552,
+   "http": "HTTP 200, Content-Length=23552",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "be3c5b4a013b7023bd83b37af538ebf410716674a40e5bfb8f165623f9444453.xlsx",
+   "size": 10045,
+   "http": "HTTP 200, Content-Length=10045",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "bea752811ba58bc1eddccf5c9a61761dc0b1ab7745d4579d2801c8675c855d46.xlsx",
+   "size": 8349,
+   "http": "HTTP 200, Content-Length=8349",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "c6b6293e7f09ea218ddc6f938698204f8c5a83d0ef413fc2914fbab4fb27ca52.xlsx",
+   "size": 63496,
+   "http": "HTTP 200, Content-Length=63496",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "ca833f5fd6346c38376fd7d546c9dbb1489846a880531c6b48c8c5c9ec0b07d8.xlsx",
+   "size": 9058,
+   "http": "HTTP 200, Content-Length=9058",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "d064b5b32e3cc57518922166d36050b32cde5e2ecc26f8fbb233a46ac1aa7412.txt",
+   "size": 10000001,
+   "http": "HTTP 200, Content-Length=10000001",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "d0a591812aafc61a68b111b688b10cf333798abd0ba808a2f0e9d95ccaaa2a77.xls",
+   "size": 60928,
+   "http": "HTTP 200, Content-Length=60928",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "d86af8db07679bdd4b5b30b5e08f014fb620df5eb16046a786eaed89328ed500.txt",
+   "size": 7889364,
+   "http": "HTTP 200, Content-Length=7889364",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "da69ba8d74341a2805b766a5fdf8723bbf681dfe6766f2b1da618b29c677eef9.xls",
+   "size": 27648,
+   "http": "HTTP 200, Content-Length=27648",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "dcac378e6d0cbffb686d459b00d48c42aa243352483cdf72549bac323922667d.xls",
+   "size": 32768,
+   "http": "HTTP 200, Content-Length=32768",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "e0f09d65be188500427fda15981e80e850c1ed8f2cb5b8a14a6ef7756cfb17b4.xls",
+   "size": 33280,
+   "http": "HTTP 200, Content-Length=33280",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "e71c1bbf665488d802258e63ba1052d0b89b4086126d56f6fdc8c1af40063829.txt",
+   "size": 900001,
+   "http": "HTTP 200, Content-Length=900001",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "ecd3535548c67b72a14c0ad2d1f1ac95788fcfce73327ce5b2cba45bbf46ffa8.xlsx",
+   "size": 10070,
+   "http": "HTTP 200, Content-Length=10070",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "f08c4264a3cae4eda6ad600f8f6dd747d7b3b2dbf06c6d5f0c9ea699374b0d1e.txt",
+   "size": 31896,
+   "http": "HTTP 200, Content-Length=31896",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt",
+   "size": 376351,
+   "http": "HTTP 200, Content-Length=376351",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "f4e4c5b9f75c28ffde0ed30559c8b451136f1e506074ef52c2062f2397e234d9.xls",
+   "size": 803840,
+   "http": "HTTP 200, Content-Length=803840"
+  },
+  {
+   "sha_ext": "f609b4ea3e45fe79c7e8287654bd1768b9ee7b5dddecce04819d2be382092cb0.txt",
+   "size": 22036,
+   "http": "HTTP 200, Content-Length=22036",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "f78832a80411d34ceb84a3255f04151e064826a15812205e94f24fab2217289d.xls",
+   "size": 15360,
+   "http": "HTTP 200, Content-Length=15360"
+  },
+  {
+   "sha_ext": "f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx",
+   "size": 11282,
+   "http": "HTTP 200, Content-Length=11282"
+  },
+  {
+   "sha_ext": "f8de6087f73348a5313924568d004bdda2d409b474acea3d25a98190cb71e48a.xls",
+   "size": 33792,
+   "http": "HTTP 200, Content-Length=33792"
+  },
+  {
+   "sha_ext": "fcfef8b530e62f2d90b87db89ce4c5d0c9ddb887e69e6e383decc6174c8cc252.txt",
+   "size": 58925,
+   "http": "HTTP 200, Content-Length=58925"
+  },
+  {
+   "sha_ext": "fd59b88c6563f2735a6bec6d92ffa0286acb468ebcd03f7489309bbabae93956.xls",
+   "size": 32768,
+   "http": "HTTP 200, Content-Length=32768"
+  },
+  {
+   "sha_ext": "ff2989f9378ebd4947ce69c2c657963aafc7ebfcc0a0957db97b1070a559ee57.txt",
+   "size": 1000000,
+   "http": "HTTP 200, Content-Length=1000000"
+  }
+ ],
+ "failed": []
+}

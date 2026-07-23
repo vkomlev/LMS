@@ -1,0 +1,2377 @@
+{
+ "plan": [
+  {
+   "id": 2131,
+   "course_id": 138,
+   "external_uid": "ext:d4:kompege:20260602:1956",
+   "source": "kompege",
+   "source_id": "1956",
+   "via": "external_uid",
+   "answer_src": "966",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ня заголовок таблицы имеет следующий вид таблица товар содер",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "2021"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "25c78c1c54f7df5916729277784ac491b8d2a6a7db11ac7968479e8bec0aec7d.xlsx",
+     "ext": "xlsx",
+     "size": 93054,
+     "name": "03.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\2131_0.xlsx",
+     "url": "https://kompege.ru/files/LqGbIv_G9.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/25c78c1c54f7df5916729277784ac491b8d2a6a7db11ac7968479e8bec0aec7d.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">03.xlsx</a></p>\n"
+  },
+  {
+   "id": 2132,
+   "course_id": 138,
+   "external_uid": "ext:d4:kompege:20260602:2052",
+   "source": "kompege",
+   "source_id": "2052",
+   "via": "external_uid",
+   "answer_src": "44",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " записи об оказываемых оператором услугах наименование и цен",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "9b82460fa3a0963d468093c47f6f844c71f7b074a70b5336637e23abb099fa7d.xls",
+     "ext": "xls",
+     "size": 119296,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2132_0.xls",
+     "url": "https://kompege.ru/files/sFi6HGLUI.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9b82460fa3a0963d468093c47f6f844c71f7b074a70b5336637e23abb099fa7d.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 2134,
+   "course_id": 138,
+   "external_uid": "ext:d4:kompege:20260602:2055",
+   "source": "kompege",
+   "source_id": "2055",
+   "via": "external_uid",
+   "answer_src": "5",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "х оператором услугах наименование и цена оказанной услуги та",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "10c4bad158419866293012d8d085b63844adf5af3fe0acc52ef053f9f7abfea4.xls",
+     "ext": "xls",
+     "size": 119296,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2134_0.xls",
+     "url": "https://kompege.ru/files/OAv-NbfCu.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/10c4bad158419866293012d8d085b63844adf5af3fe0acc52ef053f9f7abfea4.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 2135,
+   "course_id": 138,
+   "external_uid": "ext:d4:kompege:20260602:2057",
+   "source": "kompege",
+   "source_id": "2057",
+   "via": "external_uid",
+   "answer_src": "205",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ле длительность содержит длительность аудиозаписи в миллисек",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "7ad15b3dd21c6cd93049425eb7e4c0d038dda32196b1a3ee8f39b28f6168024a.xlsx",
+     "ext": "xlsx",
+     "size": 235033,
+     "name": "03.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\2135_0.xlsx",
+     "url": "https://kompege.ru/files/8jAoUhL7J.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/7ad15b3dd21c6cd93049425eb7e4c0d038dda32196b1a3ee8f39b28f6168024a.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">03.xlsx</a></p>\n"
+  },
+  {
+   "id": 2164,
+   "course_id": 149,
+   "external_uid": "ext:d4:kompege:20260602:4794",
+   "source": "kompege",
+   "source_id": "4794",
+   "via": "external_uid",
+   "answer_src": "23",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "определите минимальное время через которое завершится выполн",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "fd59b88c6563f2735a6bec6d92ffa0286acb468ebcd03f7489309bbabae93956.xls",
+     "ext": "xls",
+     "size": 32768,
+     "name": "22.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2164_0.xls",
+     "url": "https://kompege.ru/files/4jfqiEh_Q.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/fd59b88c6563f2735a6bec6d92ffa0286acb468ebcd03f7489309bbabae93956.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22.xls</a></p>\n"
+  },
+  {
+   "id": 2165,
+   "course_id": 149,
+   "external_uid": "ext:d4:kompege:20260602:15337",
+   "source": "kompege",
+   "source_id": "15337",
+   "via": "external_uid",
+   "answer_src": "8",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "етьем столбце перечислены с разделителем id процессов от кот",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "ca833f5fd6346c38376fd7d546c9dbb1489846a880531c6b48c8c5c9ec0b07d8.xlsx",
+     "ext": "xlsx",
+     "size": 9058,
+     "name": "22.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\2165_0.xlsx",
+     "url": "https://kompege.ru/files/ue8koYevP.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ca833f5fd6346c38376fd7d546c9dbb1489846a880531c6b48c8c5c9ec0b07d8.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">22.xlsx</a></p>\n"
+  },
+  {
+   "id": 2191,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:930",
+   "source": "kompege",
+   "source_id": "930",
+   "via": "external_uid",
+   "answer_src": "4507 3066",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " нижней клетке и заканчивает в правой верхней какое максимал",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "4fcf4d46d7834b4b22181ab5937026cf55a14a4196b1d1455150c5388cd88a5b.xls",
+     "ext": "xls",
+     "size": 37376,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2191_0.xls",
+     "url": "https://kompege.ru/files/KK94pZSz2.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/4fcf4d46d7834b4b22181ab5937026cf55a14a4196b1d1455150c5388cd88a5b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 2192,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:17874",
+   "source": "kompege",
+   "source_id": "17874",
+   "via": "external_uid",
+   "answer_src": "2671 419",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ава и снизу ограничены стенами робот не может продолжать дви",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "abf0efdaa06a102bff72c120a937be2ae7fcb94e5a942d2d06dad4fd162dbc81.xls",
+     "ext": "xls",
+     "size": 24576,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2192_0.xls",
+     "url": "https://kompege.ru/files/Y7kxUt962.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/abf0efdaa06a102bff72c120a937be2ae7fcb94e5a942d2d06dad4fd162dbc81.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 2193,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:23758",
+   "source": "kompege",
+   "source_id": "23758",
+   "via": "external_uid",
+   "answer_src": "2362 1205",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ава и снизу ограничены стенами робот не может продолжать дви",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "48e3bf216c04d73f4fe9f4a9f29fc0beb1050b7944456468c1aed1cc6cdceaff.ods",
+     "ext": "ods",
+     "size": 22207,
+     "name": "18.ods",
+     "path": "reviews\\tsk390-dedup\\files\\2193_0.ods",
+     "url": "https://kompege.ru/files/2W5MDJQ7sV.ods",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/48e3bf216c04d73f4fe9f4a9f29fc0beb1050b7944456468c1aed1cc6cdceaff.ods\" target=\"_blank\" rel=\"noopener noreferrer\">18.ods</a></p>\n"
+  },
+  {
+   "id": 2207,
+   "course_id": 154,
+   "external_uid": "ext:d4:kompege:20260602:21425",
+   "source": "kompege",
+   "source_id": "21425",
+   "via": "external_uid",
+   "answer_src": "167990 73043\\n122627 29105",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ластера в каждой строке записана информация о расположении н",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "1000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx",
+     "ext": "xlsx",
+     "size": 11282,
+     "name": "27_A.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\2207_0.xlsx",
+     "url": "https://kompege.ru/files/vXbqN8qLI.xlsx",
+     "reuse": false
+    },
+    {
+     "sha_ext": "9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt",
+     "ext": "txt",
+     "size": 3752,
+     "name": "27_A.txt",
+     "path": "reviews\\tsk390-dedup\\files\\2207_1.txt",
+     "url": "https://kompege.ru/files/Z0jceVu98.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx",
+     "ext": "xlsx",
+     "size": 340484,
+     "name": "27_B.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\2207_2.xlsx",
+     "url": "https://kompege.ru/files/3jyOX3uyP.xlsx",
+     "reuse": false
+    },
+    {
+     "sha_ext": "f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt",
+     "ext": "txt",
+     "size": 376351,
+     "name": "27_B.txt",
+     "path": "reviews\\tsk390-dedup\\files\\2207_3.txt",
+     "url": "https://kompege.ru/files/hrTvnpVrQ.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.xlsx</a> &middot; <a href=\"/api/v1/media/9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.txt</a> &middot; <a href=\"/api/v1/media/984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.xlsx</a> &middot; <a href=\"/api/v1/media/f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.txt</a></p>\n"
+  },
+  {
+   "id": 2208,
+   "course_id": 154,
+   "external_uid": "ext:d4:kompege:20260602:21932",
+   "source": "kompege",
+   "source_id": "21932",
+   "via": "external_uid",
+   "answer_src": "32865 70666\\n144062 61170",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "строке записана информация о расположении на карте одной зве",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "1000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt",
+     "ext": "txt",
+     "size": 5023,
+     "name": "27_A.txt",
+     "path": "reviews\\tsk390-dedup\\files\\2208_0.txt",
+     "url": "https://kompege.ru/files/JLuOGrtDc8.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt",
+     "ext": "txt",
+     "size": 14119,
+     "name": "27_B.txt",
+     "path": "reviews\\tsk390-dedup\\files\\2208_1.txt",
+     "url": "https://kompege.ru/files/9TcW6VOG9C.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.txt</a> &middot; <a href=\"/api/v1/media/8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.txt</a></p>\n"
+  },
+  {
+   "id": 3825,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:09429131",
+   "source": "kompege",
+   "source_id": "1148",
+   "via": "source_task_id",
+   "answer_src": "C38412",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "оит раньше в алфавите запишите в ответе эту букву а затем ск",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt",
+     "ext": "txt",
+     "size": 1000132,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3825_0.txt",
+     "url": "https://kompege.ru/files/rWKOZMZph.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3839,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:1e5fbb25",
+   "source": "kompege",
+   "source_id": "1255",
+   "via": "source_task_id",
+   "answer_src": "1004",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "динаковыми буквами в одной строке пример исходный файл giga ",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "4e6322244da44f78d6ab7bc97965e0e4f4c2213ae58f74144d64e9b7eb949a77.txt",
+     "ext": "txt",
+     "size": 1000325,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3839_0.txt",
+     "url": "https://kompege.ru/files/v03s1T3pa.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/4e6322244da44f78d6ab7bc97965e0e4f4c2213ae58f74144d64e9b7eb949a77.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3840,
+   "course_id": 1395,
+   "external_uid": "wp_nav:17:8e50656a",
+   "source": "kompege",
+   "source_id": "12926",
+   "via": "source_task_id",
+   "answer_src": "24 -22671",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "которых только одно число меньше числа а и сумма чисел пятер",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f08c4264a3cae4eda6ad600f8f6dd747d7b3b2dbf06c6d5f0c9ea699374b0d1e.txt",
+     "ext": "txt",
+     "size": 31896,
+     "name": "17.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3840_0.txt",
+     "url": "https://kompege.ru/files/BLJDpgPxA.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f08c4264a3cae4eda6ad600f8f6dd747d7b3b2dbf06c6d5f0c9ea699374b0d1e.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17.txt</a></p>\n"
+  },
+  {
+   "id": 3846,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:c0bba2d5",
+   "source": "kompege",
+   "source_id": "1341",
+   "via": "source_task_id",
+   "answer_src": "1904",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "йте количество слов в найденном предложении в ответ запишите",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "8e5fa68cd88d4e62d2b453afbd5744e89fa3017cc06cbbe08e1e6ac591d65bbe.docx",
+     "ext": "docx",
+     "size": 27217,
+     "name": "10.docx",
+     "path": "reviews\\tsk390-dedup\\files\\3846_0.docx",
+     "url": "https://kompege.ru/files/w2DbYDuyu.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8e5fa68cd88d4e62d2b453afbd5744e89fa3017cc06cbbe08e1e6ac591d65bbe.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10.docx</a></p>\n"
+  },
+  {
+   "id": 3850,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:ab2597de",
+   "source": "kompege",
+   "source_id": "1348",
+   "via": "source_task_id",
+   "answer_src": "626 1933",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "но центра поля по верхней половине поля после съезда с левог",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "12cea6e1e3e4457eae4f52feeab7cd462ce2285dabb5b98fac086411c3dd85fc.xlsx",
+     "ext": "xlsx",
+     "size": 8354,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3850_0.xlsx",
+     "url": "https://kompege.ru/files/uZwGHXBI7.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/12cea6e1e3e4457eae4f52feeab7cd462ce2285dabb5b98fac086411c3dd85fc.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 3855,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:094c8cd4",
+   "source": "kompege",
+   "source_id": "1373",
+   "via": "source_task_id",
+   "answer_src": "1163 1203",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ходимо заплатить за проход если число отрицательное счет роб",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "9945d3f35c4127768bfe4090fa36d65254e96f4226ec6a0805767601cd69bcf7.xlsx",
+     "ext": "xlsx",
+     "size": 10394,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3855_0.xlsx",
+     "url": "https://kompege.ru/files/kzZrUJU_4.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9945d3f35c4127768bfe4090fa36d65254e96f4226ec6a0805767601cd69bcf7.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 3902,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:55c28939",
+   "source": "kompege",
+   "source_id": "18239",
+   "via": "source_task_id",
+   "answer_src": "1095",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "м арифметическим выражением с целыми числами чье значение пр",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "20000",
+     "456",
+     "789"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "d86af8db07679bdd4b5b30b5e08f014fb620df5eb16046a786eaed89328ed500.txt",
+     "ext": "txt",
+     "size": 7889364,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3902_0.txt",
+     "url": "https://kompege.ru/files/ZT1fEfX5Pi.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/d86af8db07679bdd4b5b30b5e08f014fb620df5eb16046a786eaed89328ed500.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3915,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:de7fbd84",
+   "source": "kompege",
+   "source_id": "18937",
+   "via": "source_task_id",
+   "answer_src": "129",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "наки были ключами к его магии однажды наш числовой заклинате",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "210c441fe26230b573c0aa610535105cf61020e8794b12e719bb7aa276f7e2f9.txt",
+     "ext": "txt",
+     "size": 10241326,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3915_0.txt",
+     "url": "https://kompege.ru/files/RjFdM83DQ8.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/210c441fe26230b573c0aa610535105cf61020e8794b12e719bb7aa276f7e2f9.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3919,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3faf265a",
+   "source": "kompege",
+   "source_id": "1918",
+   "via": "source_task_id",
+   "answer_src": "1553 2545",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ещение плата равна значению числа в клетке это также относит",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "9167e53d9a754dcb3babbb45aa678251cba5fa5052ef78d226a3e94b6cee51c7.xls",
+     "ext": "xls",
+     "size": 36864,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3919_0.xls",
+     "url": "https://kompege.ru/files/QJ74WdbEp.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9167e53d9a754dcb3babbb45aa678251cba5fa5052ef78d226a3e94b6cee51c7.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3938,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:e136d7e1",
+   "source": "kompege",
+   "source_id": "20179",
+   "via": "source_task_id",
+   "answer_src": "2728 80",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "носится к начальной и конечной клеткам маршрута робота в угл",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "84378584dc665d8040186f5152dea7626222cb2876603bb51b3f8d01555e69ee.xlsx",
+     "ext": "xlsx",
+     "size": 10824,
+     "name": "18.14.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3938_0.xlsx",
+     "url": "https://kompege.ru/files/mXrgcWifP.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/84378584dc665d8040186f5152dea7626222cb2876603bb51b3f8d01555e69ee.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.14.xlsx</a></p>\n"
+  },
+  {
+   "id": 3943,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:a944587d",
+   "source": "kompege",
+   "source_id": "20813",
+   "via": "source_task_id",
+   "answer_src": "111",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тным арифметическим выражением с целыми неотрицательными чис",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "d064b5b32e3cc57518922166d36050b32cde5e2ecc26f8fbb233a46ac1aa7412.txt",
+     "ext": "txt",
+     "size": 10000001,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3943_0.txt",
+     "url": "https://kompege.ru/files/bznf-u81ka.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/d064b5b32e3cc57518922166d36050b32cde5e2ecc26f8fbb233a46ac1aa7412.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3952,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:f3455b17",
+   "source": "kompege",
+   "source_id": "2139",
+   "via": "source_task_id",
+   "answer_src": "533849",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " население таблица языки код языка код страны название являе",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "3ec1f3372e4279d59e97227e86074de667ebd43a6d662170a30ea8830df1db01.xls",
+     "ext": "xls",
+     "size": 602624,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3952_0.xls",
+     "url": "https://kompege.ru/files/VpprzGl29.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/3ec1f3372e4279d59e97227e86074de667ebd43a6d662170a30ea8830df1db01.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 3953,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:580be990",
+   "source": "kompege",
+   "source_id": "2140",
+   "via": "source_task_id",
+   "answer_src": "1897",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ификатор столицы таблица города идентификатор название код с",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a03db4618b5e868bcb3b1d02b0742f26bd33322829cade9ebdfa574d8accd5b8.xls",
+     "ext": "xls",
+     "size": 605184,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3953_0.xls",
+     "url": "https://kompege.ru/files/Tq4KWYuWy.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a03db4618b5e868bcb3b1d02b0742f26bd33322829cade9ebdfa574d8accd5b8.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 3954,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:a0c4250f",
+   "source": "kompege",
+   "source_id": "2141",
+   "via": "source_task_id",
+   "answer_src": "88479",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "а города идентификатор название код страны район население т",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "150"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "7aeca5642d3853ed93d7891fa54224445d101ccadd40f2356eea5c548d82a987.xls",
+     "ext": "xls",
+     "size": 602624,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3954_0.xls",
+     "url": "https://kompege.ru/files/NIbf-8uFq.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/7aeca5642d3853ed93d7891fa54224445d101ccadd40f2356eea5c548d82a987.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 3960,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:8b3bfc4c",
+   "source": "kompege",
+   "source_id": "2145",
+   "via": "source_task_id",
+   "answer_src": "114",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "одственные связи содержит информацию о родительских связях i",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "80e0f9c00a053adbfeb546773d2ff87236c443867edbc0e04c75abd3be913706.xls",
+     "ext": "xls",
+     "size": 155136,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3960_0.xls",
+     "url": "https://kompege.ru/files/UzQFbQRzl.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/80e0f9c00a053adbfeb546773d2ff87236c443867edbc0e04c75abd3be913706.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 3961,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:2353dca1",
+   "source": "kompege",
+   "source_id": "2146",
+   "via": "source_task_id",
+   "answer_src": "22",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "т информацию о родительских связях id родителя из таблицы лю",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "47c7ab420dde3c5426ab1e13b9a7063c52f7a95d6595737cd734a3443ccb57f3.xls",
+     "ext": "xls",
+     "size": 155648,
+     "name": "03.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3961_0.xls",
+     "url": "https://kompege.ru/files/2mC42gK42.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/47c7ab420dde3c5426ab1e13b9a7063c52f7a95d6595737cd734a3443ccb57f3.xls\" target=\"_blank\" rel=\"noopener noreferrer\">03.xls</a></p>\n"
+  },
+  {
+   "id": 3962,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:edbd0c0e",
+   "source": "kompege",
+   "source_id": "2157",
+   "via": "source_task_id",
+   "answer_src": "13 18",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "дну из трех клеток следующей строки на клетку прямо или боко",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "b183ab5fae37715ddcd19ffe726a1d663a3755ec9c068d839d41374b6799ac1a.xls",
+     "ext": "xls",
+     "size": 28160,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3962_0.xls",
+     "url": "https://kompege.ru/files/uzWo31_EV.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b183ab5fae37715ddcd19ffe726a1d663a3755ec9c068d839d41374b6799ac1a.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3963,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:bbfb4779",
+   "source": "kompege",
+   "source_id": "2158",
+   "via": "source_task_id",
+   "answer_src": "15",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "торых отличаются не более чем на определите количество таких",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "5d4504ee34f60bbded4922b0f93b98f9ae4c0df9184a39aaca5df0d3d638343e.xls",
+     "ext": "xls",
+     "size": 55808,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3963_0.xls",
+     "url": "https://kompege.ru/files/8xMW3srwe.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5d4504ee34f60bbded4922b0f93b98f9ae4c0df9184a39aaca5df0d3d638343e.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3964,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:e698270e",
+   "source": "kompege",
+   "source_id": "2159",
+   "via": "source_task_id",
+   "answer_src": "245937",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "е пары чисел порядковые номера которых отличаются не менее ч",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "1e435c56b00a241127d1431181f6a26b9412a6c9070ba52dead163bb56215c5e.xls",
+     "ext": "xls",
+     "size": 55808,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3964_0.xls",
+     "url": "https://kompege.ru/files/UVHQ5xaYW.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1e435c56b00a241127d1431181f6a26b9412a6c9070ba52dead163bb56215c5e.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3966,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:830453f1",
+   "source": "kompege",
+   "source_id": "2160",
+   "via": "source_task_id",
+   "answer_src": "446",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "аправлении рассматриваются последовательности чисел такие чт",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "b86898af8a279fd1bad152b28a3f84826ec4f415fe76042e2eca3f072124c48d.xls",
+     "ext": "xls",
+     "size": 7168,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3966_0.xls",
+     "url": "https://kompege.ru/files/2ReXezsih.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b86898af8a279fd1bad152b28a3f84826ec4f415fe76042e2eca3f072124c48d.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3968,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6371d7e4",
+   "source": "kompege",
+   "source_id": "2161",
+   "via": "source_task_id",
+   "answer_src": "29",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "дыдущего не менее чем на какую максимальную сумму могут имет",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "d0a591812aafc61a68b111b688b10cf333798abd0ba808a2f0e9d95ccaaa2a77.xls",
+     "ext": "xls",
+     "size": 60928,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3968_0.xls",
+     "url": "https://kompege.ru/files/embr0Dwj8.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/d0a591812aafc61a68b111b688b10cf333798abd0ba808a2f0e9d95ccaaa2a77.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3969,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:4e831772",
+   "source": "kompege",
+   "source_id": "2162",
+   "via": "source_task_id",
+   "answer_src": "2405 128",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "е минимальную и максимальную сумму чисел в клетках в которых",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "809ba016000177b69dae37e364b233f74b7406cae0e030b641bc5080c9e7be51.xls",
+     "ext": "xls",
+     "size": 31232,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3969_0.xls",
+     "url": "https://kompege.ru/files/lia0N8VUQ.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/809ba016000177b69dae37e364b233f74b7406cae0e030b641bc5080c9e7be51.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3971,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:f3827a2f",
+   "source": "kompege",
+   "source_id": "2211",
+   "via": "source_task_id",
+   "answer_src": "3854",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ные внесли данные в таблицу указав в первом столбце радиус в",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "1000",
+     "5000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "5dd8fe68d02e3035a392fc43bcb6f7130e9ecdb5bbdc700478fb1aea510ab0f2.xlsx",
+     "ext": "xlsx",
+     "size": 76133,
+     "name": "9.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3971_0.xlsx",
+     "url": "https://kompege.ru/files/bdt0nCrrB.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5dd8fe68d02e3035a392fc43bcb6f7130e9ecdb5bbdc700478fb1aea510ab0f2.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">9.xlsx</a></p>\n"
+  },
+  {
+   "id": 3972,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:4a4fb834",
+   "source": "kompege",
+   "source_id": "2218",
+   "via": "source_task_id",
+   "answer_src": "491 2071",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "бота запас энергии изменяется по следующим правилам если чис",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "501744ce25001afe6d0763a52e8ec03e9faa5a2aed9c5d04f9708d4295616bcb.xls",
+     "ext": "xls",
+     "size": 29184,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3972_0.xls",
+     "url": "https://kompege.ru/files/ImcXYIF9v.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/501744ce25001afe6d0763a52e8ec03e9faa5a2aed9c5d04f9708d4295616bcb.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 3993,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:2e23f96f",
+   "source": "kompege",
+   "source_id": "2507",
+   "via": "source_task_id",
+   "answer_src": "K36582",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "пишите в ответе эту букву а затем сколько раз она встречаетс",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "86e62fdeb950ab100f8bf6728a7cdb81fdd8054d95af6c114320a131f79c87fb.txt",
+     "ext": "txt",
+     "size": 951217,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3993_0.txt",
+     "url": "https://kompege.ru/files/beXmcewXJ.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/86e62fdeb950ab100f8bf6728a7cdb81fdd8054d95af6c114320a131f79c87fb.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 3999,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:5bf4742f",
+   "source": "kompege",
+   "source_id": "2518",
+   "via": "source_task_id",
+   "answer_src": "20",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " необходимо выполнить за неделю за это время один снеговик с",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "103",
+     "191"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "c6b6293e7f09ea218ddc6f938698204f8c5a83d0ef413fc2914fbab4fb27ca52.xlsx",
+     "ext": "xlsx",
+     "size": 63496,
+     "name": "9.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3999_0.xlsx",
+     "url": "https://kompege.ru/files/Ip0xllOA5.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/c6b6293e7f09ea218ddc6f938698204f8c5a83d0ef413fc2914fbab4fb27ca52.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">9.xlsx</a></p>\n"
+  },
+  {
+   "id": 4000,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:fe97d298",
+   "source": "kompege",
+   "source_id": "2577",
+   "via": "source_task_id",
+   "answer_src": "208",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " не более символов определите максимальное количество идущих",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4000_0.txt",
+     "url": "https://kompege.ru/files/ECjxYCSUU.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4001,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:7be8b32c",
+   "source": "kompege",
+   "source_id": "2578",
+   "via": "source_task_id",
+   "answer_src": "90",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " символов определите максимальное количество идущих подряд с",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4001_0.txt",
+     "url": "https://kompege.ru/files/eeEKO5W1V.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4020,
+   "course_id": 1395,
+   "external_uid": "wp_nav:17:bf2f6f14",
+   "source": "kompege",
+   "source_id": "2997",
+   "via": "source_task_id",
+   "answer_src": "924 1940",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " встречается в середине всех трехзначных чисел в файле напри",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "10000",
+     "152"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f609b4ea3e45fe79c7e8287654bd1768b9ee7b5dddecce04819d2be382092cb0.txt",
+     "ext": "txt",
+     "size": 22036,
+     "name": "17.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4020_0.txt",
+     "url": "https://kompege.ru/files/704QzwbsM.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f609b4ea3e45fe79c7e8287654bd1768b9ee7b5dddecce04819d2be382092cb0.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17.txt</a></p>\n"
+  },
+  {
+   "id": 4034,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:a7f4949a",
+   "source": "kompege",
+   "source_id": "3099",
+   "via": "source_task_id",
+   "answer_src": "7",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "укв получившейся строки можно было собрать палиндром в ответ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "ff2989f9378ebd4947ce69c2c657963aafc7ebfcc0a0957db97b1070a559ee57.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4034_0.txt",
+     "url": "https://kompege.ru/files/scdrcDEHG.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ff2989f9378ebd4947ce69c2c657963aafc7ebfcc0a0957db97b1070a559ee57.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4035,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:ac6da2f0",
+   "source": "kompege",
+   "source_id": "310",
+   "via": "source_task_id",
+   "answer_src": "1222",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ещение одну из двух команд вправо или вниз по команде вправо",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "853635bb43967f7c0e4610a48e731ab27c31e7fe199f961dbdd208585553288c.xls",
+     "ext": "xls",
+     "size": 28672,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4035_0.xls",
+     "url": "https://kompege.ru/files/pVnP2j68g.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/853635bb43967f7c0e4610a48e731ab27c31e7fe199f961dbdd208585553288c.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4048,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:a31e38e8",
+   "source": "kompege",
+   "source_id": "3739",
+   "via": "source_task_id",
+   "answer_src": "43",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ием команд вправо или вниз процент зарядки батареи робота ме",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "7fde359bea87e8542d8620782a901e72522564c35ab916cda91b61dfa7065577.xls",
+     "ext": "xls",
+     "size": 30720,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4048_0.xls",
+     "url": "https://kompege.ru/files/v1BqttoOP.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/7fde359bea87e8542d8620782a901e72522564c35ab916cda91b61dfa7065577.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4056,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:72cc5412",
+   "source": "kompege",
+   "source_id": "3763",
+   "via": "source_task_id",
+   "answer_src": "252776",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "лите количество подстрок длиной не менее трех символов котор",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "50322b4a398948c09be8f37d84d56b249e476d98cbb6e6ecdd1fdd5fe853666a.txt",
+     "ext": "txt",
+     "size": 100000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4056_0.txt",
+     "url": "https://kompege.ru/files/zl9rrsKN-.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/50322b4a398948c09be8f37d84d56b249e476d98cbb6e6ecdd1fdd5fe853666a.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4066,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:3e19b214",
+   "source": "kompege",
+   "source_id": "410",
+   "via": "source_task_id",
+   "answer_src": "1064 635",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "начальной и конечной клетке маршрута черепашки определите ма",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "97387c73424d81b5393c5119ad48eff4092741a7ffd65cfb97cc13151f92368b.xlsx",
+     "ext": "xlsx",
+     "size": 8780,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4066_0.xlsx",
+     "url": "https://kompege.ru/files/ho83pxjQD.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/97387c73424d81b5393c5119ad48eff4092741a7ffd65cfb97cc13151f92368b.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4076,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:87530e94",
+   "source": "kompege",
+   "source_id": "4330",
+   "via": "source_task_id",
+   "answer_src": "60 24",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " в той в которой находится робот он набирает очка если числа",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "03d8b2101d2f908bdf72aa665847b24d585b4fd5269a86f75cd5b803676c16de.xlsx",
+     "ext": "xlsx",
+     "size": 9403,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4076_0.xlsx",
+     "url": "https://kompege.ru/files/U7o6ycdKN.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/03d8b2101d2f908bdf72aa665847b24d585b4fd5269a86f75cd5b803676c16de.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4079,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b246c6b7",
+   "source": "kompege",
+   "source_id": "435",
+   "via": "source_task_id",
+   "answer_src": "1649 1352",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " исполнитель кладоискатель затем кладоискатель кладоискатель",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f8de6087f73348a5313924568d004bdda2d409b474acea3d25a98190cb71e48a.xls",
+     "ext": "xls",
+     "size": 33792,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4079_0.xls",
+     "url": "https://kompege.ru/files/rPiA0pmYH.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f8de6087f73348a5313924568d004bdda2d409b474acea3d25a98190cb71e48a.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4094,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:fc3f4641",
+   "source": "kompege",
+   "source_id": "4549",
+   "via": "source_task_id",
+   "answer_src": "47",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "олов abc bac cab cba стоящих одна за другой и пересекающихся",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e71c1bbf665488d802258e63ba1052d0b89b4086126d56f6fdc8c1af40063829.txt",
+     "ext": "txt",
+     "size": 900001,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4094_0.txt",
+     "url": "https://kompege.ru/files/sRp4gGLmI.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e71c1bbf665488d802258e63ba1052d0b89b4086126d56f6fdc8c1af40063829.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4095,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:58e1da7e",
+   "source": "kompege",
+   "source_id": "4555",
+   "via": "source_task_id",
+   "answer_src": "22",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "xy и zzx искомая подпоследовательность должна состоять тольк",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "8634b01ddee7da7904023aacfa3d1050541fe7c75a6b4afd096fc72328216a48.txt",
+     "ext": "txt",
+     "size": 1000022,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4095_0.txt",
+     "url": "https://kompege.ru/files/MkoNZber1.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8634b01ddee7da7904023aacfa3d1050541fe7c75a6b4afd096fc72328216a48.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4104,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:db3d1195",
+   "source": "kompege",
+   "source_id": "470",
+   "via": "source_task_id",
+   "answer_src": "ВЕРХ 1743",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "нижней ячейке исполнитель низ в левой верхней какой из испол",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e0f09d65be188500427fda15981e80e850c1ed8f2cb5b8a14a6ef7756cfb17b4.xls",
+     "ext": "xls",
+     "size": 33280,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4104_0.xls",
+     "url": "https://kompege.ru/files/zc2CFsug6.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e0f09d65be188500427fda15981e80e850c1ed8f2cb5b8a14a6ef7756cfb17b4.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4111,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:47015107",
+   "source": "kompege",
+   "source_id": "4791",
+   "via": "source_task_id",
+   "answer_src": "26145",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ределите минимальное время через которое завершится выполнен",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f4e4c5b9f75c28ffde0ed30559c8b451136f1e506074ef52c2062f2397e234d9.xls",
+     "ext": "xls",
+     "size": 803840,
+     "name": "22.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4111_0.xls",
+     "url": "https://kompege.ru/files/gYX-iEROb.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f4e4c5b9f75c28ffde0ed30559c8b451136f1e506074ef52c2062f2397e234d9.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22.xls</a></p>\n"
+  },
+  {
+   "id": 4112,
+   "course_id": 149,
+   "external_uid": "wp_nav:22:c97a8ee7",
+   "source": "kompege",
+   "source_id": "4793",
+   "via": "source_task_id",
+   "answer_src": "1",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "лице указано значение типовой пример организации данных в фа",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "da69ba8d74341a2805b766a5fdf8723bbf681dfe6766f2b1da618b29c677eef9.xls",
+     "ext": "xls",
+     "size": 27648,
+     "name": "22.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4112_0.xls",
+     "url": "https://kompege.ru/files/XMg1iLloE.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/da69ba8d74341a2805b766a5fdf8723bbf681dfe6766f2b1da618b29c677eef9.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22.xls</a></p>\n"
+  },
+  {
+   "id": 4116,
+   "course_id": 149,
+   "external_uid": "wp_nav:22:f91b6269",
+   "source": "kompege",
+   "source_id": "4798",
+   "via": "source_task_id",
+   "answer_src": "36",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "определите минимальное время через которое завершится выполн",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "dcac378e6d0cbffb686d459b00d48c42aa243352483cdf72549bac323922667d.xls",
+     "ext": "xls",
+     "size": 32768,
+     "name": "22.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4116_0.xls",
+     "url": "https://kompege.ru/files/hMD1ugAnB.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/dcac378e6d0cbffb686d459b00d48c42aa243352483cdf72549bac323922667d.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22.xls</a></p>\n"
+  },
+  {
+   "id": 4131,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:2922bbe3",
+   "source": "kompege",
+   "source_id": "501",
+   "via": "source_task_id",
+   "answer_src": "23321",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "итель лево в правой нижней исполнители обязательно встречают",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "04f97327fcbefd7522dce089479f471687eea7e0ccb7a632e256e859a7b726d1.xls",
+     "ext": "xls",
+     "size": 30720,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4131_0.xls",
+     "url": "https://kompege.ru/files/fzAh2F8sl.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/04f97327fcbefd7522dce089479f471687eea7e0ccb7a632e256e859a7b726d1.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4135,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:cc7bb534",
+   "source": "kompege",
+   "source_id": "5151",
+   "via": "source_task_id",
+   "answer_src": "1946 810",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "зрушается перед каждым запуском робота в каждой клетке квадр",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "78452d776d40f89a43d7544fe91c097a7b884a823bfa4c0dc414b8d4dab71398.xlsx",
+     "ext": "xlsx",
+     "size": 9762,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4135_0.xlsx",
+     "url": "https://kompege.ru/files/wAHPQoiuX.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/78452d776d40f89a43d7544fe91c097a7b884a823bfa4c0dc414b8d4dab71398.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4167,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:31ae7d18",
+   "source": "kompege",
+   "source_id": "5746",
+   "via": "source_task_id",
+   "answer_src": "300",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "чаться но могут повторятся в пределах подстроки укажите длин",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "982b22b2c1ccab1e1b52abce4d6b4b59af3da0f41895d79ec9b952e4e228ac65.txt",
+     "ext": "txt",
+     "size": 436131,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4167_0.txt",
+     "url": "https://kompege.ru/files/IH1Ws0vL8.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/982b22b2c1ccab1e1b52abce4d6b4b59af3da0f41895d79ec9b952e4e228ac65.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4170,
+   "course_id": 1395,
+   "external_uid": "wp_nav:17:bb50fe42",
+   "source": "kompege",
+   "source_id": "5758",
+   "via": "source_task_id",
+   "answer_src": "254546 1343",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "асстояние между элементами пар является нечетным числом под ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "1000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "1c13857c45d777530c2a6d4197f1ac0019ee03bd47cb4c34fe89981137b6de88.txt",
+     "ext": "txt",
+     "size": 6794,
+     "name": "17.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4170_0.txt",
+     "url": "https://kompege.ru/files/OLmv6UZUQ.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1c13857c45d777530c2a6d4197f1ac0019ee03bd47cb4c34fe89981137b6de88.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17.txt</a></p>\n"
+  },
+  {
+   "id": 4174,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:757d450a",
+   "source": "kompege",
+   "source_id": "5810",
+   "via": "source_task_id",
+   "answer_src": "44",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "й из сочетаний xy yz и xyz искомая подпоследовательность дол",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "079321a6a927f74970a70fbd510b5058ac28afa39c89b2d8bdcbc78a63818aaa.txt",
+     "ext": "txt",
+     "size": 999044,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4174_0.txt",
+     "url": "https://kompege.ru/files/qQOl_YShr.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/079321a6a927f74970a70fbd510b5058ac28afa39c89b2d8bdcbc78a63818aaa.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4175,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6c3ba2f2",
+   "source": "kompege",
+   "source_id": "5828",
+   "via": "source_task_id",
+   "answer_src": "34 64",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тносится к начальной и конечной клеткам маршрута робота изна",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "bea752811ba58bc1eddccf5c9a61761dc0b1ab7745d4579d2801c8675c855d46.xlsx",
+     "ext": "xlsx",
+     "size": 8349,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4175_0.xlsx",
+     "url": "https://kompege.ru/files/trfIPVVCw.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bea752811ba58bc1eddccf5c9a61761dc0b1ab7745d4579d2801c8675c855d46.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4176,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:122725cb",
+   "source": "kompege",
+   "source_id": "583",
+   "via": "source_task_id",
+   "answer_src": "1495 -2371",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ерхнем углу поля и не может выходить за его пределы пустые я",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "70ba11aac49a1e795ecf69fab96bd0795c065de216dd507ba4664696b21dd7f4.xls",
+     "ext": "xls",
+     "size": 33280,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4176_0.xls",
+     "url": "https://kompege.ru/files/lGiZJBaDc.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/70ba11aac49a1e795ecf69fab96bd0795c065de216dd507ba4664696b21dd7f4.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4188,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:fa09c0b8",
+   "source": "kompege",
+   "source_id": "5888",
+   "via": "source_task_id",
+   "answer_src": "229549",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "авита определите максимальную длину подстроки не содержащей ",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "7e904561a4cba88df4a5859f33307ad92ff343d0973e6cc3599554df4bcddd26.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4188_0.txt",
+     "url": "https://kompege.ru/files/i7lxTYZSn.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/7e904561a4cba88df4a5859f33307ad92ff343d0973e6cc3599554df4bcddd26.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4204,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:b14f319b",
+   "source": "kompege",
+   "source_id": "6275",
+   "via": "source_task_id",
+   "answer_src": "42",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "инимальную длину подстроки включающей все шестнадцатеричные ",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "825d7c932bc1bc2e2038423fda08605628b7977692265d6a708b5d77b35601ce.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4204_0.txt",
+     "url": "https://kompege.ru/files/huzooBIjx.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/825d7c932bc1bc2e2038423fda08605628b7977692265d6a708b5d77b35601ce.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4207,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:13f81eeb",
+   "source": "kompege",
+   "source_id": "630",
+   "via": "source_task_id",
+   "answer_src": "551",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ксимальную сумму могут иметь выбранные числа пример входных ",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "aab5a2e56358a87bbfc75598497d036f2ad6c51bdcfa7909ee4ad27ea3c98e5e.xls",
+     "ext": "xls",
+     "size": 52224,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4207_0.xls",
+     "url": "https://kompege.ru/files/a9OyWjcEy.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/aab5a2e56358a87bbfc75598497d036f2ad6c51bdcfa7909ee4ad27ea3c98e5e.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4209,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:7075ea9d",
+   "source": "kompege",
+   "source_id": "6357",
+   "via": "source_task_id",
+   "answer_src": "1770",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "всех неповторяющихся чисел строки меньше чем среднее арифмет",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a522c957b6cd3bbbd8addd7c0387890471991832c437f79c7197916c6d171b71.xlsx",
+     "ext": "xlsx",
+     "size": 212889,
+     "name": "09.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4209_0.xlsx",
+     "url": "https://kompege.ru/files/Qvo07B1W2.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a522c957b6cd3bbbd8addd7c0387890471991832c437f79c7197916c6d171b71.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">09.xlsx</a></p>\n"
+  },
+  {
+   "id": 4212,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:c6cbb30a",
+   "source": "kompege",
+   "source_id": "675",
+   "via": "source_task_id",
+   "answer_src": "5",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ым какую максимальную длину может иметь выбранная последоват",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f78832a80411d34ceb84a3255f04151e064826a15812205e94f24fab2217289d.xls",
+     "ext": "xls",
+     "size": 15360,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4212_0.xls",
+     "url": "https://kompege.ru/files/loWdPBUiD.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f78832a80411d34ceb84a3255f04151e064826a15812205e94f24fab2217289d.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4221,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3d05812a",
+   "source": "kompege",
+   "source_id": "6926",
+   "via": "source_task_id",
+   "answer_src": "30 11",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "м от до если значение в ячейке четное то роботу начисляется ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "5300e010973c6ae62c7a21e5378aac8ad360db64b574f436e2ff02f154ec0673.xlsx",
+     "ext": "xlsx",
+     "size": 10662,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4221_0.xlsx",
+     "url": "https://kompege.ru/files/ZCsfHodID.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5300e010973c6ae62c7a21e5378aac8ad360db64b574f436e2ff02f154ec0673.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4231,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:147f3a43",
+   "source": "kompege",
+   "source_id": "726",
+   "via": "source_task_id",
+   "answer_src": "967 25",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "у со стеной робот разрушается с каждой клетки робот забирает",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "500"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "2522bb7c02efe8c89ee43d6806301ae9c8a73736735d4925793bdd5455a248d1.xls",
+     "ext": "xls",
+     "size": 21504,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4231_0.xls",
+     "url": "https://kompege.ru/files/CHw1YGsIU.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/2522bb7c02efe8c89ee43d6806301ae9c8a73736735d4925793bdd5455a248d1.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4241,
+   "course_id": 1395,
+   "external_uid": "wp_nav:17:b69bd1db",
+   "source": "kompege",
+   "source_id": "7717",
+   "via": "source_task_id",
+   "answer_src": "11 9881",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " а сумма текущей пары не больше максимального элемента после",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "10000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a87f59e852d5c7531d9ad6a6bc6a12db350aaa978c0ddc50e7e5350473a400d3.txt",
+     "ext": "txt",
+     "size": 4885,
+     "name": "17.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4241_0.txt",
+     "url": "https://kompege.ru/files/ejTx0_1PF.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a87f59e852d5c7531d9ad6a6bc6a12db350aaa978c0ddc50e7e5350473a400d3.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17.txt</a></p>\n"
+  },
+  {
+   "id": 4244,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:0a5658ce",
+   "source": "kompege",
+   "source_id": "782",
+   "via": "source_task_id",
+   "answer_src": "1602 1329",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ых с ней ячеек слева справа сверху и снизу для клеток находя",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "bbc2972f83de6e870f02e5a6da76d861fb5b237ca27863b5efa38edefabb0bd1.xls",
+     "ext": "xls",
+     "size": 9088,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4244_0.xls",
+     "url": "https://kompege.ru/files/eFpJTOk9h.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bbc2972f83de6e870f02e5a6da76d861fb5b237ca27863b5efa38edefabb0bd1.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4246,
+   "course_id": 1395,
+   "external_uid": "wp_nav:17:00e340c0",
+   "source": "kompege",
+   "source_id": "7848",
+   "via": "source_task_id",
+   "answer_src": "30 4138",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "30 4138",
+    "answer_src": "30 4138",
+    "similarity": 0.99
+   },
+   "files": [
+    {
+     "sha_ext": "fcfef8b530e62f2d90b87db89ce4c5d0c9ddb887e69e6e383decc6174c8cc252.txt",
+     "ext": "txt",
+     "size": 58925,
+     "name": "17.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4246_0.txt",
+     "url": "https://kompege.ru/files/ZiAoivJUp.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/fcfef8b530e62f2d90b87db89ce4c5d0c9ddb887e69e6e383decc6174c8cc252.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17.txt</a></p>\n"
+  },
+  {
+   "id": 4254,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:568c87f9",
+   "source": "kompege",
+   "source_id": "832",
+   "via": "source_task_id",
+   "answer_src": "769 445",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "того спускается пешеход или поднимается разница является пол",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "127"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "2eae9a370040c4a9038fa81ef4ff1a0274af2b9d3820c9b87ce79c0c80954d7e.xls",
+     "ext": "xls",
+     "size": 27648,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4254_0.xls",
+     "url": "https://kompege.ru/files/sBuId7_ZL.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/2eae9a370040c4a9038fa81ef4ff1a0274af2b9d3820c9b87ce79c0c80954d7e.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4263,
+   "course_id": 151,
+   "external_uid": "wp_nav:24:9ba9f398",
+   "source": "kompege",
+   "source_id": "857",
+   "via": "source_task_id",
+   "answer_src": "59",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "азбит на строки различной длины определите количество строк ",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt",
+     "ext": "txt",
+     "size": 1000132,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4263_0.txt",
+     "url": "https://kompege.ru/files/Miszvn0O3.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4264,
+   "course_id": 151,
+   "external_uid": "wp_nav:24:8b83fd9e",
+   "source": "kompege",
+   "source_id": "860",
+   "via": "source_task_id",
+   "answer_src": "482",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "укв a z текст разбит на строки различной длины определите ко",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt",
+     "ext": "txt",
+     "size": 1000132,
+     "name": "24.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4264_0.txt",
+     "url": "https://kompege.ru/files/RVFBMGeWN.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a860d2234647ae8e4a5954015499c05068b4524f87431c0ae25eb6cf6e5735cf.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24.txt</a></p>\n"
+  },
+  {
+   "id": 4271,
+   "course_id": 1402,
+   "external_uid": "wp_nav:26:69525be7",
+   "source": "kompege",
+   "source_id": "9077",
+   "via": "source_task_id",
+   "answer_src": "192 86",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "т быть арендован со следующей минуты после финиша определите",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "3feec4c13189263762fc26308f8b84d8107d39f3701c54140168153e9e95d1e5.txt",
+     "ext": "txt",
+     "size": 13587,
+     "name": "26.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4271_0.txt",
+     "url": "https://kompege.ru/files/9bb8aAoeu.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/3feec4c13189263762fc26308f8b84d8107d39f3701c54140168153e9e95d1e5.txt\" target=\"_blank\" rel=\"noopener noreferrer\">26.txt</a></p>\n"
+  },
+  {
+   "id": 4283,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:cdc791ef",
+   "source": "kompege",
+   "source_id": "938",
+   "via": "source_task_id",
+   "answer_src": "949 1945",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " плата за посещение в размере от до посетив клетку робот пла",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "bd9f439bdcd2bf109321ad7780bcbcd1252352dc0b6538b693d90655257bf0ec.xls",
+     "ext": "xls",
+     "size": 23552,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4283_0.xls",
+     "url": "https://kompege.ru/files/gCj8s72Cf.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bd9f439bdcd2bf109321ad7780bcbcd1252352dc0b6538b693d90655257bf0ec.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  },
+  {
+   "id": 4284,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:5d7c9efc",
+   "source": "kompege",
+   "source_id": "939",
+   "via": "source_task_id",
+   "answer_src": "2186 1029",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " плата за посещение в размере от до посетив клетку робот пла",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "ecd3535548c67b72a14c0ad2d1f1ac95788fcfce73327ce5b2cba45bbf46ffa8.xlsx",
+     "ext": "xlsx",
+     "size": 10070,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4284_0.xlsx",
+     "url": "https://kompege.ru/files/qpOMb9coa.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ecd3535548c67b72a14c0ad2d1f1ac95788fcfce73327ce5b2cba45bbf46ffa8.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4285,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:95944939",
+   "source": "kompege",
+   "source_id": "942",
+   "via": "source_task_id",
+   "answer_src": "180 2157",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ата указана плата за посещение в размере от до посетив клетк",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "be3c5b4a013b7023bd83b37af538ebf410716674a40e5bfb8f165623f9444453.xlsx",
+     "ext": "xlsx",
+     "size": 10045,
+     "name": "18.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\4285_0.xlsx",
+     "url": "https://kompege.ru/files/2YgBVqi-r.xlsx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/be3c5b4a013b7023bd83b37af538ebf410716674a40e5bfb8f165623f9444453.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">18.xlsx</a></p>\n"
+  },
+  {
+   "id": 4286,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:94fbd23c",
+   "source": "kompege",
+   "source_id": "943",
+   "via": "source_task_id",
+   "answer_src": "2130 181",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ата указана плата за посещение в размере от до посетив клетк",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "98b9766d8cdd1c261c4b9064e622158d314fd04a15bc28017fc0f146a8a26adb.xls",
+     "ext": "xls",
+     "size": 23040,
+     "name": "18.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4286_0.xls",
+     "url": "https://kompege.ru/files/N0SLuepQI.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/98b9766d8cdd1c261c4b9064e622158d314fd04a15bc28017fc0f146a8a26adb.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18.xls</a></p>\n"
+  }
+ ],
+ "manual": []
+}

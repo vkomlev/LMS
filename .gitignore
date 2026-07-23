@@ -63,3 +63,9 @@ node_modules/*
 # выключал гейт скиллов на сутки в новом дереве (tsk-366, разбор 2026-07-23).
 .skill-engaged-note.md
 out/
+
+# tsk-390: скачанные файлы-приложения источников (~200 МБ) и дамп заданий для автосверки
+# дублей (~15 МБ). Восстанавливаются прогоном scripts/tsk369_fetch_files.py и
+# reviews/tsk350-dedup/dump_tasks.py; в истории им не место.
+reviews/tsk390-dedup/files/
+reviews/tsk350-dedup/tasks_dump.json

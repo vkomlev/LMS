@@ -1,0 +1,648 @@
+{
+ "plan": [
+  {
+   "id": 3004,
+   "course_id": 154,
+   "external_uid": "tg:ege:977",
+   "source": "kompege",
+   "source_id": "26678",
+   "via": "stem",
+   "answer_src": "471672 912\\n75241 98298",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ем координата y значения даны в условных единицах известно ч",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "100",
+     "1000",
+     "10000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "ec59ee5f5de2f14cb0e8133ba29986bc4287d95f6d0f334920d014dba70d8460.txt",
+     "ext": "txt",
+     "size": 31263,
+     "name": "27_A.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3004_0.txt",
+     "url": "https://kompege.ru/files/DYr2_LcwSnB.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "1eccf55698b714774325884fdb6c94c83bae8adccec6ce199cff9d58c3559997.txt",
+     "ext": "txt",
+     "size": 156107,
+     "name": "27_B.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3004_1.txt",
+     "url": "https://kompege.ru/files/s4j_mN-SdoK.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ec59ee5f5de2f14cb0e8133ba29986bc4287d95f6d0f334920d014dba70d8460.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.txt</a> &middot; <a href=\"/api/v1/media/1eccf55698b714774325884fdb6c94c83bae8adccec6ce199cff9d58c3559997.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.txt</a></p>\n"
+  },
+  {
+   "id": 3015,
+   "course_id": 154,
+   "external_uid": "tg:ege:966",
+   "source": "yandex",
+   "source_id": "13495a81-a647-4626-9907-8620f31c1e93",
+   "via": "stem",
+   "answer_src": "[\"354468\", \"244713\"]; [\"80045\", \"243309\"]",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "те помех при передаче данных эти три точки не относятся ни к",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "1000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "9777a7d1d24fa91276bcf6eccf674525eb2038a92d702fdf5f6ab370acff7379.txt",
+     "ext": "txt",
+     "size": 10828,
+     "name": "27_А.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3015_0.txt",
+     "url": "https://plcn.s3.yandex.net/resources/27A_6_1760540560.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "9c57224ef55d626bc785863be73ae13ed82e485ba9652639f8af6fe3d2f106ae.txt",
+     "ext": "txt",
+     "size": 31727,
+     "name": "27_Б.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3015_1.txt",
+     "url": "https://plcn.s3.yandex.net/resources/27B_6_1760540568.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9777a7d1d24fa91276bcf6eccf674525eb2038a92d702fdf5f6ab370acff7379.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_А.txt</a> &middot; <a href=\"/api/v1/media/9c57224ef55d626bc785863be73ae13ed82e485ba9652639f8af6fe3d2f106ae.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_Б.txt</a></p>\n"
+  },
+  {
+   "id": 3021,
+   "course_id": 149,
+   "external_uid": "tg:ege:960",
+   "source": "yandex",
+   "source_id": "0791d62b-45e2-49e1-9972-647a074b969f",
+   "via": "stem",
+   "answer_src": "6",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "6",
+    "answer_src": "6",
+    "similarity": 0.87
+   },
+   "files": [
+    {
+     "sha_ext": "c5b803abc78a2d7ca939211618281b27567614881b2abd60e60af9db49aa306d.ods",
+     "ext": "ods",
+     "size": 10285,
+     "name": "22.ods",
+     "path": "reviews\\tsk390-dedup\\files\\3021_0.ods",
+     "url": "https://plcn.s3.yandex.net/resources/22_2_1760539836.ods",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/c5b803abc78a2d7ca939211618281b27567614881b2abd60e60af9db49aa306d.ods\" target=\"_blank\" rel=\"noopener noreferrer\">22.ods</a></p>\n"
+  },
+  {
+   "id": 3122,
+   "course_id": 138,
+   "external_uid": "tg:ege:845",
+   "source": "sdamgia",
+   "source_id": "81787",
+   "via": "stem",
+   "answer_src": "133228",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "133228",
+    "answer_src": "133228",
+    "similarity": 0.3
+   },
+   "files": [
+    {
+     "sha_ext": "ffe801693aa8bd13843a382f32f81f3c62b17a1144a5675027e779e049985ff3.ods",
+     "ext": "ods",
+     "size": 132250,
+     "name": "",
+     "path": "reviews\\tsk390-dedup\\files\\3122_0.ods",
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=225005",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ffe801693aa8bd13843a382f32f81f3c62b17a1144a5675027e779e049985ff3.ods\" target=\"_blank\" rel=\"noopener noreferrer\">Файл к заданию</a></p>\n"
+  },
+  {
+   "id": 3301,
+   "course_id": 145,
+   "external_uid": "tg:ege:559",
+   "source": "polyakov",
+   "source_id": "6757",
+   "via": "stem",
+   "answer_src": "299 196183",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "299 196183",
+    "answer_src": "299 196183",
+    "similarity": 0.97
+   },
+   "files": [
+    {
+     "sha_ext": "ad384a43e7e3df1b9e49d09147becc19f001514ad4e5738ca49359268f75a76c.txt",
+     "ext": "txt",
+     "size": 36036,
+     "name": "17-379.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3301_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-seq/17-379.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ad384a43e7e3df1b9e49d09147becc19f001514ad4e5738ca49359268f75a76c.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17-379.txt</a></p>\n"
+  },
+  {
+   "id": 3338,
+   "course_id": 154,
+   "external_uid": "tg:ege:508",
+   "source": "kompege",
+   "source_id": "21932",
+   "via": "stem",
+   "answer_src": "32865 70666\\n144062 61170",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " каждой строке записана информация о расположении на карте о",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "1000"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt",
+     "ext": "txt",
+     "size": 5023,
+     "name": "27_A.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3338_0.txt",
+     "url": "https://kompege.ru/files/JLuOGrtDc8.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt",
+     "ext": "txt",
+     "size": 14119,
+     "name": "27_B.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3338_1.txt",
+     "url": "https://kompege.ru/files/9TcW6VOG9C.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/00abfe9295a12fe69565e28f84483abe324763a614e9fc2a79320f7191dc0248.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.txt</a> &middot; <a href=\"/api/v1/media/8a946159fc6b1da9dd4aec2a2f814c2b833522787bd76e1746cf3a89a8773e79.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.txt</a></p>\n"
+  },
+  {
+   "id": 3355,
+   "course_id": 154,
+   "external_uid": "tg:ege:491",
+   "source": "sdamgia",
+   "source_id": "28130",
+   "via": "stem",
+   "answer_src": "3&625350",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "3 625350",
+    "answer_src": "3&625350",
+    "similarity": 0.02
+   },
+   "files": [
+    {
+     "sha_ext": "02f97a1f53bf1873931272b0dd8404f743d362ecb718af5e28237530d5dc7e7d.txt",
+     "ext": "txt",
+     "size": 90,
+     "name": "",
+     "path": "reviews\\tsk390-dedup\\files\\3355_0.txt",
+     "url": "https://inf-ege.sdamgia.ru/doc/inf/zadanie27/28130_A.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "30de3f8295b23703263de59bb2ff1c8c62d4b225bb0b6ad2eb7c5b5673b3a5b1.txt",
+     "ext": "txt",
+     "size": 27667,
+     "name": "",
+     "path": "reviews\\tsk390-dedup\\files\\3355_1.txt",
+     "url": "https://inf-ege.sdamgia.ru/doc/inf/zadanie27/28130_B.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/02f97a1f53bf1873931272b0dd8404f743d362ecb718af5e28237530d5dc7e7d.txt\" target=\"_blank\" rel=\"noopener noreferrer\">Файл А</a> &middot; <a href=\"/api/v1/media/30de3f8295b23703263de59bb2ff1c8c62d4b225bb0b6ad2eb7c5b5673b3a5b1.txt\" target=\"_blank\" rel=\"noopener noreferrer\">Файл Б</a></p>\n"
+  },
+  {
+   "id": 3356,
+   "course_id": 154,
+   "external_uid": "tg:ege:490",
+   "source": "kompege",
+   "source_id": "21425",
+   "via": "stem",
+   "answer_src": "167990 73043\\n122627 29105",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": false,
+    "answer_lms": "167990 73043\n122627 29105",
+    "answer_src": "167990 73043\\n122627 29105",
+    "similarity": 0.92
+   },
+   "files": [
+    {
+     "sha_ext": "f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx",
+     "ext": "xlsx",
+     "size": 11282,
+     "name": "27_A.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3356_0.xlsx",
+     "url": "https://kompege.ru/files/vXbqN8qLI.xlsx",
+     "reuse": false
+    },
+    {
+     "sha_ext": "9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt",
+     "ext": "txt",
+     "size": 3752,
+     "name": "27_A.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3356_1.txt",
+     "url": "https://kompege.ru/files/Z0jceVu98.txt",
+     "reuse": false
+    },
+    {
+     "sha_ext": "984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx",
+     "ext": "xlsx",
+     "size": 340484,
+     "name": "27_B.xlsx",
+     "path": "reviews\\tsk390-dedup\\files\\3356_2.xlsx",
+     "url": "https://kompege.ru/files/3jyOX3uyP.xlsx",
+     "reuse": false
+    },
+    {
+     "sha_ext": "f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt",
+     "ext": "txt",
+     "size": 376351,
+     "name": "27_B.txt",
+     "path": "reviews\\tsk390-dedup\\files\\3356_3.txt",
+     "url": "https://kompege.ru/files/hrTvnpVrQ.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f88d64d29ed4091351a994f462edfa132bc2ae855c459f084d7ed3322338d1d2.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.xlsx</a> &middot; <a href=\"/api/v1/media/9e31d01316b68172bad777ce347e7b70d9e8c23d7270a97836d7050c02ec5d93.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_A.txt</a> &middot; <a href=\"/api/v1/media/984483b6198ecd0201ea8921308a7da49b11b9c3a56a23ffad50b4314698c073.xlsx\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.xlsx</a> &middot; <a href=\"/api/v1/media/f262d90bb5c9e0fbf98018cb1a404fbc974ba703560193fde8e6a280943fd0f8.txt\" target=\"_blank\" rel=\"noopener noreferrer\">27_B.txt</a></p>\n"
+  }
+ ],
+ "manual": [
+  {
+   "id": 3170,
+   "course_id": 146,
+   "source": null,
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "tg:ege:742",
+   "stem": "Задание 18_23758 Исполнитель Робот может перемещаться по клеткам, выполняя за одно перемещение одну из двух команд: вправо или вниз. Квадрат ограничен внешними стенами. Между соседними клетками квадра"
+  },
+  {
+   "id": 3461,
+   "course_id": 146,
+   "source": null,
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "tg:ege:223",
+   "stem": "Задание 18_55635 Робот стоит в левом нижнем углу прямоугольного поля, в каждой клетке которого записано целое положительное число. За один ход робот может переместиться на одну клетку вправо, вверх ил"
+  },
+  {
+   "id": 4780,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:01",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Вы хотите добавить на лист Движение_товаров столбец «Кол-во в упаковке» с помощью функции ВПР (справочник — лист Товар ). Какой ст"
+  },
+  {
+   "id": 4781,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:02",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Откройте лист Товар . Чему равно «Количество в упаковке» для артикула 47 («Кофе в зёрнах»)? Введите число (разделитель — запятая, "
+  },
+  {
+   "id": 4782,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:03",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Добавьте столбец «Сумма» = «Количество упаковок» × «Цена» на лист Движение_товаров . Операции какого типа нужно учитывать при расч"
+  },
+  {
+   "id": 4783,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:04",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Посчитайте суммарную выручку по всем магазинам: СУММ столбца «Сумма» (только строки с типом операции « Продажа »). Введите результ"
+  },
+  {
+   "id": 4784,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:05",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Постройте сводную таблицу «Выручка по магазинам» (строки — ID магазина, значения — сумма поля «Сумма», тип «Продажа»). Отсортируйт"
+  },
+  {
+   "id": 4785,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:06",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Чему равна суммарная выручка магазина M10 (руб., целое число)?"
+  },
+  {
+   "id": 4786,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:07",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . В той же сводной таблице «Выручка по магазинам» найдите магазин с наименьшей суммарной выручкой. Введите его ID."
+  },
+  {
+   "id": 4787,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:08",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Расширьте сводную таблицу: добавьте артикулы (товары) как строки, магазины — как столбцы. Найдите товар-лидер по выручке в магазин"
+  },
+  {
+   "id": 4788,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:09",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Для сводной с товарами и магазинами выберите «Показать значения как → % от итога по столбцу». Найдите долю товара-лидера в суммарн"
+  },
+  {
+   "id": 4789,
+   "course_id": 138,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:tsk109:c138:10",
+   "stem": "Файл: скачать 3.zip — три листа: Движение_товаров , Товар , Магазин . Используя сводную таблицу «Выручка по магазинам», посчитайте суммарную выручку всех магазинов Октябрьского района (ID: M1, M5, M6,"
+  },
+  {
+   "id": 5063,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:01",
+   "stem": "Дан список из 300 символов (X, Y, Z): a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYX"
+  },
+  {
+   "id": 5064,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:02",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5065,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:03",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5066,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:04",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5067,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:05",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5068,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:06",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5069,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:07",
+   "stem": "Дан список из 500 символов (A–Z): b = list(\"XAUDIBROVWGNNRSGAOXORESJOQKWSISJOMKBWEUAASXPOCCIOQJLGQMEXNUBNITNLRDSGCVMPVNNHXWTVREEGDVBWGWEIHVBTBJLYDDKZAEHORPUUKUYLWBBXHGXXNMCILNJTKWHJZBAYPFFCMMTRZJVEJCV"
+  },
+  {
+   "id": 5070,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:08",
+   "stem": "Дан список: b = list(\"XAUDIBROVWGNNRSGAOXORESJOQKWSISJOMKBWEUAASXPOCCIOQJLGQMEXNUBNITNLRDSGCVMPVNNHXWTVREEGDVBWGWEIHVBTBJLYDDKZAEHORPUUKUYLWBBXHGXXNMCILNJTKWHJZBAYPFFCMMTRZJVEJCVOZNBURIAJHXIRHKMHHMTQN"
+  },
+  {
+   "id": 5071,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:09",
+   "stem": "Дан список: a = list(\"YZXYXXYYZXXXXZXZYXXZXXXZYXYXZYXZXXZZYZXYZYZZZYXYXYZXXYYZZZYXXYZXZZXYYYXYXZXYZYXYYYZZZXXXYYXXZYYXZZYXZXYZYYYYYYYZXXZZYXXXZYYZZYYZXYXZZZXZYYZYXXYYXZYYXZYXZZXXZZXXXZYZYYXZZZXXYXZYXY"
+  },
+  {
+   "id": 5072,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:10",
+   "stem": "Выполните код: import re result = re.search(r'\\d', 'Hello123') print(result.group()) Что выведет программа? Введите ответ."
+  },
+  {
+   "id": 5073,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:11",
+   "stem": "Выполните код: import re result = re.search(r'\"(\\w+)\"', 'This is a \"word\" in quotes.') print(result.group(1)) Что выведет программа? Введите ответ."
+  },
+  {
+   "id": 5074,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:12",
+   "stem": "Дан паттерн для проверки email: import re pattern = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+$' result = bool(re.match(pattern, 'user@example.com')) Чему равно значение result ?"
+  },
+  {
+   "id": 5075,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:13",
+   "stem": "Выполните код: import re result = re.search(r'\\b(\\w+)\\b\\s+\\1\\b', 'This is a test test.') print(result.group()) Что выведет программа? Введите ответ (с пробелом между словами)."
+  },
+  {
+   "id": 5076,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:14",
+   "stem": "Выполните код: import re pattern = r'\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}' result = re.search(pattern, '123-456-7890') print(result.group()) Что выведет программа? Введите ответ."
+  },
+  {
+   "id": 5077,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:15",
+   "stem": "Выполните код: import re result = re.findall(r' ]+>', ' This is bold text. ') print(len(result)) Что выведет программа? Введите число."
+  },
+  {
+   "id": 5078,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:16",
+   "stem": "Выполните код: import re text = 'Date: 01/15/2022, Meeting on 03/20/2022' result = re.findall(r'\\b\\d{2}/\\d{2}/\\d{4}\\b', text) print(len(result)) Что выведет программа? Введите число."
+  },
+  {
+   "id": 5079,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:17",
+   "stem": "Выполните код: import re text = 'Hello world, Python is amazing!' result = re.findall(r'\\b\\w{5}\\b', text) print(len(result)) Что выведет программа? Подсказка: посчитайте буквы в каждом слове. Введите "
+  },
+  {
+   "id": 5080,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:18",
+   "stem": "Выполните код: import re pattern = r'(?P&lt;protocol&gt;https?)://(?P&lt;domain&gt;[\\w.-]+)/(?P&lt;path&gt;[\\w/]*)' url = 'https://www.example.com/path/to/page' result = re.match(pattern, url) print(r"
+  },
+  {
+   "id": 5081,
+   "course_id": 151,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c151:vvod:19",
+   "stem": "Выполните код: import re pattern = r'[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4}){7}' ipv6 = '2001:0db8:85a3:0000:0000:8a2e:0370:7334' result = re.search(pattern, ipv6) print(result.group()) Что выведет програ"
+  },
+  {
+   "id": 5089,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:01",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5090,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:02",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5091,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:03",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5092,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:04",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5093,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:05",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5094,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:06",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  },
+  {
+   "id": 5095,
+   "course_id": 145,
+   "source": "lms-authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "lms:c145:vvod:07",
+   "stem": "Скачайте архив с файлом данных: 17_1970.zip — файл 17_1970.txt содержит 5000 целых чисел от −1000 до 1000, по одному в строке. with open(\"17_1970.txt\") as f: nums = [int(x) for x in f.read().split()] "
+  }
+ ]
+}

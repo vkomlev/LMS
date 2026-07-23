@@ -1,0 +1,1901 @@
+{
+ "plan": [
+  {
+   "id": 2077,
+   "course_id": 145,
+   "external_uid": "ext:d4:polyakov:20260602:6757",
+   "source": "polyakov",
+   "source_id": "6757",
+   "via": "external_uid",
+   "answer_src": "299 196183",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тырехзначным а сумма элементов тройки не меньше максимальног",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "000",
+     "100",
+     "2023",
+     "379"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "ad384a43e7e3df1b9e49d09147becc19f001514ad4e5738ca49359268f75a76c.txt",
+     "ext": "txt",
+     "size": 36036,
+     "name": "17-379.txt",
+     "path": "reviews\\tsk390-dedup\\files\\2077_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-seq/17-379.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ad384a43e7e3df1b9e49d09147becc19f001514ad4e5738ca49359268f75a76c.txt\" target=\"_blank\" rel=\"noopener noreferrer\">17-379.txt</a></p>\n"
+  },
+  {
+   "id": 2078,
+   "course_id": 146,
+   "external_uid": "ext:d4:polyakov:20260602:2380",
+   "source": "polyakov",
+   "source_id": "2380",
+   "via": "external_uid",
+   "answer_src": "617",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " могут иметь выбранные числа в ответе запишите целую часть п",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "4b7c06ffbb8e00d161888a09f08d0a6cbb92653432ec852c961c7d84ae145568.xls",
+     "ext": "xls",
+     "size": 40448,
+     "name": "18-15.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2078_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-15.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/4b7c06ffbb8e00d161888a09f08d0a6cbb92653432ec852c961c7d84ae145568.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-15.xls</a></p>\n"
+  },
+  {
+   "id": 2083,
+   "course_id": 160,
+   "external_uid": "ext:d4:polyakov:20260602:2807",
+   "source": "polyakov",
+   "source_id": "2807",
+   "via": "external_uid",
+   "answer_src": "71879 70609",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "д во второй сумма расходов найдите двух людей с наибольшей р",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "dc12fb351be0e408c2a5a4442b13472504f89e3698ee0c05b1c2dde30bc0e691.xls",
+     "ext": "xls",
+     "size": 36352,
+     "name": "9-j7.xls",
+     "path": "reviews\\tsk390-dedup\\files\\2083_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-j7.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/dc12fb351be0e408c2a5a4442b13472504f89e3698ee0c05b1c2dde30bc0e691.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-j7.xls</a></p>\n"
+  },
+  {
+   "id": 3194,
+   "course_id": 138,
+   "external_uid": "tg:ege:711",
+   "source": "polyakov",
+   "source_id": "7613",
+   "via": "source_task_id",
+   "answer_src": "848098",
+   "verdict": "weak",
+   "evidence": {
+    "answers_agree": true,
+    "answer_lms": "848098",
+    "answer_src": "848098",
+    "similarity": 0.33
+   },
+   "files": [
+    {
+     "sha_ext": "342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls",
+     "ext": "xls",
+     "size": 1122816,
+     "name": "3-148.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3194_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dbase/3-148.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">3-148.xls</a></p>\n"
+  },
+  {
+   "id": 3308,
+   "course_id": 146,
+   "external_uid": "tg:ege:544",
+   "source": "polyakov",
+   "source_id": "2380",
+   "via": "source_task_id",
+   "answer_src": "617",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "льше предыдущего определите какую максимальную сумму могут и",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "4b7c06ffbb8e00d161888a09f08d0a6cbb92653432ec852c961c7d84ae145568.xls",
+     "ext": "xls",
+     "size": 40448,
+     "name": "18-15.xls",
+     "path": "reviews\\tsk390-dedup\\files\\3308_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-15.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/4b7c06ffbb8e00d161888a09f08d0a6cbb92653432ec852c961c7d84ae145568.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-15.xls</a></p>\n"
+  },
+  {
+   "id": 4335,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:7c053ada",
+   "source": "polyakov",
+   "source_id": "5854",
+   "via": "source_task_id",
+   "answer_src": "7858 7494",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "прыгнуть не может перед каждым запуском попрыгунчика в каждо",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "149"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "5590bcb8257792efb6cfaca8ae09483ce90bb482e15dc5c35631acea2046cfcc.xls",
+     "ext": "xls",
+     "size": 71168,
+     "name": "18-149.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4335_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-149.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5590bcb8257792efb6cfaca8ae09483ce90bb482e15dc5c35631acea2046cfcc.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-149.xls</a></p>\n"
+  },
+  {
+   "id": 4336,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:c792094a",
+   "source": "polyakov",
+   "source_id": "5855",
+   "via": "source_task_id",
+   "answer_src": "258 2817",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ет все собранные монеты и начинает сбор с монеты находящиеся",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "150"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "56c3b61b2bd38d9616da7a5ead71baf472b1b8ede84c17592efd0e61d3a39e81.xls",
+     "ext": "xls",
+     "size": 59392,
+     "name": "18-150.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4336_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-150.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/56c3b61b2bd38d9616da7a5ead71baf472b1b8ede84c17592efd0e61d3a39e81.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-150.xls</a></p>\n"
+  },
+  {
+   "id": 4337,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:e740e4a4",
+   "source": "polyakov",
+   "source_id": "5862",
+   "via": "source_task_id",
+   "answer_src": "24",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "числены с разделителем id процессов от которых зависит данны",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-46.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4337_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-46.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-46.xls</a></p>\n"
+  },
+  {
+   "id": 4342,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:279d6b62",
+   "source": "polyakov",
+   "source_id": "5867",
+   "via": "source_task_id",
+   "answer_src": "35",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "те сумму его id и времени прошедшего с момента начала вычисл",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-46.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4342_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-46.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-46.xls</a></p>\n"
+  },
+  {
+   "id": 4344,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:f62480b5",
+   "source": "polyakov",
+   "source_id": "5869",
+   "via": "source_task_id",
+   "answer_src": "31",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "сла и времени прошедшего с момента начала вычислений до их з",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-46.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4344_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-46.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-46.xls</a></p>\n"
+  },
+  {
+   "id": 4345,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:34f1b227",
+   "source": "polyakov",
+   "source_id": "5870",
+   "via": "source_task_id",
+   "answer_src": "40",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "сла и времени прошедшего с момента начала вычислений до их з",
+    "prose_ok": true,
+    "key_src_numbers": [],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-46.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4345_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-46.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/f1ec098dd352ba0fd3da7d1f65cfe35667a281a4841e63eb2bbfa834a1704319.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-46.xls</a></p>\n"
+  },
+  {
+   "id": 4351,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3b3d9d79",
+   "source": "polyakov",
+   "source_id": "5927",
+   "via": "source_task_id",
+   "answer_src": "13240 524",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "файле xls в виде прямоугольной таблицы каждая ячейка которой",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "152"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "8f32fb73d41b7d7d868dee32f0031e296efbf5fdb5785d1d8b36c8ae1a647b4f.xls",
+     "ext": "xls",
+     "size": 83456,
+     "name": "18-152.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4351_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-152.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8f32fb73d41b7d7d868dee32f0031e296efbf5fdb5785d1d8b36c8ae1a647b4f.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-152.xls</a></p>\n"
+  },
+  {
+   "id": 4372,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:f4c71856",
+   "source": "polyakov",
+   "source_id": "6147",
+   "via": "source_task_id",
+   "answer_src": "16",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ько заглавные буквы латинского алфавита и точки определите м",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "250"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt",
+     "ext": "txt",
+     "size": 1000000,
+     "name": "24-250.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4372_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-250.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/80ce53554228ac58b2217f7c803e5723819cca5f1538fbcf37c1e0ac6e85a8af.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-250.txt</a></p>\n"
+  },
+  {
+   "id": 4378,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:f1e11c41",
+   "source": "polyakov",
+   "source_id": "6180",
+   "via": "source_task_id",
+   "answer_src": "711 84",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " примера максимальная сумма получается при проходе коня по к",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "162",
+     "165"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "c8802871782d01ebe9d8b241f66920a65cacd9b04bf0dae71171180bd6b74462.xls",
+     "ext": "xls",
+     "size": 72704,
+     "name": "18-162.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4378_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-162.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/c8802871782d01ebe9d8b241f66920a65cacd9b04bf0dae71171180bd6b74462.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-162.xls</a></p>\n"
+  },
+  {
+   "id": 4379,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6eb197fe",
+   "source": "polyakov",
+   "source_id": "6203",
+   "via": "source_task_id",
+   "answer_src": "30 11",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "мы которые может собрать робот пройдя из левой верхней клетк",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "163"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "336b361e2b11ea68720bac98f608824c7bd97e188a00cc3a34be330a95e62be6.xls",
+     "ext": "xls",
+     "size": 68608,
+     "name": "18-163.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4379_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-163.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/336b361e2b11ea68720bac98f608824c7bd97e188a00cc3a34be330a95e62be6.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-163.xls</a></p>\n"
+  },
+  {
+   "id": 4381,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b110631c",
+   "source": "polyakov",
+   "source_id": "6224",
+   "via": "source_task_id",
+   "answer_src": "746 22",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "т клетке поля в ответе укажите два числа сначала минимальную",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "164"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "6c6d7c63385334da9ba2499020913f3b4ed3458f35d0034e053a3b11682e32b4.xls",
+     "ext": "xls",
+     "size": 56320,
+     "name": "18-164.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4381_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-164.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/6c6d7c63385334da9ba2499020913f3b4ed3458f35d0034e053a3b11682e32b4.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-164.xls</a></p>\n"
+  },
+  {
+   "id": 4384,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b0a0f120",
+   "source": "polyakov",
+   "source_id": "6294",
+   "via": "source_task_id",
+   "answer_src": "1950 160",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "е максимальную денежную сумму которую может собрать робот и ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "167",
+     "236"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "bfd4dff5cdd427893bab35f6479c53630b7127cfcb4bd49928300cce72fd4a56.xls",
+     "ext": "xls",
+     "size": 73728,
+     "name": "18-167.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4384_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dynxls/18-167.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bfd4dff5cdd427893bab35f6479c53630b7127cfcb4bd49928300cce72fd4a56.xls\" target=\"_blank\" rel=\"noopener noreferrer\">18-167.xls</a></p>\n"
+  },
+  {
+   "id": 4385,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:bab3b08b",
+   "source": "polyakov",
+   "source_id": "6327",
+   "via": "source_task_id",
+   "answer_src": "57",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ределите сколько раз встречается в тексте слово всякий во вс",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4385_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4386,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:aab760dc",
+   "source": "polyakov",
+   "source_id": "6329",
+   "via": "source_task_id",
+   "answer_src": "39",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "пределите сколько раз встречается в тексте слово гора во все",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4386_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4387,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:23913a0c",
+   "source": "polyakov",
+   "source_id": "6330",
+   "via": "source_task_id",
+   "answer_src": "15",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ко раз встречается в тексте слово горе во всех формах единст",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4387_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4388,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:5ca19241",
+   "source": "polyakov",
+   "source_id": "6331",
+   "via": "source_task_id",
+   "answer_src": "142",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ределите сколько раз встречается в тексте слово гость во все",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4388_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4389,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:bb10c36c",
+   "source": "polyakov",
+   "source_id": "6332",
+   "via": "source_task_id",
+   "answer_src": "27",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "пределите сколько раз встречается в тексте слово губа во все",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4389_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4390,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:d96c873c",
+   "source": "polyakov",
+   "source_id": "6333",
+   "via": "source_task_id",
+   "answer_src": "181",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ределите сколько раз встречается в тексте слово другой во вс",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4390_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4391,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:b72b3465",
+   "source": "polyakov",
+   "source_id": "6334",
+   "via": "source_task_id",
+   "answer_src": "22",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "пределите сколько раз встречается в тексте слово жена во все",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "228"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx",
+     "ext": "docx",
+     "size": 485234,
+     "name": "10-228.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4391_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-228.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/07a852d3138e408586a852d37bc39b03468bd836bfe7adfafa10ae65bc0df946.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-228.docx</a></p>\n"
+  },
+  {
+   "id": 4392,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:64afa7bc",
+   "source": "polyakov",
+   "source_id": "6335",
+   "via": "source_task_id",
+   "answer_src": "114",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ержащих хотя бы одну ячейку со следующими свойствами число в",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "202"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "db723b6b8da65edfcfdff11c301044a2ed422f45e03cedb47653eb4b1d21333c.xls",
+     "ext": "xls",
+     "size": 89088,
+     "name": "9-202.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4392_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-202.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/db723b6b8da65edfcfdff11c301044a2ed422f45e03cedb47653eb4b1d21333c.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-202.xls</a></p>\n"
+  },
+  {
+   "id": 4393,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:29337f5c",
+   "source": "polyakov",
+   "source_id": "6336",
+   "via": "source_task_id",
+   "answer_src": "603",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ержащих хотя бы одну ячейку со следующими свойствами число в",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "202"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "db723b6b8da65edfcfdff11c301044a2ed422f45e03cedb47653eb4b1d21333c.xls",
+     "ext": "xls",
+     "size": 89088,
+     "name": "9-202.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4393_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-202.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/db723b6b8da65edfcfdff11c301044a2ed422f45e03cedb47653eb4b1d21333c.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-202.xls</a></p>\n"
+  },
+  {
+   "id": 4394,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:9157ea9d",
+   "source": "polyakov",
+   "source_id": "6337",
+   "via": "source_task_id",
+   "answer_src": "25",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "содержащих хотя бы одну ячейку со следующими свойствами числ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "102",
+     "204"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls",
+     "ext": "xls",
+     "size": 86016,
+     "name": "9-204.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4394_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-204.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-204.xls</a></p>\n"
+  },
+  {
+   "id": 4395,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:7e6d44bb",
+   "source": "polyakov",
+   "source_id": "6338",
+   "via": "source_task_id",
+   "answer_src": "799",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " содержащих хотя бы одну ячейку со следующими свойствами чис",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "204"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls",
+     "ext": "xls",
+     "size": 86016,
+     "name": "9-204.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4395_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-204.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-204.xls</a></p>\n"
+  },
+  {
+   "id": 4396,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:4c594b1f",
+   "source": "polyakov",
+   "source_id": "6339",
+   "via": "source_task_id",
+   "answer_src": "21",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "содержащих хотя бы одну ячейку со следующими свойствами числ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "204"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls",
+     "ext": "xls",
+     "size": 86016,
+     "name": "9-204.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4396_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-204.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-204.xls</a></p>\n"
+  },
+  {
+   "id": 4397,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:66091424",
+   "source": "polyakov",
+   "source_id": "6340",
+   "via": "source_task_id",
+   "answer_src": "464",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ержащих хотя бы одну ячейку со следующими свойствами число в",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "204"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls",
+     "ext": "xls",
+     "size": 86016,
+     "name": "9-204.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4397_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-204.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-204.xls</a></p>\n"
+  },
+  {
+   "id": 4398,
+   "course_id": 1387,
+   "external_uid": "wp_nav:9:f13d3f5a",
+   "source": "polyakov",
+   "source_id": "6341",
+   "via": "source_task_id",
+   "answer_src": "442",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ржащих хотя бы одну ячейку со следующими свойствами число в ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "204"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls",
+     "ext": "xls",
+     "size": 86016,
+     "name": "9-204.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4398_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-xls/9-204.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/92e272bf6e18503618ad1dd612e1dbc34453edf8a9b4b6337cb73ee952c29103.xls\" target=\"_blank\" rel=\"noopener noreferrer\">9-204.xls</a></p>\n"
+  },
+  {
+   "id": 4419,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:86c9c924",
+   "source": "polyakov",
+   "source_id": "6880",
+   "via": "source_task_id",
+   "answer_src": "17",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " процесса id во втором столбце таблицы время его выполнения ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "97519fd36ac0c0eb24fc000a2091ad47d2a889d3e95eb3e03f62f9dc9442b14a.xls",
+     "ext": "xls",
+     "size": 27136,
+     "name": "22-94.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4419_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-94.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/97519fd36ac0c0eb24fc000a2091ad47d2a889d3e95eb3e03f62f9dc9442b14a.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-94.xls</a></p>\n"
+  },
+  {
+   "id": 4438,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:4466bd47",
+   "source": "polyakov",
+   "source_id": "7317",
+   "via": "source_task_id",
+   "answer_src": "1914",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "чается в тексте не считая сносок сочетание букв но в середин",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4438_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4439,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:698d59ed",
+   "source": "polyakov",
+   "source_id": "7318",
+   "via": "source_task_id",
+   "answer_src": "108",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "встречается в первой главе первой истории не считая сносок с",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4439_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4440,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:da6326c7",
+   "source": "polyakov",
+   "source_id": "7319",
+   "via": "source_task_id",
+   "answer_src": "108",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тся в тексте не считая сносок сочетание букв рот в середине ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4440_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4441,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:73aedc8b",
+   "source": "polyakov",
+   "source_id": "7320",
+   "via": "source_task_id",
+   "answer_src": "37",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ается во второй истории включая заголовки эпиграфы и сноски ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4441_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4442,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:88fcfaec",
+   "source": "polyakov",
+   "source_id": "7321",
+   "via": "source_task_id",
+   "answer_src": "37",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "я в тексте не считая сносок сочетание букв лес в середине др",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4442_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4443,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:9c6f6ed0",
+   "source": "polyakov",
+   "source_id": "7322",
+   "via": "source_task_id",
+   "answer_src": "11",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тся в третьей истории включая заголовки эпиграфы и сноски со",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4443_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4444,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:e64d8af4",
+   "source": "polyakov",
+   "source_id": "7323",
+   "via": "source_task_id",
+   "answer_src": "5",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ется в тексте не считая сносок сочетание букв был в середине",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4444_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4445,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:a2f3155f",
+   "source": "polyakov",
+   "source_id": "7324",
+   "via": "source_task_id",
+   "answer_src": "7",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "тся в третьей истории включая заголовки эпиграфы и сноски со",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4445_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4446,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:8ad1b7e8",
+   "source": "polyakov",
+   "source_id": "7325",
+   "via": "source_task_id",
+   "answer_src": "369",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "торий определите сколько раз встречаются в третьей главе вто",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4446_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4447,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:c602616c",
+   "source": "polyakov",
+   "source_id": "7326",
+   "via": "source_task_id",
+   "answer_src": "303",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "рий определите сколько раз встречаются во второй главе треть",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4447_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4452,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:a97ec75e",
+   "source": "polyakov",
+   "source_id": "7438",
+   "via": "source_task_id",
+   "answer_src": "644",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "кого алфавита и десятичные цифры найдите максимальную длину ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "100",
+     "293"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "b916609b022aaff6f18ef43d6645e95f45f9271e83ea14a77d0818a0a6657814.txt",
+     "ext": "txt",
+     "size": 689879,
+     "name": "24-293.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4452_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-293.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b916609b022aaff6f18ef43d6645e95f45f9271e83ea14a77d0818a0a6657814.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-293.txt</a></p>\n"
+  },
+  {
+   "id": 4453,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:f2a212be",
+   "source": "polyakov",
+   "source_id": "7439",
+   "via": "source_task_id",
+   "answer_src": "479",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "алфавита и десятичные цифры найдите максимальную длину подст",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "294"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "3c7699d6a229059c0b36e6dc122817443e25f4a5b0512a182f6a6ac7f8bd2924.txt",
+     "ext": "txt",
+     "size": 606851,
+     "name": "24-294.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4453_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-294.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/3c7699d6a229059c0b36e6dc122817443e25f4a5b0512a182f6a6ac7f8bd2924.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-294.txt</a></p>\n"
+  },
+  {
+   "id": 4456,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:22ce2e5f",
+   "source": "polyakov",
+   "source_id": "7614",
+   "via": "source_task_id",
+   "answer_src": "59181",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "в течение дня поле наличие карты клиента содержит значение д",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "148",
+     "2024"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls",
+     "ext": "xls",
+     "size": 1122816,
+     "name": "3-148.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4456_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dbase/3-148.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">3-148.xls</a></p>\n"
+  },
+  {
+   "id": 4457,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:6ac7f82b",
+   "source": "polyakov",
+   "source_id": "7615",
+   "via": "source_task_id",
+   "answer_src": "372670",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "е наличие карты клиента содержит значение да или нет таблица",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "148",
+     "2024"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls",
+     "ext": "xls",
+     "size": 1122816,
+     "name": "3-148.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4457_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dbase/3-148.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">3-148.xls</a></p>\n"
+  },
+  {
+   "id": 4458,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:291df350",
+   "source": "polyakov",
+   "source_id": "7616",
+   "via": "source_task_id",
+   "answer_src": "67",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "вар содержит информацию об основных характеристиках каждого ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "148",
+     "2024"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls",
+     "ext": "xls",
+     "size": 1122816,
+     "name": "3-148.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4458_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dbase/3-148.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">3-148.xls</a></p>\n"
+  },
+  {
+   "id": 4459,
+   "course_id": 1381,
+   "external_uid": "wp_nav:3:c999ab81",
+   "source": "polyakov",
+   "source_id": "7617",
+   "via": "source_task_id",
+   "answer_src": "190481",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " таблица товар содержит информацию об основных характеристик",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "148",
+     "2024"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls",
+     "ext": "xls",
+     "size": 1122816,
+     "name": "3-148.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4459_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-dbase/3-148.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/342d0e6f5072f4d8c03072c2e8c8cec0862a5857ce3305f9b633992c2e15073b.xls\" target=\"_blank\" rel=\"noopener noreferrer\">3-148.xls</a></p>\n"
+  },
+  {
+   "id": 4475,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:d0605d09",
+   "source": "polyakov",
+   "source_id": "7802",
+   "via": "source_task_id",
+   "answer_src": "172",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "лицы время его выполнения в миллисекундах в третьем столбце ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "130"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "1a04394f3a3cd268249ce6f92e4cb64524edbc7e6c9ef76148c2113df63cc414.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-130.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4475_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-130.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1a04394f3a3cd268249ce6f92e4cb64524edbc7e6c9ef76148c2113df63cc414.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-130.xls</a></p>\n"
+  },
+  {
+   "id": 4476,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:c3c16c13",
+   "source": "polyakov",
+   "source_id": "7803",
+   "via": "source_task_id",
+   "answer_src": "130",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ицы время его выполнения в миллисекундах в третьем столбце п",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "130"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "1a04394f3a3cd268249ce6f92e4cb64524edbc7e6c9ef76148c2113df63cc414.xls",
+     "ext": "xls",
+     "size": 53248,
+     "name": "22-130.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4476_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-130.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1a04394f3a3cd268249ce6f92e4cb64524edbc7e6c9ef76148c2113df63cc414.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-130.xls</a></p>\n"
+  },
+  {
+   "id": 4477,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:28d1b39b",
+   "source": "polyakov",
+   "source_id": "7804",
+   "via": "source_task_id",
+   "answer_src": "340",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "лицы время его выполнения в миллисекундах в третьем столбце ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "132"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "89102284477c8e7b927ad3a4d59e477d9c8afeebc736ef2bd3b917c27fc52f98.xls",
+     "ext": "xls",
+     "size": 53760,
+     "name": "22-132.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4477_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-132.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/89102284477c8e7b927ad3a4d59e477d9c8afeebc736ef2bd3b917c27fc52f98.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-132.xls</a></p>\n"
+  },
+  {
+   "id": 4478,
+   "course_id": 1398,
+   "external_uid": "wp_nav:22:db64e4b3",
+   "source": "polyakov",
+   "source_id": "7805",
+   "via": "source_task_id",
+   "answer_src": "272",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ицы время его выполнения в миллисекундах в третьем столбце п",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "132"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "89102284477c8e7b927ad3a4d59e477d9c8afeebc736ef2bd3b917c27fc52f98.xls",
+     "ext": "xls",
+     "size": 53760,
+     "name": "22-132.xls",
+     "path": "reviews\\tsk390-dedup\\files\\4478_0.xls",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-proc/22-132.xls",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/89102284477c8e7b927ad3a4d59e477d9c8afeebc736ef2bd3b917c27fc52f98.xls\" target=\"_blank\" rel=\"noopener noreferrer\">22-132.xls</a></p>\n"
+  },
+  {
+   "id": 4485,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:0d6411ba",
+   "source": "polyakov",
+   "source_id": "7858",
+   "via": "source_task_id",
+   "answer_src": "1051",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "елите сколько раз встречаются в тексте не считая сносок и ко",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4485_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4486,
+   "course_id": 1388,
+   "external_uid": "wp_nav:10:3edd90ef",
+   "source": "polyakov",
+   "source_id": "7859",
+   "via": "source_task_id",
+   "answer_src": "4731",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ите сколько раз встречаются в тексте не считая сносок и коло",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "260"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx",
+     "ext": "docx",
+     "size": 1844100,
+     "name": "10-260.docx",
+     "path": "reviews\\tsk390-dedup\\files\\4486_0.docx",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-txt/10-260.docx",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e1eb1bb4545290a17381671d2501e6ade476291fab3d59d6952025211aa81b8a.docx\" target=\"_blank\" rel=\"noopener noreferrer\">10-260.docx</a></p>\n"
+  },
+  {
+   "id": 4496,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:e945b1fc",
+   "source": "polyakov",
+   "source_id": "7976",
+   "via": "source_task_id",
+   "answer_src": "283733",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "слами записанными в шестнадцатеричной системе счисления в эт",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "314"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt",
+     "ext": "txt",
+     "size": 1000012,
+     "name": "24-314.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4496_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-314.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-314.txt</a></p>\n"
+  },
+  {
+   "id": 4497,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:4ed28161",
+   "source": "polyakov",
+   "source_id": "7977",
+   "via": "source_task_id",
+   "answer_src": "5513",
+   "verdict": "match",
+   "evidence": {
+    "fragment": " числами записанными в шестеричной системе счисления в этом ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "314"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt",
+     "ext": "txt",
+     "size": 1000012,
+     "name": "24-314.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4497_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-314.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-314.txt</a></p>\n"
+  },
+  {
+   "id": 4498,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:3ffc6de3",
+   "source": "polyakov",
+   "source_id": "7978",
+   "via": "source_task_id",
+   "answer_src": "31201",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "елыми неотрицательными числами записанными в десятичной сист",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "314"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt",
+     "ext": "txt",
+     "size": 1000012,
+     "name": "24-314.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4498_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-314.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-314.txt</a></p>\n"
+  },
+  {
+   "id": 4499,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:521473a6",
+   "source": "polyakov",
+   "source_id": "7979",
+   "via": "source_task_id",
+   "answer_src": "142844",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "неотрицательными числами записанными в восьмеричной системе ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "314"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt",
+     "ext": "txt",
+     "size": 1000012,
+     "name": "24-314.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4499_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-314.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e607779e312ff955d403e2630ee6814a4b78fff3e82ab825771f8385ae174299.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-314.txt</a></p>\n"
+  },
+  {
+   "id": 4500,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:a6c6588f",
+   "source": "polyakov",
+   "source_id": "7993",
+   "via": "source_task_id",
+   "answer_src": "989",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "те максимальную длину последовательности вида число число чи",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "320"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "8358ebcc7a8040c9ab6d93bd43efe6e9b438bfa92946c8cb5a23c8bbea2a3341.txt",
+     "ext": "txt",
+     "size": 1000003,
+     "name": "24-320.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4500_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-320.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8358ebcc7a8040c9ab6d93bd43efe6e9b438bfa92946c8cb5a23c8bbea2a3341.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-320.txt</a></p>\n"
+  },
+  {
+   "id": 4515,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:51b9d89d",
+   "source": "polyakov",
+   "source_id": "8099",
+   "via": "source_task_id",
+   "answer_src": "89",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "альное количество идущих подряд групп символов вида a b или ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "0678",
+     "322",
+     "335"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "402cfafe91cffeca9d156a6cedb3c2c48b3520f810ed2eea45b63c4b77f7acdd.txt",
+     "ext": "txt",
+     "size": 210005,
+     "name": "24-335.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4515_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-335.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/402cfafe91cffeca9d156a6cedb3c2c48b3520f810ed2eea45b63c4b77f7acdd.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-335.txt</a></p>\n"
+  },
+  {
+   "id": 4516,
+   "course_id": 1400,
+   "external_uid": "wp_nav:24:ec06798c",
+   "source": "polyakov",
+   "source_id": "8100",
+   "via": "source_task_id",
+   "answer_src": "55",
+   "verdict": "match",
+   "evidence": {
+    "fragment": "ьное количество идущих подряд групп символов вида a b или a ",
+    "prose_ok": true,
+    "key_src_numbers": [
+     "0678",
+     "3222",
+     "335",
+     "7182",
+     "745"
+    ],
+    "missing_in_lms": [],
+    "nums_ok": true
+   },
+   "files": [
+    {
+     "sha_ext": "402cfafe91cffeca9d156a6cedb3c2c48b3520f810ed2eea45b63c4b77f7acdd.txt",
+     "ext": "txt",
+     "size": 210005,
+     "name": "24-335.txt",
+     "path": "reviews\\tsk390-dedup\\files\\4516_0.txt",
+     "url": "https://kpolyakov.spb.ru/cms/files/ege-sym/24-335.txt",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/402cfafe91cffeca9d156a6cedb3c2c48b3520f810ed2eea45b63c4b77f7acdd.txt\" target=\"_blank\" rel=\"noopener noreferrer\">24-335.txt</a></p>\n"
+  }
+ ],
+ "manual": []
+}

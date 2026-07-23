@@ -1,0 +1,379 @@
+{
+ "plan": [
+  {
+   "id": 4780,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4781,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4782,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4783,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4784,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4785,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4786,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4787,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4788,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 4789,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods",
+     "ext": "ods",
+     "size": 3271039,
+     "name": "03.ods",
+     "path": null,
+     "url": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b2fd940a8c9c57e94fd8f166f73043b93655e0a74a67eb3faee5a39ca10b5081.ods\" target=\"_blank\" rel=\"noopener noreferrer\">03.ods</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://inf-ege.sdamgia.ru/get_file?id=228463",
+   "evidence": {
+    "operator_confirmed": "оператор указал источник: sdamgia problem?id=75240, вложение 03.ods; сверено — лист «Товар» несёт «Артикул» и «Количество в упаковке» (ключ ВПР из условия), лист «Магазин» содержит «М10»"
+   }
+  },
+  {
+   "id": 5089,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5090,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5091,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5092,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5093,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5094,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  },
+  {
+   "id": 5095,
+   "course_id": null,
+   "files": [
+    {
+     "sha_ext": "0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip",
+     "ext": "zip",
+     "size": 9778,
+     "name": "17_1970.zip",
+     "path": null,
+     "url": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0f7041dd045cb971e626ebf5fff6978b72f5b84ed3bd980ec6f085b8f167d1bf.zip\" target=\"_blank\" rel=\"noopener noreferrer\">17_1970.zip</a></p>\n",
+   "verdict": "operator_confirmed",
+   "source": "operator",
+   "source_id": "https://victor-komlev.ru/wp-content/uploads/2025/09/17_1970.zip",
+   "evidence": {
+    "operator_confirmed": "оператор прислал ссылку на авторский файл; сверено — внутри 17_1970.txt ровно 5000 целых чисел в диапазоне −1000…1000, как обещает условие"
+   }
+  }
+ ],
+ "manual": []
+}
