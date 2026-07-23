@@ -1,0 +1,12 @@
+{
+  "_meta": {
+    "task": "tsk-321 (хвост) batch2: задание №26 — 3 ответа, подтверждённых источником sdamgia + близнецом",
+    "normalization": ["trim", "lower"],
+    "sets_manual_review_required": false
+  },
+  "answers": {
+    "3802": {"values": ["171 701"], "ege": 26, "verify": "sdamgia:83156 'Ответ: 171 701' == answer_raw"},
+    "3783": {"values": ["22262050 33246829"], "ege": 26, "verify": "sdamgia:59851 первое число == answer_raw, источник дополнил второе"},
+    "3790": {"values": ["52326 635"], "ege": 26, "verify": "sdamgia:70553 ответ под вопросом+кодом решения; близнец 3340 (c153) == '52326 635'"}
+  }
+}
