@@ -1,0 +1,3385 @@
+{
+ "taken": "2026-07-23",
+ "courses": [
+  144,
+  146,
+  153,
+  154,
+  157,
+  1384,
+  1394,
+  1396,
+  1402,
+  1403
+ ],
+ "rows": [
+  {
+   "id": 2078,
+   "course_id": 146,
+   "external_uid": "ext:d4:polyakov:20260602:2380",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2080,
+   "course_id": 1394,
+   "external_uid": "ext:d4:polyakov:20260602:7239",
+   "difficulty_id": 4,
+   "order_position": 67,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2081,
+   "course_id": 1384,
+   "external_uid": "ext:d4:polyakov:20260602:6350",
+   "difficulty_id": 4,
+   "order_position": 2,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2140,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:591",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2141,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:928",
+   "difficulty_id": 3,
+   "order_position": 31,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2142,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:20962",
+   "difficulty_id": 3,
+   "order_position": 48,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2143,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:21711",
+   "difficulty_id": 3,
+   "order_position": 30,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2144,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:23200",
+   "difficulty_id": 3,
+   "order_position": 29,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2145,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:23275",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2146,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:21902",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2147,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:23562",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2148,
+   "course_id": 144,
+   "external_uid": "ext:d4:kompege:20260602:628",
+   "difficulty_id": 3,
+   "order_position": 37,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2169,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:4694",
+   "difficulty_id": 2,
+   "order_position": 11,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2170,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:4742",
+   "difficulty_id": 2,
+   "order_position": 12,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2171,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:4747",
+   "difficulty_id": 2,
+   "order_position": 13,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2172,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:17860",
+   "difficulty_id": 2,
+   "order_position": 19,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2173,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:23190",
+   "difficulty_id": 2,
+   "order_position": 21,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2174,
+   "course_id": 157,
+   "external_uid": "ext:d4:kompege:20260602:9987",
+   "difficulty_id": 3,
+   "order_position": 45,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2190,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:17",
+   "difficulty_id": 2,
+   "order_position": 21,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2191,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:930",
+   "difficulty_id": 2,
+   "order_position": 22,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2192,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:17874",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2193,
+   "course_id": 146,
+   "external_uid": "ext:d4:kompege:20260602:23758",
+   "difficulty_id": 3,
+   "order_position": 47,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2207,
+   "course_id": 154,
+   "external_uid": "ext:d4:kompege:20260602:21425",
+   "difficulty_id": 3,
+   "order_position": 25,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2208,
+   "course_id": 154,
+   "external_uid": "ext:d4:kompege:20260602:21932",
+   "difficulty_id": 3,
+   "order_position": 26,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2305,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:33763",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2306,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:72576",
+   "difficulty_id": 3,
+   "order_position": 51,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2307,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:27415",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2308,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:55635",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2309,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:51987",
+   "difficulty_id": 3,
+   "order_position": 37,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2310,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:72603",
+   "difficulty_id": 3,
+   "order_position": 45,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2311,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:48466",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2312,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:33488",
+   "difficulty_id": 3,
+   "order_position": 38,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2313,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:58485",
+   "difficulty_id": 3,
+   "order_position": 46,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2314,
+   "course_id": 146,
+   "external_uid": "ext:d4:sdamgia:20260602:29666",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2322,
+   "course_id": 157,
+   "external_uid": "ext:d4:sdamgia:20260602:75243",
+   "difficulty_id": 2,
+   "order_position": 24,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2323,
+   "course_id": 157,
+   "external_uid": "ext:d4:sdamgia:20260602:48454",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2324,
+   "course_id": 157,
+   "external_uid": "ext:d4:sdamgia:20260602:52845",
+   "difficulty_id": 3,
+   "order_position": 46,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2325,
+   "course_id": 157,
+   "external_uid": "ext:d4:sdamgia:20260602:58245",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2326,
+   "course_id": 157,
+   "external_uid": "ext:d4:sdamgia:20260602:47404",
+   "difficulty_id": 3,
+   "order_position": 47,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2327,
+   "course_id": 1384,
+   "external_uid": "ext:d4:sdamgia:20260602:58248",
+   "difficulty_id": 4,
+   "order_position": 8,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2328,
+   "course_id": 1384,
+   "external_uid": "ext:d4:sdamgia:20260602:58249",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2329,
+   "course_id": 1384,
+   "external_uid": "ext:d4:sdamgia:20260602:68239",
+   "difficulty_id": 4,
+   "order_position": 3,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2330,
+   "course_id": 1384,
+   "external_uid": "ext:d4:sdamgia:20260602:55593",
+   "difficulty_id": 4,
+   "order_position": 4,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2350,
+   "course_id": 144,
+   "external_uid": "ext:d4:sdamgia:20260602:55633",
+   "difficulty_id": 3,
+   "order_position": 39,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2351,
+   "course_id": 144,
+   "external_uid": "ext:d4:sdamgia:20260602:56544",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2352,
+   "course_id": 1394,
+   "external_uid": "ext:d4:sdamgia:20260602:48437",
+   "difficulty_id": 4,
+   "order_position": 1,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2353,
+   "course_id": 144,
+   "external_uid": "ext:d4:sdamgia:20260602:47013",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2354,
+   "course_id": 144,
+   "external_uid": "ext:d4:sdamgia:20260602:48464",
+   "difficulty_id": 3,
+   "order_position": 38,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2355,
+   "course_id": 1394,
+   "external_uid": "ext:d4:sdamgia:20260602:62470",
+   "difficulty_id": 4,
+   "order_position": 3,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2386,
+   "course_id": 1403,
+   "external_uid": "ext:d4:sdamgia:20260602:70554",
+   "difficulty_id": 4,
+   "order_position": 1,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2392,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v1:20260602:v1t6",
+   "difficulty_id": 2,
+   "order_position": 14,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2402,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v1:20260602:v1t16",
+   "difficulty_id": 2,
+   "order_position": 2,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2404,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v1:20260602:v1t18",
+   "difficulty_id": 2,
+   "order_position": 2,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2412,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v1:20260602:v1t26",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2413,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v1:20260602:v1t27",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2418,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v2:20260602:v2t6",
+   "difficulty_id": 2,
+   "order_position": 15,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2427,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v2:20260602:v2t16",
+   "difficulty_id": 2,
+   "order_position": 3,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2429,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v2:20260602:v2t18",
+   "difficulty_id": 2,
+   "order_position": 6,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2437,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v2:20260602:v2t26",
+   "difficulty_id": 2,
+   "order_position": 2,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2438,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v2:20260602:v2t27",
+   "difficulty_id": 2,
+   "order_position": 4,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2441,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v3:20260602:v3t16",
+   "difficulty_id": 2,
+   "order_position": 4,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2443,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v3:20260602:v3t18",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2450,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v3:20260602:v3t26",
+   "difficulty_id": 2,
+   "order_position": 4,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2451,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v3:20260602:v3t27",
+   "difficulty_id": 2,
+   "order_position": 2,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2456,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v4:20260602:v4t6",
+   "difficulty_id": 2,
+   "order_position": 16,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2466,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v4:20260602:v4t16",
+   "difficulty_id": 2,
+   "order_position": 5,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2468,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v4:20260602:v4t18",
+   "difficulty_id": 2,
+   "order_position": 7,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2476,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v4:20260602:v4t26",
+   "difficulty_id": 2,
+   "order_position": 3,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2477,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v4:20260602:v4t27",
+   "difficulty_id": 2,
+   "order_position": 3,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2483,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v5:20260602:v5t6",
+   "difficulty_id": 2,
+   "order_position": 17,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2490,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v5:20260602:v5t16",
+   "difficulty_id": 2,
+   "order_position": 6,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2492,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v5:20260602:v5t18",
+   "difficulty_id": 2,
+   "order_position": 3,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2500,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v5:20260602:v5t27",
+   "difficulty_id": 2,
+   "order_position": 5,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2511,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v6:20260602:v6t16",
+   "difficulty_id": 2,
+   "order_position": 7,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2513,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v6:20260602:v6t18",
+   "difficulty_id": 2,
+   "order_position": 4,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2521,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v6:20260602:v6t26",
+   "difficulty_id": 2,
+   "order_position": 7,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2522,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v6:20260602:v6t27",
+   "difficulty_id": 2,
+   "order_position": 6,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2529,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v7:20260602:v7t16",
+   "difficulty_id": 2,
+   "order_position": 8,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2531,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v7:20260602:v7t18",
+   "difficulty_id": 2,
+   "order_position": 5,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2539,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v7:20260602:v7t27",
+   "difficulty_id": 2,
+   "order_position": 7,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2544,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v8:20260602:v8t16",
+   "difficulty_id": 2,
+   "order_position": 9,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2545,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v8:20260602:v8t18",
+   "difficulty_id": 2,
+   "order_position": 10,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2552,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v8:20260602:v8t26",
+   "difficulty_id": 2,
+   "order_position": 8,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2553,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v8:20260602:v8t27",
+   "difficulty_id": 2,
+   "order_position": 10,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2559,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v9:20260602:v9t6",
+   "difficulty_id": 2,
+   "order_position": 18,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2566,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v9:20260602:v9t16",
+   "difficulty_id": 2,
+   "order_position": 10,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2568,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v9:20260602:v9t18",
+   "difficulty_id": 2,
+   "order_position": 12,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2575,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v9:20260602:v9t27",
+   "difficulty_id": 2,
+   "order_position": 8,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2580,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v10:20260602:v10t6",
+   "difficulty_id": 2,
+   "order_position": 20,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2588,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v10:20260602:v10t16",
+   "difficulty_id": 2,
+   "order_position": 11,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2590,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v10:20260602:v10t18",
+   "difficulty_id": 2,
+   "order_position": 11,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2598,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v10:20260602:v10t27",
+   "difficulty_id": 2,
+   "order_position": 14,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2602,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v11:20260602:v11t6",
+   "difficulty_id": 2,
+   "order_position": 25,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2611,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v11:20260602:v11t16",
+   "difficulty_id": 2,
+   "order_position": 26,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2613,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v11:20260602:v11t18",
+   "difficulty_id": 2,
+   "order_position": 19,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2621,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v11:20260602:v11t26",
+   "difficulty_id": 2,
+   "order_position": 9,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2622,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v11:20260602:v11t27",
+   "difficulty_id": 2,
+   "order_position": 9,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2628,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v12:20260602:v12t6",
+   "difficulty_id": 2,
+   "order_position": 22,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2636,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v12:20260602:v12t16",
+   "difficulty_id": 2,
+   "order_position": 12,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2638,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v12:20260602:v12t18",
+   "difficulty_id": 2,
+   "order_position": 8,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2646,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v12:20260602:v12t27",
+   "difficulty_id": 2,
+   "order_position": 11,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2652,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v13:20260602:v13t6",
+   "difficulty_id": 2,
+   "order_position": 23,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2662,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v13:20260602:v13t16",
+   "difficulty_id": 2,
+   "order_position": 13,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2671,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v13:20260602:v13t26",
+   "difficulty_id": 2,
+   "order_position": 5,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2672,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v13:20260602:v13t27",
+   "difficulty_id": 2,
+   "order_position": 12,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2677,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v14:20260602:v14t6",
+   "difficulty_id": 2,
+   "order_position": 27,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2685,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v14:20260602:v14t16",
+   "difficulty_id": 2,
+   "order_position": 27,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2693,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v14:20260602:v14t27",
+   "difficulty_id": 2,
+   "order_position": 20,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2699,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v15:20260602:v15t6",
+   "difficulty_id": 2,
+   "order_position": 28,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2707,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v15:20260602:v15t16",
+   "difficulty_id": 2,
+   "order_position": 14,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2716,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v15:20260602:v15t27",
+   "difficulty_id": 2,
+   "order_position": 13,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2720,
+   "course_id": 1384,
+   "external_uid": "pdf:d4:pdf:crylov:v16:20260602:v16t6",
+   "difficulty_id": 4,
+   "order_position": 1,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 2728,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v16:20260602:v16t16",
+   "difficulty_id": 2,
+   "order_position": 15,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2735,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v16:20260602:v16t27",
+   "difficulty_id": 2,
+   "order_position": 18,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2741,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v17:20260602:v17t6",
+   "difficulty_id": 2,
+   "order_position": 26,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2749,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v17:20260602:v17t16",
+   "difficulty_id": 2,
+   "order_position": 16,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2751,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v17:20260602:v17t18",
+   "difficulty_id": 2,
+   "order_position": 9,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2758,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v17:20260602:v17t27",
+   "difficulty_id": 2,
+   "order_position": 15,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2763,
+   "course_id": 157,
+   "external_uid": "pdf:d4:pdf:crylov:v18:20260602:v18t6",
+   "difficulty_id": 2,
+   "order_position": 30,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2770,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v18:20260602:v18t16",
+   "difficulty_id": 2,
+   "order_position": 28,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2772,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v18:20260602:v18t18",
+   "difficulty_id": 2,
+   "order_position": 13,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2780,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v18:20260602:v18t26",
+   "difficulty_id": 2,
+   "order_position": 6,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2781,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v18:20260602:v18t27",
+   "difficulty_id": 2,
+   "order_position": 19,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2793,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v19:20260602:v19t16",
+   "difficulty_id": 2,
+   "order_position": 17,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2795,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v19:20260602:v19t18",
+   "difficulty_id": 2,
+   "order_position": 20,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2803,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v19:20260602:v19t27",
+   "difficulty_id": 2,
+   "order_position": 16,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2815,
+   "course_id": 144,
+   "external_uid": "pdf:d4:pdf:crylov:v20:20260602:v20t16",
+   "difficulty_id": 2,
+   "order_position": 18,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2817,
+   "course_id": 146,
+   "external_uid": "pdf:d4:pdf:crylov:v20:20260602:v20t18",
+   "difficulty_id": 2,
+   "order_position": 14,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2825,
+   "course_id": 153,
+   "external_uid": "pdf:d4:pdf:crylov:v20:20260602:v20t26",
+   "difficulty_id": 2,
+   "order_position": 10,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2826,
+   "course_id": 154,
+   "external_uid": "pdf:d4:pdf:crylov:v20:20260602:v20t27",
+   "difficulty_id": 2,
+   "order_position": 17,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2834,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v3:20260602:v3t6",
+   "difficulty_id": 2,
+   "order_position": 29,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2847,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v5:20260602:v5t26",
+   "difficulty_id": 2,
+   "order_position": 20,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2852,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v6:20260602:v6t6",
+   "difficulty_id": 2,
+   "order_position": 31,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2858,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v7:20260602:v7t6",
+   "difficulty_id": 2,
+   "order_position": 32,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2862,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v7:20260602:v7t26",
+   "difficulty_id": 2,
+   "order_position": 11,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2868,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v8:20260602:v8t6",
+   "difficulty_id": 2,
+   "order_position": 33,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2880,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v9:20260602:v9t26",
+   "difficulty_id": 2,
+   "order_position": 14,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2884,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v10:20260602:v10t26",
+   "difficulty_id": 2,
+   "order_position": 15,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2890,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v12:20260602:v12t26",
+   "difficulty_id": 2,
+   "order_position": 16,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2891,
+   "course_id": 146,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v13:20260602:v13t18",
+   "difficulty_id": 2,
+   "order_position": 15,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2896,
+   "course_id": 146,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v14:20260602:v14t18",
+   "difficulty_id": 2,
+   "order_position": 16,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2897,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v14:20260602:v14t26",
+   "difficulty_id": 2,
+   "order_position": 17,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2900,
+   "course_id": 146,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v15:20260602:v15t18",
+   "difficulty_id": 2,
+   "order_position": 17,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2901,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v15:20260602:v15t26",
+   "difficulty_id": 2,
+   "order_position": 12,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2906,
+   "course_id": 146,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v16:20260602:v16t18",
+   "difficulty_id": 2,
+   "order_position": 18,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2909,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v16:20260602:v16t26",
+   "difficulty_id": 2,
+   "order_position": 13,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2913,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v17:20260602:v17t26",
+   "difficulty_id": 2,
+   "order_position": 18,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2918,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v19:20260602:v19t6",
+   "difficulty_id": 2,
+   "order_position": 34,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2922,
+   "course_id": 153,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v19:20260602:v19t26",
+   "difficulty_id": 2,
+   "order_position": 19,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2924,
+   "course_id": 157,
+   "external_uid": "ext:pdf:d4:pdf:crylov:v20:20260602:v20t6",
+   "difficulty_id": 2,
+   "order_position": 35,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2998,
+   "course_id": 157,
+   "external_uid": "tg:ege:984",
+   "difficulty_id": 3,
+   "order_position": 48,
+   "requirement_level": "required"
+  },
+  {
+   "id": 2999,
+   "course_id": 1402,
+   "external_uid": "tg:ege:983",
+   "difficulty_id": 4,
+   "order_position": 2,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3004,
+   "course_id": 154,
+   "external_uid": "tg:ege:977",
+   "difficulty_id": 3,
+   "order_position": 22,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3010,
+   "course_id": 1402,
+   "external_uid": "tg:ege:971",
+   "difficulty_id": 4,
+   "order_position": 4,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3012,
+   "course_id": 144,
+   "external_uid": "tg:ege:969",
+   "difficulty_id": 3,
+   "order_position": 42,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3015,
+   "course_id": 154,
+   "external_uid": "tg:ege:966",
+   "difficulty_id": 3,
+   "order_position": 27,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3016,
+   "course_id": 153,
+   "external_uid": "tg:ege:965",
+   "difficulty_id": 3,
+   "order_position": 51,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3024,
+   "course_id": 157,
+   "external_uid": "tg:ege:957",
+   "difficulty_id": 2,
+   "order_position": 36,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3026,
+   "course_id": 153,
+   "external_uid": "tg:ege:955",
+   "difficulty_id": 2,
+   "order_position": 24,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3032,
+   "course_id": 144,
+   "external_uid": "tg:ege:948",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3035,
+   "course_id": 153,
+   "external_uid": "tg:ege:944",
+   "difficulty_id": 3,
+   "order_position": 54,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3055,
+   "course_id": 144,
+   "external_uid": "tg:ege:918",
+   "difficulty_id": 2,
+   "order_position": 19,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3060,
+   "course_id": 157,
+   "external_uid": "tg:ege:913",
+   "difficulty_id": 2,
+   "order_position": 37,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3096,
+   "course_id": 153,
+   "external_uid": "tg:ege:875",
+   "difficulty_id": 3,
+   "order_position": 56,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3168,
+   "course_id": 153,
+   "external_uid": "tg:ege:744",
+   "difficulty_id": 3,
+   "order_position": 57,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3170,
+   "course_id": 146,
+   "external_uid": "tg:ege:742",
+   "difficulty_id": 3,
+   "order_position": 48,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3241,
+   "course_id": 144,
+   "external_uid": "tg:ege:642",
+   "difficulty_id": 3,
+   "order_position": 40,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3270,
+   "course_id": 144,
+   "external_uid": "tg:ege:603",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3282,
+   "course_id": 144,
+   "external_uid": "tg:ege:591",
+   "difficulty_id": 3,
+   "order_position": 41,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3287,
+   "course_id": 144,
+   "external_uid": "tg:ege:581",
+   "difficulty_id": 3,
+   "order_position": 45,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3293,
+   "course_id": 153,
+   "external_uid": "tg:ege:571",
+   "difficulty_id": 3,
+   "order_position": 55,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3300,
+   "course_id": 144,
+   "external_uid": "tg:ege:560",
+   "difficulty_id": 3,
+   "order_position": 46,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3302,
+   "course_id": 1384,
+   "external_uid": "tg:ege:558",
+   "difficulty_id": 4,
+   "order_position": 9,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3308,
+   "course_id": 146,
+   "external_uid": "tg:ege:544",
+   "difficulty_id": 3,
+   "order_position": 39,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3333,
+   "course_id": 154,
+   "external_uid": "tg:ege:514",
+   "difficulty_id": 3,
+   "order_position": 28,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3338,
+   "course_id": 154,
+   "external_uid": "tg:ege:508",
+   "difficulty_id": 3,
+   "order_position": 23,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3340,
+   "course_id": 153,
+   "external_uid": "tg:ege:506",
+   "difficulty_id": 2,
+   "order_position": 25,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3342,
+   "course_id": 153,
+   "external_uid": "tg:ege:504",
+   "difficulty_id": 2,
+   "order_position": 26,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3355,
+   "course_id": 154,
+   "external_uid": "tg:ege:491",
+   "difficulty_id": 2,
+   "order_position": 21,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3356,
+   "course_id": 154,
+   "external_uid": "tg:ege:490",
+   "difficulty_id": 3,
+   "order_position": 24,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3372,
+   "course_id": 157,
+   "external_uid": "tg:ege:471",
+   "difficulty_id": 2,
+   "order_position": 38,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3397,
+   "course_id": 153,
+   "external_uid": "tg:ege:440",
+   "difficulty_id": 3,
+   "order_position": 48,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3412,
+   "course_id": 146,
+   "external_uid": "tg:ege:422",
+   "difficulty_id": 2,
+   "order_position": 24,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3413,
+   "course_id": 146,
+   "external_uid": "tg:ege:421",
+   "difficulty_id": 2,
+   "order_position": 25,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3414,
+   "course_id": 146,
+   "external_uid": "tg:ege:420",
+   "difficulty_id": 2,
+   "order_position": 26,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3455,
+   "course_id": 153,
+   "external_uid": "tg:ege:277",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3456,
+   "course_id": 146,
+   "external_uid": "tg:ege:260",
+   "difficulty_id": 3,
+   "order_position": 40,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3461,
+   "course_id": 146,
+   "external_uid": "tg:ege:223",
+   "difficulty_id": 3,
+   "order_position": 49,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3462,
+   "course_id": 146,
+   "external_uid": "tg:ege:221",
+   "difficulty_id": 3,
+   "order_position": 41,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3463,
+   "course_id": 146,
+   "external_uid": "tg:ege:220",
+   "difficulty_id": 3,
+   "order_position": 50,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3468,
+   "course_id": 146,
+   "external_uid": "tg:ege:66",
+   "difficulty_id": 3,
+   "order_position": 42,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3476,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:8b1e0a5b",
+   "difficulty_id": 3,
+   "order_position": 58,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3486,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:982de393",
+   "difficulty_id": 4,
+   "order_position": 1,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3494,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:93ba2fca",
+   "difficulty_id": 4,
+   "order_position": 13,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3503,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:fa6d2889",
+   "difficulty_id": 4,
+   "order_position": 4,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3512,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:fc53acdc",
+   "difficulty_id": 4,
+   "order_position": 2,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3519,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:203d9c67",
+   "difficulty_id": 4,
+   "order_position": 14,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3538,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:6b883897",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3544,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b52f5ad2",
+   "difficulty_id": 4,
+   "order_position": 15,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3548,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:68c9f830",
+   "difficulty_id": 4,
+   "order_position": 6,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3551,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:401f0753",
+   "difficulty_id": 4,
+   "order_position": 16,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3553,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:779773b4",
+   "difficulty_id": 4,
+   "order_position": 7,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3561,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:34b612c8",
+   "difficulty_id": 4,
+   "order_position": 9,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3565,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:96616a8b",
+   "difficulty_id": 4,
+   "order_position": 10,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3569,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:c7db816f",
+   "difficulty_id": 4,
+   "order_position": 17,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3584,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:275034a1",
+   "difficulty_id": 4,
+   "order_position": 18,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3592,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:c8b8f99e",
+   "difficulty_id": 4,
+   "order_position": 11,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3595,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:2b5430fa",
+   "difficulty_id": 4,
+   "order_position": 65,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3620,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:3dcfefa3",
+   "difficulty_id": 4,
+   "order_position": 8,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3627,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:e6c1a9eb",
+   "difficulty_id": 4,
+   "order_position": 19,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3628,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:7d8f6795",
+   "difficulty_id": 4,
+   "order_position": 20,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3637,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:2b9641b1",
+   "difficulty_id": 4,
+   "order_position": 14,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3692,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:8c0dc529",
+   "difficulty_id": 4,
+   "order_position": 10,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3711,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:9fd37927",
+   "difficulty_id": 4,
+   "order_position": 13,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3715,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:388a061d",
+   "difficulty_id": 4,
+   "order_position": 14,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3716,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:b6d13bf3",
+   "difficulty_id": 4,
+   "order_position": 15,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3722,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:05da01f2",
+   "difficulty_id": 4,
+   "order_position": 12,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3725,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:2ea8a2b4",
+   "difficulty_id": 4,
+   "order_position": 16,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3730,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:0bef6669",
+   "difficulty_id": 4,
+   "order_position": 17,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3732,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:b10f1b64",
+   "difficulty_id": 4,
+   "order_position": 18,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3736,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:af03af1e",
+   "difficulty_id": 4,
+   "order_position": 20,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3737,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:60cf7570",
+   "difficulty_id": 4,
+   "order_position": 21,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3742,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:b0f2174f",
+   "difficulty_id": 4,
+   "order_position": 22,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3749,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:65641397",
+   "difficulty_id": 4,
+   "order_position": 23,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3763,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:2c36d01d",
+   "difficulty_id": 2,
+   "order_position": 28,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3764,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:3ca9f5c1",
+   "difficulty_id": 3,
+   "order_position": 52,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3768,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:9e6fe25f",
+   "difficulty_id": 2,
+   "order_position": 29,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3769,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:8a092fcd",
+   "difficulty_id": 2,
+   "order_position": 31,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3770,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:bf6abb01",
+   "difficulty_id": 2,
+   "order_position": 33,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3771,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:d774b016",
+   "difficulty_id": 2,
+   "order_position": 30,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3772,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:fa24afec",
+   "difficulty_id": 2,
+   "order_position": 42,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3773,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:cec9626f",
+   "difficulty_id": 2,
+   "order_position": 27,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3774,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:9d60fd95",
+   "difficulty_id": 3,
+   "order_position": 49,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3775,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:200df565",
+   "difficulty_id": 3,
+   "order_position": 61,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3776,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:cb7c6048",
+   "difficulty_id": 2,
+   "order_position": 37,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3779,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:9fe21449",
+   "difficulty_id": 3,
+   "order_position": 59,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3780,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:6478fe8c",
+   "difficulty_id": 3,
+   "order_position": 60,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3781,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:3f2c9b2b",
+   "difficulty_id": 3,
+   "order_position": 50,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3782,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:cb9cc61f",
+   "difficulty_id": 2,
+   "order_position": 34,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3783,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:820c3087",
+   "difficulty_id": 2,
+   "order_position": 21,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3784,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:0f9e343f",
+   "difficulty_id": 2,
+   "order_position": 36,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3786,
+   "course_id": 1402,
+   "external_uid": "wp_nav:26:561d4697",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3787,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:3355c77f",
+   "difficulty_id": 2,
+   "order_position": 39,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3788,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:9540535a",
+   "difficulty_id": 2,
+   "order_position": 22,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3790,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:6ec606c1",
+   "difficulty_id": 2,
+   "order_position": 23,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3791,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:5c97d786",
+   "difficulty_id": 3,
+   "order_position": 46,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3793,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:7e7af267",
+   "difficulty_id": 2,
+   "order_position": 32,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3795,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:44fe1242",
+   "difficulty_id": 3,
+   "order_position": 47,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3797,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:566d72a1",
+   "difficulty_id": 3,
+   "order_position": 45,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3799,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:7d518f7a",
+   "difficulty_id": 2,
+   "order_position": 40,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3800,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:201ae504",
+   "difficulty_id": 2,
+   "order_position": 35,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3801,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:a6e52f44",
+   "difficulty_id": 3,
+   "order_position": 53,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3802,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:6102d228",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3817,
+   "course_id": 144,
+   "external_uid": "wp_nav:16:b97f38bc",
+   "difficulty_id": 2,
+   "order_position": 20,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3826,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:95e9b9dc",
+   "difficulty_id": 4,
+   "order_position": 13,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3827,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:d650759b",
+   "difficulty_id": 4,
+   "order_position": 24,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3841,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:d7bf6444",
+   "difficulty_id": 4,
+   "order_position": 25,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3842,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:223160f3",
+   "difficulty_id": 4,
+   "order_position": 12,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3850,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:ab2597de",
+   "difficulty_id": 4,
+   "order_position": 21,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3855,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:094c8cd4",
+   "difficulty_id": 4,
+   "order_position": 22,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3859,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:9131439d",
+   "difficulty_id": 4,
+   "order_position": 6,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3860,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:95141116",
+   "difficulty_id": 4,
+   "order_position": 26,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3861,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:152514c6",
+   "difficulty_id": 4,
+   "order_position": 27,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3862,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:c2723fad",
+   "difficulty_id": 4,
+   "order_position": 28,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3863,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:4d5f4d03",
+   "difficulty_id": 4,
+   "order_position": 29,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3868,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:e4edb366",
+   "difficulty_id": 4,
+   "order_position": 17,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3874,
+   "course_id": 144,
+   "external_uid": "wp_nav:16:9dc7308e",
+   "difficulty_id": 2,
+   "order_position": 21,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3877,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:cc448ed3",
+   "difficulty_id": 4,
+   "order_position": 30,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3895,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:c21fa716",
+   "difficulty_id": 2,
+   "order_position": 38,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3919,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3faf265a",
+   "difficulty_id": 4,
+   "order_position": 44,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3928,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:bb34895d",
+   "difficulty_id": 4,
+   "order_position": 15,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3938,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:e136d7e1",
+   "difficulty_id": 4,
+   "order_position": 23,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3957,
+   "course_id": 153,
+   "external_uid": "wp_nav:26:63fc00be",
+   "difficulty_id": 2,
+   "order_position": 41,
+   "requirement_level": "required"
+  },
+  {
+   "id": 3962,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:edbd0c0e",
+   "difficulty_id": 4,
+   "order_position": 24,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3963,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:bbfb4779",
+   "difficulty_id": 4,
+   "order_position": 4,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3964,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:e698270e",
+   "difficulty_id": 4,
+   "order_position": 3,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3966,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:830453f1",
+   "difficulty_id": 4,
+   "order_position": 7,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3968,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6371d7e4",
+   "difficulty_id": 4,
+   "order_position": 9,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3969,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:4e831772",
+   "difficulty_id": 4,
+   "order_position": 25,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3972,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:4a4fb834",
+   "difficulty_id": 4,
+   "order_position": 26,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3975,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:87081526",
+   "difficulty_id": 4,
+   "order_position": 19,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 3977,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:430ca402",
+   "difficulty_id": 4,
+   "order_position": 20,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4010,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:994d0417",
+   "difficulty_id": 4,
+   "order_position": 18,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4018,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:9da6f60f",
+   "difficulty_id": 4,
+   "order_position": 21,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4023,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:1f8f3425",
+   "difficulty_id": 4,
+   "order_position": 22,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4024,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:91a3b84c",
+   "difficulty_id": 4,
+   "order_position": 23,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4029,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:c7481b29",
+   "difficulty_id": 4,
+   "order_position": 27,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4035,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:ac6da2f0",
+   "difficulty_id": 4,
+   "order_position": 2,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4042,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:4c503313",
+   "difficulty_id": 4,
+   "order_position": 30,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4048,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:a31e38e8",
+   "difficulty_id": 4,
+   "order_position": 6,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4066,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:3e19b214",
+   "difficulty_id": 2,
+   "order_position": 23,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4076,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:87530e94",
+   "difficulty_id": 4,
+   "order_position": 28,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4079,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b246c6b7",
+   "difficulty_id": 4,
+   "order_position": 29,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4104,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:db3d1195",
+   "difficulty_id": 4,
+   "order_position": 8,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4106,
+   "course_id": 157,
+   "external_uid": "wp_nav:6:1578b1e9",
+   "difficulty_id": 2,
+   "order_position": 39,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4107,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:73e64c1e",
+   "difficulty_id": 4,
+   "order_position": 31,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4108,
+   "course_id": 157,
+   "external_uid": "wp_nav:6:1831f26f",
+   "difficulty_id": 2,
+   "order_position": 40,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4119,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:bf375d44",
+   "difficulty_id": 4,
+   "order_position": 7,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4120,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:b16ee59b",
+   "difficulty_id": 4,
+   "order_position": 32,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4121,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:57a6cf3c",
+   "difficulty_id": 4,
+   "order_position": 57,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4122,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:adda2e9b",
+   "difficulty_id": 4,
+   "order_position": 11,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4131,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:2922bbe3",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4134,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:4eba1abc",
+   "difficulty_id": 4,
+   "order_position": 33,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4135,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:cc7bb534",
+   "difficulty_id": 4,
+   "order_position": 30,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4140,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:42205fd4",
+   "difficulty_id": 4,
+   "order_position": 16,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4147,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:0c2d2b8b",
+   "difficulty_id": 4,
+   "order_position": 34,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4157,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:30b7bbac",
+   "difficulty_id": 4,
+   "order_position": 19,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4173,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:e0dd49c3",
+   "difficulty_id": 4,
+   "order_position": 31,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4175,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6c3ba2f2",
+   "difficulty_id": 4,
+   "order_position": 27,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4176,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:122725cb",
+   "difficulty_id": 4,
+   "order_position": 10,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4185,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:249c7743",
+   "difficulty_id": 4,
+   "order_position": 24,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4196,
+   "course_id": 144,
+   "external_uid": "wp_nav:16:98fd7a80",
+   "difficulty_id": 2,
+   "order_position": 22,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4202,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:a7c18e8b",
+   "difficulty_id": 4,
+   "order_position": 25,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4207,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:13f81eeb",
+   "difficulty_id": 4,
+   "order_position": 11,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4212,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:c6cbb30a",
+   "difficulty_id": 4,
+   "order_position": 12,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4214,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:46068707",
+   "difficulty_id": 4,
+   "order_position": 35,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4216,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:11cbcb5a",
+   "difficulty_id": 4,
+   "order_position": 29,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4219,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:e6b30f54",
+   "difficulty_id": 4,
+   "order_position": 33,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4221,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3d05812a",
+   "difficulty_id": 4,
+   "order_position": 34,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4231,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:147f3a43",
+   "difficulty_id": 4,
+   "order_position": 35,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4243,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:d4bad8d2",
+   "difficulty_id": 4,
+   "order_position": 34,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4244,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:0a5658ce",
+   "difficulty_id": 4,
+   "order_position": 36,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4254,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:568c87f9",
+   "difficulty_id": 4,
+   "order_position": 32,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4258,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:4dbcd98f",
+   "difficulty_id": 4,
+   "order_position": 35,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4268,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:367a14d0",
+   "difficulty_id": 4,
+   "order_position": 28,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4271,
+   "course_id": 1402,
+   "external_uid": "wp_nav:26:69525be7",
+   "difficulty_id": 4,
+   "order_position": 3,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4281,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:e41fcb68",
+   "difficulty_id": 4,
+   "order_position": 37,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4283,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:cdc791ef",
+   "difficulty_id": 2,
+   "order_position": 28,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4284,
+   "course_id": 146,
+   "external_uid": "wp_nav:18:5d7c9efc",
+   "difficulty_id": 2,
+   "order_position": 27,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4285,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:95944939",
+   "difficulty_id": 4,
+   "order_position": 37,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4286,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:94fbd23c",
+   "difficulty_id": 4,
+   "order_position": 38,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4289,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:029f5eca",
+   "difficulty_id": 4,
+   "order_position": 26,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4291,
+   "course_id": 144,
+   "external_uid": "wp_nav:16:e35bb2a2",
+   "difficulty_id": 2,
+   "order_position": 23,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4335,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:7c053ada",
+   "difficulty_id": 4,
+   "order_position": 39,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4336,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:c792094a",
+   "difficulty_id": 4,
+   "order_position": 40,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4349,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:24f41a2a",
+   "difficulty_id": 4,
+   "order_position": 38,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4350,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:0666a758",
+   "difficulty_id": 4,
+   "order_position": 40,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4351,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:3b3d9d79",
+   "difficulty_id": 4,
+   "order_position": 41,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4356,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:3a5f4497",
+   "difficulty_id": 4,
+   "order_position": 41,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4378,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:f1e11c41",
+   "difficulty_id": 4,
+   "order_position": 42,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4379,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:6eb197fe",
+   "difficulty_id": 4,
+   "order_position": 43,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4381,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b110631c",
+   "difficulty_id": 4,
+   "order_position": 31,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4384,
+   "course_id": 1396,
+   "external_uid": "wp_nav:18:b0a0f120",
+   "difficulty_id": 4,
+   "order_position": 33,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4403,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:c07279b6",
+   "difficulty_id": 4,
+   "order_position": 42,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4407,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:64e3e788",
+   "difficulty_id": 4,
+   "order_position": 36,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4408,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:da0916a0",
+   "difficulty_id": 4,
+   "order_position": 37,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4409,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:fa2b297c",
+   "difficulty_id": 4,
+   "order_position": 38,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4410,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:5f96e3e9",
+   "difficulty_id": 4,
+   "order_position": 40,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4426,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:0f95bace",
+   "difficulty_id": 4,
+   "order_position": 43,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4427,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:699061f8",
+   "difficulty_id": 4,
+   "order_position": 45,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4428,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:bc4777fe",
+   "difficulty_id": 4,
+   "order_position": 32,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4429,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:e2f7e885",
+   "difficulty_id": 4,
+   "order_position": 48,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4430,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:0ebbb40b",
+   "difficulty_id": 4,
+   "order_position": 36,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4431,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:23acf8f6",
+   "difficulty_id": 4,
+   "order_position": 49,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4432,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:96dc3c34",
+   "difficulty_id": 4,
+   "order_position": 50,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4433,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:6b466ed3",
+   "difficulty_id": 4,
+   "order_position": 51,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4434,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:bf227597",
+   "difficulty_id": 4,
+   "order_position": 52,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4435,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:53477e0c",
+   "difficulty_id": 4,
+   "order_position": 53,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4436,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:f90a24d4",
+   "difficulty_id": 4,
+   "order_position": 54,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4437,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:6afdbf58",
+   "difficulty_id": 4,
+   "order_position": 55,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4448,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:e135b31a",
+   "difficulty_id": 4,
+   "order_position": 39,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4450,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:176620df",
+   "difficulty_id": 4,
+   "order_position": 56,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4451,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:a9365edd",
+   "difficulty_id": 4,
+   "order_position": 58,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4487,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:f2952c1b",
+   "difficulty_id": 4,
+   "order_position": 41,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4488,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:2c5b31e6",
+   "difficulty_id": 4,
+   "order_position": 42,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4489,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:9d7a2295",
+   "difficulty_id": 4,
+   "order_position": 43,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4490,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:ea3dace6",
+   "difficulty_id": 4,
+   "order_position": 44,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4491,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:ee822d8e",
+   "difficulty_id": 4,
+   "order_position": 45,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4492,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:03962e3f",
+   "difficulty_id": 4,
+   "order_position": 46,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4503,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:83b06ae5",
+   "difficulty_id": 4,
+   "order_position": 39,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4504,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:3f1fd085",
+   "difficulty_id": 4,
+   "order_position": 46,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4505,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:776121da",
+   "difficulty_id": 4,
+   "order_position": 44,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4506,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:28565efa",
+   "difficulty_id": 4,
+   "order_position": 60,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4509,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:2906fb55",
+   "difficulty_id": 4,
+   "order_position": 47,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4510,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:f6e447fa",
+   "difficulty_id": 4,
+   "order_position": 48,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4512,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:12d0081f",
+   "difficulty_id": 4,
+   "order_position": 49,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4513,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:487989bf",
+   "difficulty_id": 4,
+   "order_position": 50,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4514,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:0f080f91",
+   "difficulty_id": 4,
+   "order_position": 51,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4517,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:18bf2000",
+   "difficulty_id": 4,
+   "order_position": 61,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4522,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:28be40d1",
+   "difficulty_id": 4,
+   "order_position": 52,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4523,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:f040436b",
+   "difficulty_id": 4,
+   "order_position": 53,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4524,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:f8f59fc7",
+   "difficulty_id": 4,
+   "order_position": 54,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4525,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:224377f9",
+   "difficulty_id": 4,
+   "order_position": 55,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4526,
+   "course_id": 1384,
+   "external_uid": "wp_nav:6:353c2654",
+   "difficulty_id": 4,
+   "order_position": 56,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4531,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:83bac6aa",
+   "difficulty_id": 4,
+   "order_position": 57,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4540,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:b2c3d4c2",
+   "difficulty_id": 4,
+   "order_position": 62,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4541,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:daf4c14f",
+   "difficulty_id": 4,
+   "order_position": 47,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4542,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:cc2888a2",
+   "difficulty_id": 4,
+   "order_position": 59,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4543,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:c1ce7e2a",
+   "difficulty_id": 4,
+   "order_position": 63,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4544,
+   "course_id": 1394,
+   "external_uid": "wp_nav:16:90946df2",
+   "difficulty_id": 4,
+   "order_position": 64,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4557,
+   "course_id": 157,
+   "external_uid": "crylov:v5t6",
+   "difficulty_id": 2,
+   "order_position": 41,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4558,
+   "course_id": 157,
+   "external_uid": "crylov:v11t6",
+   "difficulty_id": 2,
+   "order_position": 42,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4573,
+   "course_id": 144,
+   "external_uid": "crylov:v1t16",
+   "difficulty_id": 2,
+   "order_position": 24,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4574,
+   "course_id": 144,
+   "external_uid": "crylov:v11t16",
+   "difficulty_id": 2,
+   "order_position": 25,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4575,
+   "course_id": 144,
+   "external_uid": "crylov:v16t16",
+   "difficulty_id": 3,
+   "order_position": 47,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4585,
+   "course_id": 1402,
+   "external_uid": "crylov:v11t26",
+   "difficulty_id": 4,
+   "order_position": 1,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 4832,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:01",
+   "difficulty_id": 1,
+   "order_position": 1,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4833,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:02",
+   "difficulty_id": 1,
+   "order_position": 2,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4834,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:03",
+   "difficulty_id": 1,
+   "order_position": 5,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4835,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:04",
+   "difficulty_id": 1,
+   "order_position": 3,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4836,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:05",
+   "difficulty_id": 1,
+   "order_position": 6,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4837,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:06",
+   "difficulty_id": 1,
+   "order_position": 7,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4838,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:07",
+   "difficulty_id": 1,
+   "order_position": 8,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4839,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:08",
+   "difficulty_id": 1,
+   "order_position": 4,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4840,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:09",
+   "difficulty_id": 1,
+   "order_position": 9,
+   "requirement_level": "required"
+  },
+  {
+   "id": 4841,
+   "course_id": 157,
+   "external_uid": "lms:c157:vvod:10",
+   "difficulty_id": 1,
+   "order_position": 10,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9479,
+   "course_id": 157,
+   "external_uid": "crylov:v1t6",
+   "difficulty_id": 3,
+   "order_position": 49,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9489,
+   "course_id": 146,
+   "external_uid": "crylov:v1t18",
+   "difficulty_id": 2,
+   "order_position": 29,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9496,
+   "course_id": 1402,
+   "external_uid": "crylov:v1t26",
+   "difficulty_id": 4,
+   "order_position": 6,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9497,
+   "course_id": 1403,
+   "external_uid": "crylov:v1t27",
+   "difficulty_id": 4,
+   "order_position": 2,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9504,
+   "course_id": 146,
+   "external_uid": "crylov:v5t18",
+   "difficulty_id": 2,
+   "order_position": 31,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9512,
+   "course_id": 1403,
+   "external_uid": "crylov:v5t27",
+   "difficulty_id": 4,
+   "order_position": 3,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9517,
+   "course_id": 1396,
+   "external_uid": "crylov:v11t18",
+   "difficulty_id": 4,
+   "order_position": 45,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9523,
+   "course_id": 1403,
+   "external_uid": "crylov:v11t27",
+   "difficulty_id": 4,
+   "order_position": 4,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9526,
+   "course_id": 157,
+   "external_uid": "crylov:v16t6",
+   "difficulty_id": 3,
+   "order_position": 50,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9533,
+   "course_id": 1403,
+   "external_uid": "crylov:v16t27",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9553,
+   "course_id": 1394,
+   "external_uid": "crylov:v5t16",
+   "difficulty_id": 4,
+   "order_position": 66,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9554,
+   "course_id": 1402,
+   "external_uid": "crylov:v5t26",
+   "difficulty_id": 4,
+   "order_position": 7,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9562,
+   "course_id": 146,
+   "external_uid": "crylov:v16t18",
+   "difficulty_id": 2,
+   "order_position": 30,
+   "requirement_level": "required"
+  },
+  {
+   "id": 9565,
+   "course_id": 1402,
+   "external_uid": "crylov:v16t26",
+   "difficulty_id": 4,
+   "order_position": 8,
+   "requirement_level": "recommended"
+  },
+  {
+   "id": 9567,
+   "course_id": 1402,
+   "external_uid": "sdamgia:41001",
+   "difficulty_id": 4,
+   "order_position": 9,
+   "requirement_level": "recommended"
+  }
+ ]
+}
