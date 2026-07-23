@@ -1,0 +1,1541 @@
+{
+ "taken": "2026-07-23",
+ "courses": [
+  1178,
+  1179,
+  1180,
+  1181
+ ],
+ "rows": [
+  {
+   "id": 6931,
+   "course_id": 1178,
+   "external_uid": "authored:oge-informatika:zadanie-13#q1",
+   "difficulty_id": 2,
+   "order_position": 2,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6932,
+   "course_id": 1178,
+   "external_uid": "authored:oge-informatika:zadanie-13#q2",
+   "difficulty_id": 3,
+   "order_position": 3,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6933,
+   "course_id": 1178,
+   "external_uid": "authored:oge-informatika:zadanie-13#q3",
+   "difficulty_id": 3,
+   "order_position": 4,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6934,
+   "course_id": 1179,
+   "external_uid": "authored:oge-informatika:zadanie-14#q1",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6935,
+   "course_id": 1179,
+   "external_uid": "authored:oge-informatika:zadanie-14#q2",
+   "difficulty_id": 3,
+   "order_position": 3,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6936,
+   "course_id": 1179,
+   "external_uid": "authored:oge-informatika:zadanie-14#q3",
+   "difficulty_id": 3,
+   "order_position": 8,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6937,
+   "course_id": 1180,
+   "external_uid": "authored:oge-informatika:zadanie-15#q1",
+   "difficulty_id": 2,
+   "order_position": 7,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6938,
+   "course_id": 1180,
+   "external_uid": "authored:oge-informatika:zadanie-15#q2",
+   "difficulty_id": 3,
+   "order_position": 10,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6939,
+   "course_id": 1180,
+   "external_uid": "authored:oge-informatika:zadanie-15#q3",
+   "difficulty_id": 4,
+   "order_position": 15,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6940,
+   "course_id": 1180,
+   "external_uid": "authored:oge-informatika:zadanie-15#q4",
+   "difficulty_id": 4,
+   "order_position": 14,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6941,
+   "course_id": 1181,
+   "external_uid": "authored:oge-informatika:zadanie-16#q1",
+   "difficulty_id": 2,
+   "order_position": 1,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6942,
+   "course_id": 1181,
+   "external_uid": "authored:oge-informatika:zadanie-16#q2",
+   "difficulty_id": 3,
+   "order_position": 2,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6943,
+   "course_id": 1181,
+   "external_uid": "authored:oge-informatika:zadanie-16#q3",
+   "difficulty_id": 3,
+   "order_position": 3,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6944,
+   "course_id": 1181,
+   "external_uid": "authored:oge-informatika:zadanie-16#q4",
+   "difficulty_id": 4,
+   "order_position": 6,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6945,
+   "course_id": 1181,
+   "external_uid": "authored:oge-informatika:zadanie-16#q5",
+   "difficulty_id": 4,
+   "order_position": 5,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6946,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10566_1",
+   "difficulty_id": 3,
+   "order_position": 2,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6947,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10566_2",
+   "difficulty_id": 3,
+   "order_position": 4,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6948,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10567_1",
+   "difficulty_id": 3,
+   "order_position": 7,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6949,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10567_2",
+   "difficulty_id": 3,
+   "order_position": 5,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6950,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10568_1",
+   "difficulty_id": 3,
+   "order_position": 6,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6951,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10568_2",
+   "difficulty_id": 3,
+   "order_position": 15,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6952,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10569_1",
+   "difficulty_id": 3,
+   "order_position": 9,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6953,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10569_2",
+   "difficulty_id": 3,
+   "order_position": 17,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6954,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10570_1",
+   "difficulty_id": 3,
+   "order_position": 14,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6955,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10570_2",
+   "difficulty_id": 3,
+   "order_position": 10,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6956,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10571_1",
+   "difficulty_id": 3,
+   "order_position": 11,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6957,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10571_2",
+   "difficulty_id": 3,
+   "order_position": 12,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6958,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10572_1",
+   "difficulty_id": 3,
+   "order_position": 13,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6959,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10572_2",
+   "difficulty_id": 3,
+   "order_position": 29,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6960,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10573_1",
+   "difficulty_id": 3,
+   "order_position": 24,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6961,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10573_2",
+   "difficulty_id": 3,
+   "order_position": 22,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6962,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10574_1",
+   "difficulty_id": 3,
+   "order_position": 20,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6963,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10574_2",
+   "difficulty_id": 3,
+   "order_position": 18,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6964,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10575_1",
+   "difficulty_id": 3,
+   "order_position": 57,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6965,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10575_2",
+   "difficulty_id": 3,
+   "order_position": 41,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6966,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10576_1",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6967,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10576_2",
+   "difficulty_id": 3,
+   "order_position": 31,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6968,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10577_1",
+   "difficulty_id": 3,
+   "order_position": 27,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6969,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10577_2",
+   "difficulty_id": 3,
+   "order_position": 77,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6970,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10578_1",
+   "difficulty_id": 3,
+   "order_position": 71,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6971,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10578_2",
+   "difficulty_id": 3,
+   "order_position": 55,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6972,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10579_1",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6973,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10579_2",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6974,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10580_1",
+   "difficulty_id": 3,
+   "order_position": 38,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6975,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10580_2",
+   "difficulty_id": 3,
+   "order_position": 78,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6976,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11040_1",
+   "difficulty_id": 3,
+   "order_position": 73,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6977,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11040_2",
+   "difficulty_id": 3,
+   "order_position": 65,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6978,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11041_1",
+   "difficulty_id": 3,
+   "order_position": 52,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6979,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11041_2",
+   "difficulty_id": 3,
+   "order_position": 46,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6980,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11042_1",
+   "difficulty_id": 3,
+   "order_position": 48,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6981,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11042_2",
+   "difficulty_id": 3,
+   "order_position": 50,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6982,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11044_1",
+   "difficulty_id": 3,
+   "order_position": 75,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6983,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11044_2",
+   "difficulty_id": 3,
+   "order_position": 66,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6984,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11046_1",
+   "difficulty_id": 3,
+   "order_position": 64,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6985,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11046_2",
+   "difficulty_id": 3,
+   "order_position": 63,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6986,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11047_1",
+   "difficulty_id": 3,
+   "order_position": 59,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6987,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11047_2",
+   "difficulty_id": 3,
+   "order_position": 61,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6988,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11048_1",
+   "difficulty_id": 3,
+   "order_position": 62,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6989,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11048_2",
+   "difficulty_id": 3,
+   "order_position": 72,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6990,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11050_1",
+   "difficulty_id": 3,
+   "order_position": 70,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6991,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11050_2",
+   "difficulty_id": 3,
+   "order_position": 69,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6992,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11051_1",
+   "difficulty_id": 3,
+   "order_position": 68,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6993,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11051_2",
+   "difficulty_id": 3,
+   "order_position": 67,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6994,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11054_1",
+   "difficulty_id": 3,
+   "order_position": 76,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 6995,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11054_2",
+   "difficulty_id": 3,
+   "order_position": 74,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7151,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10571",
+   "difficulty_id": 3,
+   "order_position": 16,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7152,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10593",
+   "difficulty_id": 3,
+   "order_position": 20,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7153,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10566",
+   "difficulty_id": 3,
+   "order_position": 19,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7154,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10567",
+   "difficulty_id": 3,
+   "order_position": 21,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7155,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10568",
+   "difficulty_id": 3,
+   "order_position": 23,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7156,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10569",
+   "difficulty_id": 3,
+   "order_position": 25,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7157,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10570",
+   "difficulty_id": 3,
+   "order_position": 26,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7158,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10572",
+   "difficulty_id": 3,
+   "order_position": 28,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7159,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10573",
+   "difficulty_id": 3,
+   "order_position": 30,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7160,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10574",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7161,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10575",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7162,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10576",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7163,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10577",
+   "difficulty_id": 3,
+   "order_position": 37,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7164,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10578",
+   "difficulty_id": 3,
+   "order_position": 39,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7165,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10579",
+   "difficulty_id": 3,
+   "order_position": 40,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7166,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:10580",
+   "difficulty_id": 3,
+   "order_position": 42,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7167,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11040",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7168,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11041",
+   "difficulty_id": 3,
+   "order_position": 45,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7169,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11042",
+   "difficulty_id": 3,
+   "order_position": 47,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7170,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11044",
+   "difficulty_id": 3,
+   "order_position": 49,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7171,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11046",
+   "difficulty_id": 3,
+   "order_position": 51,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7172,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11047",
+   "difficulty_id": 3,
+   "order_position": 53,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7173,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11048",
+   "difficulty_id": 3,
+   "order_position": 54,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7174,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11050",
+   "difficulty_id": 3,
+   "order_position": 56,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7175,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11051",
+   "difficulty_id": 3,
+   "order_position": 58,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7176,
+   "course_id": 1179,
+   "external_uid": "sdamgia:oge:14:11054",
+   "difficulty_id": 3,
+   "order_position": 60,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7177,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10581",
+   "difficulty_id": 3,
+   "order_position": 21,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7178,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10582",
+   "difficulty_id": 3,
+   "order_position": 22,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7179,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10583",
+   "difficulty_id": 3,
+   "order_position": 23,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7180,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10584",
+   "difficulty_id": 3,
+   "order_position": 24,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7181,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10585",
+   "difficulty_id": 3,
+   "order_position": 25,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7182,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10586",
+   "difficulty_id": 3,
+   "order_position": 26,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7183,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10587",
+   "difficulty_id": 3,
+   "order_position": 27,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7184,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10588",
+   "difficulty_id": 3,
+   "order_position": 28,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7185,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10589",
+   "difficulty_id": 3,
+   "order_position": 29,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7186,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10590",
+   "difficulty_id": 3,
+   "order_position": 30,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7187,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10591",
+   "difficulty_id": 3,
+   "order_position": 31,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7188,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10592",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7189,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10594",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7190,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:10595",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7191,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11076",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7192,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11077",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7193,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11078",
+   "difficulty_id": 3,
+   "order_position": 37,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7194,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11079",
+   "difficulty_id": 3,
+   "order_position": 38,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7195,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11239",
+   "difficulty_id": 3,
+   "order_position": 39,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7196,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11241",
+   "difficulty_id": 3,
+   "order_position": 40,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7197,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11244",
+   "difficulty_id": 3,
+   "order_position": 41,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7198,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11248",
+   "difficulty_id": 3,
+   "order_position": 42,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7199,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11250",
+   "difficulty_id": 3,
+   "order_position": 43,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7200,
+   "course_id": 1178,
+   "external_uid": "sdamgia:oge:13:11252",
+   "difficulty_id": 3,
+   "order_position": 44,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7201,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37703",
+   "difficulty_id": 3,
+   "order_position": 16,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7202,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37704",
+   "difficulty_id": 3,
+   "order_position": 17,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7203,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37705",
+   "difficulty_id": 3,
+   "order_position": 18,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7204,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37706",
+   "difficulty_id": 3,
+   "order_position": 19,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7205,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37707",
+   "difficulty_id": 3,
+   "order_position": 20,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7206,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37708",
+   "difficulty_id": 3,
+   "order_position": 21,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7207,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37709",
+   "difficulty_id": 3,
+   "order_position": 22,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7208,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37710",
+   "difficulty_id": 3,
+   "order_position": 23,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7209,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37711",
+   "difficulty_id": 3,
+   "order_position": 24,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7210,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37712",
+   "difficulty_id": 3,
+   "order_position": 25,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7211,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37713",
+   "difficulty_id": 3,
+   "order_position": 26,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7212,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37714",
+   "difficulty_id": 3,
+   "order_position": 27,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7213,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37715",
+   "difficulty_id": 3,
+   "order_position": 28,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7214,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37716",
+   "difficulty_id": 3,
+   "order_position": 29,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7215,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37717",
+   "difficulty_id": 3,
+   "order_position": 30,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7216,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37718",
+   "difficulty_id": 3,
+   "order_position": 31,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7217,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37719",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7218,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37720",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7219,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37721",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7220,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37722",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7221,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37723",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7222,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37724",
+   "difficulty_id": 3,
+   "order_position": 37,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7223,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37725",
+   "difficulty_id": 3,
+   "order_position": 38,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7224,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37726",
+   "difficulty_id": 3,
+   "order_position": 39,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7225,
+   "course_id": 1180,
+   "external_uid": "sdamgia:oge:15:37727",
+   "difficulty_id": 3,
+   "order_position": 40,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7226,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37830",
+   "difficulty_id": 3,
+   "order_position": 7,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7227,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37831",
+   "difficulty_id": 3,
+   "order_position": 8,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7228,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37832",
+   "difficulty_id": 3,
+   "order_position": 9,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7229,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37833",
+   "difficulty_id": 3,
+   "order_position": 10,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7230,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37834",
+   "difficulty_id": 3,
+   "order_position": 11,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7231,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37835",
+   "difficulty_id": 3,
+   "order_position": 12,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7232,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37836",
+   "difficulty_id": 3,
+   "order_position": 13,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7233,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37837",
+   "difficulty_id": 3,
+   "order_position": 14,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7234,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37838",
+   "difficulty_id": 3,
+   "order_position": 15,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7235,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37839",
+   "difficulty_id": 3,
+   "order_position": 16,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7236,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37840",
+   "difficulty_id": 3,
+   "order_position": 17,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7237,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37841",
+   "difficulty_id": 3,
+   "order_position": 18,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7238,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37842",
+   "difficulty_id": 3,
+   "order_position": 19,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7239,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37844",
+   "difficulty_id": 3,
+   "order_position": 20,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7240,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37845",
+   "difficulty_id": 3,
+   "order_position": 21,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7241,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37846",
+   "difficulty_id": 3,
+   "order_position": 22,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7242,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37847",
+   "difficulty_id": 3,
+   "order_position": 23,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7243,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37848",
+   "difficulty_id": 3,
+   "order_position": 24,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7244,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37849",
+   "difficulty_id": 3,
+   "order_position": 25,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7245,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37850",
+   "difficulty_id": 3,
+   "order_position": 26,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7246,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37861",
+   "difficulty_id": 3,
+   "order_position": 27,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7247,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37868",
+   "difficulty_id": 3,
+   "order_position": 28,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7248,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37869",
+   "difficulty_id": 3,
+   "order_position": 29,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7249,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37872",
+   "difficulty_id": 3,
+   "order_position": 30,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7250,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37878",
+   "difficulty_id": 3,
+   "order_position": 31,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7251,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37879",
+   "difficulty_id": 3,
+   "order_position": 32,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7252,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37897",
+   "difficulty_id": 3,
+   "order_position": 33,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7253,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37898",
+   "difficulty_id": 3,
+   "order_position": 34,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7254,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:37905",
+   "difficulty_id": 3,
+   "order_position": 35,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  },
+  {
+   "id": 7255,
+   "course_id": 1181,
+   "external_uid": "sdamgia:oge:16:42063",
+   "difficulty_id": 3,
+   "order_position": 36,
+   "requirement_level": "required",
+   "difficulty_provenance": null
+  }
+ ]
+}
