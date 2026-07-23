@@ -1,0 +1,98 @@
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index b4e0dc4..4ab100c 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -13,6 +13,12 @@ from app.services.courses_service import CoursesService
+ from app.schemas.task_content import TaskContent
+ from app.schemas.solution_rules import SolutionRules
+ 
++# tsk-347: сложность HARD и префикс course_uid подкурса сложных заданий.
++# Подкурс заводится один на номерной курс ЕГЭ: 'lms:tsk347:hard:<course_id>'.
++HARD_DIFFICULTY_ID = 4
++HARD_TWIN_UID_PREFIX = "lms:tsk347:hard:"
++
++
+ class TasksService(BaseService[Tasks]):
+     """
+     Сервис для работы с заданиями.
+@@ -223,8 +229,20 @@ class TasksService(BaseService[Tasks]):
+         # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
+         courses_needing_reorder: Set[int] = set()
+ 
++        # tsk-347: HARD-задания курса, у которого есть подкурс сложных, уходят
++        # в этот подкурс, а не в сам курс.
++        hard_twins = await self._resolve_hard_twin_courses(db, items)
++
+         for data in items:
+             external_uid = data["external_uid"]
++            twin_course_id = hard_twins.get(data.get("course_id"))
++            if twin_course_id is not None and data.get("difficulty_id") == HARD_DIFFICULTY_ID:
++                # Курсы, между которыми задание может переехать этим батчем,
++                # обязаны пересортироваться: смена course_id без явной позиции
++                # оставила бы задание на позиции из старого курса.
++                courses_needing_reorder.add(data["course_id"])
++                courses_needing_reorder.add(twin_course_id)
++                data = {**data, "course_id": twin_course_id, "requirement_level": "recommended"}
+             task_content = data.get("task_content")
+             solution_rules = data.get("solution_rules")
+ 
+@@ -312,6 +330,47 @@ class TasksService(BaseService[Tasks]):
+ 
+         return results
+ 
++    async def _resolve_hard_twin_courses(
++        self, db: AsyncSession, items: Sequence[Dict[str, Any]]
++    ) -> dict[int, int]:
++        """Курсы батча -> их подкурс сложных заданий, если он заведён (tsk-347).
++
++        HARD-задания ЕГЭ вынесены в отдельный необязательный блок в конце
++        программы: у номерного курса ``X`` подкурс сложных опознаётся по
++        ``courses.course_uid = 'lms:tsk347:hard:X'``. Без этого шага импорт
++        утаскивал бы задание обратно в номерной курс — ``bulk_upsert`` при
++        UPDATE перезаписывает ``course_id`` и ``requirement_level`` значениями
++        из payload, а конвейеры (ContentBackbone, Google Sheets, прямой
++        bulk-upsert) шлют номерной курс и уровень по умолчанию ``required``.
++        Тот же класс регрессии, что чинил tsk-345: разовая правка данных без
++        инварианта в коде разъезжается на следующем импорте.
++
++        Связь берётся из ДАННЫХ, а не из списка id в коде: заведут блок сложных
++        ещё одному курсу — он подхватится сам, править сервис не нужно.
++
++        :return: ``{course_id: hard_twin_course_id}`` только для курсов батча,
++            у которых подкурс сложных существует.
++        """
++        course_ids = {
++            data["course_id"]
++            for data in items
++            if data.get("course_id") is not None
++            and data.get("difficulty_id") == HARD_DIFFICULTY_ID
++        }
++        if not course_ids:
++            return {}
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT split_part(course_uid, ':', 4)::int AS src_course_id, id "
++                    "FROM courses "
++                    "WHERE course_uid = ANY(:uids)"
++                ),
++                {"uids": [f"{HARD_TWIN_UID_PREFIX}{cid}" for cid in sorted(course_ids)]},
++            )
++        ).fetchall()
++        return {int(src): int(twin) for src, twin in rows}
++
+     async def _reorder_tasks_by_difficulty(
+         self, db: AsyncSession, course_id: int
+     ) -> int:
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 7421639..ad7456a 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -208,6 +208,7 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         "test_tasks_order_position_api.py",
+         "test_tasks_reorder_api.py",
+         "test_tsk345_reorder_by_difficulty.py",
++        "test_tsk347_hard_twin_routing.py",
+         "test_teacher_courses_triggers_smoke.py",
+         "test_teacher_help_requests_overdue_tsk312.py",
+         "test_teacher_help_requests_stage38.py",

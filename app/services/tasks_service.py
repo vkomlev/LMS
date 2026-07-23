@@ -13,6 +13,12 @@ from app.services.courses_service import CoursesService
 from app.schemas.task_content import TaskContent
 from app.schemas.solution_rules import SolutionRules
 
+# tsk-347: сложность HARD и префикс course_uid подкурса сложных заданий.
+# Подкурс заводится один на номерной курс ЕГЭ: 'lms:tsk347:hard:<course_id>'.
+HARD_DIFFICULTY_ID = 4
+HARD_TWIN_UID_PREFIX = "lms:tsk347:hard:"
+
+
 class TasksService(BaseService[Tasks]):
     """
     Сервис для работы с заданиями.
@@ -223,8 +229,31 @@ class TasksService(BaseService[Tasks]):
         # порядок THEORY→EASY→NORMAL→HARD→PROJECT — пересортируем в конце.
         courses_needing_reorder: Set[int] = set()
 
+        # tsk-347: HARD-задания курса, у которого есть подкурс сложных, уходят
+        # в этот подкурс, а сам подкурс держит уровень `recommended`.
+        hard_twins, twin_course_ids = await self._resolve_hard_routing(db, items)
+
         for data in items:
             external_uid = data["external_uid"]
+            twin_course_id = hard_twins.get(data.get("course_id"))
+            if twin_course_id is not None and data.get("difficulty_id") == HARD_DIFFICULTY_ID:
+                # Курсы, между которыми задание может переехать этим батчем,
+                # обязаны пересортироваться: смена course_id без явной позиции
+                # оставила бы задание на позиции из старого курса.
+                courses_needing_reorder.add(data["course_id"])
+                courses_needing_reorder.add(twin_course_id)
+                data = {**data, "course_id": twin_course_id}
+            # Решает КУРС НАЗНАЧЕНИЯ этого задания, а не наличие подкурса
+            # сложных у курса батча: иначе не-HARD задание, приехавшее в одном
+            # батче с HARD, тоже получило бы `recommended` (поймано тестом).
+            if data.get("course_id") in twin_course_ids or data.get("course_id") == twin_course_id:
+                # Уровень задаёт КЛАССИФИКАЦИЯ, а не payload: поля
+                # `requirement_level` нет ни у одного клиента-конвейера, а API
+                # подставляет дефолт `required` (schemas/tasks.py). Без этой
+                # строки переиздание задания, уже лежащего в подкурсе сложных
+                # (round-trip чтение→bulk-upsert в ContentBackbone
+                # `lms_stem_hygiene`), вернуло бы его в основной поток.
+                data = {**data, "requirement_level": "recommended"}
             task_content = data.get("task_content")
             solution_rules = data.get("solution_rules")
 
@@ -311,6 +340,70 @@ class TasksService(BaseService[Tasks]):
             await db.commit()
 
         return results
+
+    async def _resolve_hard_routing(
+        self, db: AsyncSession, items: Sequence[Dict[str, Any]]
+    ) -> Tuple[dict[int, int], set[int]]:
+        """Маршрутизация HARD-заданий в блок сложных (tsk-347).
+
+        HARD-задания ЕГЭ вынесены в отдельный необязательный блок в конце
+        программы: у номерного курса ``X`` подкурс сложных опознаётся по
+        ``courses.course_uid = 'lms:tsk347:hard:X'``.
+
+        Зачем инвариант в коде, а не только правка данных: ``bulk_upsert`` при
+        UPDATE перезаписывает ``course_id`` (payload шлёт номерной курс) и
+        ``requirement_level`` — причём поля уровня нет ни у одного
+        клиента-конвейера (``TaskPayload`` в ContentBackbone), а API
+        подставляет дефолт ``required`` (``schemas/tasks.py``). Без этого
+        первая же доливка KompEGE/Крылова вернула бы задания в основной поток.
+        Тот же класс регрессии, что чинил tsk-345: разовый снимок данных без
+        инварианта разъезжается на следующем импорте.
+
+        Связь берётся из ДАННЫХ, а не из списка id в коде: заведут блок сложных
+        ещё одному курсу — он подхватится сам, править сервис не нужно.
+
+        :return: кортеж из
+            ``{course_id: hard_twin_course_id}`` — куда уводить HARD-задания
+            курсов батча (только там, где подкурс сложных существует), и
+            множества id курсов батча, которые САМИ являются подкурсами
+            сложных (туда пишет round-trip «переиздание»: читает задание уже
+            из подкурса и шлёт его обратно с тем же course_id).
+        """
+        hard_source_ids = {
+            data["course_id"]
+            for data in items
+            if data.get("course_id") is not None
+            and data.get("difficulty_id") == HARD_DIFFICULTY_ID
+        }
+        all_course_ids = {
+            data["course_id"] for data in items if data.get("course_id") is not None
+        }
+        if not all_course_ids:
+            return {}, set()
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, course_uid FROM courses "
+                    "WHERE course_uid = ANY(:twin_uids) OR "
+                    "      (id = ANY(:ids) AND course_uid LIKE :prefix || '%')"
+                ),
+                {
+                    "twin_uids": [f"{HARD_TWIN_UID_PREFIX}{cid}" for cid in sorted(hard_source_ids)],
+                    "ids": sorted(all_course_ids),
+                    "prefix": HARD_TWIN_UID_PREFIX,
+                },
+            )
+        ).fetchall()
+
+        twins: dict[int, int] = {}
+        twin_course_ids: set[int] = set()
+        for course_id, course_uid in rows:
+            src_course_id = int(course_uid.rsplit(":", 1)[1])
+            if src_course_id in hard_source_ids:
+                twins[src_course_id] = int(course_id)
+            if int(course_id) in all_course_ids:
+                twin_course_ids.add(int(course_id))
+        return twins, twin_course_ids
 
     async def _reorder_tasks_by_difficulty(
         self, db: AsyncSession, course_id: int
