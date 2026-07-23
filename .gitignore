@@ -62,3 +62,4 @@ node_modules/*
 # а не репозитория: в git он получал свежий mtime при каждом worktree/checkout и молча
 # выключал гейт скиллов на сутки в новом дереве (tsk-366, разбор 2026-07-23).
 .skill-engaged-note.md
+out/

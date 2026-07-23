@@ -1,0 +1,2388 @@
+{
+  "task": "tsk-381",
+  "canon": "ТГ-разметка @cyberguru_ege (главный канон оператора)",
+  "rows": [
+    {
+      "id": 2834,
+      "external_uid": "ext:pdf:d4:pdf:crylov:v3:20260602:v3t6",
+      "course_id": 157,
+      "difficulty_id": 2,
+      "variant": 3,
+      "task_n": 6,
+      "stem_level": null,
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "895"
+      ],
+      "tg_best_similarity": 0.856,
+      "tg_key_candidates": [
+        "895"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 2836,
+      "external_uid": "ext:pdf:d4:pdf:crylov:v3:20260602:v3t8",
+      "course_id": 159,
+      "difficulty_id": 2,
+      "variant": 3,
+      "task_n": 8,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "896"
+      ],
+      "tg_best_similarity": 0.932,
+      "tg_key_candidates": [
+        "896"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "простой",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 2837,
+      "external_uid": "ext:pdf:d4:pdf:crylov:v3:20260602:v3t9",
+      "course_id": 160,
+      "difficulty_id": 2,
+      "variant": 3,
+      "task_n": 9,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "897"
+      ],
+      "tg_best_similarity": 0.904,
+      "tg_key_candidates": [
+        "897"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "простой",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 2839,
+      "external_uid": "ext:pdf:d4:pdf:crylov:v3:20260602:v3t11",
+      "course_id": 162,
+      "difficulty_id": 2,
+      "variant": 3,
+      "task_n": 11,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1023",
+        "907"
+      ],
+      "tg_best_similarity": 0.998,
+      "tg_key_candidates": [
+        "1023",
+        "907"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "простой",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 4550,
+      "external_uid": "crylov:v1t1",
+      "course_id": 140,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 1,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "928"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "928"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4551,
+      "external_uid": "crylov:v1t2",
+      "course_id": 148,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 2,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "879"
+      ],
+      "tg_best_similarity": 0.979,
+      "tg_key_candidates": [
+        "879"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4552,
+      "external_uid": "crylov:v16t2",
+      "course_id": 148,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 2,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "825"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "825"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4553,
+      "external_uid": "crylov:v1t3",
+      "course_id": 138,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 3,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "880"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "880"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4554,
+      "external_uid": "crylov:v11t3",
+      "course_id": 138,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 3,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "926"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "926"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4555,
+      "external_uid": "crylov:v1t5",
+      "course_id": 156,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 5,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "925"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "925"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4556,
+      "external_uid": "crylov:v11t5",
+      "course_id": 156,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 5,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "908"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "908"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4557,
+      "external_uid": "crylov:v5t6",
+      "course_id": 157,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 6,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "898"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "898"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4558,
+      "external_uid": "crylov:v11t6",
+      "course_id": 157,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 6,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "810"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "810"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4559,
+      "external_uid": "crylov:v1t8",
+      "course_id": 159,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 8,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "872"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "872"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4560,
+      "external_uid": "crylov:v11t9",
+      "course_id": 160,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 9,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "881"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "881"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4561,
+      "external_uid": "crylov:v5t11",
+      "course_id": 162,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 11,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [
+        "простой",
+        "средний"
+      ],
+      "tg_post_ids": [
+        "902",
+        "806"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "902",
+        "806"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 4562,
+      "external_uid": "crylov:v5t12",
+      "course_id": 163,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 12,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "903"
+      ],
+      "tg_best_similarity": 0.965,
+      "tg_key_candidates": [
+        "903"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4563,
+      "external_uid": "crylov:v11t12",
+      "course_id": 163,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 12,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "909"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "909"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4564,
+      "external_uid": "crylov:v5t13",
+      "course_id": 139,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 13,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "904"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "904"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4565,
+      "external_uid": "crylov:v11t13",
+      "course_id": 139,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 13,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "929"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "929"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4566,
+      "external_uid": "crylov:v16t13",
+      "course_id": 139,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 13,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "827"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "827"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4567,
+      "external_uid": "crylov:v5t14",
+      "course_id": 142,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 14,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "905"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "905"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4568,
+      "external_uid": "crylov:v11t14",
+      "course_id": 142,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 14,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "930"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "930"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4569,
+      "external_uid": "crylov:v16t14",
+      "course_id": 142,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 14,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "951"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "951"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4570,
+      "external_uid": "crylov:v5t15",
+      "course_id": 143,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 15,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "804"
+      ],
+      "tg_best_similarity": 0.996,
+      "tg_key_candidates": [
+        "804"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4571,
+      "external_uid": "crylov:v11t15",
+      "course_id": 143,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 15,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "910"
+      ],
+      "tg_best_similarity": 0.982,
+      "tg_key_candidates": [
+        "910"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4572,
+      "external_uid": "crylov:v16t15",
+      "course_id": 143,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 15,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "911"
+      ],
+      "tg_best_similarity": 0.92,
+      "tg_key_candidates": [
+        "911"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4573,
+      "external_uid": "crylov:v1t16",
+      "course_id": 144,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 16,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "805"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "805"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4574,
+      "external_uid": "crylov:v11t16",
+      "course_id": 144,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 16,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "931"
+      ],
+      "tg_best_similarity": 0.993,
+      "tg_key_candidates": [
+        "931"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4575,
+      "external_uid": "crylov:v16t16",
+      "course_id": 144,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 16,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "828",
+        "830"
+      ],
+      "tg_best_similarity": 0.982,
+      "tg_key_candidates": [
+        "828",
+        "830"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4576,
+      "external_uid": "crylov:v5t17",
+      "course_id": 145,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 17,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "906"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "906"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4577,
+      "external_uid": "crylov:v11t17",
+      "course_id": 145,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 17,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "811"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "811"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4578,
+      "external_uid": "crylov:v16t17",
+      "course_id": 145,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 17,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "831"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "831"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4579,
+      "external_uid": "crylov:v1t19",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 19,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [
+        "871"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "871"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 4580,
+      "external_uid": "crylov:v16t19",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 19,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "832"
+      ],
+      "tg_best_similarity": 0.993,
+      "tg_key_candidates": [
+        "832"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4581,
+      "external_uid": "crylov:v16t23",
+      "course_id": 150,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 23,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "912"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "912"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4582,
+      "external_uid": "crylov:v11t24",
+      "course_id": 151,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 24,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "813"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "813"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4583,
+      "external_uid": "crylov:v16t24",
+      "course_id": 151,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 24,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "836"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "836"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4584,
+      "external_uid": "crylov:v11t25",
+      "course_id": 152,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 25,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "932"
+      ],
+      "tg_best_similarity": 0.996,
+      "tg_key_candidates": [
+        "932"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 4585,
+      "external_uid": "crylov:v11t26",
+      "course_id": 1402,
+      "difficulty_id": 4,
+      "variant": 11,
+      "task_n": 26,
+      "stem_level": "сложный",
+      "tg_level": "сложный",
+      "tg_levels_all": [
+        "сложный"
+      ],
+      "tg_post_ids": [
+        "814"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "814"
+      ],
+      "expected_difficulty_id": 4,
+      "current_level": "сложный",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9478,
+      "external_uid": "crylov:v1t4",
+      "course_id": 155,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 4,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "1003"
+      ],
+      "tg_best_similarity": 0.946,
+      "tg_key_candidates": [
+        "1003"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9479,
+      "external_uid": "crylov:v1t6",
+      "course_id": 157,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 6,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [
+        "1005"
+      ],
+      "tg_best_similarity": 0.923,
+      "tg_key_candidates": [
+        "1005"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9480,
+      "external_uid": "crylov:v1t7",
+      "course_id": 158,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 7,
+      "stem_level": "средний",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "775"
+      ],
+      "tg_best_similarity": 0.994,
+      "tg_key_candidates": [
+        "775"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ (текст условия ≠ пост)"
+    },
+    {
+      "id": 9481,
+      "external_uid": "crylov:v1t9",
+      "course_id": 160,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 9,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.505,
+      "tg_key_candidates": [
+        "865"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9482,
+      "external_uid": "crylov:v1t10",
+      "course_id": 141,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 10,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "889"
+      ],
+      "tg_best_similarity": 0.888,
+      "tg_key_candidates": [
+        "889"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9483,
+      "external_uid": "crylov:v1t11",
+      "course_id": 162,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 11,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "776"
+      ],
+      "tg_best_similarity": 0.992,
+      "tg_key_candidates": [
+        "776"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9484,
+      "external_uid": "crylov:v1t12",
+      "course_id": 163,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 12,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.035,
+      "tg_key_candidates": [
+        "777"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9485,
+      "external_uid": "crylov:v1t13",
+      "course_id": 139,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 13,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "890"
+      ],
+      "tg_best_similarity": 0.992,
+      "tg_key_candidates": [
+        "890"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9486,
+      "external_uid": "crylov:v1t14",
+      "course_id": 142,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 14,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "892"
+      ],
+      "tg_best_similarity": 0.791,
+      "tg_key_candidates": [
+        "892"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9487,
+      "external_uid": "crylov:v1t15",
+      "course_id": 143,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 15,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "743"
+      ],
+      "tg_best_similarity": 0.943,
+      "tg_key_candidates": [
+        "743"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9488,
+      "external_uid": "crylov:v1t17",
+      "course_id": 145,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 17,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.128,
+      "tg_key_candidates": [
+        "767"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9489,
+      "external_uid": "crylov:v1t18",
+      "course_id": 146,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 18,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.609,
+      "tg_key_candidates": [
+        "783"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9490,
+      "external_uid": "crylov:v1t20",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 20,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9491,
+      "external_uid": "crylov:v1t21",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 1,
+      "task_n": 21,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9492,
+      "external_uid": "crylov:v1t22",
+      "course_id": 149,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 22,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "893"
+      ],
+      "tg_best_similarity": 0.91,
+      "tg_key_candidates": [
+        "893"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9493,
+      "external_uid": "crylov:v1t23",
+      "course_id": 150,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 23,
+      "stem_level": "простой",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "768"
+      ],
+      "tg_best_similarity": 0.949,
+      "tg_key_candidates": [
+        "768"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает (текст условия ≠ пост)"
+    },
+    {
+      "id": 9494,
+      "external_uid": "crylov:v1t24",
+      "course_id": 151,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 24,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "769"
+      ],
+      "tg_best_similarity": 0.938,
+      "tg_key_candidates": [
+        "769"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9495,
+      "external_uid": "crylov:v1t25",
+      "course_id": 152,
+      "difficulty_id": 3,
+      "variant": 1,
+      "task_n": 25,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "770"
+      ],
+      "tg_best_similarity": 0.948,
+      "tg_key_candidates": [
+        "770"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9496,
+      "external_uid": "crylov:v1t26",
+      "course_id": 1402,
+      "difficulty_id": 4,
+      "variant": 1,
+      "task_n": 26,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.49,
+      "tg_key_candidates": [
+        "744"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9497,
+      "external_uid": "crylov:v1t27",
+      "course_id": 1403,
+      "difficulty_id": 4,
+      "variant": 1,
+      "task_n": 27,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [
+        "771"
+      ],
+      "tg_best_similarity": 0.94,
+      "tg_key_candidates": [
+        "771",
+        "772"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9498,
+      "external_uid": "crylov:v5t1",
+      "course_id": 140,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 1,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9499,
+      "external_uid": "crylov:v5t2",
+      "course_id": 148,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 2,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9500,
+      "external_uid": "crylov:v5t3",
+      "course_id": 138,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 3,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9501,
+      "external_uid": "crylov:v5t4",
+      "course_id": 155,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 4,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9502,
+      "external_uid": "crylov:v5t5",
+      "course_id": 156,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 5,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9503,
+      "external_uid": "crylov:v5t10",
+      "course_id": 141,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 10,
+      "stem_level": "простой",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "784"
+      ],
+      "tg_best_similarity": 0.889,
+      "tg_key_candidates": [
+        "784"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает (текст условия ≠ пост)"
+    },
+    {
+      "id": 9504,
+      "external_uid": "crylov:v5t18",
+      "course_id": 146,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 18,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9505,
+      "external_uid": "crylov:v5t19",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 19,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9506,
+      "external_uid": "crylov:v5t20",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 20,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9507,
+      "external_uid": "crylov:v5t21",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 21,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9508,
+      "external_uid": "crylov:v5t22",
+      "course_id": 149,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 22,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9509,
+      "external_uid": "crylov:v5t23",
+      "course_id": 150,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 23,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9510,
+      "external_uid": "crylov:v5t24",
+      "course_id": 151,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 24,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "799",
+        "800"
+      ],
+      "tg_best_similarity": 0.915,
+      "tg_key_candidates": [
+        "799",
+        "800"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9511,
+      "external_uid": "crylov:v5t25",
+      "course_id": 152,
+      "difficulty_id": 2,
+      "variant": 5,
+      "task_n": 25,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9512,
+      "external_uid": "crylov:v5t27",
+      "course_id": 1403,
+      "difficulty_id": 4,
+      "variant": 5,
+      "task_n": 27,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9513,
+      "external_uid": "crylov:v11t4",
+      "course_id": 155,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 4,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9514,
+      "external_uid": "crylov:v11t7",
+      "course_id": 158,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 7,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9515,
+      "external_uid": "crylov:v11t8",
+      "course_id": 159,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 8,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1018"
+      ],
+      "tg_best_similarity": 0.911,
+      "tg_key_candidates": [
+        "1018"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9516,
+      "external_uid": "crylov:v11t10",
+      "course_id": 141,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 10,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9517,
+      "external_uid": "crylov:v11t18",
+      "course_id": 1396,
+      "difficulty_id": 4,
+      "variant": 11,
+      "task_n": 18,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.568,
+      "tg_key_candidates": [
+        "1039"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9518,
+      "external_uid": "crylov:v11t19",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 19,
+      "stem_level": "средний",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "1061"
+      ],
+      "tg_best_similarity": 0.944,
+      "tg_key_candidates": [
+        "1061"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает (текст условия ≠ пост)"
+    },
+    {
+      "id": 9519,
+      "external_uid": "crylov:v11t20",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 20,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9520,
+      "external_uid": "crylov:v11t21",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 21,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9521,
+      "external_uid": "crylov:v11t22",
+      "course_id": 1398,
+      "difficulty_id": 4,
+      "variant": 11,
+      "task_n": 22,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9522,
+      "external_uid": "crylov:v11t23",
+      "course_id": 150,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 23,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9523,
+      "external_uid": "crylov:v11t27",
+      "course_id": 1403,
+      "difficulty_id": 4,
+      "variant": 11,
+      "task_n": 27,
+      "stem_level": "сложный",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9524,
+      "external_uid": "crylov:v16t3",
+      "course_id": 138,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 3,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1000"
+      ],
+      "tg_best_similarity": 0.804,
+      "tg_key_candidates": [
+        "1000"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9525,
+      "external_uid": "crylov:v16t4",
+      "course_id": 155,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 4,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9526,
+      "external_uid": "crylov:v16t6",
+      "course_id": 157,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 6,
+      "stem_level": null,
+      "tg_level": "сложный",
+      "tg_levels_all": [
+        "сложный"
+      ],
+      "tg_post_ids": [
+        "1006"
+      ],
+      "tg_best_similarity": 0.948,
+      "tg_key_candidates": [
+        "1006"
+      ],
+      "expected_difficulty_id": 4,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9527,
+      "external_uid": "crylov:v16t7",
+      "course_id": 158,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 7,
+      "stem_level": null,
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "1020"
+      ],
+      "tg_best_similarity": 0.961,
+      "tg_key_candidates": [
+        "1020"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9528,
+      "external_uid": "crylov:v16t8",
+      "course_id": 159,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 8,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9529,
+      "external_uid": "crylov:v16t11",
+      "course_id": 162,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 11,
+      "stem_level": null,
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "1021"
+      ],
+      "tg_best_similarity": 0.964,
+      "tg_key_candidates": [
+        "1021"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9530,
+      "external_uid": "crylov:v16t12",
+      "course_id": 163,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 12,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.041,
+      "tg_key_candidates": [
+        "1022"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "средний",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9531,
+      "external_uid": "crylov:v16t21",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 21,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9532,
+      "external_uid": "crylov:v16t22",
+      "course_id": 1398,
+      "difficulty_id": 4,
+      "variant": 16,
+      "task_n": 22,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9533,
+      "external_uid": "crylov:v16t27",
+      "course_id": 1403,
+      "difficulty_id": 4,
+      "variant": 16,
+      "task_n": 27,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1073"
+      ],
+      "tg_best_similarity": 0.867,
+      "tg_key_candidates": [
+        "1073"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "сложный",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9550,
+      "external_uid": "crylov:v5t7",
+      "course_id": 158,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 7,
+      "stem_level": null,
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "899"
+      ],
+      "tg_best_similarity": 0.959,
+      "tg_key_candidates": [
+        "899"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9551,
+      "external_uid": "crylov:v5t8",
+      "course_id": 159,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 8,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "900"
+      ],
+      "tg_best_similarity": 0.88,
+      "tg_key_candidates": [
+        "900"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9552,
+      "external_uid": "crylov:v5t9",
+      "course_id": 160,
+      "difficulty_id": 3,
+      "variant": 5,
+      "task_n": 9,
+      "stem_level": null,
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "901"
+      ],
+      "tg_best_similarity": 0.83,
+      "tg_key_candidates": [
+        "901"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9553,
+      "external_uid": "crylov:v5t16",
+      "course_id": 1394,
+      "difficulty_id": 4,
+      "variant": 5,
+      "task_n": 16,
+      "stem_level": null,
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1038"
+      ],
+      "tg_best_similarity": 0.9,
+      "tg_key_candidates": [
+        "1038"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "сложный",
+      "verdict": "РАСХОЖДЕНИЕ"
+    },
+    {
+      "id": 9554,
+      "external_uid": "crylov:v5t26",
+      "course_id": 1402,
+      "difficulty_id": 4,
+      "variant": 5,
+      "task_n": 26,
+      "stem_level": null,
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.642,
+      "tg_key_candidates": [
+        "802"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "сложный",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9555,
+      "external_uid": "crylov:v11t1",
+      "course_id": 140,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 1,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9556,
+      "external_uid": "crylov:v11t2",
+      "course_id": 148,
+      "difficulty_id": 2,
+      "variant": 11,
+      "task_n": 2,
+      "stem_level": "средний",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "808"
+      ],
+      "tg_best_similarity": 0.807,
+      "tg_key_candidates": [
+        "808"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает (текст условия ≠ пост)"
+    },
+    {
+      "id": 9557,
+      "external_uid": "crylov:v11t11",
+      "course_id": 162,
+      "difficulty_id": 3,
+      "variant": 11,
+      "task_n": 11,
+      "stem_level": "средний",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "812"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "812"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ (текст условия ≠ пост)"
+    },
+    {
+      "id": 9558,
+      "external_uid": "crylov:v16t1",
+      "course_id": 140,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 1,
+      "stem_level": "простой",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "824"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "824"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "простой",
+      "verdict": "РАСХОЖДЕНИЕ (текст условия ≠ пост)"
+    },
+    {
+      "id": 9559,
+      "external_uid": "crylov:v16t5",
+      "course_id": 156,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 5,
+      "stem_level": "средний",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "826"
+      ],
+      "tg_best_similarity": 0.818,
+      "tg_key_candidates": [
+        "826"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "средний",
+      "verdict": "РАСХОЖДЕНИЕ (текст условия ≠ пост)"
+    },
+    {
+      "id": 9560,
+      "external_uid": "crylov:v16t9",
+      "course_id": 160,
+      "difficulty_id": 3,
+      "variant": 16,
+      "task_n": 9,
+      "stem_level": "средний",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "1019"
+      ],
+      "tg_best_similarity": 0.91,
+      "tg_key_candidates": [
+        "1019"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "средний",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9561,
+      "external_uid": "crylov:v16t10",
+      "course_id": 141,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 10,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9562,
+      "external_uid": "crylov:v16t18",
+      "course_id": 146,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 18,
+      "stem_level": "средний",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": 0.485,
+      "tg_key_candidates": [
+        "1040"
+      ],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9563,
+      "external_uid": "crylov:v16t20",
+      "course_id": 147,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 20,
+      "stem_level": "простой",
+      "tg_level": null,
+      "tg_levels_all": [],
+      "tg_post_ids": [],
+      "tg_best_similarity": null,
+      "tg_key_candidates": [],
+      "expected_difficulty_id": null,
+      "current_level": "простой",
+      "verdict": "нет канона в ТГ"
+    },
+    {
+      "id": 9564,
+      "external_uid": "crylov:v16t25",
+      "course_id": 152,
+      "difficulty_id": 2,
+      "variant": 16,
+      "task_n": 25,
+      "stem_level": "простой",
+      "tg_level": "простой",
+      "tg_levels_all": [
+        "простой"
+      ],
+      "tg_post_ids": [
+        "1072"
+      ],
+      "tg_best_similarity": 1.0,
+      "tg_key_candidates": [
+        "1072"
+      ],
+      "expected_difficulty_id": 2,
+      "current_level": "простой",
+      "verdict": "совпадает"
+    },
+    {
+      "id": 9565,
+      "external_uid": "crylov:v16t26",
+      "course_id": 1402,
+      "difficulty_id": 4,
+      "variant": 16,
+      "task_n": 26,
+      "stem_level": "сложный",
+      "tg_level": "средний",
+      "tg_levels_all": [
+        "средний"
+      ],
+      "tg_post_ids": [
+        "837"
+      ],
+      "tg_best_similarity": 0.709,
+      "tg_key_candidates": [
+        "837"
+      ],
+      "expected_difficulty_id": 3,
+      "current_level": "сложный",
+      "verdict": "РАСХОЖДЕНИЕ (текст условия ≠ пост)"
+    }
+  ],
+  "unparsed_posts": [
+    {
+      "post_id": "177",
+      "level": null,
+      "pattern": null,
+      "head": "С.С. Крылов рассказал, что будет на ЕГЭ 2025! Вчера прошла встреча С.С. Крылова (руководителя комиссии по раз",
+      "norm_body": "с с крылов рассказал что будет на егэ 2025 вчера прошла встреча с с крылова руководителя комиссии по разработке ким егэ по информатике на которой сергей сергеевич отвечал на вопросы про егэ 2025 нам данное мероприятие очень понравилось были получены ответы на многие волнующие нас вопросы самое важное 1 задание 27 1 1 задание будет именно на кластеризацию то есть другие алгоритмы анализа данных изучать не нужно 1 2 при решении не нужно использовать олимпиадные алгоритмы простой перебор вложенными циклами решит задачу на максимальный балл 1 3 возможные усложнения задачи аномалии расположение кластеров которое усложнит решение задачи увеличение количества кластеров но в разумных пределах 2 задание 22 количество процессов будет не большим можно будет решить вручную 3 задание 19 21 сюжеты могут быть разные могут отличаться например количество куч количество камушек 4 задание 24 можно решать шаблоном с помощью регулярных выражений мы не поняли что это значит можно решать с помощью конечного автомата 5 задание 26 возможно пригодится бинарный поиск при решении 6 задание 18 не планируется его усложнение 7 шкалу перевода первичных баллов в тестовые менять не планируют"
+    }
+  ],
+  "stats": {
+    "total": 112,
+    "tg_level_found": 69,
+    "no_tg_level": 43,
+    "match": 54,
+    "mismatch": 15,
+    "tg_conflict": 1,
+    "stem_vs_tg_conflict": 9
+  }
+}
