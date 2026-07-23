@@ -213,43 +213,59 @@ def find_groups(only_active: bool = True) -> tuple[list[dict], list[dict]]:
 
         dsu = DSU()
         pairs: list[tuple[int, int, float]] = []
-        weak_pairs: list[tuple[int, int, float]] = []
+        weak_pairs: list[tuple[int, int, float, str]] = []
         for i, j in cand:
             a, b = pool[i], pool[j]
             c = containment(a["sig"], b["sig"])
             if c < CONTAINMENT_MIN:
                 continue
-            if a["files"] != b["files"]:
-                weak_pairs.append((i, j, c, "разные приложенные файлы"))
-                continue
-            short = min(len(a["sig"]), len(b["sig"]))
-            if short < SIG_MIN:
-                weak_pairs.append((i, j, c, "слишком короткая подпись"))
-                continue
-            words = min(len(a["text"].split()), len(b["text"].split()))
-            if words < SHORT_TEXT and c < SHORT_CONTAINMENT:
-                # у коротких условий одно слово меняет вопрос целиком
-                weak_pairs.append((i, j, c, "короткое условие, похожесть неполная"))
-                continue
-            if not a["answer"] or not b["answer"]:
-                weak_pairs.append((i, j, c, "нет эталонного ответа"))
-                continue
-            if a["answer"] != b["answer"]:
-                continue  # разный ответ => разные задания, не спорная пара
+
+            # Все факторы считаем сразу — классификация ниже, а не «первый провал».
+            # РАЗЛИЧАЮЩИЕ факторы: их провал => это РАЗНЫЕ задания. Не дубль и НЕ спорное
+            # (иначе список спорных заполняется очевидными вариациями по числам).
             nc = num_containment(a["nums"], b["nums"])
-            if nc < NUM_MIN:
-                weak_pairs.append((i, j, c, f"числа условия расходятся ({nc:.2f})"))
-                continue
-            # фактор формулы информативен только на содержательной нагрузке:
-            # у «определите количество шестизначных чисел...» её почти нет,
-            # и звёздочка автора уже перевесила бы весь отпечаток
             payload_len = min(len(a["payload"].split()), len(b["payload"].split()))
             fc = containment(a["fgrams"], b["fgrams"])
-            if payload_len >= FORMULA_MIN_TOKENS and fc < FORMULA_MIN:
-                weak_pairs.append((i, j, c, f"формула условия расходится ({fc:.2f})"))
+            fc_applies = payload_len >= FORMULA_MIN_TOKENS
+            ans_diff = a["answer"] and b["answer"] and a["answer"] != b["answer"]
+
+            # ПОДТВЕРЖДАЮЩИЕ факторы (их нехватка => спорное, если всё различающее сошлось)
+            files_ok = a["files"] == b["files"]
+            sig_ok = min(len(a["sig"]), len(b["sig"])) >= SIG_MIN
+            words = min(len(a["text"].split()), len(b["text"].split()))
+            short_ok = not (words < SHORT_TEXT and c < SHORT_CONTAINMENT)
+            ans_both = bool(a["answer"] and b["answer"])
+
+            # Различающее сошлось? (нужно для «пограничного» статуса)
+            nums_ok = nc >= NUM_MIN
+            formula_ok = (not fc_applies) or fc >= FORMULA_MIN
+
+            if ans_diff:
+                continue  # разный ответ — уверенно разные задания
+            if not nums_ok and not ans_both:
+                continue  # числа разошлись и ответом не подтвердить — разные задания
+            if not formula_ok and not (ans_both and nums_ok):
+                continue  # формула разошлась и нет сильного подтверждения — разные
+
+            if files_ok and sig_ok and short_ok and ans_both and nums_ok and formula_ok:
+                pairs.append((i, j, c))
+                dsu.union(i, j)
                 continue
-            pairs.append((i, j, c))
-            dsu.union(i, j)
+
+            # Иначе — спорное. Причина = самый сильный сигнал сомнения.
+            if not nums_ok:      # ответ совпал, но число условия изменено (Крылов-клон)
+                why, metric = "числа условия расходятся при совпавшем ответе", f"числа {nc:.2f}"
+            elif not formula_ok:  # текст+ответ сошлись, формула другая
+                why, metric = "формула условия расходится", f"формула {fc:.2f}"
+            elif not files_ok:
+                why, metric = "разные приложенные файлы (остальное совпало)", ""
+            elif not ans_both:
+                why, metric = "нет эталонного ответа (числа и формула совпали)", ""
+            elif not short_ok:
+                why, metric = "короткое условие, похожесть неполная", ""
+            else:
+                why, metric = "слишком короткая подпись", ""
+            weak_pairs.append((i, j, c, why, metric))
 
         clusters: dict[int, list[int]] = defaultdict(list)
         for i in range(len(pool)):
@@ -267,9 +283,9 @@ def find_groups(only_active: bool = True) -> tuple[list[dict], list[dict]]:
                     default=0.0,
                 ),
             })
-        for i, j, c, why in weak_pairs:
+        for i, j, c, why, metric in weak_pairs:
             weak.append({"theme": theme, "members": [pool[i], pool[j]],
-                         "containment": c, "reason": why})
+                         "containment": c, "reason": why, "metric": metric})
     return groups, weak
 
 
