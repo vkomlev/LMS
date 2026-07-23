@@ -1,0 +1,822 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index c953369..1b6f599 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -35,7 +35,7 @@ from app.schemas.checking import (
+     CheckResult,
+     CheckFeedback,
+ )
+-from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES
++from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES, COMMENT_TASK_TYPES
+ 
+ from app.services.attempts_service import AttemptsService
+ from app.services.task_results_service import TaskResultsService
+@@ -645,8 +645,9 @@ async def submit_attempt_answers(
+         #
+         # Если попытка истекла по времени — не подменяем (overdue → честный
+         # FAILED, как для остальных типов).
++        #   - TBL_COM (tsk-366) — тот же тип «с комментарием», ведёт себя как SA_COM.
+         optimistic_manual = task_content.type == "TA" or (
+-            task_content.type == "SA_COM" and check_result.is_correct is None
++            task_content.type in COMMENT_TASK_TYPES and check_result.is_correct is None
+         )
+         if optimistic_manual and not attempt.time_expired:
+             check_result = CheckResult(
+diff --git a/app/api/v1/meta_tasks.py b/app/api/v1/meta_tasks.py
+index cb5f3b6..39a97bc 100644
+--- a/app/api/v1/meta_tasks.py
++++ b/app/api/v1/meta_tasks.py
+@@ -15,8 +15,8 @@ router = APIRouter(tags=["meta"])
+ difficulty_service = DifficultyLevelsService()
+ courses_service = CoursesService()
+ 
+-# Жёстко заданные типы задач для импорта
+-TASK_TYPES: List[str] = ["SC", "MC", "SA", "SA_COM", "TA"]
++# Жёстко заданные типы задач для импорта (tsk-366: + TBL_COM — табличный ответ)
++TASK_TYPES: List[str] = ["SC", "MC", "SA", "SA_COM", "TBL_COM", "TA"]
+ 
+ 
+ @router.get(
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index db4cacf..901a412 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -614,7 +614,7 @@ async def get_pending_review_results(
+         conditions = [
+             TaskResults.checked_at.is_(None),
+             TaskResults.is_correct.isnot(None),
+-            sa_text("tasks.task_content->>'type' = 'SA_COM'"),
++            sa_text("tasks.task_content->>'type' IN ('SA_COM','TBL_COM')"),
+             sa_text(
+                 "COALESCE((tasks.solution_rules->>'manual_review_required')::boolean, false) = false"
+             ),
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index a9eaac2..bd30017 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -573,7 +573,8 @@ async def search_tasks(
+     description=(
+         "Массовый импорт задач из Google Sheets таблицы в систему LMS.\n\n"
+         "**Поддерживаемые типы задач:** SC (Single Choice), MC (Multiple Choice), "
+-        "SA (Short Answer), SA_COM (Short Answer with Comments), TA (Text Answer).\n\n"
++        "SA (Short Answer), SA_COM (Short Answer with Comments), "
++        "TBL_COM (Table answer with Comments), TA (Text Answer).\n\n"
+         "**Процесс импорта:**\n"
+         "1. Извлекает spreadsheet_id из URL\n"
+         "2. Читает данные из указанного листа через Google Sheets API\n"
+@@ -593,7 +594,12 @@ async def search_tasks(
+         "является программой на Python (сравнение через AST, регистр значим), `text` — "
+         "слово/число/имя. Можно задать шаги списком через запятую из закрытого словаря "
+         "(`trim`, `lower`, `strip_punctuation`, `collapse_spaces`, `code_ast`); опечатка "
+-        "отклоняет строку, а не подставляет дефолт молча. Пустая колонка — `trim, lower`\n\n"
++        "отклоняет строку, а не подставляет дефолт молча. Пустая колонка — `trim, lower`\n"
++        "- Тип `TBL_COM` (табличный ответ) генератор ставит ЯВНО — по виду ответа он не "
++        "выводится: «два числа через пробел» бывает и обычным SA_COM (вывод программы в "
++        "одну строку). В `correct_answer` таблица пишется значениями через пробельные "
++        "символы (ячейки ряда — пробел, ряды — перевод строки), раскладка столбцов — "
++        "через `task_content_json`: `{\"table\": {\"columns\": 2}}`\n\n"
+         "**Обработка ошибок:**\n"
+         "- Импорт продолжается даже при ошибках в отдельных строках\n"
+         "- Все ошибки возвращаются в массиве `errors` с указанием номера строки\n"
+diff --git a/app/schemas/checking.py b/app/schemas/checking.py
+index bc8a2cb..2d3ada4 100644
+--- a/app/schemas/checking.py
++++ b/app/schemas/checking.py
+@@ -24,7 +24,7 @@ def _normalize_answer_type(v: Any) -> TaskType:
+             "Алиас будет удалён в будущей версии."
+         )
+         return "SA_COM"
+-    if v not in ("SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"):
++    if v not in ("SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"):
+         raise ValueError(f"Недопустимый тип ответа: {v!r}")
+     return v
+ 
+@@ -36,6 +36,8 @@ class StudentResponse(BaseModel):
+     Для разных типов задач используются разные поля:
+     - SC/MC: selected_option_ids;
+     - SA/SA_COM: value; для типов с комментарием (SA_COM и т.п.) — опционально comment;
++    - TBL_COM: value — таблица одной строкой: ячейки ряда через пробел, ряды через
++      перевод строки (любые пробельные символы допустимы, сравнение поячеечное);
+     - TA: text.
+     """
+ 
+@@ -46,8 +48,11 @@ class StudentResponse(BaseModel):
+     )
+     value: Optional[str] = Field(
+         default=None,
+-        description="Краткий текстовый/числовой ответ (SA/SA_COM).",
+-        examples=["42", "Python", None],
++        description=(
++            "Краткий текстовый/числовой ответ (SA/SA_COM) либо табличный ответ "
++            "(TBL_COM): ячейки ряда через пробел, ряды через перевод строки."
++        ),
++        examples=["42", "Python", "10 2786\n12 3140", None],
+     )
+     text: Optional[str] = Field(
+         default=None,
+diff --git a/app/schemas/solution_rules.py b/app/schemas/solution_rules.py
+index 8bfe821..1fea80d 100644
+--- a/app/schemas/solution_rules.py
++++ b/app/schemas/solution_rules.py
+@@ -57,6 +57,10 @@ class ShortAnswerAccepted(BaseModel):
+ class ShortAnswerRules(BaseModel):
+     """
+     Правила проверки короткого ответа (SA/SA_COM).
++
++    tsk-366: тот же блок обслуживает табличный ответ TBL_COM — эталон лежит в
++    `accepted_answers` строкой (ячейки через пробел, ряды через перевод строки),
++    а шаги нормализации применяются к КАЖДОЙ ячейке отдельно.
+     """
+ 
+     normalization: List[NormalizationStep] = Field(
+@@ -102,6 +106,34 @@ class ShortAnswerRules(BaseModel):
+     )
+ 
+ 
++class TableAnswerRules(BaseModel):
++    """
++    Настройки сравнения табличного ответа (TBL_COM, tsk-366).
++
++    Сам эталон и шаги нормализации живут в общем блоке `short_answer` — том же,
++    что у SA/SA_COM. Это осознанно: 210 заданий уже хранят табличный ответ строкой
++    в `accepted_answers` и работают, поэтому перевод в TBL_COM обязан быть сменой
++    ТИПА, а не переписыванием правил. Здесь — только то, чего у короткого ответа нет.
++
++    Режим начисления баллов отдельным полем не заводится: для этого уже есть
++    `SolutionRules.scoring_mode` (`all_or_nothing` по умолчанию — как на реальном
++    ЕГЭ, где №25 оценивается в 1 балл целиком; `partial` даёт балл пропорционально
++    числу верных рядов).
++    """
++
++    row_order_matters: bool = Field(
++        default=True,
++        description=(
++            "Важен ли порядок рядов. True (по умолчанию) — ответ сверяется как "
++            "последовательность: в №25 ряды упорядочены условием, в №26 порядок "
++            "задан смыслом. False — ряды сверяются как мультимножество (порядок "
++            "любой, но количество повторов значимо); ячейки ВНУТРИ ряда при этом "
++            "всё равно упорядочены, потому что столбцы разные по смыслу."
++        ),
++        examples=[True, False],
++    )
++
++
+ class TextRubricItem(BaseModel):
+     """
+     Критерий оценивания развёрнутого ответа (TA).
+@@ -256,6 +288,15 @@ class SolutionRules(BaseModel):
+         description="Правила проверки короткого ответа (SA/SA_COM).",
+     )
+ 
++    # Для табличного ответа (TBL_COM); эталон берётся из short_answer
++    table: Optional[TableAnswerRules] = Field(
++        default=None,
++        description=(
++            "Настройки сравнения табличного ответа (TBL_COM, tsk-366). Отсутствие "
++            "блока = поведение по умолчанию (порядок рядов важен)."
++        ),
++    )
++
+     # Для развёрнутого ответа
+     text_answer: Optional[TextAnswerRules] = Field(
+         default=None,
+diff --git a/app/schemas/task_content.py b/app/schemas/task_content.py
+index b33c0b0..bca0e94 100644
+--- a/app/schemas/task_content.py
++++ b/app/schemas/task_content.py
+@@ -5,12 +5,29 @@ from typing import Dict, List, Optional, Literal
+ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+ 
+ 
+-TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"]
++TaskType = Literal["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"]
+ 
+ # Типы квиз-вопросов со шкалами (tsk-122, ADR-0003): без «правильного» варианта,
+ # за каждый выбор начисляются баллы по шкалам.
+ QUIZ_TASK_TYPES: tuple[str, ...] = ("SC_Qw", "MC_Qw")
+ 
++# Типы с кратким ответом в поле `value` и правилами в `solution_rules.short_answer`
++# (tsk-366: TBL_COM — тот же блок правил, но сравнение поячеечное).
++SHORT_ANSWER_TASK_TYPES: tuple[str, ...] = ("SA", "SA_COM", "TBL_COM")
++
++# Типы «с комментарием»: ученик прикладывает пояснение/код и файл, преподаватель
++# может пересмотреть ответ вручную. TBL_COM заведён по образцу SA_COM (tsk-366),
++# поэтому везде, где whitelist перечисляет SA_COM, он идёт рядом.
++COMMENT_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM")
++
++# Типы, чьи ответы проходят через очередь ручной проверки преподавателя
++# (обязательную при manual_review_required, опциональную — вторичным просмотром).
++MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM", "TA")
++
++# Типы с табличным ответом (tsk-366): значения разделены пробельными символами —
++# ячейки в ряду пробелом, ряды переводом строки.
++TABLE_TASK_TYPES: tuple[str, ...] = ("TBL_COM",)
++
+ 
+ class TaskMedia(BaseModel):
+     """
+@@ -75,6 +92,41 @@ class TaskOption(BaseModel):
+     )
+ 
+ 
++class TaskTableLayout(BaseModel):
++    """
++    Раскладка табличного ответа (TBL_COM, tsk-366).
++
++    Живёт в `task_content`, а НЕ в правилах проверки, потому что это то, что
++    клиент обязан показать ученику: сколько столбцов в ряду и как они называются.
++    `solution_rules` клиенту не отдаётся (защита от слива ответа), поэтому
++    раскладка обязана лежать здесь.
++
++    Число СТОЛБЦОВ раскрывать безопасно: оно задано условием задачи («выпишите
++    число и результат деления»). Число РЯДОВ намеренно не хранится — в задании
++    №25 ЕГЭ количество найденных чисел само по себе часть ответа, и фиксированная
++    сетка выдала бы его ученику.
++    """
++
++    columns: int = Field(
++        default=2,
++        ge=1,
++        le=9,
++        description=(
++            "Количество столбцов в ряду ответа. Задано условием задачи, "
++            "показывается ученику. Ограничение 9 — практический предел таблицы ЕГЭ."
++        ),
++        examples=[1, 2, 3],
++    )
++    column_titles: Optional[List[str]] = Field(
++        default=None,
++        description=(
++            "Подписи столбцов для сетки ввода (опционально). Длина должна совпадать "
++            "с `columns`."
++        ),
++        examples=[["число", "результат деления"], None],
++    )
++
++
+ class TaskContent(BaseModel):
+     """
+     Структура JSON-поля tasks.task_content.
+@@ -86,8 +138,8 @@ class TaskContent(BaseModel):
+ 
+     type: TaskType = Field(
+         ...,
+-        description="Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw.",
+-        examples=["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw"],
++        description="Тип задачи: SC | MC | SA | SA_COM | TA | SC_Qw | MC_Qw | TBL_COM.",
++        examples=["SC", "MC", "SA", "SA_COM", "TA", "SC_Qw", "MC_Qw", "TBL_COM"],
+     )
+     code: Optional[str] = Field(
+         default=None,
+@@ -155,6 +207,15 @@ class TaskContent(BaseModel):
+         ],
+     )
+ 
++    table: Optional[TaskTableLayout] = Field(
++        default=None,
++        description=(
++            "Раскладка табличного ответа (TBL_COM, tsk-366): сколько столбцов в ряду "
++            "и как они подписаны. Для остальных типов не используется. Отсутствие "
++            "блока у TBL_COM означает раскладку по умолчанию (2 столбца)."
++        ),
++    )
++
+     scales: Optional[List[str]] = Field(
+         default=None,
+         description=(
+@@ -223,8 +284,16 @@ class TaskContent(BaseModel):
+         - SC/MC: должны быть как минимум 2 варианта;
+         - SC_Qw/MC_Qw: минимум 2 варианта + объявление scales + scores с ключами из scales;
+         - SA/TA: options не обязательны.
++        - TBL_COM: подписи столбцов, если заданы, должны совпадать по числу со `columns`.
+         - Проверка уникальности options[].id.
+         """
++        if self.table and self.table.column_titles is not None:
++            if len(self.table.column_titles) != self.table.columns:
++                raise ValueError(
++                    f"table.column_titles содержит {len(self.table.column_titles)} подписей "
++                    f"при table.columns={self.table.columns} — числа должны совпадать."
++                )
++
+         if self.type in ("SC", "MC"):
+             if not self.options or len(self.options) < 2:
+                 raise ValueError(
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index 4326045..2e711b5 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ 
+ import ast
+ import re
++from collections import Counter
+ from typing import List, Optional, Set, Dict
+ 
+ from app.schemas.task_content import TaskContent, TaskType
+@@ -105,6 +106,8 @@ class CheckingService:
+             return self._check_quiz(task_content, solution_rules, answer)
+         if task_type in ("SA", "SA_COM"):
+             return self._check_short_answer(task_content, solution_rules, answer)
++        if task_type == "TBL_COM":
++            return self._check_table_answer(task_content, solution_rules, answer)
+         if task_type == "TA":
+             return self._check_text_answer(task_content, solution_rules, answer)
+ 
+@@ -656,6 +659,247 @@ class CheckingService:
+             feedback=feedback,
+         )
+ 
++    # ---------- Проверка TBL_COM (табличный ответ) ----------
++
++    def _check_table_answer(
++        self,
++        task_content: TaskContent,
++        solution_rules: SolutionRules,
++        answer: StudentAnswer,
++    ) -> CheckResult:
++        """
++        Проверка табличного ответа (TBL_COM, tsk-366).
++
++        Ответ ученика и эталон разбираются на ЯЧЕЙКИ по пробельным символам, и
++        сравниваются ячейка с ячейкой. Благодаря этому «10 2786», «10  2786» и
++        «10\\n2786» — один и тот же ответ: ученику больше не нужно угадывать
++        разделитель, ради чего тип и заведён.
++
++        Правила берутся из того же блока `short_answer`, что у SA/SA_COM: эталон
++        в `accepted_answers`, шаги нормализации применяются к каждой ячейке
++        отдельно. Поэтому перевод существующего задания из SA_COM в TBL_COM —
++        смена типа без правки правил, и проверка от этого может только
++        расшириться, но не сузиться (см. тест-инвариант в
++        tests/test_checking_table_tbl_com_tsk366.py).
++
++        Настройки: `solution_rules.table.row_order_matters` (по умолчанию True —
++        порядок рядов важен) и общий `solution_rules.scoring_mode`
++        (`all_or_nothing` по умолчанию — как на ЕГЭ; `partial` даёт балл
++        пропорционально числу верных рядов).
++        """
++        value_raw = answer.response.value or ""
++        missing_answer = not value_raw.strip()
++
++        # Паритет с SA_COM (tsk-230): обязательная ручная проверка — без авто-вердикта.
++        if solution_rules.manual_review_required:
++            return CheckResult(
++                is_correct=None,
++                score=0,
++                max_score=solution_rules.max_score,
++                details=None,
++                feedback=None,
++            )
++
++        rules: Optional[ShortAnswerRules] = solution_rules.short_answer
++
++        if not rules or (not rules.accepted_answers and not (rules.use_regex and rules.regex)):
++            # Эталона нет — сверять нечем, ведём себя как SA_COM без правил.
++            penalty = solution_rules.penalties.missing_answer if missing_answer else 0
++            return CheckResult(
++                is_correct=None,
++                score=max(0, 0 - penalty),
++                max_score=solution_rules.max_score,
++                details=None,
++                feedback=None,
++            )
++
++        if missing_answer:
++            final_score = max(0, 0 - solution_rules.penalties.missing_answer)
++            return CheckResult(
++                is_correct=False,
++                score=final_score,
++                max_score=solution_rules.max_score,
++                details=CheckResultDetails(matched_short_answer=None),
++                feedback=self._generate_feedback_table(
++                    is_correct=False,
++                    base_score=0,
++                    max_score=solution_rules.max_score,
++                    cells_given=0,
++                    columns=self._table_columns(task_content),
++                ),
++            )
++
++        columns = self._table_columns(task_content)
++        order_matters = (
++            solution_rules.table.row_order_matters if solution_rules.table else True
++        )
++        cells = self._table_cells(value_raw, rules.normalization)
++
++        base_score = 0
++        matched_value: Optional[str] = None
++
++        # Регулярное выражение — паритет с SA: применяется к ответу, сведённому
++        # к канонической однострочной записи (ячейки через один пробел).
++        if rules.use_regex and rules.regex:
++            try:
++                if re.compile(rules.regex).fullmatch(" ".join(cells)):
++                    base_score = solution_rules.max_score
++                    matched_value = value_raw
++            except re.error:
++                pass
++
++        if base_score < solution_rules.max_score:
++            for accepted in rules.accepted_answers:
++                expected = self._table_cells(accepted.value, rules.normalization)
++                score = self._score_table(
++                    cells=cells,
++                    expected=expected,
++                    full_score=accepted.score,
++                    columns=columns,
++                    order_matters=order_matters,
++                    partial=solution_rules.scoring_mode == "partial",
++                )
++                if score > base_score:
++                    base_score = score
++                    matched_value = accepted.value
++
++        is_correct = base_score == solution_rules.max_score if base_score > 0 else False
++
++        penalty = 0
++        if solution_rules.penalties and base_score == 0:
++            penalty += solution_rules.penalties.wrong_answer
++        final_score = max(0, base_score - penalty)
++
++        return CheckResult(
++            is_correct=is_correct,
++            score=final_score,
++            max_score=solution_rules.max_score,
++            details=CheckResultDetails(matched_short_answer=matched_value),
++            feedback=self._generate_feedback_table(
++                is_correct=is_correct,
++                base_score=base_score,
++                max_score=solution_rules.max_score,
++                cells_given=len(cells),
++                columns=columns,
++            ),
++        )
++
++    @staticmethod
++    def _table_columns(task_content: TaskContent) -> int:
++        """Число столбцов в ряду: из раскладки задания, по умолчанию 2."""
++        if task_content.table and task_content.table.columns > 0:
++            return task_content.table.columns
++        return 2
++
++    @classmethod
++    def _table_cells(cls, value: str, steps: List[str]) -> List[str]:
++        """
++        Разбирает табличный ответ на нормализованные ячейки.
++
++        Разделитель — ЛЮБАЯ последовательность пробельных символов, поэтому
++        пробел, несколько пробелов, табуляция и перевод строки равнозначны.
++        Шаги нормализации применяются к каждой ячейке отдельно.
++
++        Пустые после нормализации ячейки отбрасываются. Это не косметика: при
++        `strip_punctuation` одиноко стоящая запятая («1 , 2») превращается в
++        пустую ячейку и сдвинула бы всю таблицу — ответ, который SA_COM засчитал
++        бы, стал бы неверным. Отбрасывание держит обещание «проверка TBL_COM не
++        строже проверки SA_COM на тех же правилах».
++        """
++        cells = [cls._normalize_text(cell, steps) for cell in value.split()]
++        return [cell for cell in cells if cell != ""]
++
++    @staticmethod
++    def _score_table(
++        cells: List[str],
++        expected: List[str],
++        full_score: int,
++        columns: int,
++        order_matters: bool,
++        partial: bool,
++    ) -> int:
++        """
++        Считает балл за таблицу относительно одного эталона.
++
++        Args:
++            cells: Ячейки ответа ученика (нормализованные).
++            expected: Ячейки эталона (нормализованные).
++            full_score: Балл за полное совпадение с этим эталоном.
++            columns: Число столбцов в ряду (нужно, когда порядок рядов не важен
++                или считается частичный балл).
++            order_matters: Важен ли порядок рядов.
++            partial: Режим частичного балла (`scoring_mode='partial'`).
++
++        Returns:
++            Начисленный балл (0..full_score).
++        """
++        def rows(flat: List[str]) -> List[tuple[str, ...]]:
++            step = max(1, columns)
++            return [tuple(flat[i:i + step]) for i in range(0, len(flat), step)]
++
++        if not expected:
++            return 0
++
++        if order_matters:
++            exact = cells == expected
++        else:
++            exact = Counter(rows(cells)) == Counter(rows(expected))
++
++        if exact:
++            return full_score
++        if not partial:
++            return 0
++
++        # Частичный балл: доля совпавших рядов эталона.
++        expected_rows = rows(expected)
++        student_rows = rows(cells)
++        if order_matters:
++            hit = sum(
++                1
++                for i, row in enumerate(expected_rows)
++                if i < len(student_rows) and student_rows[i] == row
++            )
++        else:
++            common = Counter(student_rows) & Counter(expected_rows)
++            hit = sum(common.values())
++        return int(full_score * hit / len(expected_rows))
++
++    def _generate_feedback_table(
++        self,
++        is_correct: bool,
++        base_score: int,
++        max_score: int,
++        cells_given: int,
++        columns: int,
++    ) -> Optional[CheckFeedback]:
++        """
++        Обратная связь по табличному ответу.
++
++        При неверном ответе дополнительно сообщаем, сколько значений система
++        разобрала. Ученику это нужно, чтобы отличить ошибку в вычислениях от
++        ошибки ввода — раньше он не видел ни того, ни другого.
++        """
++        if is_correct:
++            general = "Отлично! Ваш ответ правильный."
++        elif base_score > 0:
++            general = (
++                f"Ваш ответ частично правильный. Набрано {base_score} из {max_score} баллов."
++            )
++        elif cells_given == 0:
++            general = "Ответ пуст. Введите значения таблицы."
++        else:
++            rows_hint = ""
++            if columns > 1 and cells_given % columns != 0:
++                rows_hint = (
++                    f" В ряду должно быть {columns} значения, а всего значений "
++                    f"{cells_given} — ряды заполнены не до конца."
++                )
++            general = (
++                f"Ответ неверен. Система разобрала {cells_given} значений.{rows_hint}"
++            )
++
++        return CheckFeedback(general=general, by_option=None)
++
+     @classmethod
+     def _matches_short_answer(
+         cls,
+diff --git a/app/services/escalation_service.py b/app/services/escalation_service.py
+index 06ed643..052ad9a 100644
+--- a/app/services/escalation_service.py
++++ b/app/services/escalation_service.py
+@@ -86,7 +86,7 @@ async def escalation_cron_tick(
+                 FROM task_results tr
+                 JOIN tasks t ON t.id = tr.task_id
+                 WHERE tr.checked_at IS NULL
+-                  AND t.task_content->>'type' IN ('SA_COM','TA')
++                  AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+                   -- tsk-210: эскалируем только первично-верные pending (ждут
+                   -- вторичной проверки учителя). SA_COM с is_correct=FALSE —
+                   -- честный FAILED, не pending. TA всегда is_correct=TRUE.
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index eb20472..0b19069 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -660,7 +660,7 @@ class LearningEngineService:
+                         WHERE tr.user_id = :sid
+                           AND t.course_id = ANY(:cids)
+                           AND tr.checked_at IS NULL
+-                          AND t.task_content->>'type' IN ('SA_COM','TA')
++                          AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+                         """
+                     ),
+                     {"sid": student_id, "cids": tree_ids},
+diff --git a/app/services/manual_progress_service.py b/app/services/manual_progress_service.py
+index 7aed889..babcdc7 100644
+--- a/app/services/manual_progress_service.py
++++ b/app/services/manual_progress_service.py
+@@ -62,7 +62,10 @@ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.auth.current_user import CurrentUser
+-from app.schemas.task_content import QUIZ_TASK_TYPES
++from app.schemas.task_content import (
++    QUIZ_TASK_TYPES,
++    MANUAL_REVIEW_TASK_TYPES as _MANUAL_REVIEW_TASK_TYPES,
++)
+ from app.services import audit_service
+ from app.services.checking_service import CheckingService
+ from app.services.learning_engine_service import LearningEngineService
+@@ -78,7 +81,8 @@ REVOKE_REASON = "manual_progress_revoked"
+ #: Провенанс реального прохождения ученика (дефолт колонки `source`).
+ SYSTEM_SOURCE = "system"
+ #: Типы заданий с ручной проверкой преподавателем (tsk-336: pending_review).
+-MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TA")
++#: Реэкспорт единого списка из схемы, чтобы whitelist не разъезжался (tsk-366).
++MANUAL_REVIEW_TASK_TYPES = _MANUAL_REVIEW_TASK_TYPES
+ #: Фильтр обхода — тот же, что у учебного движка (см. `compute_course_state`).
+ _REQUIREMENT_LEVELS = ("required", "skippable")
+ #: Максимальная длина комментария преподавателя (обрезается, а не отклоняется).
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 393f7e2..ac2fd1d 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.identity_link import IdentityLink
+ from app.models.users import Users
+-from app.schemas.task_content import QUIZ_TASK_TYPES
++from app.schemas.task_content import QUIZ_TASK_TYPES, MANUAL_REVIEW_TASK_TYPES
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
+ 
+@@ -805,9 +805,10 @@ def _compute_syllabus_task_status(row: dict) -> str:
+ 
+     if is_correct is True:
+         task_type = row.get("task_type") or ""
+-        # Ручная проверка учителем (SA_COM/TA, тот же whitelist, что в teacher_queue):
+-        # passed только после checked_at, иначе optimistic pending_review (Y-6).
+-        if task_type in ("SA_COM", "TA"):
++        # Ручная проверка учителем (SA_COM/TBL_COM/TA, тот же whitelist, что в
++        # teacher_queue): passed только после checked_at, иначе optimistic
++        # pending_review (Y-6).
++        if task_type in MANUAL_REVIEW_TASK_TYPES:
+             return "passed" if checked_at is not None else "pending_review"
+         # Авто-проверяемые (SC/MC/SA): учителя нет, checked_at не ставится → верный
+         # ответ = passed сразу. tsk-214: раньше правило «checked_at обязателен»
+diff --git a/app/services/sheets_parser_service.py b/app/services/sheets_parser_service.py
+index 299509d..6acba68 100644
+--- a/app/services/sheets_parser_service.py
++++ b/app/services/sheets_parser_service.py
+@@ -8,7 +8,12 @@ import logging
+ from typing import Dict, List, Optional, Tuple, Any, get_args
+ from urllib.parse import urlparse, parse_qs
+ 
+-from app.schemas.task_content import TaskContent, TaskOption, TaskType
++from app.schemas.task_content import (
++    TaskContent,
++    TaskOption,
++    TaskType,
++    SHORT_ANSWER_TASK_TYPES,
++)
+ from app.schemas.solution_rules import (
+     SolutionRules,
+     PenaltiesRules,
+@@ -151,7 +156,11 @@ class SheetsParserService:
+         # Парсим тип задачи
+         assert task_type is not None  # required=True raises before this point.
+         task_type_upper = task_type.upper().strip()
+-        if task_type_upper not in ("SC", "MC", "SA", "SA_COM", "TA"):
++        # tsk-366: TBL_COM объявляется генератором ЯВНО — тип не выводится из вида
++        # ответа. Ответ «два числа через пробел» бывает и у обычного SA_COM (вывод
++        # программы в одну строку), и автоопределение перевело бы такие задания в
++        # таблицу ошибочно (принцип tsk-325/tsk-370: не додумывать за источник).
++        if task_type_upper not in ("SC", "MC", "SA", "SA_COM", "TBL_COM", "TA"):
+             raise DomainError(
+                 detail=f"Неподдерживаемый тип задачи: {task_type}",
+                 status_code=400,
+@@ -239,8 +248,8 @@ class SheetsParserService:
+             "penalties": PenaltiesRules(),  # Дефолтные значения
+         }
+         
+-        # Для SA/SA_COM парсим accepted_answers
+-        if task_type_parsed in ("SA", "SA_COM"):
++        # Для SA/SA_COM/TBL_COM парсим accepted_answers (общий блок правил, tsk-366)
++        if task_type_parsed in SHORT_ANSWER_TASK_TYPES:
+             accepted_answers = self._parse_accepted_answers(row, column_mapping, max_score)
+             if accepted_answers:
+                 solution_rules_data["short_answer"] = ShortAnswerRules(
+@@ -442,7 +451,7 @@ class SheetsParserService:
+                     pass
+         
+         # Дефолтные значения по типу задачи
+-        if task_type in ("SA", "SA_COM"):
++        if task_type in SHORT_ANSWER_TASK_TYPES:
+             return self.settings.default_points_short_answer
+         return 10  # Дефолт для SC/MC/TA
+ 
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 9bf6dbb..1d88ae7 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -20,6 +20,7 @@ from typing import Any, Optional, Tuple
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
+ from app.utils.task_title import humanize_task_title
+ 
+ logger = logging.getLogger(__name__)
+@@ -123,9 +124,11 @@ REVIEW_ACL_SQL = f"""
+ #     (review_kind=optional). Сюда же попадают честно-заваленные (is_correct=false),
+ #     которые tsk-210 не хотел показывать как обязательные — теперь их отсекает
+ #     сама ось mrr, без хрупкой опоры на is_correct.
++#   - TBL_COM (tsk-366) — табличный ответ, заведён по образцу SA_COM: та же ось
++#     обязательности, та же вторичная проверка.
+ MANDATORY_REVIEW_TEMPLATE = """
+     ({tasks}.task_content->>'type' = 'TA'
+-     OR ({tasks}.task_content->>'type' = 'SA_COM'
++     OR ({tasks}.task_content->>'type' IN ('SA_COM','TBL_COM')
+          AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
+ """
+ 
+@@ -553,7 +556,7 @@ async def claim_review_by_id(
+     if row is None:
+         raise GradeNotFoundError()
+     checked_at, claimed_by, claim_expires_at, task_type, acl_ok = row
+-    if task_type not in ("SA_COM", "TA"):
++    if task_type not in MANUAL_REVIEW_TASK_TYPES:
+         raise GradeNotFoundError()
+     if not acl_ok:
+         raise ClaimForbiddenError()
+diff --git a/scripts/check_ungradable_tasks.py b/scripts/check_ungradable_tasks.py
+index 97bb550..a69600c 100644
+--- a/scripts/check_ungradable_tasks.py
++++ b/scripts/check_ungradable_tasks.py
+@@ -19,6 +19,21 @@ correct_options, при этом `manual_review_required=false`. Структу
+ проверить ответ нечем и в ручную оно не уйдёт. Тот же дефект, другая маскировка, и
+ на момент написания чека таких заданий 231 (SA_COM/SC_Qw в 28 курсах).
+ 
++Обе формы ищутся БЕЗ привязки к типу задания, поэтому пустой `TBL_COM` (табличный
++ответ, tsk-366) ловится теми же запросами, что и пустой `SA_COM`: эталон таблицы
++лежит в том же `short_answer.accepted_answers`.
++
++Отдельно, БЕЗ влияния на код выхода, печатается раздел «кандидаты в TBL_COM»:
++активные SA/SA_COM, чей эталон — несколько значений через пробельные символы. Такой
++ответ ученик вводит вслепую: поле одно, разделитель приходится угадывать — ровно та
++боль, ради которой заведён тип TBL_COM. Это НЕ дефект: тот же вид ответа честно
++бывает у SA_COM, где вывод программы обязан быть ОДНОЙ строкой («выведите числа через
++пробел в одну строку»), и автоперевод таких заданий в таблицу был бы ошибкой
++(принцип tsk-325/tsk-370 — не додумывать за источник). Поэтому раздел — сигнал на
++разбор, а не красный свет; разобранное задание снимается с учёта пометкой
++`task_content.tbl_com_not_applicable = true`. Без этого раздела класс вернулся бы
++следующей партией импорта и всплыл бы только жалобой ученика (tsk-366, пункт 5).
++
+ Что делает. Считает и перечисляет активные задания обеих форм. Read-only: ни одного
+ UPDATE. Чинит не этот скрипт — он только сообщает.
+ 
+@@ -85,6 +100,25 @@ ORDER BY t.course_id, t.id
+ """
+ 
+ 
++# Сигнал (не дефект): краткий ответ из нескольких значений через пробельные символы —
++# кандидат в TBL_COM. Разобранные снимаются пометкой `tbl_com_not_applicable`.
++SQL_TBL_COM_CANDIDATES = """
++SELECT t.id, t.course_id, t.task_content->>'type' AS task_type,
++       coalesce(t.solution_rules#>>'{short_answer,accepted_answers,0,value}',
++                t.task_content->>'answer_raw') AS answer
++FROM tasks t
++WHERE t.is_active
++  AND t.task_content->>'type' IN ('SA', 'SA_COM')
++  AND (t.task_content->>'tbl_com_not_applicable')::bool IS NOT TRUE
++  -- Критерий тот же, что у разметки грунта (scripts/tsk366_mark_pending_tbl_com.py):
++  -- ВСЕ значения — числа. Иначе в раздел попадёт честный текстовый ответ из двух слов
++  -- («Три встречи»), и сигнал утонет в шуме.
++  AND coalesce(t.solution_rules#>>'{short_answer,accepted_answers,0,value}',
++               t.task_content->>'answer_raw') ~ '^\\d+([ \\n\\r\\t]+\\d+)+$'
++ORDER BY t.course_id, t.id
++"""
++
++
+ async def main(quiet: bool) -> int:
+     from sqlalchemy import text
+     from sqlalchemy.ext.asyncio import create_async_engine
+@@ -106,6 +140,7 @@ async def main(quiet: bool) -> int:
+ 
+             empty = (await conn.execute(text(SQL_EMPTY_RULES))).mappings().all()
+             hollow = (await conn.execute(text(SQL_HOLLOW_RULES))).mappings().all()
++            candidates = (await conn.execute(text(SQL_TBL_COM_CANDIDATES))).mappings().all()
+     finally:
+         await engine.dispose()
+ 
+@@ -132,6 +167,25 @@ async def main(quiet: bool) -> int:
+     elif not quiet:
+         print("\nПРАВИЛО ЕСТЬ, НО ПУСТОЕ: 0 — OK")
+ 
++    # Раздел-сигнал: код выхода НЕ меняет (см. модульную докстроку).
++    if candidates:
++        print(
++            f"\nК СВЕДЕНИЮ — кандидаты в TBL_COM (ответ из нескольких значений "
++            f"в одном поле): {len(candidates)}"
++        )
++        by_course: dict[int, int] = {}
++        for r in candidates:
++            by_course[r["course_id"]] = by_course.get(r["course_id"], 0) + 1
++        for course_id, n in sorted(by_course.items(), key=lambda kv: -kv[1])[:10]:
++            print(f"  курс {course_id}: {n}")
++        print("  примеры: " + ", ".join(str(r["id"]) for r in candidates[:15]))
++        print(
++            "  Разобрать: табличный ответ → тип TBL_COM (tsk-366); ответ обязан быть "
++            "одной строкой → пометить task_content.tbl_com_not_applicable = true."
++        )
++    elif not quiet:
++        print("\nКАНДИДАТЫ В TBL_COM: 0 — OK")
++
+     if total:
+         print(f"\nИТОГО непроверяемых активных заданий: {total}")
+         return 1

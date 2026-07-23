@@ -15,8 +15,8 @@ router = APIRouter(tags=["meta"])
 difficulty_service = DifficultyLevelsService()
 courses_service = CoursesService()
 
-# Жёстко заданные типы задач для импорта
-TASK_TYPES: List[str] = ["SC", "MC", "SA", "SA_COM", "TA"]
+# Жёстко заданные типы задач для импорта (tsk-366: + TBL_COM — табличный ответ)
+TASK_TYPES: List[str] = ["SC", "MC", "SA", "SA_COM", "TBL_COM", "TA"]
 
 
 @router.get(

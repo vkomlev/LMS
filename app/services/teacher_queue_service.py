@@ -20,6 +20,7 @@ from typing import Any, Optional, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -123,9 +124,11 @@ REVIEW_ACL_SQL = f"""
 #     (review_kind=optional). Сюда же попадают честно-заваленные (is_correct=false),
 #     которые tsk-210 не хотел показывать как обязательные — теперь их отсекает
 #     сама ось mrr, без хрупкой опоры на is_correct.
+#   - TBL_COM (tsk-366) — табличный ответ, заведён по образцу SA_COM: та же ось
+#     обязательности, та же вторичная проверка.
 MANDATORY_REVIEW_TEMPLATE = """
     ({tasks}.task_content->>'type' = 'TA'
-     OR ({tasks}.task_content->>'type' = 'SA_COM'
+     OR ({tasks}.task_content->>'type' IN ('SA_COM','TBL_COM')
          AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
 """
 
@@ -553,7 +556,7 @@ async def claim_review_by_id(
     if row is None:
         raise GradeNotFoundError()
     checked_at, claimed_by, claim_expires_at, task_type, acl_ok = row
-    if task_type not in ("SA_COM", "TA"):
+    if task_type not in MANUAL_REVIEW_TASK_TYPES:
         raise GradeNotFoundError()
     if not acl_ok:
         raise ClaimForbiddenError()

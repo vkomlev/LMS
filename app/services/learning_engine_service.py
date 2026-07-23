@@ -660,7 +660,7 @@ class LearningEngineService:
                         WHERE tr.user_id = :sid
                           AND t.course_id = ANY(:cids)
                           AND tr.checked_at IS NULL
-                          AND t.task_content->>'type' IN ('SA_COM','TA')
+                          AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
                         """
                     ),
                     {"sid": student_id, "cids": tree_ids},

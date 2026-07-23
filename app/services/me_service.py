@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity_link import IdentityLink
 from app.models.users import Users
-from app.schemas.task_content import QUIZ_TASK_TYPES
+from app.schemas.task_content import QUIZ_TASK_TYPES, MANUAL_REVIEW_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
 
@@ -805,9 +805,10 @@ def _compute_syllabus_task_status(row: dict) -> str:
 
     if is_correct is True:
         task_type = row.get("task_type") or ""
-        # Ручная проверка учителем (SA_COM/TA, тот же whitelist, что в teacher_queue):
-        # passed только после checked_at, иначе optimistic pending_review (Y-6).
-        if task_type in ("SA_COM", "TA"):
+        # Ручная проверка учителем (SA_COM/TBL_COM/TA, тот же whitelist, что в
+        # teacher_queue): passed только после checked_at, иначе optimistic
+        # pending_review (Y-6).
+        if task_type in MANUAL_REVIEW_TASK_TYPES:
             return "passed" if checked_at is not None else "pending_review"
         # Авто-проверяемые (SC/MC/SA): учителя нет, checked_at не ставится → верный
         # ответ = passed сразу. tsk-214: раньше правило «checked_at обязателен»
