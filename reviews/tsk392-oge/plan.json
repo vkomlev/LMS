@@ -1,0 +1,4723 @@
+{
+ "plan": [
+  {
+   "id": 6851,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10503",
+   "source": "sdamgia",
+   "source_id": "10503",
+   "via": "external_uid",
+   "answer_src": "Овсяников",
+   "verdict": "match",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10503",
+     "verdict_text_gate": "match",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Овсяников",
+      "answer_src": "Овсяников"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "found": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6851_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6852,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10506",
+   "source": "sdamgia",
+   "source_id": "10506",
+   "via": "external_uid",
+   "answer_src": "Три встречи",
+   "verdict": "match",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10506",
+     "verdict_text_gate": "match",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Три встречи",
+      "answer_src": "Три встречи"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "found": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6852_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6853,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10509",
+   "source": "sdamgia",
+   "source_id": "10509",
+   "via": "external_uid",
+   "answer_src": "Евгений",
+   "verdict": "match",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10509",
+     "verdict_text_gate": "match",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Евгений",
+      "answer_src": "Евгений"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "found": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6853_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6854,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10511",
+   "source": "sdamgia",
+   "source_id": "10511",
+   "via": "external_uid",
+   "answer_src": "Анненков",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10511",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Анненков",
+      "answer_src": "Анненков"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Вонифатий",
+       "Тургенев"
+      ],
+      "found": [
+       "DEMO-12",
+       "Вонифатий",
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6854_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6855,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10513",
+   "source": "sdamgia",
+   "source_id": "10513",
+   "via": "external_uid",
+   "answer_src": "Сергей",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10513",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Сергей",
+      "answer_src": "Сергей"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "found": [
+       "DEMO-12",
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6855_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6856,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10515",
+   "source": "sdamgia",
+   "source_id": "10515",
+   "via": "external_uid",
+   "answer_src": "философ|философом|Философ",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10515",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "философ",
+      "answer_src": "философ|философом|Философ"
+     },
+     "tokens": {
+      "tokens": [
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6856_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6857,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10517",
+   "source": "sdamgia",
+   "source_id": "10517",
+   "via": "external_uid",
+   "answer_src": "800|восемьсот",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10517",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "800",
+      "answer_src": "800|восемьсот"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6857_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6858,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10520",
+   "source": "sdamgia",
+   "source_id": "10520",
+   "via": "external_uid",
+   "answer_src": "Семен|Семён",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10520",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Семен",
+      "answer_src": "Семен|Семён"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Достоевский",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Достоевский",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6858_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6859,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10523",
+   "source": "sdamgia",
+   "source_id": "10523",
+   "via": "external_uid",
+   "answer_src": "Платон",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10523",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Платон",
+      "answer_src": "Платон"
+     },
+     "tokens": {
+      "tokens": [
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6859_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6860,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10531",
+   "source": "sdamgia",
+   "source_id": "10531",
+   "via": "external_uid",
+   "answer_src": "судья",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10531",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "судья",
+      "answer_src": "судья"
+     },
+     "tokens": {
+      "tokens": [
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6860_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6861,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10532",
+   "source": "sdamgia",
+   "source_id": "10532",
+   "via": "external_uid",
+   "answer_src": "Андрий",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10532",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Андрий",
+      "answer_src": "Андрий"
+     },
+     "tokens": {
+      "tokens": [
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6861_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6862,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10533",
+   "source": "sdamgia",
+   "source_id": "10533",
+   "via": "external_uid",
+   "answer_src": "Андрей",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10533",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Андрей",
+      "answer_src": "Андрей"
+     },
+     "tokens": {
+      "tokens": [
+       "Гончаров",
+       "Проза"
+      ],
+      "found": [
+       "Гончаров",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6862_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6863,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10534",
+   "source": "sdamgia",
+   "source_id": "10534",
+   "via": "external_uid",
+   "answer_src": "Родион",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10534",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Родион",
+      "answer_src": "Родион"
+     },
+     "tokens": {
+      "tokens": [
+       "Достоевский",
+       "Проза"
+      ],
+      "found": [
+       "Достоевский",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6863_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6864,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:18220",
+   "source": "sdamgia",
+   "source_id": "18220",
+   "via": "external_uid",
+   "answer_src": "60",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18220",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "60",
+      "answer_src": "60"
+     },
+     "tokens": {
+      "tokens": [
+       "Тургенев"
+      ],
+      "found": [
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b.rar",
+     "ext": "rar",
+     "size": 5160921,
+     "name": "11 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6864_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48516",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b.rar\" target=\"_blank\" rel=\"noopener noreferrer\">11 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6865,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:18235",
+   "source": "sdamgia",
+   "source_id": "18235",
+   "via": "external_uid",
+   "answer_src": "Сорренто",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18235",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Сорренто",
+      "answer_src": "Сорренто"
+     },
+     "tokens": {
+      "tokens": [
+       "Тургенев"
+      ],
+      "found": [
+       "Тургенев"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b.rar",
+     "ext": "rar",
+     "size": 5160921,
+     "name": "11 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6865_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48519",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b.rar\" target=\"_blank\" rel=\"noopener noreferrer\">11 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6866,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:37200",
+   "source": "sdamgia",
+   "source_id": "37200",
+   "via": "external_uid",
+   "answer_src": "Алексей",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "37200",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Алексей",
+      "answer_src": "Алексей"
+     },
+     "tokens": {
+      "tokens": [
+       "Достоевский",
+       "Проза"
+      ],
+      "found": [
+       "Достоевский",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "c5b2aed2e5dd14e8f9bed9e8e7ecee76d4607ba942b0109348f6bdaf5e34bc34.rar",
+     "ext": "rar",
+     "size": 36967783,
+     "name": "Проза.rar",
+     "path": "reviews\\tsk392-oge\\files\\6866_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=82268",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/c5b2aed2e5dd14e8f9bed9e8e7ecee76d4607ba942b0109348f6bdaf5e34bc34.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Проза.rar</a></p>\n"
+  },
+  {
+   "id": 6867,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:37264",
+   "source": "sdamgia",
+   "source_id": "37264",
+   "via": "external_uid",
+   "answer_src": "Хлопов",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "37264",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Хлопов",
+      "answer_src": "Хлопов"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза"
+      ],
+      "found": [
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "38caa58d4cbf2c0a8a0949bbf7c778a7e8e25c77682fb0a5d7d6cfe16d909b9f.rar",
+     "ext": "rar",
+     "size": 36969573,
+     "name": "Проза задание 11.rar",
+     "path": "reviews\\tsk392-oge\\files\\6867_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=67162",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/38caa58d4cbf2c0a8a0949bbf7c778a7e8e25c77682fb0a5d7d6cfe16d909b9f.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Проза задание 11.rar</a></p>\n"
+  },
+  {
+   "id": 6868,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:37336",
+   "source": "sdamgia",
+   "source_id": "37336",
+   "via": "external_uid",
+   "answer_src": "Февронья",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "37336",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Февронья",
+      "answer_src": "Февронья"
+     },
+     "tokens": {
+      "tokens": [
+       "Гоголь",
+       "Проза"
+      ],
+      "found": [
+       "Гоголь",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar",
+     "ext": "rar",
+     "size": 36967738,
+     "name": "DEMO-11.rar",
+     "path": "reviews\\tsk392-oge\\files\\6868_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=68157",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-11.rar</a></p>\n"
+  },
+  {
+   "id": 6869,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:43449",
+   "source": "sdamgia",
+   "source_id": "43449",
+   "via": "external_uid",
+   "answer_src": "Николай",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "43449",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Николай",
+      "answer_src": "Николай"
+     },
+     "tokens": {
+      "tokens": [
+       "Достоевский",
+       "Проза",
+       "единственном сыне"
+      ],
+      "found": [
+       "Проза",
+       "единственном сыне"
+      ],
+      "ratio": 0.67
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "ef7f29feabfb4c2a9c55f2dc83f50901961e3b9637796c042b721a826b34ed73.rar",
+     "ext": "rar",
+     "size": 36967646,
+     "name": "Проза.rar",
+     "path": "reviews\\tsk392-oge\\files\\6869_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=32912",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ef7f29feabfb4c2a9c55f2dc83f50901961e3b9637796c042b721a826b34ed73.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Проза.rar</a></p>\n"
+  },
+  {
+   "id": 6870,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:43588",
+   "source": "sdamgia",
+   "source_id": "43588",
+   "via": "external_uid",
+   "answer_src": "серый",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "43588",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "серый",
+      "answer_src": "серый"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза"
+      ],
+      "found": [
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar",
+     "ext": "rar",
+     "size": 36967738,
+     "name": "DEMO-11.rar",
+     "path": "reviews\\tsk392-oge\\files\\6870_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-11.rar</a></p>\n"
+  },
+  {
+   "id": 6871,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:43644",
+   "source": "sdamgia",
+   "source_id": "43644",
+   "via": "external_uid",
+   "answer_src": "портной",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "43644",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "портной",
+      "answer_src": "портной"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза"
+      ],
+      "found": [
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar",
+     "ext": "rar",
+     "size": 36967738,
+     "name": "DEMO-11.rar",
+     "path": "reviews\\tsk392-oge\\files\\6871_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-11.rar</a></p>\n"
+  },
+  {
+   "id": 6872,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:43776",
+   "source": "sdamgia",
+   "source_id": "43776",
+   "via": "external_uid",
+   "answer_src": "Плюшкин",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "43776",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Плюшкин",
+      "answer_src": "Плюшкин"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза",
+       "разбойницей"
+      ],
+      "found": [
+       "Проза",
+       "разбойницей"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar",
+     "ext": "rar",
+     "size": 36967738,
+     "name": "DEMO-11.rar",
+     "path": "reviews\\tsk392-oge\\files\\6872_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-11.rar</a></p>\n"
+  },
+  {
+   "id": 6873,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10536",
+   "source": "sdamgia",
+   "source_id": "10536",
+   "via": "external_uid",
+   "answer_src": "Дубровский",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10536",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Дубровский",
+      "answer_src": "Дубровский"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза",
+       "Пушкин"
+      ],
+      "found": [
+       "Проза",
+       "Пушкин"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6873_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6874,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:10565",
+   "source": "sdamgia",
+   "source_id": "10565",
+   "via": "external_uid",
+   "answer_src": "купец",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10565",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "купец",
+      "answer_src": "купец"
+     },
+     "tokens": {
+      "tokens": [
+       "Проза",
+       "Чехов"
+      ],
+      "found": [
+       "Проза",
+       "Чехов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6874_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6875,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11304",
+   "source": "sdamgia",
+   "source_id": "11304",
+   "via": "external_uid",
+   "answer_src": "доктор|врач",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11304",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "доктор",
+      "answer_src": "доктор|врач"
+     },
+     "tokens": {
+      "tokens": [
+       "Чехов"
+      ],
+      "found": [
+       "Чехов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar",
+     "ext": "rar",
+     "size": 3125774,
+     "name": "Чехов.rar",
+     "path": "reviews\\tsk392-oge\\files\\6875_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48484",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Чехов.rar</a></p>\n"
+  },
+  {
+   "id": 6876,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11305",
+   "source": "sdamgia",
+   "source_id": "11305",
+   "via": "external_uid",
+   "answer_src": "Щелколобов",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11305",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Щелколобов",
+      "answer_src": "Щелколобов"
+     },
+     "tokens": {
+      "tokens": [
+       "Чехов"
+      ],
+      "found": [
+       "Чехов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar",
+     "ext": "rar",
+     "size": 3125774,
+     "name": "Чехов.rar",
+     "path": "reviews\\tsk392-oge\\files\\6876_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48485",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Чехов.rar</a></p>\n"
+  },
+  {
+   "id": 6877,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11306",
+   "source": "sdamgia",
+   "source_id": "11306",
+   "via": "external_uid",
+   "answer_src": "подпоручик",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11306",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "подпоручик",
+      "answer_src": "подпоручик"
+     },
+     "tokens": {
+      "tokens": [
+       "Чехов"
+      ],
+      "found": [
+       "Чехов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar",
+     "ext": "rar",
+     "size": 3125774,
+     "name": "Чехов.rar",
+     "path": "reviews\\tsk392-oge\\files\\6877_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48486",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Чехов.rar</a></p>\n"
+  },
+  {
+   "id": 6878,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11307",
+   "source": "sdamgia",
+   "source_id": "11307",
+   "via": "external_uid",
+   "answer_src": "беллетрист",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11307",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "беллетрист",
+      "answer_src": "беллетрист"
+     },
+     "tokens": {
+      "tokens": [
+       "Чехов"
+      ],
+      "found": [
+       "Чехов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar",
+     "ext": "rar",
+     "size": 3125774,
+     "name": "Чехов.rar",
+     "path": "reviews\\tsk392-oge\\files\\6878_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48487",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Чехов.rar</a></p>\n"
+  },
+  {
+   "id": 6879,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11308",
+   "source": "sdamgia",
+   "source_id": "11308",
+   "via": "external_uid",
+   "answer_src": "Лев",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11308",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Лев",
+      "answer_src": "Лев"
+     },
+     "tokens": {
+      "tokens": [
+       "Набоков"
+      ],
+      "found": [
+       "Набоков"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "b9d9f9fa1f198aa541cabaf25f607a0d1ba693fc7cf40e13d57d6f21b9ad111a.rar",
+     "ext": "rar",
+     "size": 2309668,
+     "name": "Набоков.rar",
+     "path": "reviews\\tsk392-oge\\files\\6879_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48488",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b9d9f9fa1f198aa541cabaf25f607a0d1ba693fc7cf40e13d57d6f21b9ad111a.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Набоков.rar</a></p>\n"
+  },
+  {
+   "id": 6880,
+   "course_id": 1163,
+   "external_uid": "oge:reshu:t11:11310",
+   "source": "sdamgia",
+   "source_id": "11310",
+   "via": "external_uid",
+   "answer_src": "Чечня|в Чечне",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11310",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "Чечня",
+      "answer_src": "Чечня|в Чечне"
+     },
+     "tokens": {
+      "tokens": [
+       "Лермонтов"
+      ],
+      "found": [
+       "Лермонтов"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "c8f62cccb7377f08dd5ae8bf648bf2d5fd289a524ec3dd811999a729bc353242.rar",
+     "ext": "rar",
+     "size": 1680399,
+     "name": "Лермонтов.rar",
+     "path": "reviews\\tsk392-oge\\files\\6880_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48489",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/c8f62cccb7377f08dd5ae8bf648bf2d5fd289a524ec3dd811999a729bc353242.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Лермонтов.rar</a></p>\n"
+  },
+  {
+   "id": 6881,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10504",
+   "source": "sdamgia",
+   "source_id": "10504",
+   "via": "external_uid",
+   "answer_src": "16",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10504",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "16",
+      "answer_src": "16"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6881_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6882,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10507",
+   "source": "sdamgia",
+   "source_id": "10507",
+   "via": "external_uid",
+   "answer_src": "11",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10507",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "11",
+      "answer_src": "11"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6882_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6883,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10510",
+   "source": "sdamgia",
+   "source_id": "10510",
+   "via": "external_uid",
+   "answer_src": "10",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10510",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "10",
+      "answer_src": "10"
+     },
+     "tokens": {
+      "tokens": [
+       "*.htm",
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "*.htm",
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6883_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6884,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10512",
+   "source": "sdamgia",
+   "source_id": "10512",
+   "via": "external_uid",
+   "answer_src": "14",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10512",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "14",
+      "answer_src": "14"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6884_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6885,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10514",
+   "source": "sdamgia",
+   "source_id": "10514",
+   "via": "external_uid",
+   "answer_src": "11",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10514",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "11",
+      "answer_src": "11"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "found": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6885_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6886,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10516",
+   "source": "sdamgia",
+   "source_id": "10516",
+   "via": "external_uid",
+   "answer_src": "16",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10516",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "16",
+      "answer_src": "16"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "found": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6886_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6887,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10518",
+   "source": "sdamgia",
+   "source_id": "10518",
+   "via": "external_uid",
+   "answer_src": "12",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10518",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "12",
+      "answer_src": "12"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "found": [
+       "DEMO-12",
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6887_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6888,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10522",
+   "source": "sdamgia",
+   "source_id": "10522",
+   "via": "external_uid",
+   "answer_src": "33",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10522",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "33",
+      "answer_src": "33"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6888_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6889,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10524",
+   "source": "sdamgia",
+   "source_id": "10524",
+   "via": "external_uid",
+   "answer_src": "25",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10524",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "25",
+      "answer_src": "25"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6889_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6890,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10596",
+   "source": "sdamgia",
+   "source_id": "10596",
+   "via": "external_uid",
+   "answer_src": "31",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10596",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "31",
+      "answer_src": "31"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6890_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6891,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10597",
+   "source": "sdamgia",
+   "source_id": "10597",
+   "via": "external_uid",
+   "answer_src": "17",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10597",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "17",
+      "answer_src": "17"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6891_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6892,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10598",
+   "source": "sdamgia",
+   "source_id": "10598",
+   "via": "external_uid",
+   "answer_src": "3",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10598",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "3",
+      "answer_src": "3"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6892_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6893,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11325",
+   "source": "sdamgia",
+   "source_id": "11325",
+   "via": "external_uid",
+   "answer_src": "12",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11325",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "12",
+      "answer_src": "12"
+     },
+     "tokens": {
+      "tokens": [
+       "Task12"
+      ],
+      "found": [
+       "Task12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+     "ext": "rar",
+     "size": 8740905,
+     "name": "Task12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6893_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48497",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Task12.rar</a></p>\n"
+  },
+  {
+   "id": 6894,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11326",
+   "source": "sdamgia",
+   "source_id": "11326",
+   "via": "external_uid",
+   "answer_src": "10",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11326",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "10",
+      "answer_src": "10"
+     },
+     "tokens": {
+      "tokens": [
+       "Task12"
+      ],
+      "found": [
+       "Task12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+     "ext": "rar",
+     "size": 8740905,
+     "name": "Task12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6894_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48498",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Task12.rar</a></p>\n"
+  },
+  {
+   "id": 6895,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11327",
+   "source": "sdamgia",
+   "source_id": "11327",
+   "via": "external_uid",
+   "answer_src": "7",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11327",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "7",
+      "answer_src": "7"
+     },
+     "tokens": {
+      "tokens": [
+       "Task12"
+      ],
+      "found": [
+       "Task12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+     "ext": "rar",
+     "size": 8740905,
+     "name": "Task12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6895_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48499",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Task12.rar</a></p>\n"
+  },
+  {
+   "id": 6896,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11328",
+   "source": "sdamgia",
+   "source_id": "11328",
+   "via": "external_uid",
+   "answer_src": "3",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11328",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "3",
+      "answer_src": "3"
+     },
+     "tokens": {
+      "tokens": [
+       "Task12"
+      ],
+      "found": [
+       "Task12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+     "ext": "rar",
+     "size": 8740905,
+     "name": "Task12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6896_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48500",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Task12.rar</a></p>\n"
+  },
+  {
+   "id": 6897,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11331",
+   "source": "sdamgia",
+   "source_id": "11331",
+   "via": "external_uid",
+   "answer_src": "5",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11331",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "5",
+      "answer_src": "5"
+     },
+     "tokens": {
+      "tokens": [
+       "Files"
+      ],
+      "found": [
+       "Files"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "ad63cea84eba524af1830b4412068835df332b6d55240ce5effd5ad2501b6d44.rar",
+     "ext": "rar",
+     "size": 163369,
+     "name": "Files.rar",
+     "path": "reviews\\tsk392-oge\\files\\6897_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48503",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ad63cea84eba524af1830b4412068835df332b6d55240ce5effd5ad2501b6d44.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Files.rar</a></p>\n"
+  },
+  {
+   "id": 6898,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:12861",
+   "source": "sdamgia",
+   "source_id": "12861",
+   "via": "external_uid",
+   "answer_src": "17",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "12861",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "17",
+      "answer_src": "17"
+     },
+     "tokens": {
+      "tokens": [
+       "Стихи"
+      ],
+      "found": [
+       "Стихи"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "e8b47563f106c8c37aa0d14170e5393a46a0e4f91f754db65350824331e67891.rar",
+     "ext": "rar",
+     "size": 10335974,
+     "name": "Стихи.rar",
+     "path": "reviews\\tsk392-oge\\files\\6898_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48505",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e8b47563f106c8c37aa0d14170e5393a46a0e4f91f754db65350824331e67891.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Стихи.rar</a></p>\n"
+  },
+  {
+   "id": 6899,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18221",
+   "source": "sdamgia",
+   "source_id": "18221",
+   "via": "external_uid",
+   "answer_src": "17",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18221",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "17",
+      "answer_src": "17"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e.rar",
+     "ext": "rar",
+     "size": 8296524,
+     "name": "12 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6899_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48517",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e.rar\" target=\"_blank\" rel=\"noopener noreferrer\">12 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6900,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18236",
+   "source": "sdamgia",
+   "source_id": "18236",
+   "via": "external_uid",
+   "answer_src": "13",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18236",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "13",
+      "answer_src": "13"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e.rar",
+     "ext": "rar",
+     "size": 8296524,
+     "name": "12 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6900_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48520",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e.rar\" target=\"_blank\" rel=\"noopener noreferrer\">12 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6901,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18251",
+   "source": "sdamgia",
+   "source_id": "18251",
+   "via": "external_uid",
+   "answer_src": "12",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18251",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "12",
+      "answer_src": "12"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8.rar",
+     "ext": "rar",
+     "size": 7518657,
+     "name": "12 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6901_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48523",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8.rar\" target=\"_blank\" rel=\"noopener noreferrer\">12 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6902,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18266",
+   "source": "sdamgia",
+   "source_id": "18266",
+   "via": "external_uid",
+   "answer_src": "7",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18266",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "7",
+      "answer_src": "7"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8.rar",
+     "ext": "rar",
+     "size": 7518657,
+     "name": "12 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6902_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48526",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8.rar\" target=\"_blank\" rel=\"noopener noreferrer\">12 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6903,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18281",
+   "source": "sdamgia",
+   "source_id": "18281",
+   "via": "external_uid",
+   "answer_src": "15",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18281",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "15",
+      "answer_src": "15"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "66c1990af6af4a5dfb416d38fe06444e378c69d115943bda13a7f42aedba8d77.rar",
+     "ext": "rar",
+     "size": 6421690,
+     "name": "12 задание.rar",
+     "path": "reviews\\tsk392-oge\\files\\6903_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48528",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/66c1990af6af4a5dfb416d38fe06444e378c69d115943bda13a7f42aedba8d77.rar\" target=\"_blank\" rel=\"noopener noreferrer\">12 задание.rar</a></p>\n"
+  },
+  {
+   "id": 6904,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:18296",
+   "source": "sdamgia",
+   "source_id": "18296",
+   "via": "external_uid",
+   "answer_src": "13",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "18296",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "13",
+      "answer_src": "13"
+     },
+     "tokens": {
+      "tokens": [
+       "Поэзия"
+      ],
+      "found": [
+       "Поэзия"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "88207fcecada0e10a210e5cd3bd33ddb80ab134894e3519f20efadc4eb76676d.rar",
+     "ext": "rar",
+     "size": 6420998,
+     "name": "Поэзия.rar",
+     "path": "reviews\\tsk392-oge\\files\\6904_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=55346",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/88207fcecada0e10a210e5cd3bd33ddb80ab134894e3519f20efadc4eb76676d.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Поэзия.rar</a></p>\n"
+  },
+  {
+   "id": 6905,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:37265",
+   "source": "sdamgia",
+   "source_id": "37265",
+   "via": "external_uid",
+   "answer_src": "16",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "37265",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "16",
+      "answer_src": "16"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "2eb8f2a6914f8f8142c234c4e81638066c933f1a7b1008605246ed2818a61a63.rar",
+     "ext": "rar",
+     "size": 45269687,
+     "name": "DEMO-12 задание 12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6905_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=67163",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/2eb8f2a6914f8f8142c234c4e81638066c933f1a7b1008605246ed2818a61a63.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12 задание 12.rar</a></p>\n"
+  },
+  {
+   "id": 6906,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:37280",
+   "source": "sdamgia",
+   "source_id": "37280",
+   "via": "external_uid",
+   "answer_src": "1",
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "37280",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "1",
+      "answer_src": "1"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "found": [
+       "DEMO-12",
+       "Проза"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "be99979825f8a6ad9ce07c645ac91339c601a7b63a9681a5669a335192730a55.rar",
+     "ext": "rar",
+     "size": 45269687,
+     "name": "DEMO-12 задание 12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6906_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=67171",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/be99979825f8a6ad9ce07c645ac91339c601a7b63a9681a5669a335192730a55.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12 задание 12.rar</a></p>\n"
+  },
+  {
+   "id": 6907,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10599",
+   "source": "sdamgia",
+   "source_id": "10599",
+   "via": "external_uid",
+   "answer_src": "2",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10599",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "2",
+      "answer_src": "2"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6907_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6908,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10600",
+   "source": "sdamgia",
+   "source_id": "10600",
+   "via": "external_uid",
+   "answer_src": "3",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10600",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "3",
+      "answer_src": "3"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6908_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6909,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:10601",
+   "source": "sdamgia",
+   "source_id": "10601",
+   "via": "external_uid",
+   "answer_src": "4",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "10601",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "4",
+      "answer_src": "4"
+     },
+     "tokens": {
+      "tokens": [
+       "DEMO-12"
+      ],
+      "found": [
+       "DEMO-12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+     "ext": "rar",
+     "size": 32922115,
+     "name": "DEMO-12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6909_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar\" target=\"_blank\" rel=\"noopener noreferrer\">DEMO-12.rar</a></p>\n"
+  },
+  {
+   "id": 6910,
+   "course_id": 1164,
+   "external_uid": "oge:reshu:t12:11322",
+   "source": "sdamgia",
+   "source_id": "11322",
+   "via": "external_uid",
+   "answer_src": "3",
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "answer+tokens"
+     ],
+     "source": "sdamgia",
+     "source_id": "11322",
+     "verdict_text_gate": "weak",
+     "twin_sha": null,
+     "answer": {
+      "answer_lms": "3",
+      "answer_src": "3"
+     },
+     "tokens": {
+      "tokens": [
+       "Task12"
+      ],
+      "found": [
+       "Task12"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+     "ext": "rar",
+     "size": 8740905,
+     "name": "Task12.rar",
+     "path": "reviews\\tsk392-oge\\files\\6910_0.rar",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=48494",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar\" target=\"_blank\" rel=\"noopener noreferrer\">Task12.rar</a></p>\n"
+  },
+  {
+   "id": 6946,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10566_1",
+   "source": "sdamgia",
+   "source_id": "10566",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10566",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3.ods",
+     "ext": "ods",
+     "size": 23087,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6946_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83378",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6947,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10566_2",
+   "source": "sdamgia",
+   "source_id": "10566",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10566",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3.ods",
+     "ext": "ods",
+     "size": 23087,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6947_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83378",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6948,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10567_1",
+   "source": "sdamgia",
+   "source_id": "10567",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10567",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08.ods",
+     "ext": "ods",
+     "size": 29574,
+     "name": "task 14 (1).ods",
+     "path": "reviews\\tsk392-oge\\files\\6948_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83379",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14 (1).ods</a></p>\n"
+  },
+  {
+   "id": 6949,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10567_2",
+   "source": "sdamgia",
+   "source_id": "10567",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10567",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08.ods",
+     "ext": "ods",
+     "size": 29574,
+     "name": "task 14 (1).ods",
+     "path": "reviews\\tsk392-oge\\files\\6949_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83379",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14 (1).ods</a></p>\n"
+  },
+  {
+   "id": 6950,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10568_1",
+   "source": "sdamgia",
+   "source_id": "10568",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10568",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930.ods",
+     "ext": "ods",
+     "size": 29154,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6950_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83407",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6951,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10568_2",
+   "source": "sdamgia",
+   "source_id": "10568",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10568",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930.ods",
+     "ext": "ods",
+     "size": 29154,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6951_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83407",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6952,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10569_1",
+   "source": "sdamgia",
+   "source_id": "10569",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10569",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e.ods",
+     "ext": "ods",
+     "size": 29231,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6952_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83408",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6953,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10569_2",
+   "source": "sdamgia",
+   "source_id": "10569",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10569",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e.ods",
+     "ext": "ods",
+     "size": 29231,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6953_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83408",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6954,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10570_1",
+   "source": "sdamgia",
+   "source_id": "10570",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10570",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb.ods",
+     "ext": "ods",
+     "size": 29715,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6954_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83409",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6955,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10570_2",
+   "source": "sdamgia",
+   "source_id": "10570",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10570",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb.ods",
+     "ext": "ods",
+     "size": 29715,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6955_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83409",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6956,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10571_1",
+   "source": "sdamgia",
+   "source_id": "10571",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10571",
+     "verdict_text_gate": "weak",
+     "twin_sha": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad.ods",
+     "ext": "ods",
+     "size": 29716,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6956_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83410",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6957,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10571_2",
+   "source": "sdamgia",
+   "source_id": "10571",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10571",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad.ods",
+     "ext": "ods",
+     "size": 29716,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6957_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83410",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6958,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10572_1",
+   "source": "sdamgia",
+   "source_id": "10572",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10572",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98.ods",
+     "ext": "ods",
+     "size": 31037,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6958_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83411",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6959,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10572_2",
+   "source": "sdamgia",
+   "source_id": "10572",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10572",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98.ods",
+     "ext": "ods",
+     "size": 31037,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6959_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83411",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6960,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10573_1",
+   "source": "sdamgia",
+   "source_id": "10573",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10573",
+     "verdict_text_gate": "weak",
+     "twin_sha": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb.ods",
+     "ext": "ods",
+     "size": 13364,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6960_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83412",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6961,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10573_2",
+   "source": "sdamgia",
+   "source_id": "10573",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10573",
+     "verdict_text_gate": "weak",
+     "twin_sha": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb.ods",
+     "ext": "ods",
+     "size": 13364,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6961_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83412",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6962,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10574_1",
+   "source": "sdamgia",
+   "source_id": "10574",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "match",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10574",
+     "verdict_text_gate": "match",
+     "twin_sha": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e.ods",
+     "ext": "ods",
+     "size": 13401,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6962_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83413",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6963,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10574_2",
+   "source": "sdamgia",
+   "source_id": "10574",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10574",
+     "verdict_text_gate": "weak",
+     "twin_sha": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e.ods",
+     "ext": "ods",
+     "size": 13401,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6963_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83413",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6964,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10575_1",
+   "source": "sdamgia",
+   "source_id": "10575",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10575",
+     "verdict_text_gate": "weak",
+     "twin_sha": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b.ods",
+     "ext": "ods",
+     "size": 13382,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6964_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83414",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6965,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10575_2",
+   "source": "sdamgia",
+   "source_id": "10575",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10575",
+     "verdict_text_gate": "weak",
+     "twin_sha": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b.ods",
+     "ext": "ods",
+     "size": 13382,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6965_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83414",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6966,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10576_1",
+   "source": "sdamgia",
+   "source_id": "10576",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10576",
+     "verdict_text_gate": "weak",
+     "twin_sha": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca.ods",
+     "ext": "ods",
+     "size": 13381,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6966_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83415",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6967,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10576_2",
+   "source": "sdamgia",
+   "source_id": "10576",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10576",
+     "verdict_text_gate": "weak",
+     "twin_sha": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca.ods",
+     "ext": "ods",
+     "size": 13381,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6967_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83415",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6968,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10577_1",
+   "source": "sdamgia",
+   "source_id": "10577",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10577",
+     "verdict_text_gate": "weak",
+     "twin_sha": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+     "answer": null,
+     "tokens": {
+      "tokens": [
+       "Северный"
+      ],
+      "found": [
+       "Северный"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58.ods",
+     "ext": "ods",
+     "size": 13121,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6968_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83416",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6969,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10577_2",
+   "source": "sdamgia",
+   "source_id": "10577",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10577",
+     "verdict_text_gate": "weak",
+     "twin_sha": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58.ods",
+     "ext": "ods",
+     "size": 13121,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6969_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83416",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6970,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10578_1",
+   "source": "sdamgia",
+   "source_id": "10578",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10578",
+     "verdict_text_gate": "weak",
+     "twin_sha": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+     "answer": null,
+     "tokens": {
+      "tokens": [
+       "Центральный"
+      ],
+      "found": [
+       "Центральный"
+      ],
+      "ratio": 1.0
+     }
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da.ods",
+     "ext": "ods",
+     "size": 13121,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6970_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83417",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6971,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10578_2",
+   "source": "sdamgia",
+   "source_id": "10578",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10578",
+     "verdict_text_gate": "weak",
+     "twin_sha": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da.ods",
+     "ext": "ods",
+     "size": 13121,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6971_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83417",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6972,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10579_1",
+   "source": "sdamgia",
+   "source_id": "10579",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10579",
+     "verdict_text_gate": "weak",
+     "twin_sha": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f.ods",
+     "ext": "ods",
+     "size": 11352,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6972_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83418",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6973,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10579_2",
+   "source": "sdamgia",
+   "source_id": "10579",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10579",
+     "verdict_text_gate": "weak",
+     "twin_sha": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f.ods",
+     "ext": "ods",
+     "size": 11352,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6973_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83418",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6974,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10580_1",
+   "source": "sdamgia",
+   "source_id": "10580",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10580",
+     "verdict_text_gate": "weak",
+     "twin_sha": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e.ods",
+     "ext": "ods",
+     "size": 11342,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6974_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83419",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6975,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:10580_2",
+   "source": "sdamgia",
+   "source_id": "10580",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "10580",
+     "verdict_text_gate": "weak",
+     "twin_sha": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e.ods",
+     "ext": "ods",
+     "size": 11342,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6975_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83419",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6976,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11040_1",
+   "source": "sdamgia",
+   "source_id": "11040",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11040",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd.ods",
+     "ext": "ods",
+     "size": 11915,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6976_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83420",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6977,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11040_2",
+   "source": "sdamgia",
+   "source_id": "11040",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11040",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd.ods",
+     "ext": "ods",
+     "size": 11915,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6977_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83420",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6978,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11041_1",
+   "source": "sdamgia",
+   "source_id": "11041",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11041",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5.ods",
+     "ext": "ods",
+     "size": 11915,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6978_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83421",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6979,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11041_2",
+   "source": "sdamgia",
+   "source_id": "11041",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11041",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5.ods",
+     "ext": "ods",
+     "size": 11915,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6979_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83421",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6980,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11042_1",
+   "source": "sdamgia",
+   "source_id": "11042",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11042",
+     "verdict_text_gate": "weak",
+     "twin_sha": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f.ods",
+     "ext": "ods",
+     "size": 8953,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6980_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83425",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6981,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11042_2",
+   "source": "sdamgia",
+   "source_id": "11042",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11042",
+     "verdict_text_gate": "weak",
+     "twin_sha": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f.ods",
+     "ext": "ods",
+     "size": 8953,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6981_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83425",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6982,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11044_1",
+   "source": "sdamgia",
+   "source_id": "11044",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11044",
+     "verdict_text_gate": "weak",
+     "twin_sha": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7.ods",
+     "ext": "ods",
+     "size": 9129,
+     "name": "task 14 (4).ods",
+     "path": "reviews\\tsk392-oge\\files\\6982_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83426",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14 (4).ods</a></p>\n"
+  },
+  {
+   "id": 6983,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11044_2",
+   "source": "sdamgia",
+   "source_id": "11044",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11044",
+     "verdict_text_gate": "weak",
+     "twin_sha": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7.ods",
+     "ext": "ods",
+     "size": 9129,
+     "name": "task 14 (4).ods",
+     "path": "reviews\\tsk392-oge\\files\\6983_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83426",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14 (4).ods</a></p>\n"
+  },
+  {
+   "id": 6984,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11046_1",
+   "source": "sdamgia",
+   "source_id": "11046",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11046",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74.ods",
+     "ext": "ods",
+     "size": 29530,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6984_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83427",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6985,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11046_2",
+   "source": "sdamgia",
+   "source_id": "11046",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11046",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74.ods",
+     "ext": "ods",
+     "size": 29530,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6985_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83427",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6986,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11047_1",
+   "source": "sdamgia",
+   "source_id": "11047",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11047",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c.ods",
+     "ext": "ods",
+     "size": 29529,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6986_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83428",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6987,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11047_2",
+   "source": "sdamgia",
+   "source_id": "11047",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11047",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c.ods",
+     "ext": "ods",
+     "size": 29529,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6987_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83428",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6988,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11048_1",
+   "source": "sdamgia",
+   "source_id": "11048",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11048",
+     "verdict_text_gate": "weak",
+     "twin_sha": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6988_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83429",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6989,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11048_2",
+   "source": "sdamgia",
+   "source_id": "11048",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11048",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6989_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83429",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6990,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11050_1",
+   "source": "sdamgia",
+   "source_id": "11050",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11050",
+     "verdict_text_gate": "weak",
+     "twin_sha": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6990_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83430",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6991,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11050_2",
+   "source": "sdamgia",
+   "source_id": "11050",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11050",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6991_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83430",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6992,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11051_1",
+   "source": "sdamgia",
+   "source_id": "11051",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11051",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6992_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83431",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6993,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11051_2",
+   "source": "sdamgia",
+   "source_id": "11051",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "mismatch",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11051",
+     "verdict_text_gate": "mismatch",
+     "twin_sha": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e.ods",
+     "ext": "ods",
+     "size": 16522,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6993_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83431",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6994,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11054_1",
+   "source": "sdamgia",
+   "source_id": "11054",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "match",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11054",
+     "verdict_text_gate": "match",
+     "twin_sha": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08.ods",
+     "ext": "ods",
+     "size": 33441,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6994_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83432",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  },
+  {
+   "id": 6995,
+   "course_id": 1179,
+   "external_uid": "oge:reshu:t14:11054_2",
+   "source": "sdamgia",
+   "source_id": "11054",
+   "via": "external_uid",
+   "answer_src": null,
+   "verdict": "weak",
+   "evidence": {
+    "machine_evidence": {
+     "kinds": [
+      "twin_sha"
+     ],
+     "source": "sdamgia",
+     "source_id": "11054",
+     "verdict_text_gate": "weak",
+     "twin_sha": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+     "answer": null,
+     "tokens": null
+    }
+   },
+   "files": [
+    {
+     "sha_ext": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08.ods",
+     "ext": "ods",
+     "size": 33441,
+     "name": "task 14.ods",
+     "path": "reviews\\tsk392-oge\\files\\6995_0.ods",
+     "url": "https://inf-oge.sdamgia.ru/get_file?id=83432",
+     "reuse": false
+    }
+   ],
+   "block": "<p><strong>Файл к заданию:</strong> <a href=\"/api/v1/media/cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08.ods\" target=\"_blank\" rel=\"noopener noreferrer\">task 14.ods</a></p>\n"
+  }
+ ],
+ "manual": [
+  {
+   "id": 6809,
+   "course_id": 1163,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-11#q1",
+   "stem": "Какое слово лучше ввести в поиск ОС, чтобы найти файл с упоминанием редкого персонажа «Собакевич»: «Собакевич» или «он»? Впиши слово-ответ."
+  },
+  {
+   "id": 6810,
+   "course_id": 1163,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-11#q2",
+   "stem": "Что нужно сделать с архивом .rar перед поиском файлов внутри него?"
+  },
+  {
+   "id": 6811,
+   "course_id": 1163,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-11#q3",
+   "stem": "В условии сказано: «найти произведение, где упоминается озеро Байкал». Какое слово стоит ввести в поисковую строку, чтобы найти нужный файл быстрее всего? Впиши слово."
+  },
+  {
+   "id": 6812,
+   "course_id": 1163,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-11#q4",
+   "stem": "После распаковки архива в папке «Проза» лежат 40 файлов .txt в разных подпапках. Сколькими способами (папками) НЕ нужно искать вручную, если есть поиск по содержимому: впиши число подпапок, которые пр"
+  },
+  {
+   "id": 6813,
+   "course_id": 1164,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-12#q1",
+   "stem": "Какую маску нужно ввести в поиск ОС, чтобы найти все файлы с расширением .pdf? Впиши маску."
+  },
+  {
+   "id": 6814,
+   "course_id": 1164,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-12#q2",
+   "stem": "Файлы report.doc и report.docx — это файлы с одинаковым расширением?"
+  },
+  {
+   "id": 6815,
+   "course_id": 1164,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-12#q3",
+   "stem": "В папке «Архив» и трёх её подпапках лежат файлы: 5 файлов .txt в самой папке «Архив», 3 файла .txt в первой подпапке, 2 файла .txt во второй, 0 в третьей. Сколько файлов .txt найдёт поиск по маске *.t"
+  },
+  {
+   "id": 6816,
+   "course_id": 1164,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-12#q4",
+   "stem": "В каталоге 20 файлов: 8 с расширением .txt, 5 с расширением .pdf, 7 с расширением .docx. Сколько файлов НЕ найдёт поиск по маске *.pdf? Впиши число."
+  },
+  {
+   "id": 6931,
+   "course_id": 1178,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-13#q1",
+   "stem": "В задании 13.1 требуется собрать презентацию. Сколько слайдов нужно сделать по условию (стандартное требование)?"
+  },
+  {
+   "id": 6932,
+   "course_id": 1178,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-13#q2",
+   "stem": "В задании 13.2 нужно воспроизвести текст по образцу. Что из перечисленного НЕ является требованием форматирования?"
+  },
+  {
+   "id": 6933,
+   "course_id": 1178,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-13#q3",
+   "stem": "По условию нужен шрифт размером 14 пт с абзацным отступом 1 см и выравниванием по ширине. Сколько требований к форматированию перечислено в этом предложении? Впиши число."
+  },
+  {
+   "id": 6934,
+   "course_id": 1179,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-14#q1",
+   "stem": "Какая формула посчитает количество строк, где в столбце A стоит значение «Москва»?"
+  },
+  {
+   "id": 6935,
+   "course_id": 1179,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-14#q2",
+   "stem": "Нужно найти среднее значение баллов (столбец D) только у учеников из округа «В» (столбец A). Какая формула подходит?"
+  },
+  {
+   "id": 6936,
+   "course_id": 1179,
+   "source": "authored",
+   "source_id": null,
+   "reason": "источник не определён",
+   "external_uid": "authored:oge-informatika:zadanie-14#q3",
+   "stem": "Нужно посчитать количество учеников, у которых в столбце B «Пол» стоит «М» И в столбце C «Балл» больше 80. Сколько условий нужно указать в формуле СЧЁТЕСЛИМН? Впиши число."
+  }
+ ]
+}

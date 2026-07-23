@@ -30,6 +30,22 @@
    заданий (`[]` либо отсутствует) — механизм не используется ни одним импортом.
    Проверка «media пуст» ловила бы всё подряд и не значила бы ничего.
 
+4. **Одного текста условия мало.** Проверка по формулировке ловит только тех, кто про файл
+   пишет. Задания ОГЭ-11…14 переформулированы автором курса («Скачай файл-таблицу задачи
+   10566») и под FILE_GATE_RE не подходили — 110 нерешаемых заданий чек не видел вовсе,
+   их нашли вручную в tsk-392. Поэтому добавлена вторая ветка: **номер задания, где файл
+   обязателен по типу** (ЕГЭ 3,9,10,17,18,22,24,26,27; ОГЭ 11,12,13,14) — номер берётся
+   из `course_uid` (`wp:zadanie-<N>`, `wp:oge-z<N>`).
+
+   У этой ветки есть исключения: тренировочные задания, где данные вшиты в текст
+   («В каталоге 20 файлов: 8 с расширением .txt…»). Они перечислены поимённо в
+   `scripts/missing_attachments_allowlist.json` — с причиной у каждого, чтобы список
+   можно было перепроверить, а не принимать на веру.
+
+5. **`.rar` — тоже файл данных.** Приложение к ОГЭ-11/12/13 — архив каталога
+   («DEMO-12.rar»). Без `rar` в списке расширений 25 заданий ОГЭ-13 с уже привязанным
+   архивом числились нерешаемыми (tsk-392).
+
 Что делает. Считает и перечисляет активные задания с файловым условием без ссылки на файл.
 Read-only: ни одного UPDATE. Чинит не этот скрипт — он только сообщает.
 
@@ -49,6 +65,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -79,18 +96,37 @@ FILE_GATE_RE = (
     r"в текстовом файле содерж)"
 )
 
+# Расширения файла ДАННЫХ. `rar` обязателен — см. пункт 5 в шапке.
+DATA_EXT = "xlsx|xls|ods|csv|txt|odt|docx|doc|zip|rar"
+
+# Номера заданий, где файл обязателен по самому типу задания (решение оператора, tsk-390
+# для ЕГЭ и tsk-392 для ОГЭ). ЕГЭ-25 исключён намеренно: данные-диапазон в тексте.
+# ОГЭ-15 («Робот в среде КуМир») исключён: ученик сам сохраняет свой алгоритм в файл.
+FILE_REQUIRED_COURSE_UID = (
+    r"^wp:zadanie-(3|9|10|17|18|22|24|26|27)$|^wp:oge-z(11|12|13|14)$"
+)
+
+ALLOWLIST_PATH = Path(__file__).resolve().parent / "missing_attachments_allowlist.json"
+
 SQL_MISSING_ATTACHMENT = rf"""
 SELECT t.id, t.course_id, t.external_uid,
        t.task_content->>'type' AS task_type,
        coalesce(jsonb_array_length(t.task_content->'attached_file_paths'), 0) AS meta_paths,
+       (c.course_uid ~ '{FILE_REQUIRED_COURSE_UID}') AS by_number,
        left(replace(regexp_replace(t.task_content->>'stem', '<[^>]+>', ' ', 'g'), chr(173), ''), 70) AS stem
 FROM tasks t
+JOIN courses c ON c.id = t.course_id
 WHERE t.is_active
-  AND lower(replace(regexp_replace(t.task_content->>'stem', '<[^>]+>', ' ', 'g'), chr(173), ''))
-      ~ '{FILE_GATE_RE}'
+  AND (
+        lower(replace(regexp_replace(t.task_content->>'stem', '<[^>]+>', ' ', 'g'), chr(173), ''))
+            ~ '{FILE_GATE_RE}'
+        -- Вторая ветка: номер задания, где файл обязателен по типу. Текст условия бывает
+        -- переформулирован и про файл не говорит вовсе (ОГЭ 11-14, tsk-392).
+        OR c.course_uid ~ '{FILE_REQUIRED_COURSE_UID}'
+      )
   AND NOT (
         (t.task_content->>'stem') || ' ' || coalesce(t.task_content->>'attached_file_paths','')
-        ~* '/api/v1/media/[0-9a-f]{{64}}\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)'
+        ~* '/api/v1/media/[0-9a-f]{{64}}\.({DATA_EXT})'
       )
   -- Файл бывает приложен и ПРЯМОЙ внешней ссылкой (авторские задания курса ссылаются на
   -- victor-komlev.ru/wp-content/uploads/...). Для ученика она работает так же, поэтому
@@ -98,10 +134,22 @@ WHERE t.is_active
   -- в CAS там, где файл уже есть, — так и вышло в tsk-390 с 17 авторскими заданиями.
   AND NOT (
         (t.task_content->>'stem')
-        ~* 'href="https?://[^"]+\.(xlsx|xls|ods|csv|txt|odt|docx|doc|zip)"'
+        ~* 'href="https?://[^"]+\.({DATA_EXT})"'
       )
 ORDER BY t.course_id, t.id
 """
+
+
+def load_allowlist() -> dict[int, str]:
+    """Задания, которым файл не нужен, — с причиной у каждого.
+
+    Список нужен только второй ветке (по номеру задания): она берёт задание целиком по
+    типу и потому неизбежно захватывает тренировочные вопросы со вшитыми данными.
+    """
+    if not ALLOWLIST_PATH.exists():
+        return {}
+    raw = json.loads(ALLOWLIST_PATH.read_text(encoding="utf-8"))
+    return {int(k): v for k, v in raw.get("tasks", {}).items()}
 
 
 async def main(quiet: bool) -> int:
@@ -125,6 +173,12 @@ async def main(quiet: bool) -> int:
             rows = (await conn.execute(text(SQL_MISSING_ATTACHMENT))).mappings().all()
     finally:
         await engine.dispose()
+
+    allowlist = load_allowlist()
+    excused = [r for r in rows if r["id"] in allowlist]
+    rows = [r for r in rows if r["id"] not in allowlist]
+    if excused and not quiet:
+        print(f"Из проверки исключено (файл не нужен, см. {ALLOWLIST_PATH.name}): {len(excused)}")
 
     if not rows:
         if not quiet:

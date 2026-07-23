@@ -78,6 +78,10 @@ CONTENT_TYPE_EXT = {
 SPREADSHEET_EXT = {"xls", "xlsx", "ods", "csv"}
 TEXT_EXT = {"txt"}
 DOC_EXT = {"doc", "docx", "odt", "rtf"}
+# Архив согласуется с ЛЮБОЙ формулировкой: внутри лежит ровно тот файл, который обещан
+# условием. У ОГЭ-11/12 приложение — всегда архив каталога («DEMO-12.rar»), и без этой
+# поблажки задания отсеивались как «тип файла не совпал с формулировкой» (tsk-392).
+ARCHIVE_EXT = {"zip", "rar"}
 
 
 def fetch_bytes(url: str) -> tuple[bytes, dict]:
@@ -147,14 +151,32 @@ def expected_ext(stem_plain: str) -> set[str] | None:
     """Какого типа файл обещает условие. None — если по тексту не понять."""
     low = stem_plain.lower()
     if re.search(r"электронн\w* таблиц|таблич\w* файл", low):
-        return SPREADSHEET_EXT
+        return SPREADSHEET_EXT | ARCHIVE_EXT
     if re.search(r"текстов\w* файл", low):
-        return TEXT_EXT | DOC_EXT
+        return TEXT_EXT | DOC_EXT | ARCHIVE_EXT
     if re.search(r"текстов\w* редактор", low):
-        return DOC_EXT | TEXT_EXT
+        return DOC_EXT | TEXT_EXT | ARCHIVE_EXT
     if re.search(r"файл, содержащ\w* текст|фрагмент базы данных", low):
-        return SPREADSHEET_EXT | DOC_EXT | TEXT_EXT
+        return SPREADSHEET_EXT | DOC_EXT | TEXT_EXT | ARCHIVE_EXT
     return None
+
+
+def name_from_headers(headers: dict) -> str:
+    """Имя файла из Content-Disposition («DEMO-12.rar»); пусто, если сервер его не дал.
+
+    HTTP-заголовки Python декодирует как latin-1, а sdamgia кладёт в них UTF-8-байты:
+    «Лермонтов.rar» без обратной перекодировки превращается в «Ð\x9bÐµÑ\x80…» и в таком
+    виде уехал бы ученику в подпись ссылки (tsk-392).
+    """
+    disp = headers.get("Content-Disposition") or headers.get("content-disposition") or ""
+    m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)", disp)
+    if not m:
+        return ""
+    name = urllib.parse.unquote(m.group(1)).strip()
+    try:
+        return name.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
 
 
 def ext_from_headers(headers: dict, url: str, fallback_name: str = "") -> str | None:
@@ -234,6 +256,12 @@ def sdamgia_block(html: str, task_id: str, lms_stem: str = "") -> str:
     return blocks[0] if blocks else html
 
 
+# Служебные вложения шаблона страницы «Решу ОГЭ/ЕГЭ»: лежат внутри блока задачи, но к ней
+# не относятся (одинаковы у всех задач). Без фильтра ученику к каждому заданию ОГЭ-14
+# приложилась бы инструкция по обновлению сертификата Windows (tsk-392).
+_SDAMGIA_BOILERPLATE = re.compile(r"сер[­\s]*ти[­\s]*фи[­\s]*ка[­\s]*та", re.I)
+
+
 def src_sdamgia(task_id: str, lms_stem: str = "", oge: bool = False) -> tuple[str, str | None, list[dict]]:
     # ОГЭ живёт на отдельном домене того же движка: разметка и разбор совпадают.
     host = "https://inf-oge.sdamgia.ru" if oge else "https://inf-ege.sdamgia.ru"
@@ -255,6 +283,8 @@ def src_sdamgia(task_id: str, lms_stem: str = "", oge: bool = False) -> tuple[st
     files = []
     for href in re.findall(r'href="([^"]+)"', block):
         if "get_file?id=" in href or Path(href).suffix.lower().lstrip(".") in ALLOWED_EXT - {"png", "jpg", "jpeg", "gif", "svg", "webp"}:
+            if _SDAMGIA_BOILERPLATE.search(href):
+                continue
             url = href if href.startswith("http") else host + href
             files.append({"url": url, "name": ""})
     return text, answer, files
@@ -404,6 +434,7 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
     results = []
     stats: dict[str, int] = {}
     processed = 0
+    url_cache: dict[str, tuple[bytes, dict]] = {}
     for it in items:
         src, sid = it.get("source"), it.get("source_id")
         if src not in GETTERS or not sid:
@@ -421,7 +452,8 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
                 text, answer, files = src_yandex(str(sid), it["stem"])
             elif src == "sdamgia":
                 # Условие нужно, чтобы выбрать нужную задачу из связки 19-21 на странице.
-                text, answer, files = src_sdamgia(str(sid), it["stem"])
+                # `oge` ставит шаг 1 для партии ОГЭ: тот же движок, но домен inf-oge.
+                text, answer, files = src_sdamgia(str(sid), it["stem"], oge=bool(it.get("oge")))
             else:
                 text, answer, files = GETTERS[src](str(sid))
             time.sleep(PAUSE_SEC)
@@ -441,8 +473,15 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
         want = expected_ext(it["stem"])
         for n, f in enumerate(files):
             try:
-                data, headers = fetch_bytes(f["url"])
-                time.sleep(0.3)
+                # Задачи ОГЭ-11/12 одной демо-версии ссылаются на ОДИН архив (DEMO-12.rar,
+                # 33 МБ): без кэша прогон из 110 заданий скачал бы его 110 раз — 3.6 ГБ
+                # трафика и час ожидания ради одного и того же файла (tsk-392).
+                if f["url"] in url_cache:
+                    data, headers = url_cache[f["url"]]
+                else:
+                    data, headers = fetch_bytes(f["url"])
+                    url_cache[f["url"]] = (data, headers)
+                    time.sleep(0.3)
             except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
                 rec["files"].append({"url": f["url"], "error": str(exc)})
                 continue
@@ -453,7 +492,11 @@ def main(items_path: Path, out_dir: Path, only: str | None, limit: int | None,
             dest = files_dir / f"{it['id']}_{n}.{ext}"
             dest.write_bytes(data)
             rec["files"].append({
-                "url": f["url"], "name": f.get("name") or "", "ext": ext,
+                # Имя из Content-Disposition — то, что увидит ученик в подписи ссылки.
+                # У sdamgia имя в разметке страницы отсутствует, и без этого запасного
+                # источника подпись выходила «Файл к заданию: Файл к заданию» вместо
+                # «DEMO-12.rar» (tsk-392).
+                "url": f["url"], "name": f.get("name") or name_from_headers(headers), "ext": ext,
                 "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
                 "path": str(dest),
                 "ext_ok": (ext in want) if want else None,

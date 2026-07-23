@@ -1,0 +1,1956 @@
+{
+ "evidence": {
+  "6851": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10503",
+   "verdict_text_gate": "match",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Овсяников",
+    "answer_src": "Овсяников"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "found": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6852": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10506",
+   "verdict_text_gate": "match",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Три встречи",
+    "answer_src": "Три встречи"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "found": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6853": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10509",
+   "verdict_text_gate": "match",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Евгений",
+    "answer_src": "Евгений"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "found": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6854": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10511",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Анненков",
+    "answer_src": "Анненков"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Вонифатий",
+     "Тургенев"
+    ],
+    "found": [
+     "DEMO-12",
+     "Вонифатий",
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6855": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10513",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Сергей",
+    "answer_src": "Сергей"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "found": [
+     "DEMO-12",
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6856": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10515",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "философ",
+    "answer_src": "философ|философом|Философ"
+   },
+   "tokens": {
+    "tokens": [
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6857": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10517",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "800",
+    "answer_src": "800|восемьсот"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6858": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10520",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Семен",
+    "answer_src": "Семен|Семён"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Достоевский",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Достоевский",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6859": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10523",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Платон",
+    "answer_src": "Платон"
+   },
+   "tokens": {
+    "tokens": [
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6860": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10531",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "судья",
+    "answer_src": "судья"
+   },
+   "tokens": {
+    "tokens": [
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6861": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10532",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Андрий",
+    "answer_src": "Андрий"
+   },
+   "tokens": {
+    "tokens": [
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6862": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10533",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Андрей",
+    "answer_src": "Андрей"
+   },
+   "tokens": {
+    "tokens": [
+     "Гончаров",
+     "Проза"
+    ],
+    "found": [
+     "Гончаров",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6863": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10534",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Родион",
+    "answer_src": "Родион"
+   },
+   "tokens": {
+    "tokens": [
+     "Достоевский",
+     "Проза"
+    ],
+    "found": [
+     "Достоевский",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6864": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18220",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "60",
+    "answer_src": "60"
+   },
+   "tokens": {
+    "tokens": [
+     "Тургенев"
+    ],
+    "found": [
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6865": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18235",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Сорренто",
+    "answer_src": "Сорренто"
+   },
+   "tokens": {
+    "tokens": [
+     "Тургенев"
+    ],
+    "found": [
+     "Тургенев"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6866": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "37200",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Алексей",
+    "answer_src": "Алексей"
+   },
+   "tokens": {
+    "tokens": [
+     "Достоевский",
+     "Проза"
+    ],
+    "found": [
+     "Достоевский",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6867": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "37264",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Хлопов",
+    "answer_src": "Хлопов"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза"
+    ],
+    "found": [
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6868": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "37336",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Февронья",
+    "answer_src": "Февронья"
+   },
+   "tokens": {
+    "tokens": [
+     "Гоголь",
+     "Проза"
+    ],
+    "found": [
+     "Гоголь",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6869": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "43449",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Николай",
+    "answer_src": "Николай"
+   },
+   "tokens": {
+    "tokens": [
+     "Достоевский",
+     "Проза",
+     "единственном сыне"
+    ],
+    "found": [
+     "Проза",
+     "единственном сыне"
+    ],
+    "ratio": 0.67
+   }
+  },
+  "6870": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "43588",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "серый",
+    "answer_src": "серый"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза"
+    ],
+    "found": [
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6871": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "43644",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "портной",
+    "answer_src": "портной"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза"
+    ],
+    "found": [
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6872": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "43776",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Плюшкин",
+    "answer_src": "Плюшкин"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза",
+     "разбойницей"
+    ],
+    "found": [
+     "Проза",
+     "разбойницей"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6873": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10536",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Дубровский",
+    "answer_src": "Дубровский"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза",
+     "Пушкин"
+    ],
+    "found": [
+     "Проза",
+     "Пушкин"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6874": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10565",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "купец",
+    "answer_src": "купец"
+   },
+   "tokens": {
+    "tokens": [
+     "Проза",
+     "Чехов"
+    ],
+    "found": [
+     "Проза",
+     "Чехов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6875": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11304",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "доктор",
+    "answer_src": "доктор|врач"
+   },
+   "tokens": {
+    "tokens": [
+     "Чехов"
+    ],
+    "found": [
+     "Чехов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6876": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11305",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Щелколобов",
+    "answer_src": "Щелколобов"
+   },
+   "tokens": {
+    "tokens": [
+     "Чехов"
+    ],
+    "found": [
+     "Чехов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6877": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11306",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "подпоручик",
+    "answer_src": "подпоручик"
+   },
+   "tokens": {
+    "tokens": [
+     "Чехов"
+    ],
+    "found": [
+     "Чехов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6878": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11307",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "беллетрист",
+    "answer_src": "беллетрист"
+   },
+   "tokens": {
+    "tokens": [
+     "Чехов"
+    ],
+    "found": [
+     "Чехов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6879": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11308",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Лев",
+    "answer_src": "Лев"
+   },
+   "tokens": {
+    "tokens": [
+     "Набоков"
+    ],
+    "found": [
+     "Набоков"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6880": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11310",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "Чечня",
+    "answer_src": "Чечня|в Чечне"
+   },
+   "tokens": {
+    "tokens": [
+     "Лермонтов"
+    ],
+    "found": [
+     "Лермонтов"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6881": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10504",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "16",
+    "answer_src": "16"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6882": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10507",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "11",
+    "answer_src": "11"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6883": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10510",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "10",
+    "answer_src": "10"
+   },
+   "tokens": {
+    "tokens": [
+     "*.htm",
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "*.htm",
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6884": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10512",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "14",
+    "answer_src": "14"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6885": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10514",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "11",
+    "answer_src": "11"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "found": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6886": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10516",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "16",
+    "answer_src": "16"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "found": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6887": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10518",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "12",
+    "answer_src": "12"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "found": [
+     "DEMO-12",
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6888": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10522",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "33",
+    "answer_src": "33"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6889": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10524",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "25",
+    "answer_src": "25"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6890": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10596",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "31",
+    "answer_src": "31"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6891": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10597",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "17",
+    "answer_src": "17"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6892": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10598",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "3",
+    "answer_src": "3"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6893": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11325",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "12",
+    "answer_src": "12"
+   },
+   "tokens": {
+    "tokens": [
+     "Task12"
+    ],
+    "found": [
+     "Task12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6894": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11326",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "10",
+    "answer_src": "10"
+   },
+   "tokens": {
+    "tokens": [
+     "Task12"
+    ],
+    "found": [
+     "Task12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6895": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11327",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "7",
+    "answer_src": "7"
+   },
+   "tokens": {
+    "tokens": [
+     "Task12"
+    ],
+    "found": [
+     "Task12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6896": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11328",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "3",
+    "answer_src": "3"
+   },
+   "tokens": {
+    "tokens": [
+     "Task12"
+    ],
+    "found": [
+     "Task12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6897": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11331",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "5",
+    "answer_src": "5"
+   },
+   "tokens": {
+    "tokens": [
+     "Files"
+    ],
+    "found": [
+     "Files"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6898": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "12861",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "17",
+    "answer_src": "17"
+   },
+   "tokens": {
+    "tokens": [
+     "Стихи"
+    ],
+    "found": [
+     "Стихи"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6899": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18221",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "17",
+    "answer_src": "17"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6900": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18236",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "13",
+    "answer_src": "13"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6901": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18251",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "12",
+    "answer_src": "12"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6902": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18266",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "7",
+    "answer_src": "7"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6903": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18281",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "15",
+    "answer_src": "15"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6904": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "18296",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "13",
+    "answer_src": "13"
+   },
+   "tokens": {
+    "tokens": [
+     "Поэзия"
+    ],
+    "found": [
+     "Поэзия"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6905": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "37265",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "16",
+    "answer_src": "16"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6906": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "37280",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "1",
+    "answer_src": "1"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "found": [
+     "DEMO-12",
+     "Проза"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6907": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10599",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "2",
+    "answer_src": "2"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6908": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10600",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "3",
+    "answer_src": "3"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6909": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "10601",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "4",
+    "answer_src": "4"
+   },
+   "tokens": {
+    "tokens": [
+     "DEMO-12"
+    ],
+    "found": [
+     "DEMO-12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6910": {
+   "kinds": [
+    "answer+tokens"
+   ],
+   "source": "sdamgia",
+   "source_id": "11322",
+   "verdict_text_gate": "weak",
+   "twin_sha": null,
+   "answer": {
+    "answer_lms": "3",
+    "answer_src": "3"
+   },
+   "tokens": {
+    "tokens": [
+     "Task12"
+    ],
+    "found": [
+     "Task12"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6946": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10566",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+   "answer": null,
+   "tokens": null
+  },
+  "6947": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10566",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+   "answer": null,
+   "tokens": null
+  },
+  "6948": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10567",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+   "answer": null,
+   "tokens": null
+  },
+  "6949": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10567",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+   "answer": null,
+   "tokens": null
+  },
+  "6950": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10568",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+   "answer": null,
+   "tokens": null
+  },
+  "6951": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10568",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+   "answer": null,
+   "tokens": null
+  },
+  "6952": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10569",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+   "answer": null,
+   "tokens": null
+  },
+  "6953": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10569",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+   "answer": null,
+   "tokens": null
+  },
+  "6954": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10570",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+   "answer": null,
+   "tokens": null
+  },
+  "6955": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10570",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+   "answer": null,
+   "tokens": null
+  },
+  "6956": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10571",
+   "verdict_text_gate": "weak",
+   "twin_sha": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+   "answer": null,
+   "tokens": null
+  },
+  "6957": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10571",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+   "answer": null,
+   "tokens": null
+  },
+  "6958": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10572",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+   "answer": null,
+   "tokens": null
+  },
+  "6959": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10572",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+   "answer": null,
+   "tokens": null
+  },
+  "6960": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10573",
+   "verdict_text_gate": "weak",
+   "twin_sha": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+   "answer": null,
+   "tokens": null
+  },
+  "6961": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10573",
+   "verdict_text_gate": "weak",
+   "twin_sha": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+   "answer": null,
+   "tokens": null
+  },
+  "6962": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10574",
+   "verdict_text_gate": "match",
+   "twin_sha": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+   "answer": null,
+   "tokens": null
+  },
+  "6963": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10574",
+   "verdict_text_gate": "weak",
+   "twin_sha": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+   "answer": null,
+   "tokens": null
+  },
+  "6964": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10575",
+   "verdict_text_gate": "weak",
+   "twin_sha": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+   "answer": null,
+   "tokens": null
+  },
+  "6965": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10575",
+   "verdict_text_gate": "weak",
+   "twin_sha": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+   "answer": null,
+   "tokens": null
+  },
+  "6966": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10576",
+   "verdict_text_gate": "weak",
+   "twin_sha": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+   "answer": null,
+   "tokens": null
+  },
+  "6967": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10576",
+   "verdict_text_gate": "weak",
+   "twin_sha": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+   "answer": null,
+   "tokens": null
+  },
+  "6968": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10577",
+   "verdict_text_gate": "weak",
+   "twin_sha": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+   "answer": null,
+   "tokens": {
+    "tokens": [
+     "Северный"
+    ],
+    "found": [
+     "Северный"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6969": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10577",
+   "verdict_text_gate": "weak",
+   "twin_sha": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+   "answer": null,
+   "tokens": null
+  },
+  "6970": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10578",
+   "verdict_text_gate": "weak",
+   "twin_sha": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+   "answer": null,
+   "tokens": {
+    "tokens": [
+     "Центральный"
+    ],
+    "found": [
+     "Центральный"
+    ],
+    "ratio": 1.0
+   }
+  },
+  "6971": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10578",
+   "verdict_text_gate": "weak",
+   "twin_sha": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+   "answer": null,
+   "tokens": null
+  },
+  "6972": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10579",
+   "verdict_text_gate": "weak",
+   "twin_sha": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+   "answer": null,
+   "tokens": null
+  },
+  "6973": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10579",
+   "verdict_text_gate": "weak",
+   "twin_sha": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+   "answer": null,
+   "tokens": null
+  },
+  "6974": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10580",
+   "verdict_text_gate": "weak",
+   "twin_sha": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+   "answer": null,
+   "tokens": null
+  },
+  "6975": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "10580",
+   "verdict_text_gate": "weak",
+   "twin_sha": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+   "answer": null,
+   "tokens": null
+  },
+  "6976": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11040",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+   "answer": null,
+   "tokens": null
+  },
+  "6977": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11040",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+   "answer": null,
+   "tokens": null
+  },
+  "6978": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11041",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+   "answer": null,
+   "tokens": null
+  },
+  "6979": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11041",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+   "answer": null,
+   "tokens": null
+  },
+  "6980": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11042",
+   "verdict_text_gate": "weak",
+   "twin_sha": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+   "answer": null,
+   "tokens": null
+  },
+  "6981": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11042",
+   "verdict_text_gate": "weak",
+   "twin_sha": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+   "answer": null,
+   "tokens": null
+  },
+  "6982": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11044",
+   "verdict_text_gate": "weak",
+   "twin_sha": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+   "answer": null,
+   "tokens": null
+  },
+  "6983": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11044",
+   "verdict_text_gate": "weak",
+   "twin_sha": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+   "answer": null,
+   "tokens": null
+  },
+  "6984": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11046",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+   "answer": null,
+   "tokens": null
+  },
+  "6985": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11046",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+   "answer": null,
+   "tokens": null
+  },
+  "6986": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11047",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+   "answer": null,
+   "tokens": null
+  },
+  "6987": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11047",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+   "answer": null,
+   "tokens": null
+  },
+  "6988": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11048",
+   "verdict_text_gate": "weak",
+   "twin_sha": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+   "answer": null,
+   "tokens": null
+  },
+  "6989": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11048",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+   "answer": null,
+   "tokens": null
+  },
+  "6990": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11050",
+   "verdict_text_gate": "weak",
+   "twin_sha": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+   "answer": null,
+   "tokens": null
+  },
+  "6991": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11050",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+   "answer": null,
+   "tokens": null
+  },
+  "6992": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11051",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+   "answer": null,
+   "tokens": null
+  },
+  "6993": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11051",
+   "verdict_text_gate": "mismatch",
+   "twin_sha": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+   "answer": null,
+   "tokens": null
+  },
+  "6994": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11054",
+   "verdict_text_gate": "match",
+   "twin_sha": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+   "answer": null,
+   "tokens": null
+  },
+  "6995": {
+   "kinds": [
+    "twin_sha"
+   ],
+   "source": "sdamgia",
+   "source_id": "11054",
+   "verdict_text_gate": "weak",
+   "twin_sha": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+   "answer": null,
+   "tokens": null
+  }
+ },
+ "rejected": []
+}

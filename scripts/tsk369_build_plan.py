@@ -112,7 +112,7 @@ def weak_is_confirmed(rec: dict, item: dict, lms_answer: str | None) -> tuple[bo
 
 
 def main(items_path: Path, fetched_dir: Path, out_path: Path,
-         confirmed_path: Path | None = None) -> None:
+         confirmed_path: Path | None = None, evidence_path: Path | None = None) -> None:
     # Ручное подтверждение оператора: принимается, только если рядом записано, ЧЕМ именно
     # проверена принадлежность файла (сверка данных, пересчёт ответа). Файл лежит в
     # reviews/ и коммитится вместе с отчётом — это аудит, а не молчаливый обход гейта.
@@ -120,6 +120,16 @@ def main(items_path: Path, fetched_dir: Path, out_path: Path,
     if confirmed_path and confirmed_path.exists():
         raw = json.loads(confirmed_path.read_text(encoding="utf-8"))
         confirmed = {int(k): v for k, v in raw.items() if k.isdigit()}
+
+    # Машинное доказательство принадлежности вместо текстовой сверки. Нужно там, где
+    # условие переписано автором курса и дословный фрагмент не может совпасть в принципе
+    # (партия ОГЭ, tsk-392): признаки считает scripts/tsk392_evidence.py, здесь они только
+    # принимаются. Отличие от `--confirmed`: там основание — слово оператора, тут —
+    # вычисленный и записанный в артефакт признак (sha файла, верный ответ, якоря условия).
+    evidence: dict[int, dict] = {}
+    if evidence_path and evidence_path.exists():
+        raw = json.loads(evidence_path.read_text(encoding="utf-8")).get("evidence", {})
+        evidence = {int(k): v for k, v in raw.items()}
 
     items = {i["id"]: i for i in json.loads(items_path.read_text(encoding="utf-8"))}
     # Порядок чтения = приоритет: первая запись про задание побеждает. Ручной ключ
@@ -152,15 +162,17 @@ def main(items_path: Path, fetched_dir: Path, out_path: Path,
         # Близнец внутри LMS: файл уже в CAS, скачивать нечего — размера и sha256 нет.
         files += [f for f in rec.get("files", []) if f.get("reuse") and f.get("sha_ext")]
         reason = None
-        evidence: dict = {}
-        if tid in confirmed and files:
-            evidence = {"operator_confirmed": confirmed[tid].get("reason")}
+        evidence_rec: dict = {}
+        if tid in evidence and files:
+            evidence_rec = {"machine_evidence": evidence[tid]}
+        elif tid in confirmed and files:
+            evidence_rec = {"operator_confirmed": confirmed[tid].get("reason")}
         elif rec.get("verdict") == "weak" and files:
-            ok, evidence = weak_is_confirmed(rec, item, answers.get(tid))
+            ok, evidence_rec = weak_is_confirmed(rec, item, answers.get(tid))
             if not ok:
                 reason = ("сверка: weak, второй признак не сработал "
-                          f"(ответы={evidence['answers_agree']}, "
-                          f"сходство текста={evidence['similarity']})")
+                          f"(ответы={evidence_rec['answers_agree']}, "
+                          f"сходство текста={evidence_rec['similarity']})")
         elif rec.get("verdict") != "match":
             reason = f"сверка: {rec.get('verdict')}"
         if not reason and not files:
@@ -181,7 +193,7 @@ def main(items_path: Path, fetched_dir: Path, out_path: Path,
             "id": tid, "course_id": rec["course_id"], "external_uid": item["external_uid"],
             "source": rec["source"], "source_id": rec["source_id"], "via": item["via"],
             "answer_src": rec.get("answer_src"), "verdict": rec.get("verdict"),
-            "evidence": evidence or rec.get("detail"),
+            "evidence": evidence_rec or rec.get("detail"),
             "files": [{"sha_ext": f["sha_ext"], "ext": f["ext"], "size": f.get("size"),
                        "name": f.get("name") or "", "path": f.get("path"),
                        "url": f.get("url"), "reuse": bool(f.get("reuse"))}
@@ -220,6 +232,8 @@ if __name__ == "__main__":
     ap.add_argument("--fetched", required=True, help="каталог с fetched_*.json")
     ap.add_argument("--out", required=True)
     ap.add_argument("--confirmed", help="JSON с подтверждениями оператора (reviews/...)")
+    ap.add_argument("--evidence", help="JSON машинных доказательств (scripts/tsk392_evidence.py)")
     a = ap.parse_args()
     main(Path(a.items), Path(a.fetched), Path(a.out),
-         Path(a.confirmed) if a.confirmed else None)
+         Path(a.confirmed) if a.confirmed else None,
+         Path(a.evidence) if a.evidence else None)

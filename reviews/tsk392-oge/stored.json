@@ -1,0 +1,245 @@
+{
+ "stored": [
+  {
+   "sha_ext": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e.ods",
+   "size": 29231,
+   "http": "HTTP 200, Content-Length=29231",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9.ods",
+   "size": 16522,
+   "http": "HTTP 200, Content-Length=16522",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142.rar",
+   "size": 36967738,
+   "http": "HTTP 200, Content-Length=36967738"
+  },
+  {
+   "sha_ext": "0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8.rar",
+   "size": 7518657,
+   "http": "HTTP 200, Content-Length=7518657"
+  },
+  {
+   "sha_ext": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08.ods",
+   "size": 16522,
+   "http": "HTTP 200, Content-Length=16522",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e.rar",
+   "size": 8296524,
+   "http": "HTTP 200, Content-Length=8296524"
+  },
+  {
+   "sha_ext": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca.ods",
+   "size": 13381,
+   "http": "HTTP 200, Content-Length=13381",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "2eb8f2a6914f8f8142c234c4e81638066c933f1a7b1008605246ed2818a61a63.rar",
+   "size": 45269687,
+   "http": "HTTP 200, Content-Length=45269687"
+  },
+  {
+   "sha_ext": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e.ods",
+   "size": 16522,
+   "http": "HTTP 200, Content-Length=16522",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "38caa58d4cbf2c0a8a0949bbf7c778a7e8e25c77682fb0a5d7d6cfe16d909b9f.rar",
+   "size": 36969573,
+   "http": "HTTP 200, Content-Length=36969573"
+  },
+  {
+   "sha_ext": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd.ods",
+   "size": 11915,
+   "http": "HTTP 200, Content-Length=11915",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e.ods",
+   "size": 11342,
+   "http": "HTTP 200, Content-Length=11342",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da.ods",
+   "size": 13121,
+   "http": "HTTP 200, Content-Length=13121",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03.rar",
+   "size": 8740905,
+   "http": "HTTP 200, Content-Length=8740905"
+  },
+  {
+   "sha_ext": "66c1990af6af4a5dfb416d38fe06444e378c69d115943bda13a7f42aedba8d77.rar",
+   "size": 6421690,
+   "http": "HTTP 200, Content-Length=6421690"
+  },
+  {
+   "sha_ext": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f.ods",
+   "size": 11352,
+   "http": "HTTP 200, Content-Length=11352",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5.ods",
+   "size": 11915,
+   "http": "HTTP 200, Content-Length=11915",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3.ods",
+   "size": 23087,
+   "http": "HTTP 200, Content-Length=23087",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b.rar",
+   "size": 5160921,
+   "http": "HTTP 200, Content-Length=5160921"
+  },
+  {
+   "sha_ext": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b.ods",
+   "size": 13382,
+   "http": "HTTP 200, Content-Length=13382",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c.ods",
+   "size": 29529,
+   "http": "HTTP 200, Content-Length=29529",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "88207fcecada0e10a210e5cd3bd33ddb80ab134894e3519f20efadc4eb76676d.rar",
+   "size": 6420998,
+   "http": "HTTP 200, Content-Length=6420998"
+  },
+  {
+   "sha_ext": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e.ods",
+   "size": 13401,
+   "http": "HTTP 200, Content-Length=13401",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7.ods",
+   "size": 9129,
+   "http": "HTTP 200, Content-Length=9129",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad.ods",
+   "size": 29716,
+   "http": "HTTP 200, Content-Length=29716",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812.rar",
+   "size": 3125774,
+   "http": "HTTP 200, Content-Length=3125774"
+  },
+  {
+   "sha_ext": "ad63cea84eba524af1830b4412068835df332b6d55240ce5effd5ad2501b6d44.rar",
+   "size": 163369,
+   "http": "HTTP 200, Content-Length=163369"
+  },
+  {
+   "sha_ext": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74.ods",
+   "size": 29530,
+   "http": "HTTP 200, Content-Length=29530",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "b9d9f9fa1f198aa541cabaf25f607a0d1ba693fc7cf40e13d57d6f21b9ad111a.rar",
+   "size": 2309668,
+   "http": "HTTP 200, Content-Length=2309668"
+  },
+  {
+   "sha_ext": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98.ods",
+   "size": 31037,
+   "http": "HTTP 200, Content-Length=31037",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "be99979825f8a6ad9ce07c645ac91339c601a7b63a9681a5669a335192730a55.rar",
+   "size": 45269687,
+   "http": "HTTP 200, Content-Length=45269687"
+  },
+  {
+   "sha_ext": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58.ods",
+   "size": 13121,
+   "http": "HTTP 200, Content-Length=13121",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "c5b2aed2e5dd14e8f9bed9e8e7ecee76d4607ba942b0109348f6bdaf5e34bc34.rar",
+   "size": 36967783,
+   "http": "HTTP 200, Content-Length=36967783"
+  },
+  {
+   "sha_ext": "c8f62cccb7377f08dd5ae8bf648bf2d5fd289a524ec3dd811999a729bc353242.rar",
+   "size": 1680399,
+   "http": "HTTP 200, Content-Length=1680399"
+  },
+  {
+   "sha_ext": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3.rar",
+   "size": 32922115,
+   "http": "HTTP 200, Content-Length=32922115"
+  },
+  {
+   "sha_ext": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930.ods",
+   "size": 29154,
+   "http": "HTTP 200, Content-Length=29154",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08.ods",
+   "size": 33441,
+   "http": "HTTP 200, Content-Length=33441",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb.ods",
+   "size": 29715,
+   "http": "HTTP 200, Content-Length=29715",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08.ods",
+   "size": 29574,
+   "http": "HTTP 200, Content-Length=29574",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f.ods",
+   "size": 8953,
+   "http": "HTTP 200, Content-Length=8953",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "e8b47563f106c8c37aa0d14170e5393a46a0e4f91f754db65350824331e67891.rar",
+   "size": 10335974,
+   "http": "HTTP 200, Content-Length=10335974"
+  },
+  {
+   "sha_ext": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb.ods",
+   "size": 13364,
+   "http": "HTTP 200, Content-Length=13364",
+   "skipped": "уже в хранилище"
+  },
+  {
+   "sha_ext": "ef7f29feabfb4c2a9c55f2dc83f50901961e3b9637796c042b721a826b34ed73.rar",
+   "size": 36967646,
+   "http": "HTTP 200, Content-Length=36967646"
+  }
+ ],
+ "failed": []
+}

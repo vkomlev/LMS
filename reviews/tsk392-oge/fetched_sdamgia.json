@@ -1,0 +1,3727 @@
+[
+ {
+  "id": 6851,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10503",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "match",
+  "detail": {
+   "fragment": "дящий на речке гнилотерке с помощью поисковых средств операц",
+   "prose_ok": true,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Овсяников",
+  "src_text": "В од ном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев каталога DEMO-12 , присутствует эпизод, происходящий на речке Гнилотерке. С помощью поисковых средств операционной системы и текстового редактора выясните фамилию главного героя этого произведения. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6851_0.rar",
+    "ext_ok": true
+   }
+  ],
+  "ext_ok": true,
+  "n_files": 1
+ },
+ {
+  "id": 6852,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10506",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "match",
+  "detail": {
+   "fragment": "котором упоминается город сорренто с помощью поисковых средс",
+   "prose_ok": true,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Три встречи",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев каталога DEMO-12 , присутствует эпизод, в котором упоминается город Сорренто. С помощью поисковых средств операционной системы и текстового редактора выясните название этого произведения. В ответ запишите название произведения без кавычек. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6852_0.rar",
+    "ext_ok": true
+   }
+  ],
+  "ext_ok": true,
+  "n_files": 1
+ },
+ {
+  "id": 6853,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10509",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "match",
+  "detail": {
+   "fragment": " присутствует персонаж базаров с помощью поисковых средств о",
+   "prose_ok": true,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Евгений",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев каталога DEMO-12 , присутствует персонаж Базаров. С помощью поисковых средств операционной системы и текстового редактора выясните имя Базарова. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6853_0.rar",
+    "ext_ok": true
+   }
+  ],
+  "ext_ok": true,
+  "n_files": 1
+ },
+ {
+  "id": 6854,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10511",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "я имя вонифатий с помощью поисковых средств выясните фамилию",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Анненков",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев каталога DEMO-12 , присутствует произведение, в котором упоминается имя «Вонифатий». С помощью поисковых средств операционной системы и текстового редактора выясните фамилию человека, которому посвящено это произведение. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6854_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6855,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10513",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "emo присутствует персонаж александра павловна с помощью поис",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Сергей",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев каталога DEMO-12 , присутствует произведение, в котором присутствует персонаж Александра Павловна. С помощью поисковых средств операционной системы и текстового редактора выясните имя брата этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6855_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6856,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10515",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "рисутствует персонаж хома брут с помощью поисковых средств в",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "философ|философом|Философ",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж Хома Брут. С помощью поисковых средств операционной системы и текстового редактора выясните, кем являлся этот персонаж. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6856_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6857,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10517",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ние с персонажем плюшкиным и определить сколько душ он имеет",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "800|восемьсот",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж Плюшкин. С помощью поисковых средств операционной системы и текстового редактора выясните, сколько душ имеет данный персонаж по словам Собакевича. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6857_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6858,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10520",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "demo rar найти произведение с персонажем мармеладовым и опре",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Семен|Семён",
+  "src_text": "В одном из произведений Ф. М. Достоевского, текст которого приведен в подкаталоге Достоевский каталога Проза , присутствует персонаж Мармеладов. С помощью поисковых средств операционной системы и текстового редактора выясните имя этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6858_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6859,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10523",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "талога проза присутствует персонаж с фамилией ковалев выясни",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Платон",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж с фамилией Ковалев. С помощью поисковых средств операционной системы и текстового редактора выясните имя этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6859_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6860,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10531",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "роизведение с персонажем аммос федорович и определить его пр",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "судья",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж Аммос Федорович. С помощью поисковых средств операционной системы и текстового редактора выясните профессию этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6860_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6861,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10532",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "йти произведение с персонажем остапом и определить имя его б",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Андрий",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж Остап. С помощью поисковых средств операционной системы и текстового редактора выясните имя брата этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6861_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6862,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10533",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "зведение и а гончарова с персонажем по фамилии штольц и опре",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Андрей",
+  "src_text": "В одном из произведений И. А. Гончарова, текст которого приведен в подкаталоге Гончаров каталога Проза , присутствует персонаж по фамилии Штольц. С помощью поисковых средств операционной системы и текстового редактора выясните имя этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6862_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6863,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10534",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "вский каталога проза присутствует персонаж раскольников выяс",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Родион",
+  "src_text": "В одном из произведений Ф. М. Достоевский, текст которого приведен в подкаталоге Достоевский каталога Проза , присутствует персонаж Раскольников. С помощью поисковых средств операционной системы и текстового редактора выясните имя этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6863_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6864,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "18220",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "в встречается персонаж m lle boncourt выясните возраст этого",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "60",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев , встречается m-lle Boncourt. С помощью поисковых средств операционной системы и текстового редактора выясните, сколько примерно лет m-lle Boncourt. Ответ запишите цифрами. 11 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48516",
+    "name": "11 задание.rar",
+    "ext": "rar",
+    "size": 5160921,
+    "sha256": "72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b",
+    "path": "reviews\\tsk392-oge\\files\\6864_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6865,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "18235",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " итальянская песня выясните в каком итальянском городе герой",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Сорренто",
+  "src_text": "В одном из произведений И. С. Тургенева, текст которого приведен в подкаталоге Тургенев , встречается песня «Vieni, pensando a me segretamente…». С помощью поисковых средств операционной системы и текстового редактора выясните, в каком городе Италии герой раньше слышал эту песню. 11 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48519",
+    "name": "11 задание.rar",
+    "ext": "rar",
+    "size": 5160921,
+    "sha256": "72be0558627d5f69b0fbd00bf6204d210faa27afbb49c8b3c0819a7c6551206b",
+    "path": "reviews\\tsk392-oge\\files\\6865_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6866,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "37200",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "талога проза присутствует персонаж федор павлович выясните и",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Алексей",
+  "src_text": "В одном из произведений Ф. М. Достоевского, текст которого приведен в подкаталоге Достоевский каталога Проза , присутствует персонаж Федор Павлович. С помощью поисковых средств операционной системы и текстового редактора выясните имя младшего сына этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=82268",
+    "name": "Проза.rar",
+    "ext": "rar",
+    "size": 36967783,
+    "sha256": "c5b2aed2e5dd14e8f9bed9e8e7ecee76d4607ba942b0109348f6bdaf5e34bc34",
+    "path": "reviews\\tsk392-oge\\files\\6866_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6867,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "37264",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " есть персонаж с должностью смотритель училищ выясните фамил",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Хлопов",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге каталога Проза, есть персонаж с должностью смотритель училищ. С помощью поисковых средств операционной системы и текстового редактора или браузера выясните фамилию этого героя. DEMO-11.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=67162",
+    "name": "Проза задание 11.rar",
+    "ext": "rar",
+    "size": 36969573,
+    "sha256": "38caa58d4cbf2c0a8a0949bbf7c778a7e8e25c77682fb0a5d7d6cfe16d909b9f",
+    "path": "reviews\\tsk392-oge\\files\\6867_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6868,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "37336",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "оль каталога проза присутствует персонаж слесарша выясните и",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Февронья",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге Гоголь каталога Проза , присутствует персонаж Слесарша. С помощью поисковых средств операционной системы и текстового редактора выясните имя этой героини. DEMO-11.rar Выполните задание, распаковав архив на своем компьютере. Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=68157",
+    "name": "DEMO-11.rar",
+    "ext": "rar",
+    "size": 36967738,
+    "sha256": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142",
+    "path": "reviews\\tsk392-oge\\files\\6868_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6869,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "43449",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "вский каталога проза говорится о единственном сыне варвары п",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Николай",
+  "src_text": "В одном из произведений Ф. М. Достоевского, текст которого приведен в подкаталоге каталога Проза , присутствует эпизод, в котором говорится о «единственном сыне» Варвары Петровны. С помощью поисковых средств операционной системы и текстового редактора выясните его имя. В ответе запишите полное имя сына Варвары Петровны. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=32912",
+    "name": "Проза.rar",
+    "ext": "rar",
+    "size": 36967646,
+    "sha256": "ef7f29feabfb4c2a9c55f2dc83f50901961e3b9637796c042b721a826b34ed73",
+    "path": "reviews\\tsk392-oge\\files\\6869_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6870,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "43588",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "тся внешний вид персонажа по имени захар выясните какого цве",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "серый",
+  "src_text": "В одном из произведений И. А. Гончарова, текст которого приведен в подкаталоге каталога Проза , присутствует эпизод, в котором описывается внешний вид персонажа по имени Захар. С помощью поисковых средств операционной системы и текстового редактора выясните, какого цвета был любимый сюртук Захара. В ответе укажите только название цвета в именительном падеже. DEMO-11.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+    "name": "DEMO-11.rar",
+    "ext": "rar",
+    "size": 36967738,
+    "sha256": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142",
+    "path": "reviews\\tsk392-oge\\files\\6870_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6871,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "43644",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "наж с отчеством петрович осматривает вицмундир определите пр",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "портной",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге каталога Проза , описывается сцена, в которой персонаж с отчеством Петрович осматривает вицмундир. С помощью поисковых средств операционной системы и текстового редактора определите профессию этого человека. DEMO-11.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+    "name": "DEMO-11.rar",
+    "ext": "rar",
+    "size": 36967738,
+    "sha256": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142",
+    "path": "reviews\\tsk392-oge\\files\\6871_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6872,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "43776",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ь служанка по имени мавра которую он называет разбойницей вы",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Плюшкин",
+  "src_text": "В одном из произведений Н. В. Гоголя, текст которого приведен в подкаталоге каталога Проза, у одного из персонажей есть служанка по имени Мавра, которую он называет «разбойницей». С помощью поисковых средств операционной системы и текстового редактора или браузера выясните фамилию этого персонажа. DEMO-11.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=68151",
+    "name": "DEMO-11.rar",
+    "ext": "rar",
+    "size": 36967738,
+    "sha256": "0897172295b451135aef3bde3b355f602cc7b7c21932d5de01b1c9251735d142",
+    "path": "reviews\\tsk392-oge\\files\\6872_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6873,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10536",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ога проза присутствует персонаж с именем владимир выясните ф",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "Дубровский",
+  "src_text": "В одном из произведений А. С. Пушкина, текст которого приведен в подкаталоге Пушкин каталога Проза , присутствует персонаж с именем Владимир. С помощью поисковых средств операционной системы и текстового редактора выясните фамилию этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6873_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6874,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "10565",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "аталога проза присутствует персонаж лопахин выясните професс",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "купец",
+  "src_text": "В одном из произведений А. П. Чехова, текст которого приведен в подкаталоге Чехов каталога Проза , присутствует персонаж Лопахин. С помощью поисковых средств операционной системы и текстового редактора выясните профессию этого персонажа. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6874_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6875,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11304",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " чехова с персонажем по фамилии рагин и определить его профе",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "доктор|врач",
+  "src_text": "В одном из произведений А. П. Чехова, текст которого приведен в каталоге Чехов , присутствует персонаж с фамилией Рагин. С помощью поисковых средств операционной системы и текстового редактора выясните профессию этого персонажа. Выполните задание, распаковав архив на своем компьютере. Чехов.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48484",
+    "name": "Чехов.rar",
+    "ext": "rar",
+    "size": 3125774,
+    "sha256": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812",
+    "path": "reviews\\tsk392-oge\\files\\6875_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6876,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11305",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ова с персонажем каролиной карловной и определить фамилию ее",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Щелколобов",
+  "src_text": "В одном из произведений А. П. Чехова, текст которого приведен в каталоге Чехов , присутствует персонаж Каролина Карловна. С помощью поисковых средств операционной системы и текстового редактора выясните фамилию мужа Каролины Карловны. Выполните задание, распаковав архив на своем компьютере. Чехов.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48485",
+    "name": "Чехов.rar",
+    "ext": "rar",
+    "size": 3125774,
+    "sha256": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812",
+    "path": "reviews\\tsk392-oge\\files\\6876_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6877,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11306",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " п чехова с персонажем с фамилией родэ и определить его зван",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "подпоручик",
+  "src_text": "В одном из произведений А. П. Чехова, текст которого приведен в каталоге Чехов , присутствует персонаж с фамилией Родэ. С помощью поисковых средств операционной системы и текстового редактора выясните звание этого персонажа. Выполните задание, распаковав архив на своем компьютере. Чехов.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48486",
+    "name": "Чехов.rar",
+    "ext": "rar",
+    "size": 3125774,
+    "sha256": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812",
+    "path": "reviews\\tsk392-oge\\files\\6877_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6878,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11307",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ехова с персонажем с фамилией триголин и определить его проф",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "беллетрист",
+  "src_text": "В одном из произведений А. П. Чехова, текст которого приведен в каталоге Чехов , присутствует персонаж с фамилией Тригорин. С помощью поисковых средств операционной системы и текстового редактора выясните профессию этого персонажа. Выполните задание, распаковав архив на своем компьютере. Чехов.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48487",
+    "name": "Чехов.rar",
+    "ext": "rar",
+    "size": 3125774,
+    "sha256": "a98a36bc03d305593d42205bf9ff4ce869b6eddc6ec67778e973c62f8a0f3812",
+    "path": "reviews\\tsk392-oge\\files\\6878_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6879,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11308",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "е в в набокова с персонажем ганин выясните имя этого персона",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Лев",
+  "src_text": "В одном из произведений В. В. Набокова, текст которого приведен в каталоге Набоков , присутствует персонаж с фамилией Ганин. С помощью поисковых средств операционной системы и текстового редактора выясните имя этого персонажа. Выполните задание, распаковав архив на своем компьютере. Набоков.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48488",
+    "name": "Набоков.rar",
+    "ext": "rar",
+    "size": 2309668,
+    "sha256": "b9d9f9fa1f198aa541cabaf25f607a0d1ba693fc7cf40e13d57d6f21b9ad111a",
+    "path": "reviews\\tsk392-oge\\files\\6879_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6880,
+  "course_id": 1163,
+  "source": "sdamgia",
+  "source_id": "11310",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " упоминается крепость у каменного брода впиши название места",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "Чечня|в Чечне",
+  "src_text": "В одном из произведений М. Ю. Лермонтова, текст которого приведен в каталоге Лермонтов , упоминается крепость у Каменного Брода. С помощью поисковых средств операционной системы и текстового редактора выясните, где находилась эта крепость. Выполните задание, распаковав архив на своем компьютере. Лермонтов.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48489",
+    "name": "Лермонтов.rar",
+    "ext": "rar",
+    "size": 1680399,
+    "sha256": "c8f62cccb7377f08dd5ae8bf648bf2d5fd289a524ec3dd811999a729bc353242",
+    "path": "reviews\\tsk392-oge\\files\\6880_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6881,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10504",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "полните задание распаковав архив demo rar на своем компьютер",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "16",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Проза ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6881_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6882,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10507",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "полните задание распаковав архив demo rar на своем компьютер",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "11",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Проза ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6882_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6883,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10510",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "логах каталога проза архив demo rar используйте поисковую ма",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "10",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .htm содержится в подкаталогах каталога Проза ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6883_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6884,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10512",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " подкаталогах каталога проза архив demo rar маска поиска rtf",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "14",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .rtf содержится в подкаталогах каталога Проза ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6884_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6885,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10514",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "подкаталогах каталога поэзия архив demo rar маска поиска rtf",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "11",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .rtf содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6885_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6886,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10516",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "подкаталогах каталога поэзия архив demo rar маска поиска pdf",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "16",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6886_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6887,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10518",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "подкаталогах каталога поэзия архив demo rar маска поиска txt",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "12",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6887_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6888,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10522",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска txt ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "33",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6888_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6889,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10524",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска rtf ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "25",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .rtf содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6889_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6890,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10596",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска pdf ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "31",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением pdf содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6890_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6891,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10597",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска htm ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "17",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .htm содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6891_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6892,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10598",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска html ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "3",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .html содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6892_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6893,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11325",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " подкаталогах каталога task архив task rar маска поиска txt ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "12",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Task12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Task12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48497",
+    "name": "Task12.rar",
+    "ext": "rar",
+    "size": 8740905,
+    "sha256": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03",
+    "path": "reviews\\tsk392-oge\\files\\6893_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6894,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11326",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ем rtf в подкаталогах каталога task маска поиска rtf ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "10",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .rtf содержится в подкаталогах каталога Task12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Task12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48498",
+    "name": "Task12.rar",
+    "ext": "rar",
+    "size": 8740905,
+    "sha256": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03",
+    "path": "reviews\\tsk392-oge\\files\\6894_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6895,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11327",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " подкаталогах каталога task архив task rar маска поиска pdf ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "7",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Task12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Task12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48499",
+    "name": "Task12.rar",
+    "ext": "rar",
+    "size": 8740905,
+    "sha256": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03",
+    "path": "reviews\\tsk392-oge\\files\\6895_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6896,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11328",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " подкаталогах каталога task архив task rar маска поиска htm ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "3",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .htm содержится в подкаталогах каталога Task12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Task12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48500",
+    "name": "Task12.rar",
+    "ext": "rar",
+    "size": 8740905,
+    "sha256": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03",
+    "path": "reviews\\tsk392-oge\\files\\6896_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6897,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11331",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "подкаталогах каталога files архив files rar маска поиска htm",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "5",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .html содержится в подкаталогах каталога Files ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Files.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48503",
+    "name": "Files.rar",
+    "ext": "rar",
+    "size": 163369,
+    "sha256": "ad63cea84eba524af1830b4412068835df332b6d55240ce5effd5ad2501b6d44",
+    "path": "reviews\\tsk392-oge\\files\\6897_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6898,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "12861",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " с расширением pdf во всех подкаталогах маска поиска pdf отв",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "17",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Стихи ? В ответ укажите только число. Стихи.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48505",
+    "name": "Стихи.rar",
+    "ext": "rar",
+    "size": 10335974,
+    "sha256": "e8b47563f106c8c37aa0d14170e5393a46a0e4f91f754db65350824331e67891",
+    "path": "reviews\\tsk392-oge\\files\\6898_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6899,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18221",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "жится в подкаталогах каталога поэзия маска поиска pdf ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "17",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. 12 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48517",
+    "name": "12 задание.rar",
+    "ext": "rar",
+    "size": 8296524,
+    "sha256": "12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e",
+    "path": "reviews\\tsk392-oge\\files\\6899_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6900,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18236",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "жится в подкаталогах каталога поэзия маска поиска txt ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "13",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. 12 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48520",
+    "name": "12 задание.rar",
+    "ext": "rar",
+    "size": 8296524,
+    "sha256": "12de4cf3b56db7fe7199ea478c824d6ff72c02ea1efb54992d27c22ca0e7e36e",
+    "path": "reviews\\tsk392-oge\\files\\6900_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6901,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18251",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "жится в подкаталогах каталога поэзия маска поиска txt ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "12",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. 12 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48523",
+    "name": "12 задание.rar",
+    "ext": "rar",
+    "size": 7518657,
+    "sha256": "0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8",
+    "path": "reviews\\tsk392-oge\\files\\6901_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6902,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18266",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "жится в подкаталогах каталога поэзия маска поиска htm ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "7",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .htm содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. 12 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48526",
+    "name": "12 задание.rar",
+    "ext": "rar",
+    "size": 7518657,
+    "sha256": "0a89d022a76398974ea548a518c01cbd060cb52d8b2723aacd51b2b8128abce8",
+    "path": "reviews\\tsk392-oge\\files\\6902_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6903,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18281",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "жится в подкаталогах каталога поэзия маска поиска rtf ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "15",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением rtf содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. 12 задание.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48528",
+    "name": "12 задание.rar",
+    "ext": "rar",
+    "size": 6421690,
+    "sha256": "66c1990af6af4a5dfb416d38fe06444e378c69d115943bda13a7f42aedba8d77",
+    "path": "reviews\\tsk392-oge\\files\\6903_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6904,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "18296",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "одкаталогах каталога поэзия архив поэзия rar маска поиска ht",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": false
+  },
+  "answer_src": "13",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением html содержится в подкаталогах каталога Поэзия ? В ответе укажите только число. Поэзия.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=55346",
+    "name": "Поэзия.rar",
+    "ext": "rar",
+    "size": 6420998,
+    "sha256": "88207fcecada0e10a210e5cd3bd33ddb80ab134894e3519f20efadc4eb76676d",
+    "path": "reviews\\tsk392-oge\\files\\6904_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6905,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "37265",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " подкаталогах каталога проза архив demo rar маска поиска pdf",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "2024",
+    "2409"
+   ],
+   "missing_in_lms": [
+    "2024",
+    "2409"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": "16",
+  "src_text": "Источник: ОГЭ по информатике 27.05.2024. Основная волна. Санкт-Петербург. Вариант 2409 Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .pdf содержится в подкаталогах каталога Проза ? В ответе укажите только число. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=67163",
+    "name": "DEMO-12 задание 12.rar",
+    "ext": "rar",
+    "size": 45269687,
+    "sha256": "2eb8f2a6914f8f8142c234c4e81638066c933f1a7b1008605246ed2818a61a63",
+    "path": "reviews\\tsk392-oge\\files\\6905_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6906,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "37280",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " подкаталогах каталога проза архив demo rar маска поиска txt",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "2024",
+    "2410"
+   ],
+   "missing_in_lms": [
+    "2024",
+    "2410"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": "1",
+  "src_text": "Источник: ОГЭ по информатике 27.05.2024. Основная волна. Санкт-Петербург. Вариант 2410 Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .txt содержится в подкаталогах каталога Проза ? В ответе укажите только число. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=67171",
+    "name": "DEMO-12 задание 12.rar",
+    "ext": "rar",
+    "size": 45269687,
+    "sha256": "be99979825f8a6ad9ce07c645ac91339c601a7b63a9681a5669a335192730a55",
+    "path": "reviews\\tsk392-oge\\files\\6906_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6907,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10599",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ем odt в подкаталогах каталога demo маска поиска odt ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "2",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .odt содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6907_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6908,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10600",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска docx ответ ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "3",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .docx содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6908_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6909,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "10601",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ржится в подкаталогах каталога demo маска поиска doc ответ з",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "4",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .docx и .doc содержится в подкаталогах каталога DEMO-12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. DEMO-12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48458",
+    "name": "DEMO-12.rar",
+    "ext": "rar",
+    "size": 32922115,
+    "sha256": "cae9e567bd65f4ce7afdff2cc8ec2870fe14bf3ce4a44b4770d4276617fa45b3",
+    "path": "reviews\\tsk392-oge\\files\\6909_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6910,
+  "course_id": 1164,
+  "source": "sdamgia",
+  "source_id": "11322",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "doc содержится в подкаталогах каталога task ответ запишите ч",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": "3",
+  "src_text": "1.2 Действия с файлами. Использование поисковых средств операционной системы. Количество файлов с определенным расширением i Сколько файлов с расширением .doc содержится в подкаталогах каталога Task12 ? В ответе укажите только число. Выполните задание, распаковав архив на своем компьютере. Task12.rar Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=48494",
+    "name": "Task12.rar",
+    "ext": "rar",
+    "size": 8740905,
+    "sha256": "505e15148d179fc0b62fd07b00234dc0eb60d5b4720c429cd7dbce4380cade03",
+    "path": "reviews\\tsk392-oge\\files\\6910_0.rar",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6946,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10566",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ным в ней ответь сколько учеников набрали более баллов по ин",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "240",
+    "361",
+    "377",
+    "782"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "240",
+    "361",
+    "377",
+    "782"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников по выбранным ими предметам. A B C D 1 округ фамилия предмет балл 2 C Ученик 1 Физика 240 3 В Ученик 2 Физкультура 782 4 Ю Ученик 3 Биология 361 5 СВ Ученик 4 Обществознание 377 В столбце A записан код округа, в котором учится ученик; в столбце B — фамилия, в столбце C — выбранный учеником предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 учеников. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и выполните задание. 1. Определите, сколько учеников, которые проходили тестирование по информатике, набрали более 600 баллов. Ответ запишите в ячейку H2 таблицы. 2. Найдите средний тестовый балл учеников, которые проходили тестирование по информатике. Ответ запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «В», «Зел» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83378",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 23087,
+    "sha256": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+    "path": "reviews\\tsk392-oge\\files\\6946_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6947,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10566",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ших тестирование по информатике ответ запишите числом десяти",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "240",
+    "361",
+    "377",
+    "782"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "240",
+    "361",
+    "377",
+    "782"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников по выбранным ими предметам. A B C D 1 округ фамилия предмет балл 2 C Ученик 1 Физика 240 3 В Ученик 2 Физкультура 782 4 Ю Ученик 3 Биология 361 5 СВ Ученик 4 Обществознание 377 В столбце A записан код округа, в котором учится ученик; в столбце B — фамилия, в столбце C — выбранный учеником предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 учеников. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и выполните задание. 1. Определите, сколько учеников, которые проходили тестирование по информатике, набрали более 600 баллов. Ответ запишите в ячейку H2 таблицы. 2. Найдите средний тестовый балл учеников, которые проходили тестирование по информатике. Ответ запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «В», «Зел» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83378",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 23087,
+    "sha256": "723f41e13dc09d47f8a9a270513d0e7ab328cfa8c84ac579f384de8e3030b4c3",
+    "path": "reviews\\tsk392-oge\\files\\6947_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6948,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10567",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "веть сколько учеников в восточном округе в выбрали любимым п",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Восточном округе (В) выбрали в качестве любимого предмета информатику? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Северного округа (С)? Ответ на этот вопрос запишите в ячейку НЗ таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих информатику, русский язык и обществознание. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83379",
+    "name": "task 14 (1).ods",
+    "ext": "ods",
+    "size": 29574,
+    "sha256": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+    "path": "reviews\\tsk392-oge\\files\\6948_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6949,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10567",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ков северного округа с ответ запишите числом десятичный разд",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Восточном округе (В) выбрали в качестве любимого предмета информатику? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Северного округа (С)? Ответ на этот вопрос запишите в ячейку НЗ таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих информатику, русский язык и обществознание. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83379",
+    "name": "task 14 (1).ods",
+    "ext": "ods",
+    "size": 29574,
+    "sha256": "e0b661b427646deaf6dc46e04c9a1888987336612edf24171c00ef37cda39c08",
+    "path": "reviews\\tsk392-oge\\files\\6949_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6950,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10568",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ь сколько учеников в северо восточном округе св выбрали люби",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Северо-Восточном округе (СВ) выбрали в качестве любимого предмета математику? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Южного округа (Ю)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью два знака после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих информатику, немецкий язык и обществознание. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83407",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29154,
+    "sha256": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+    "path": "reviews\\tsk392-oge\\files\\6950_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6951,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10568",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "иков южного округа ю ответ запишите числом десятичный раздел",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Северо-Восточном округе (СВ) выбрали в качестве любимого предмета математику? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Южного округа (Ю)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью два знака после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих информатику, немецкий язык и обществознание. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83407",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29154,
+    "sha256": "cc7ad5f737fb17cd92915d977e366a320140bd503c05b984adb9dfe38f81f930",
+    "path": "reviews\\tsk392-oge\\files\\6951_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6952,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10569",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " сколько учеников в северо западном округе сз выбрали любимы",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Северо-Западном округе (СЗ) выбрали в качестве любимого предмета русский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Западного округа (3)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих химию, немецкий язык и математику. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83408",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29231,
+    "sha256": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+    "path": "reviews\\tsk392-oge\\files\\6952_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6953,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10569",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ков западного округа з ответ запишите числом десятичный разд",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Северо-Западном округе (СЗ) выбрали в качестве любимого предмета русский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Западного округа (3)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников, сдающих химию, немецкий язык и математику. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83408",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29231,
+    "sha256": "044f4a219b11035934bd7965e8b63d05928bd94738f0980636d7396c416d5c8e",
+    "path": "reviews\\tsk392-oge\\files\\6953_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6954,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10570",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ь сколько учеников в центральном округе ц выбрали любимым пр",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Центральном округе (Ц) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Восточного округа (В)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «C», «Ю» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83409",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29715,
+    "sha256": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+    "path": "reviews\\tsk392-oge\\files\\6954_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6955,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10570",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ов восточного округа в ответ запишите числом десятичный разд",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Центральном округе (Ц) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Восточного округа (В)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «C», «Ю» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83409",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29715,
+    "sha256": "df916f23b46a07a0a62a482fb36cf825eefd166441badcc9b671ad2fd1f47abb",
+    "path": "reviews\\tsk392-oge\\files\\6955_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6956,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10571",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "сколько учеников в южном округе ю выбрали в качестве любимог",
+   "prose_ok": true,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Южном округе (Ю) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Юго-Восточного округа (ЮВ)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «CВ», «ЮВ» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83410",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29716,
+    "sha256": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+    "path": "reviews\\tsk392-oge\\files\\6956_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6957,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10571",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ков юго восточного округа юв ответ запишите числом десятичны",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "1000",
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы: A B C D 1 округ фамилия предмет балл 2 C Ученик 1 обществознание 246 3 В Ученик 2 немецкий язык 530 4 Ю Ученик 3 русский язык 576 5 СВ Ученик 4 обществознание 304 В столбце А записан округ, в котором учится ученик; в столбце В — фамилия; в столбце С — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были занесены данные по 1000 ученикам. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников в Южном округе (Ю) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Каков средний тестовый балл у учеников Юго-Восточного округа (ЮВ)? Ответ на этот вопрос запишите в ячейку Н3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение числа участников из округов с кодами «CВ», «ЮВ» и «З». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83410",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29716,
+    "sha256": "9d43da1771c5b46f1376ac09a4975ef50d5cc97cb6a44d16ccae284aa00009ad",
+    "path": "reviews\\tsk392-oge\\files\\6957_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6958,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10572",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " ней ответь сколько городов имеют численность населения мене",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "100",
+    "1000"
+   ],
+   "missing_in_lms": [
+    "1000"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли численность населения городов разных стран. Ниже приведены первые пять строк таблицы: A B C 1 Город Численность населения Страна 2 Асмун 91,40 Египет 3 Винер-Нойштадт 39,94 Австрия 4 Люлебургаз 100,79 Турция 5 Феклабрук 11,95 Австрия В столбце А указано название города; в столбце В — численность населения (тыс. чел.); в столбце С — название страны. Всего в электронную таблицу были занесены данные по 1000 городам. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько городов, представленных в таблице, имеют численность населения менее 100 тыс. человек? Ответ запишите в ячейку F2. 2. Чему равна средняя численность населения австрийских городов, представленных в таблице? Ответ на этот вопрос с точностью не менее двух знаков после запятой (в тыс. чел.) запишите в ячейку F3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение числа городов из стран «Египет», «Австрия» и «Россия». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83411",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 31037,
+    "sha256": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+    "path": "reviews\\tsk392-oge\\files\\6958_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6959,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10572",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "еления австрийских городов ответ запишите числом десятичный ",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "100",
+    "1000"
+   ],
+   "missing_in_lms": [
+    "100",
+    "1000"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли численность населения городов разных стран. Ниже приведены первые пять строк таблицы: A B C 1 Город Численность населения Страна 2 Асмун 91,40 Египет 3 Винер-Нойштадт 39,94 Австрия 4 Люлебургаз 100,79 Турция 5 Феклабрук 11,95 Австрия В столбце А указано название города; в столбце В — численность населения (тыс. чел.); в столбце С — название страны. Всего в электронную таблицу были занесены данные по 1000 городам. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько городов, представленных в таблице, имеют численность населения менее 100 тыс. человек? Ответ запишите в ячейку F2. 2. Чему равна средняя численность населения австрийских городов, представленных в таблице? Ответ на этот вопрос с точностью не менее двух знаков после запятой (в тыс. чел.) запишите в ячейку F3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение числа городов из стран «Египет», «Австрия» и «Россия». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83411",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 31037,
+    "sha256": "bd36e00d17b657f89d47132b6d81ba6cd92d14fc5c442244b3798c5cfeb8bd98",
+    "path": "reviews\\tsk392-oge\\files\\6959_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6960,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10573",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "веть сколько учащихся школы набрали по информатике больше ба",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учащихся школы № 2 набрали по информатике больше баллов, чем по географии? Ответ на этот вопрос запишите в ячейку F3 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по географии больше 50 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F5 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «1», «3» и «4». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83412",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13364,
+    "sha256": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+    "path": "reviews\\tsk392-oge\\files\\6960_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6961,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10573",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " ученики получившие по географии больше баллов ответ запишит",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учащихся школы № 2 набрали по информатике больше баллов, чем по географии? Ответ на этот вопрос запишите в ячейку F3 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по географии больше 50 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F5 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «1», «3» и «4». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83412",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13364,
+    "sha256": "ed2cf43203490c07f47b65af8bcaa90d54cd7ba88fec3e75ace7298cd2f091cb",
+    "path": "reviews\\tsk392-oge\\files\\6961_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6962,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10574",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "match",
+  "detail": {
+   "fragment": "ая сумма баллов по двум предметам среди школьников получивши",
+   "prose_ok": true,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наименьшая сумма баллов по двум предметам среди школьников, получивших больше 50 баллов по географии или информатике? Ответ на этот вопрос запишите в ячейку F3 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по географии меньше 60 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F5 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «2», «5» и «6». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83413",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13401,
+    "sha256": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+    "path": "reviews\\tsk392-oge\\files\\6962_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6963,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10574",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " ученики получившие по географии меньше баллов ответ запишит",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наименьшая сумма баллов по двум предметам среди школьников, получивших больше 50 баллов по географии или информатике? Ответ на этот вопрос запишите в ячейку F3 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по географии меньше 60 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F5 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «2», «5» и «6». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83413",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13401,
+    "sha256": "98fb7ee5fc948b10e397519747bdf4d4d22a769a0c4c4394b047f8361a16c30e",
+    "path": "reviews\\tsk392-oge\\files\\6963_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6964,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10575",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " ответь чему равна средняя сумма баллов по двум предметам ср",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна средняя сумма баллов по двум предметам среди учащихся школы № 7? Ответ с точностью до одного знака после запятой запишите в ячейку F4 таблицы. 2. Сколько процентов от общего числа участников составили ученики школы № 5? Ответ с точностью до одного знака после запятой запишите в ячейку F6 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «2», «3» и «7». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83414",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13382,
+    "sha256": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+    "path": "reviews\\tsk392-oge\\files\\6964_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6965,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10575",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "тников составили ученики школы ответ запишите числом десятич",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна средняя сумма баллов по двум предметам среди учащихся школы № 7? Ответ с точностью до одного знака после запятой запишите в ячейку F4 таблицы. 2. Сколько процентов от общего числа участников составили ученики школы № 5? Ответ с точностью до одного знака после запятой запишите в ячейку F6 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «2», «3» и «7». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83414",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13382,
+    "sha256": "85e056fe919d3896e7837db4d2d06717d5c6d47ef97707311ebcea1ed7b0f62b",
+    "path": "reviews\\tsk392-oge\\files\\6965_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6966,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10576",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " ней ответь наибольшая сумма баллов по двум предметам среди ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наибольшая сумма баллов по двум предметам среди учащихся школы № 4? Ответ на этот вопрос запишите в ячейку F4 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по информатике не менее 80 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F6 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «1», «6» и «7». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83415",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13381,
+    "sha256": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+    "path": "reviews\\tsk392-oge\\files\\6966_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6967,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10576",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "нформатике не менее баллов ответ запишите числом десятичный ",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по географии и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Школа География Информатика 2 Лиштаев Евгений 1 81 79 3 Будин Сергей 2 63 90 4 Христич Анна 6 62 69 5 Иванов Данила 7 63 74 6 Глотова Анастасия 4 50 66 7 Лещенко Владислав 1 60 50 В столбце А указаны фамилия и имя учащегося; в столбце В — номер школы учащегося; в столбцах С, D — баллы, полученные, соответственно, по географии и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 272 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наибольшая сумма баллов по двум предметам среди учащихся школы № 4? Ответ на этот вопрос запишите в ячейку F4 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по информатике не менее 80 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку F6 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из школ «1», «6» и «7». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83415",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13381,
+    "sha256": "1f2f765b195e4535dba3042bc39f471e81dbd360f972c314de2ca5292107bfca",
+    "path": "reviews\\tsk392-oge\\files\\6967_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6968,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10577",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ответь наибольшая сумма баллов по двум предметам среди учащи",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по физике и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Округ Физика Информатика 2 Брусов Анатолий Западный 18 12 3 Васильев Александр Восточный 56 66 4 Ермишин Роман Северный 44 49 5 Моникашвили Эдуард Центральный 65 78 6 Круглов Никита Центральный 57 67 7 Титова Анастасия Северный 54 63 В столбце А указаны фамилия и имя учащегося; в столбце В — округ учащегося; в столбцах С, D — баллы, полученные, соответственно, по физике и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 266 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на три вопроса. 1. Чему равна наибольшая сумма баллов по двум предметам среди учащихся округа «Северный»? Ответ на этот вопрос запишите в ячейку G1 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по физике больше 60 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку G3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «Западный», «Восточный» и «Северный». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83416",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13121,
+    "sha256": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+    "path": "reviews\\tsk392-oge\\files\\6968_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6969,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10577",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "по физике больше баллов ответ запишите числом десятичный раз",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по физике и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Округ Физика Информатика 2 Брусов Анатолий Западный 18 12 3 Васильев Александр Восточный 56 66 4 Ермишин Роман Северный 44 49 5 Моникашвили Эдуард Центральный 65 78 6 Круглов Никита Центральный 57 67 7 Титова Анастасия Северный 54 63 В столбце А указаны фамилия и имя учащегося; в столбце В — округ учащегося; в столбцах С, D — баллы, полученные, соответственно, по физике и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 266 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на три вопроса. 1. Чему равна наибольшая сумма баллов по двум предметам среди учащихся округа «Северный»? Ответ на этот вопрос запишите в ячейку G1 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по физике больше 60 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку G3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «Западный», «Восточный» и «Северный». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83416",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13121,
+    "sha256": "bf7cafda1ad31f520552e1b7a6f384118d662a28aaaf16be45e73b36ed974f58",
+    "path": "reviews\\tsk392-oge\\files\\6969_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6970,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10578",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "веть наименьшая сумма баллов по двум предметам среди учащихс",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по физике и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Округ Физика Информатика 2 Брусов Анатолий Западный 18 12 3 Васильев Александр Восточный 56 66 4 Ермишин Роман Северный 44 49 5 Моникашвили Эдуард Центральный 65 78 6 Круглов Никита Центральный 57 67 7 Титова Анастасия Северный 54 63 В столбце А указаны фамилия и имя учащегося; в столбце В — округ учащегося; в столбцах С, D — баллы, полученные, соответственно, по физике и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 266 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наименьшая сумма баллов по двум предметам среди учащихся округа «Центральный»? Ответ на этот вопрос запишите в ячейку G1 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по физике меньше 70 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку G3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «Восточный», «Центральный» и «Южный». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83417",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13121,
+    "sha256": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+    "path": "reviews\\tsk392-oge\\files\\6970_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6971,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10578",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "по физике меньше баллов ответ запишите числом десятичный раз",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли результаты тестирования учащихся по физике и информатике. Вот первые строки получившейся таблицы: A B C D 1 Ученик Округ Физика Информатика 2 Брусов Анатолий Западный 18 12 3 Васильев Александр Восточный 56 66 4 Ермишин Роман Северный 44 49 5 Моникашвили Эдуард Центральный 65 78 6 Круглов Никита Центральный 57 67 7 Титова Анастасия Северный 54 63 В столбце А указаны фамилия и имя учащегося; в столбце В — округ учащегося; в столбцах С, D — баллы, полученные, соответственно, по физике и информатике. По каждому предмету можно было набрать от 0 до 100 баллов. Всего в электронную таблицу были занесены данные по 266 учащимся. Порядок записей в таблице произвольный. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Чему равна наименьшая сумма баллов по двум предметам среди учащихся округа «Центральный»? Ответ на этот вопрос запишите в ячейку G1 таблицы. 2. Сколько процентов от общего числа участников составили ученики, получившие по физике меньше 70 баллов? Ответ с точностью до одного знака после запятой запишите в ячейку G3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «Восточный», «Центральный» и «Южный». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83417",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 13121,
+    "sha256": "5059349ef7879dcc052091fad33814e9bb6b8432a8e0bb46e5e2465af721e3da",
+    "path": "reviews\\tsk392-oge\\files\\6971_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6972,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10579",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " и по данным в ней ответь сколько учеников любят информатику",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Среди учеников 5−11 классов проводили социологический опрос. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Любимый предмет Оценка за любимый предмет 2 Александров Артемий 5 информатика 4 3 Александрова Александра 6 алгебра 4 4 Анай Ангыр 10 геометрия 4 5 Ананкина Полина 8 русский язык 4 6 Андреев Ярослав 7 информатика 5 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В - имя, в столбце С — класс, в столбце D — любимый предмет, в столбце Е — оценка за любимый предмет. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников любят информатику? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент учеников 8 класса имеют оценку за любимый предмет 4 или 5? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение любимых предметов «информатика», «алгебра» и «геометрия». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83418",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11352,
+    "sha256": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+    "path": "reviews\\tsk392-oge\\files\\6972_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6973,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10579",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "й или за любимый предмет ответ запишите числом десятичный ра",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Среди учеников 5−11 классов проводили социологический опрос. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Любимый предмет Оценка за любимый предмет 2 Александров Артемий 5 информатика 4 3 Александрова Александра 6 алгебра 4 4 Анай Ангыр 10 геометрия 4 5 Ананкина Полина 8 русский язык 4 6 Андреев Ярослав 7 информатика 5 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В - имя, в столбце С — класс, в столбце D — любимый предмет, в столбце Е — оценка за любимый предмет. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников любят информатику? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент учеников 8 класса имеют оценку за любимый предмет 4 или 5? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение любимых предметов «информатика», «алгебра» и «геометрия». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83418",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11352,
+    "sha256": "6879543fe7dcf1ee542dcfd21fda7be328efe2b9247130ba31f69cba89b9630f",
+    "path": "reviews\\tsk392-oge\\files\\6973_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6974,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10580",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ик и по данным в ней ответь сколько учеников любят алгебру о",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Среди учеников 5−11 классов проводили социологический опрос. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Любимый предмет Оценка за любимый предмет 2 Александров Артемий 5 информатика 4 3 Александрова Александра 6 алгебра 4 4 Анай Ангыр 10 геометрия 4 5 Ананкина Полина 8 русский язык 4 6 Андреев Ярослав 7 информатика 5 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В - имя, в столбце С — класс, в столбце D — любимый предмет, в столбце Е — оценка за любимый предмет. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников любят алгебру? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент учеников 7 класса имеют оценку 3 за любимый предмет? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение любимых предметов «русский язык», «литература» и «физкультура». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83419",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11342,
+    "sha256": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+    "path": "reviews\\tsk392-oge\\files\\6974_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6975,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "10580",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "кой за любимый предмет ответ запишите числом десятичный разд",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Среди учеников 5−11 классов проводили социологический опрос. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Любимый предмет Оценка за любимый предмет 2 Александров Артемий 5 информатика 4 3 Александрова Александра 6 алгебра 4 4 Анай Ангыр 10 геометрия 4 5 Ананкина Полина 8 русский язык 4 6 Андреев Ярослав 7 информатика 5 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В - имя, в столбце С — класс, в столбце D — любимый предмет, в столбце Е — оценка за любимый предмет. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Сколько учеников любят алгебру? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент учеников 7 класса имеют оценку 3 за любимый предмет? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение любимых предметов «русский язык», «литература» и «физкультура». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83419",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11342,
+    "sha256": "450812d811c4007ea9062dad95c42f0c18420040d88cbd051bdbdfa130b68d5e",
+    "path": "reviews\\tsk392-oge\\files\\6975_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6976,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11040",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "по данным в ней ответь каков вес самого тяжелого ученика кла",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "missing_in_lms": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В медицинском кабинете измеряли рост и вес учеников с 5 по 11 классы. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Рост Вес 2 Абашкина Елена 9 168 50 3 Аксенова Мария 9 183 71 4 Александров Константин 7 170 68 5 Алексеева Анастасия 8 162 58 6 Алиев Ариф 7 171 57 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В — имя; в столбце С — класс; в столбце D — рост, в столбце Е — вес учеников. Всего в электронную таблицу были занесены данные по 211 ученикам в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Каков вес самого тяжелого ученика 10 класса? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Какой процент учеников 9 класса имеет рост больше 180? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку НЗ таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из классов 7, 8 и 9. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83420",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11915,
+    "sha256": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+    "path": "reviews\\tsk392-oge\\files\\6976_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6977,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11040",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "са имеет рост больше ответ запишите числом десятичный раздел",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "missing_in_lms": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В медицинском кабинете измеряли рост и вес учеников с 5 по 11 классы. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Рост Вес 2 Абашкина Елена 9 168 50 3 Аксенова Мария 9 183 71 4 Александров Константин 7 170 68 5 Алексеева Анастасия 8 162 58 6 Алиев Ариф 7 171 57 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В — имя; в столбце С — класс; в столбце D — рост, в столбце Е — вес учеников. Всего в электронную таблицу были занесены данные по 211 ученикам в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Каков вес самого тяжелого ученика 10 класса? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Какой процент учеников 9 класса имеет рост больше 180? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку НЗ таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из классов 7, 8 и 9. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83420",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11915,
+    "sha256": "3e481f01b36fafecff08e8779fb19e875cf224f685f1f50a3023b98a96c512bd",
+    "path": "reviews\\tsk392-oge\\files\\6977_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6978,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11041",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "о данным в ней ответь каков рост самого высокого ученика кла",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "missing_in_lms": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В медицинском кабинете измеряли рост и вес учеников с 5 по 11 классы. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Рост Вес 2 Абашкина Елена 9 168 50 3 Аксенова Мария 9 183 71 4 Александров Константин 7 170 68 5 Алексеева Анастасия 8 162 58 6 Алиев Ариф 7 171 57 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В — имя; в столбце С — класс; в столбце D — рост, в столбце Е — вес учеников. Всего в электронную таблицу были занесены данные по 211 ученикам в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Каков рост самого высокого ученика 10 класса? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Какой процент учеников 8 класса имеет вес больше 65? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку НЗ таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из классов 7, 10 и 11. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83421",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11915,
+    "sha256": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+    "path": "reviews\\tsk392-oge\\files\\6978_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6979,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11041",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "са имеет вес больше ответ запишите числом десятичный раздели",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "missing_in_lms": [
+    "162",
+    "168",
+    "170",
+    "171",
+    "183"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В медицинском кабинете измеряли рост и вес учеников с 5 по 11 классы. Результаты занесли в электронную таблицу. Ниже приведены первые пять строк таблицы: A B C D E 1 Фамилия Имя Класс Рост Вес 2 Абашкина Елена 9 168 50 3 Аксенова Мария 9 183 71 4 Александров Константин 7 170 68 5 Алексеева Анастасия 8 162 58 6 Алиев Ариф 7 171 57 Каждая строка таблицы содержит запись об одном ученике. В столбце А записана фамилия, в столбце В — имя; в столбце С — класс; в столбце D — рост, в столбце Е — вес учеников. Всего в электронную таблицу были занесены данные по 211 ученикам в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Каков рост самого высокого ученика 10 класса? Ответ на этот вопрос запишите в ячейку Н2 таблицы. 2. Какой процент учеников 8 класса имеет вес больше 65? Ответ на этот вопрос с точностью не менее 2 знаков после запятой запишите в ячейку НЗ таблицы. 3. Постройте круговую диаграмму, отображающую соотношение учеников из классов 7, 10 и 11. Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83421",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 11915,
+    "sha256": "6eb3ef5d2b9e294e4a20883bac641a249f50c09b9a04003539df5eb0183831e5",
+    "path": "reviews\\tsk392-oge\\files\\6979_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6980,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11042",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "в ней ответь в какое количество городов можно долететь менее",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Ваня Иванов собирался полететь на каникулах на отдых и записал расписание перелетов из Москвы в разные города в виде таблицы. Ниже приведены первые пять строк таблицы. А B C 1 Город Страна Примерное время в пути 2 Абакан РОССИЯ 4 3 Абу-Даби ОАЭ 5 4 Адлер РОССИЯ 2 5 Акаба ЕГИПЕТ 5 Каждая строка таблицы содержит запись об одном маршруте перелета. В столбце A записан город назначения, в столбце B — страна назначения; в столбце C — примерное время в пути. Всего в электронную таблицу были занесены данные по 183 маршруту в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. В какое количество городов можно долететь менее чем за 4 часа? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент от всех 5-часовых перелетов составляют 5-часовые перелеты в Египет? Ответ на этот вопрос нужно записать в ячейку H3 таблицы с точностью одного знака после запятой. 3. Постройте круговую диаграмму, отображающую соотношение стран, в которые есть перелеты: «РОССИЯ», «ЕГИПЕТ», «ГЕРМАНИЯ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83425",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 8953,
+    "sha256": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+    "path": "reviews\\tsk392-oge\\files\\6980_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6981,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11042",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "ставляют часовые перелеты в египет ответ запишите числом дес",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Ваня Иванов собирался полететь на каникулах на отдых и записал расписание перелетов из Москвы в разные города в виде таблицы. Ниже приведены первые пять строк таблицы. А B C 1 Город Страна Примерное время в пути 2 Абакан РОССИЯ 4 3 Абу-Даби ОАЭ 5 4 Адлер РОССИЯ 2 5 Акаба ЕГИПЕТ 5 Каждая строка таблицы содержит запись об одном маршруте перелета. В столбце A записан город назначения, в столбце B — страна назначения; в столбце C — примерное время в пути. Всего в электронную таблицу были занесены данные по 183 маршруту в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. В какое количество городов можно долететь менее чем за 4 часа? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент от всех 5-часовых перелетов составляют 5-часовые перелеты в Египет? Ответ на этот вопрос нужно записать в ячейку H3 таблицы с точностью одного знака после запятой. 3. Постройте круговую диаграмму, отображающую соотношение стран, в которые есть перелеты: «РОССИЯ», «ЕГИПЕТ», «ГЕРМАНИЯ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83425",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 8953,
+    "sha256": "e56d5a5d8785f26bbec8ac12728270a5fbd2dc14367ffa4f583a6d790618275f",
+    "path": "reviews\\tsk392-oge\\files\\6981_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6982,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11044",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "еть для какого количества городов расчетное время перелета с",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Ваня Иванов собирался полететь на каникулах на отдых и записал расписание перелетов из Москвы в разные города в виде таблицы. Ниже приведены первые пять строк таблицы. А B C 1 Город Страна Примерное время в пути 2 Абакан РОССИЯ 4 3 Абу-Даби ОАЭ 5 4 Адлер РОССИЯ 2 5 Акаба ЕГИПЕТ 5 Каждая строка таблицы содержит запись об одном маршруте перелета. В столбце A записан город назначения, в столбце B — страна назначения; в столбце C — примерное время в пути. Всего в электронную таблицу были занесены данные по 191 маршруту в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Для какого количества городов расчетное время перелета составляет более 5 часов? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент от всех 6-часовых перелетов составляют 6-часовые перелеты в города России? Ответ на этот вопрос в виде целого числа нужно записать в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение стран, в которые есть перелеты: «ЕГИПЕТ», «ИТАЛИЯ», «УКРАИНА». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83426",
+    "name": "task 14 (4).ods",
+    "ext": "ods",
+    "size": 9129,
+    "sha256": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+    "path": "reviews\\tsk392-oge\\files\\6982_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6983,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11044",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "вляют часовые перелеты в города россии ответ запишите числом",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Ваня Иванов собирался полететь на каникулах на отдых и записал расписание перелетов из Москвы в разные города в виде таблицы. Ниже приведены первые пять строк таблицы. А B C 1 Город Страна Примерное время в пути 2 Абакан РОССИЯ 4 3 Абу-Даби ОАЭ 5 4 Адлер РОССИЯ 2 5 Акаба ЕГИПЕТ 5 Каждая строка таблицы содержит запись об одном маршруте перелета. В столбце A записан город назначения, в столбце B — страна назначения; в столбце C — примерное время в пути. Всего в электронную таблицу были занесены данные по 191 маршруту в алфавитном порядке. Выполните задание. Откройте файл с данной электронной таблицей (расположение файла Вам сообщат организаторы экзамена). На основании данных, содержащихся в этой таблице, ответьте на два вопроса. 1. Для какого количества городов расчетное время перелета составляет более 5 часов? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какой процент от всех 6-часовых перелетов составляют 6-часовые перелеты в города России? Ответ на этот вопрос в виде целого числа нужно записать в ячейку H3 таблицы. 3. Постройте круговую диаграмму, отображающую соотношение стран, в которые есть перелеты: «ЕГИПЕТ», «ИТАЛИЯ», «УКРАИНА». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83426",
+    "name": "task 14 (4).ods",
+    "ext": "ods",
+    "size": 9129,
+    "sha256": "9c063bb00ab32964d3aabf1dd324a3586991ef6100ba68c568cc12fa6d5310d7",
+    "path": "reviews\\tsk392-oge\\files\\6983_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6984,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11046",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " в ней ответь сколько учеников в южном округе ю выбрали англ",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы. A B C D 1 Округ Фамилия Предмет Балл 2 С Ученик 1 Обществознание 246 3 В Ученик 2 Немецкий язык 530 4 Ю Ученик 3 Русский язык 576 5 СВ Ученик 4 Обществознание 304 В столбце A записан округ, в котором учится ученик; в столбце B — фамилия; в столбце C — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были внесены данные по одной тысяче учеников. Выполните задание. 1. Сколько учеников в Южном округе (Ю) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Каков средний тестовый балл у учеников Юго-Восточного округа (ЮВ)? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «С», «В», «Ю». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83427",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29530,
+    "sha256": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+    "path": "reviews\\tsk392-oge\\files\\6984_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6985,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11046",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ков юго восточного округа юв ответ запишите числом десятичны",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы. A B C D 1 Округ Фамилия Предмет Балл 2 С Ученик 1 Обществознание 246 3 В Ученик 2 Немецкий язык 530 4 Ю Ученик 3 Русский язык 576 5 СВ Ученик 4 Обществознание 304 В столбце A записан округ, в котором учится ученик; в столбце B — фамилия; в столбце C — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были внесены данные по одной тысяче учеников. Выполните задание. 1. Сколько учеников в Южном округе (Ю) выбрали в качестве любимого предмета английский язык? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Каков средний тестовый балл у учеников Юго-Восточного округа (ЮВ)? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «С», «В», «Ю». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83427",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29530,
+    "sha256": "b48bb1fb95316f53d2beef1a8ce4b08f1c99dce34480ea09fb9a464a77d17c74",
+    "path": "reviews\\tsk392-oge\\files\\6985_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6986,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11047",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": " сколько учеников в северо западном округе сз выбрали русски",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы. A B C D 1 Округ Фамилия Предмет Балл 2 С Ученик 1 Обществознание 246 3 В Ученик 2 Немецкий язык 530 4 Ю Ученик 3 Русский язык 576 5 СВ Ученик 4 Обществознание 304 В столбце A записан округ, в котором учится ученик; в столбце B — фамилия; в столбце C — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были внесены данные по одной тысяче учеников. Выполните задания. 1. Сколько учеников в Северо-Западном округе (СЗ) выбрали в качестве любимого предмета русский язык? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Каков средний тестовый балл у учеников Западного округа (З)? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «СВ», «З», «ЮЗ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83428",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29529,
+    "sha256": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+    "path": "reviews\\tsk392-oge\\files\\6986_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6987,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11047",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "еников западного округа з ответ запишите числом десятичный р",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "missing_in_lms": [
+    "246",
+    "304",
+    "530",
+    "576"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные о тестировании учеников. Ниже приведены первые пять строк таблицы. A B C D 1 Округ Фамилия Предмет Балл 2 С Ученик 1 Обществознание 246 3 В Ученик 2 Немецкий язык 530 4 Ю Ученик 3 Русский язык 576 5 СВ Ученик 4 Обществознание 304 В столбце A записан округ, в котором учится ученик; в столбце B — фамилия; в столбце C — любимый предмет; в столбце D — тестовый балл. Всего в электронную таблицу были внесены данные по одной тысяче учеников. Выполните задания. 1. Сколько учеников в Северо-Западном округе (СЗ) выбрали в качестве любимого предмета русский язык? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Каков средний тестовый балл у учеников Западного округа (З)? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение учеников из округов «СВ», «З», «ЮЗ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83428",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 29529,
+    "sha256": "8625d09fee4ca3d0d99ad97edbebdf441d5efbe1dc04c54430c8a1411fbc5f5c",
+    "path": "reviews\\tsk392-oge\\files\\6987_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6988,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11048",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " каким было среднее значение атмосферного давления в весенни",
+   "prose_ok": true,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. A B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 С 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B — среднесуточная температура воздуха для указанной даты, в столбце C — количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D — среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты — одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задания. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте круговую диаграмму. 1. Каким было среднее значение атмосферного давления в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какое среднее количество осадков выпадало за сутки в те дни года, когда дул северо-западный (СЗ) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «З», «СЗ», «ЮВ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83429",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+    "path": "reviews\\tsk392-oge\\files\\6988_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6989,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11048",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "те дни года когда дул северо западный сз ветер ответ запишит",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. A B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 С 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B — среднесуточная температура воздуха для указанной даты, в столбце C — количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D — среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты — одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задания. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте круговую диаграмму. 1. Каким было среднее значение атмосферного давления в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какое среднее количество осадков выпадало за сутки в те дни года, когда дул северо-западный (СЗ) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «З», «СЗ», «ЮВ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83429",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "06daf218b33aa9b4810cf404e78ea4253d558d9392d75345b275ff141f1d3df9",
+    "path": "reviews\\tsk392-oge\\files\\6989_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6990,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11050",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": " какое среднее количество осадков выпадало за сутки в весенн",
+   "prose_ok": true,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. A B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 С 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B — среднесуточная температура воздуха для указанной даты, в столбце C — количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D — среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты — одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте круговую диаграмму. 1. Какое среднее количество осадков выпадало за сутки в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какая средняя скорость ветра была в те дни года, когда дул юго-западный (ЮЗ) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «СЗ», «Ю», «В». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83430",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+    "path": "reviews\\tsk392-oge\\files\\6990_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6991,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11050",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "года когда дул юго западный юз ветер ответ запишите числом д",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. A B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 С 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B — среднесуточная температура воздуха для указанной даты, в столбце C — количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D — среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты — одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте круговую диаграмму. 1. Какое среднее количество осадков выпадало за сутки в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы. 2. Какая средняя скорость ветра была в те дни года, когда дул юго-западный (ЮЗ) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «СЗ», «Ю», «В». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83430",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "0afe37a23d1a2ddbeea9568092288980138077348e2411bbb3bee581eef54e08",
+    "path": "reviews\\tsk392-oge\\files\\6991_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6992,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11051",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ответь какой была средняя температура воздуха в весенние мес",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. А B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 C 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B – среднесуточная температура воздуха для указанной даты, в столбце C – количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D – среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты – одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте диаграмму: 1. Какой была средняя температура воздуха в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы с точностью до сотых. 2. Какое среднее количество осадков выпадало за сутки в те дни года, когда дул южный (Ю) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью до сотых. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «ЮВ», «Ю», «ЮЗ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83431",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+    "path": "reviews\\tsk392-oge\\files\\6992_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6993,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11051",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "mismatch",
+  "detail": {
+   "fragment": "ки в те дни года когда дул южный ю ветер ответ запишите числ",
+   "prose_ok": false,
+   "key_src_numbers": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "missing_in_lms": [
+    "747",
+    "748",
+    "751",
+    "752"
+   ],
+   "nums_ok": false
+  },
+  "answer_src": null,
+  "src_text": "В электронную таблицу занесли данные наблюдения за погодой в течение одного года. Ниже приведены первые пять строк таблицы. А B C D E F 1 Дата Температура Осадки Давление Ветер Скорость ветра 2 1 января 0,7 15,2 748 ЮВ 4,2 3 2 января 0,4 4,6 751 В 4,7 4 3 января –1,9 1,4 747 C 2,4 5 4 января –7,7 0,2 752 З 4,7 В столбце A записана дата наблюдения, в столбце B – среднесуточная температура воздуха для указанной даты, в столбце C – количество выпавших осадков (в миллиметрах) для указанной даты, в столбце D – среднесуточное атмосферное давление (в миллиметрах ртутного столба). В столбце E записано направление ветра для указанной даты – одно из восьми возможных значений «СЗ», «С», «СВ», «В», «ЮВ», «Ю», «ЮЗ», «З». В столбце F записана среднесуточная скорость ветра (в метрах в секунду). Всего в электронную таблицу были занесены данные по всем 365 дням года в хронологическом порядке. Выполните задание. Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте диаграмму: 1. Какой была средняя температура воздуха в весенние месяцы (март, апрель, май)? Ответ на этот вопрос запишите в ячейку H2 таблицы с точностью до сотых. 2. Какое среднее количество осадков выпадало за сутки в те дни года, когда дул южный (Ю) ветер? Ответ на этот вопрос запишите в ячейку H3 таблицы с точностью до сотых. Ответы должны быть вычислены с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение направлений ветров «ЮВ», «Ю», «ЮЗ». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83431",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 16522,
+    "sha256": "370c7886fb4662f04933fb1b3d7b524258f4628a98144d667a4ff9f9f554d18e",
+    "path": "reviews\\tsk392-oge\\files\\6993_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6994,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11054",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "match",
+  "detail": {
+   "fragment": " какое количество учащихся получило удовлетворительные оценк",
+   "prose_ok": true,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Результаты сдачи выпускных экзаменов по алгебре, русскому языку, физике и информатике учащимися 9 класса некоторого города были занесены в электронную таблицу. На рисунке приведены первые строки получившейся таблицы. А B C D E F 1 Фамилия Имя Алгебра Русский Физика Информатике 2 Абапольников Роман 4 3 5 3 3 Абрамов Кирилл 2 3 3 4 4 Авдонин Николай 4 3 4 3 В столбце A электронной таблицы записана фамилия учащегося, в столбце B — имя учащегося, в столбцах C, D, E и F — оценки учащегося по алгебре, русскому языку, физике и информатике. Оценки могут принимать значения от 2 до 5. Всего в электронную таблицу были занесены результаты 1000 учащихся. Выполните задание Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте диаграмму. 1. Какое количество учащихся получило удовлетворительные оценки (то есть оценки выше 2) на всех экзаменах? Ответ на этот вопрос запишите в ячейку I 2 таблицы. 2. Для группы учащихся, которые получили удовлетворительные оценки на всех экзаменах, посчитайте средний балл, полученный ими на экзамене по физике . Ответ на этот вопрос запишите в ячейку I 3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение оценок по информатике «3», «4» и «5». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83432",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 33441,
+    "sha256": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+    "path": "reviews\\tsk392-oge\\files\\6994_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ },
+ {
+  "id": 6995,
+  "course_id": 1179,
+  "source": "sdamgia",
+  "source_id": "11054",
+  "via": "external_uid",
+  "phrase": null,
+  "verdict": "weak",
+  "detail": {
+   "fragment": "летворительными оценками на всех экзаменах ответ запишите чи",
+   "prose_ok": false,
+   "key_src_numbers": [],
+   "missing_in_lms": [],
+   "nums_ok": true
+  },
+  "answer_src": null,
+  "src_text": "Результаты сдачи выпускных экзаменов по алгебре, русскому языку, физике и информатике учащимися 9 класса некоторого города были занесены в электронную таблицу. На рисунке приведены первые строки получившейся таблицы. А B C D E F 1 Фамилия Имя Алгебра Русский Физика Информатике 2 Абапольников Роман 4 3 5 3 3 Абрамов Кирилл 2 3 3 4 4 Авдонин Николай 4 3 4 3 В столбце A электронной таблицы записана фамилия учащегося, в столбце B — имя учащегося, в столбцах C, D, E и F — оценки учащегося по алгебре, русскому языку, физике и информатике. Оценки могут принимать значения от 2 до 5. Всего в электронную таблицу были занесены результаты 1000 учащихся. Выполните задание Откройте файл с данной электронной таблицей. На основании данных, содержащихся в этой таблице, ответьте на два вопроса и постройте диаграмму. 1. Какое количество учащихся получило удовлетворительные оценки (то есть оценки выше 2) на всех экзаменах? Ответ на этот вопрос запишите в ячейку I 2 таблицы. 2. Для группы учащихся, которые получили удовлетворительные оценки на всех экзаменах, посчитайте средний балл, полученный ими на экзамене по физике . Ответ на этот вопрос запишите в ячейку I 3 таблицы с точностью не менее двух знаков после запятой. 3. Постройте круговую диаграмму, отображающую соотношение оценок по информатике «3», «4» и «5». Левый верхний угол диаграммы разместите вблизи ячейки G6. task14.ods Спрятать решение ",
+  "files": [
+   {
+    "url": "https://inf-oge.sdamgia.ru/get_file?id=83432",
+    "name": "task 14.ods",
+    "ext": "ods",
+    "size": 33441,
+    "sha256": "cd90a8e35c5717992dc6b1d4952e02e1774d29fd5e00c14eea387acaa028fc08",
+    "path": "reviews\\tsk392-oge\\files\\6995_0.ods",
+    "ext_ok": null
+   }
+  ],
+  "ext_ok": null,
+  "n_files": 1
+ }
+]

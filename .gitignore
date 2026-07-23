@@ -69,3 +69,7 @@ out/
 # reviews/tsk350-dedup/dump_tasks.py; в истории им не место.
 reviews/tsk390-dedup/files/
 reviews/tsk350-dedup/tasks_dump.json
+
+# tsk-392: то же для партии ОГЭ. Архивы каталогов ОГЭ-11/12 крупные (DEMO-12.rar — 33 МБ,
+# и он один на десятки заданий), суммарно ~1 ГБ.
+reviews/tsk392-oge/files/
