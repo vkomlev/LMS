@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, get_current_user
 from app.auth.current_user import CurrentUser
+from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, MessageResponse, RefreshRequest
 from app.services.auth import session_service
 from app.services.auth.cookie import (
@@ -14,9 +15,11 @@ from app.services.auth.cookie import (
     set_refresh_cookie,
     set_session_cookie,
 )
+from app.services.rate_limit_service import get_redis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/session", tags=["auth"])
+_settings = Settings()
 
 
 @router.post("/refresh", response_model=AuthTokenResponse)
@@ -41,7 +44,8 @@ async def refresh(
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "refresh_token отсутствует"
         )
-    result = await session_service.refresh_session(db, incoming_refresh)
+    redis = get_redis(_settings.redis_url)
+    result = await session_service.refresh_session(db, incoming_refresh, redis)
     if result is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "refresh_token недействителен или истёк")
     access_token, refresh_token, _ = result

@@ -205,6 +205,7 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         "test_materials_bulk_upsert.py",
         "test_migrations.py",
         "test_repos_smoke.py",
+        "test_session_refresh_http_race_tsk235.py",
         "test_tasks_order_position_api.py",
         "test_tasks_reorder_api.py",
         "test_tsk345_reorder_by_difficulty.py",

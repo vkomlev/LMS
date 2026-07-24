@@ -41,5 +41,10 @@ class UserSession(Base):
         DateTime(timezone=True), nullable=True
     )
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    replaced_by_session_id: Mapped[Optional[UUID]] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("user_session.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     user: Mapped["Users"] = relationship("Users", back_populates="sessions")
