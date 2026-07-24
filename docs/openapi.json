@@ -15998,6 +15998,120 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/tasks/{task_id}/history": {
+      "get": {
+        "tags": [
+          "teacher_task_history"
+        ],
+        "summary": "История выполнения задания учеником (для преподавателя)",
+        "description": "Полная история по заданию + условие + правило проверки/эталон.\n\nACL до сборки данных: курс задания резолвится первым, доступ проверяется тем\nже ACL портала, что и правка прогресса. Ответ содержит блок ``solution`` —\nэталон отдаётся только этому (преподавательскому) эндпоинту.",
+        "operationId": "get_task_history_for_teacher_api_v1_teacher_students__student_id__tasks__task_id__history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ID задания",
+              "title": "Task Id"
+            },
+            "description": "ID задания"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskHistoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/assignment-rules/bulk-upsert": {
       "post": {
         "tags": [
@@ -17271,6 +17385,108 @@
                     "$ref": "#/components/schemas/HistoryItem"
                   },
                   "title": "Response Get History Api V1 Me History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/tasks/{task_id}/history": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Моя история по конкретному заданию",
+        "description": "История ученика по одному заданию: свои попытки, комментарии преподавателя,\nсвои обращения за помощью, подсказки.\n\nПравило проверки и эталонный ответ ученику НЕ отдаются — ``solution`` всегда\n``null`` (эталон только преподавателю, tsk-349/tsk-254). Доступ ограничен\nзадачами в дереве курсов ученика (`assert_task_access`), чтобы условие чужого\nзадания нельзя было прочитать перебором ``task_id``.",
+        "operationId": "get_my_task_history_api_v1_me_tasks__task_id__history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ID задания",
+              "title": "Task Id"
+            },
+            "description": "ID задания"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskHistoryResponse"
                 }
               }
             }
@@ -28304,6 +28520,534 @@
           "items"
         ],
         "title": "TaskFindByExternalResponse"
+      },
+      "TaskHistoryAcceptedAnswer": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "title": "Value"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value",
+          "score"
+        ],
+        "title": "TaskHistoryAcceptedAnswer",
+        "description": "Один допустимый эталонный ответ и баллы за него."
+      },
+      "TaskHistoryAttempt": {
+        "properties": {
+          "task_result_id": {
+            "type": "integer",
+            "title": "Task Result Id"
+          },
+          "attempt_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt Id"
+          },
+          "attempt_no": {
+            "type": "integer",
+            "title": "Attempt No",
+            "description": "Порядковый номер попытки (1-based, по времени сдачи)"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submitted At"
+          },
+          "score": {
+            "type": "integer",
+            "title": "Score"
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score"
+          },
+          "is_correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Correct",
+            "description": "None — сдано и ждёт ручной проверки преподавателя"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "pending_review"
+            ],
+            "title": "Status",
+            "description": "passed | failed | pending_review (по is_correct)"
+          },
+          "answer_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Json",
+            "description": "Ответ самого ученика в этой попытке"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Комментарий преподавателя (ручная проверка / regrade), из metrics.comment"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At",
+            "description": "Когда преподаватель проверил (у авто-типов null)"
+          },
+          "manual": {
+            "type": "boolean",
+            "title": "Manual",
+            "description": "True — зачтено вручную преподавателем (source_system=manual_teacher)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_result_id",
+          "attempt_no",
+          "submitted_at",
+          "score",
+          "max_score",
+          "status"
+        ],
+        "title": "TaskHistoryAttempt",
+        "description": "Одна попытка ученика по заданию (строка ``task_results`` неотменённой попытки)."
+      },
+      "TaskHistoryHelpReply": {
+        "properties": {
+          "reply_id": {
+            "type": "integer",
+            "title": "Reply Id"
+          },
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "close_after_reply": {
+            "type": "boolean",
+            "title": "Close After Reply",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reply_id",
+          "teacher_id",
+          "body",
+          "created_at"
+        ],
+        "title": "TaskHistoryHelpReply",
+        "description": "Ответ преподавателя в диалоге заявки помощи."
+      },
+      "TaskHistoryHelpRequest": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "request_type": {
+            "type": "string",
+            "enum": [
+              "manual_help",
+              "blocked_limit"
+            ],
+            "title": "Request Type"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Текст обращения ученика (у авто-заявок blocked_limit — null)"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "resolution_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Comment"
+          },
+          "replies": {
+            "items": {
+              "$ref": "#/components/schemas/TaskHistoryHelpReply"
+            },
+            "type": "array",
+            "title": "Replies"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status",
+          "request_type",
+          "created_at",
+          "replies"
+        ],
+        "title": "TaskHistoryHelpRequest",
+        "description": "Обращение ученика за помощью по заданию + диалог ответов преподавателя."
+      },
+      "TaskHistoryHints": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "text": {
+            "type": "integer",
+            "title": "Text"
+          },
+          "video": {
+            "type": "integer",
+            "title": "Video"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "text",
+          "video"
+        ],
+        "title": "TaskHistoryHints",
+        "description": "Сколько подсказок ученик открыл по этому заданию (все поля всегда заполнены)."
+      },
+      "TaskHistoryResponse": {
+        "properties": {
+          "user_id": {
+            "type": "integer",
+            "title": "User Id"
+          },
+          "task": {
+            "$ref": "#/components/schemas/TaskHistoryTaskInfo"
+          },
+          "attempts": {
+            "items": {
+              "$ref": "#/components/schemas/TaskHistoryAttempt"
+            },
+            "type": "array",
+            "title": "Attempts"
+          },
+          "help_requests": {
+            "items": {
+              "$ref": "#/components/schemas/TaskHistoryHelpRequest"
+            },
+            "type": "array",
+            "title": "Help Requests"
+          },
+          "hints": {
+            "$ref": "#/components/schemas/TaskHistoryHints"
+          },
+          "solution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskHistorySolution"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Правило проверки / эталонный ответ — ТОЛЬКО в преподавательском ответе. У ученика всегда null (эталон ученику не показываем)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_id",
+          "task",
+          "attempts",
+          "help_requests",
+          "hints"
+        ],
+        "title": "TaskHistoryResponse",
+        "description": "История выполнения задания по паре (ученик, задание)."
+      },
+      "TaskHistorySolution": {
+        "properties": {
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "max_score": {
+            "type": "integer",
+            "title": "Max Score"
+          },
+          "scoring_mode": {
+            "type": "string",
+            "title": "Scoring Mode",
+            "description": "all_or_nothing | partial | custom"
+          },
+          "auto_check": {
+            "type": "boolean",
+            "title": "Auto Check"
+          },
+          "manual_review_required": {
+            "type": "boolean",
+            "title": "Manual Review Required"
+          },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment",
+            "default": false
+          },
+          "accepted_answers": {
+            "items": {
+              "$ref": "#/components/schemas/TaskHistoryAcceptedAnswer"
+            },
+            "type": "array",
+            "title": "Accepted Answers",
+            "description": "SA/SA_COM/TBL_COM: допустимые эталонные ответы (для TBL_COM — строкой, ячейки через пробел, ряды через перевод строки)"
+          },
+          "correct_option_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Correct Option Ids",
+            "description": "SC/MC: id правильных вариантов ответа"
+          },
+          "row_order_matters": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Order Matters",
+            "description": "TBL_COM: важен ли порядок рядов при сверке"
+          },
+          "normalization": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Normalization",
+            "description": "Шаги нормализации перед сравнением (SA/SA_COM/TBL_COM)"
+          },
+          "use_regex": {
+            "type": "boolean",
+            "title": "Use Regex",
+            "default": false
+          },
+          "regex": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regex"
+          }
+        },
+        "type": "object",
+        "required": [
+          "max_score",
+          "scoring_mode",
+          "auto_check",
+          "manual_review_required",
+          "accepted_answers",
+          "correct_option_ids",
+          "normalization"
+        ],
+        "title": "TaskHistorySolution",
+        "description": "Правило проверки и эталонный ответ задания.\n\nТОЛЬКО для преподавателя. В ученическом ответе весь блок отсутствует\n(``TaskHistoryResponse.solution = null``) — он там даже не собирается."
+      },
+      "TaskHistoryTaskInfo": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type",
+            "description": "Тип задания (SC/MC/SA/SA_COM/TBL_COM/TA/…)"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "stem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stem",
+            "description": "Полное условие задания"
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "table_columns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Columns",
+            "description": "TBL_COM: число столбцов таблицы ответа (из task_content.table.columns). Нужно для рендера ответа/эталона таблицей, а не строкой (tsk-366)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "title": "TaskHistoryTaskInfo",
+        "description": "Мета-информация о задании (не содержит правила проверки/эталона)."
       },
       "TaskLimitOverrideRequest": {
         "properties": {

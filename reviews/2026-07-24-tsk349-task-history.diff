@@ -1,0 +1,994 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 4da3e21..72dccb4 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -345,6 +345,10 @@ app.include_router(teacher_assignments_router, prefix=API_PREFIX)
+ from app.api.v1.teacher_progress import router as teacher_progress_router
+ app.include_router(teacher_progress_router, prefix=API_PREFIX)
+ 
++# История выполнения задания учеником для преподавателя (tsk-349)
++from app.api.v1.teacher_task_history import router as teacher_task_history_router
++app.include_router(teacher_task_history_router, prefix=API_PREFIX)
++
+ # Upsert правил назначения из публикатора (tsk-120, ADR-0042)
+ from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
+ app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index b340c79..d01a41b 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -47,7 +47,9 @@ from app.schemas.me import (
+     StreakRead,
+     SyllabusStatesResponse,
+ )
+-from app.services import me_service, roles_service
++from app.schemas.task_history import TaskHistoryResponse
++from app.services import me_service, roles_service, task_history_service
++from app.services.tasks_acl_service import assert_task_access
+ from app.services.audit_service import log_event
+ from app.services.full_name_validator import validate_full_name
+ from app.services.auth import (
+@@ -269,6 +271,43 @@ async def get_history(
+     return [HistoryItem(**row) for row in rows]
+ 
+ 
++# ── GET /me/tasks/{task_id}/history (tsk-349) ───────────────────────────────
++
++@router.get(
++    "/tasks/{task_id}/history",
++    response_model=TaskHistoryResponse,
++    summary="Моя история по конкретному заданию",
++)
++async def get_my_task_history(
++    task_id: int = Path(..., ge=1, description="ID задания"),
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> TaskHistoryResponse:
++    """История ученика по одному заданию: свои попытки, комментарии преподавателя,
++    свои обращения за помощью, подсказки.
++
++    Правило проверки и эталонный ответ ученику НЕ отдаются — ``solution`` всегда
++    ``null`` (эталон только преподавателю, tsk-349/tsk-254). Доступ ограничен
++    задачами в дереве курсов ученика (`assert_task_access`), чтобы условие чужого
++    задания нельзя было прочитать перебором ``task_id``.
++    """
++    course_id = await task_history_service.course_of_task(db, task_id)
++    if course_id is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
++        )
++    await assert_task_access(db, current_user=current_user, task_course_id=course_id)
++
++    data = await task_history_service.build_task_history(
++        db, user_id=current_user.id, task_id=task_id, include_solution=False
++    )
++    if data is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
++        )
++    return TaskHistoryResponse(**data)
++
++
+ # ── POST /me/identity/{kind}/link ───────────────────────────────────────────
+ 
+ def _conflict_to_http(e: IdentityConflictError) -> HTTPException:
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+new file mode 100644
+index 0000000..9d6198d
+--- /dev/null
++++ b/app/schemas/task_history.py
+@@ -0,0 +1,164 @@
++"""Схемы API «история выполнения задания по паре (ученик, задание)» (tsk-349).
++
++Единый ответ на два эндпоинта:
++
++* ученический ``GET /me/tasks/{task_id}/history`` — свои попытки, комментарии
++  учителя, свои обращения за помощью, подсказки. Поле ``solution`` всегда
++  ``null`` — правило проверки и эталон ученику не отдаются (инвариант
++  «эталон только преподавателю», класс answer-in-stem, tsk-254);
++* преподавательский ``GET /teacher/students/{student_id}/tasks/{task_id}/history``
++  — то же плюс полное правило проверки/эталон в ``solution`` и диалог заявок помощи.
++
++Разграничение видимости сделано СТРУКТУРНО, а не фильтрацией на выходе: блок
++``solution`` собирается только в преподавательской ветке сервиса, ученический путь
++его не строит вовсе (вырезание уже собранного — источник утечек).
++"""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Any, Dict, List, Literal, Optional
++
++from pydantic import BaseModel, Field
++
++
++class TaskHistoryAttempt(BaseModel):
++    """Одна попытка ученика по заданию (строка ``task_results`` неотменённой попытки)."""
++
++    task_result_id: int
++    attempt_id: Optional[int] = None
++    attempt_no: int = Field(
++        ..., description="Порядковый номер попытки (1-based, по времени сдачи)"
++    )
++    submitted_at: datetime
++    score: int
++    max_score: int
++    is_correct: Optional[bool] = Field(
++        default=None, description="None — сдано и ждёт ручной проверки преподавателя"
++    )
++    status: Literal["passed", "failed", "pending_review"] = Field(
++        ..., description="passed | failed | pending_review (по is_correct)"
++    )
++    answer_json: Optional[Dict[str, Any]] = Field(
++        default=None, description="Ответ самого ученика в этой попытке"
++    )
++    comment: Optional[str] = Field(
++        default=None,
++        description="Комментарий преподавателя (ручная проверка / regrade), из metrics.comment",
++    )
++    checked_at: Optional[datetime] = Field(
++        default=None, description="Когда преподаватель проверил (у авто-типов null)"
++    )
++    manual: bool = Field(
++        default=False,
++        description="True — зачтено вручную преподавателем (source_system=manual_teacher)",
++    )
++
++
++class TaskHistoryHelpReply(BaseModel):
++    """Ответ преподавателя в диалоге заявки помощи."""
++
++    reply_id: int
++    teacher_id: int
++    body: str
++    close_after_reply: bool = False
++    created_at: datetime
++
++
++class TaskHistoryHelpRequest(BaseModel):
++    """Обращение ученика за помощью по заданию + диалог ответов преподавателя."""
++
++    request_id: int
++    status: Literal["open", "closed"]
++    request_type: Literal["manual_help", "blocked_limit"]
++    message: Optional[str] = Field(
++        default=None, description="Текст обращения ученика (у авто-заявок blocked_limit — null)"
++    )
++    created_at: datetime
++    closed_at: Optional[datetime] = None
++    resolution_comment: Optional[str] = None
++    # Обязательное (сервис всегда заполняет) — чтобы клиентский тип был не-optional.
++    replies: List[TaskHistoryHelpReply] = Field(...)
++
++
++class TaskHistoryHints(BaseModel):
++    """Сколько подсказок ученик открыл по этому заданию (все поля всегда заполнены)."""
++
++    total: int
++    text: int
++    video: int
++
++
++class TaskHistoryTaskInfo(BaseModel):
++    """Мета-информация о задании (не содержит правила проверки/эталона)."""
++
++    task_id: int
++    external_uid: Optional[str] = None
++    type: Optional[str] = Field(default=None, description="Тип задания (SC/MC/SA/SA_COM/TBL_COM/TA/…)")
++    title: Optional[str] = None
++    stem: Optional[str] = Field(default=None, description="Полное условие задания")
++    max_score: Optional[int] = None
++    course_id: Optional[int] = None
++    course_title: Optional[str] = None
++    table_columns: Optional[int] = Field(
++        default=None,
++        description=(
++            "TBL_COM: число столбцов таблицы ответа (из task_content.table.columns). "
++            "Нужно для рендера ответа/эталона таблицей, а не строкой (tsk-366)."
++        ),
++    )
++
++
++class TaskHistoryAcceptedAnswer(BaseModel):
++    """Один допустимый эталонный ответ и баллы за него."""
++
++    value: str
++    score: int
++
++
++class TaskHistorySolution(BaseModel):
++    """Правило проверки и эталонный ответ задания.
++
++    ТОЛЬКО для преподавателя. В ученическом ответе весь блок отсутствует
++    (``TaskHistoryResponse.solution = null``) — он там даже не собирается.
++    """
++
++    type: Optional[str] = None
++    max_score: int
++    scoring_mode: str = Field(..., description="all_or_nothing | partial | custom")
++    auto_check: bool
++    manual_review_required: bool
++    requires_attachment: bool = False
++    accepted_answers: List[TaskHistoryAcceptedAnswer] = Field(
++        ...,
++        description="SA/SA_COM/TBL_COM: допустимые эталонные ответы (для TBL_COM — строкой, ячейки через пробел, ряды через перевод строки)",
++    )
++    correct_option_ids: List[str] = Field(
++        ..., description="SC/MC: id правильных вариантов ответа"
++    )
++    row_order_matters: Optional[bool] = Field(
++        default=None, description="TBL_COM: важен ли порядок рядов при сверке"
++    )
++    normalization: List[str] = Field(
++        ...,
++        description="Шаги нормализации перед сравнением (SA/SA_COM/TBL_COM)",
++    )
++    use_regex: bool = False
++    regex: Optional[str] = None
++
++
++class TaskHistoryResponse(BaseModel):
++    """История выполнения задания по паре (ученик, задание)."""
++
++    user_id: int
++    task: TaskHistoryTaskInfo
++    # Всегда присутствуют (сервис заполняет всегда) → в клиентском типе не-optional.
++    attempts: List[TaskHistoryAttempt] = Field(...)
++    help_requests: List[TaskHistoryHelpRequest] = Field(...)
++    hints: TaskHistoryHints = Field(...)
++    solution: Optional[TaskHistorySolution] = Field(
++        default=None,
++        description=(
++            "Правило проверки / эталонный ответ — ТОЛЬКО в преподавательском "
++            "ответе. У ученика всегда null (эталон ученику не показываем)."
++        ),
++    )
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+new file mode 100644
+index 0000000..ea506e0
+--- /dev/null
++++ b/app/services/task_history_service.py
+@@ -0,0 +1,267 @@
++"""История выполнения задания по паре (ученик, задание) — сборка для карточки (tsk-349).
++
++Единый агрегат «всё по одному заданию у одного ученика», собранный из готовых
++кирпичей учебного движка одним набором батч-запросов (без N+1 по попыткам):
++
++* попытки — строки ``task_results`` неотменённых попыток (score/статус/ответ
++  ученика/комментарий преподавателя/время проверки);
++* заявки помощи по этому заданию + диалог ответов (``help_requests`` +
++  ``help_request_replies``);
++* подсказки — счётчики из ``learning_events`` (``get_hint_open_counts``);
++* правило проверки / эталон (``solution_rules``) — ТОЛЬКО когда
++  ``include_solution=True`` (преподавательский путь). Ученический путь блок не
++  собирает вовсе: разграничение видимости структурное, а не фильтрацией на выходе.
++
++ACL здесь НЕ проверяется — это делает вызывающий эндпоинт (учитель — ACL портала
++``ensure_can_edit_progress``; ученик — только своя история, ``current_user.id``).
++
++Замечание по именованию колонок: в ``task_results``/``attempts`` ученик — это
++``user_id``; в ``learning_events`` — ``student_id`` (учтено в
++``get_hint_open_counts``).
++"""
++from __future__ import annotations
++
++import logging
++from typing import Any, Dict, List, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services.checking_service import CheckingService
++from app.services.learning_events_service import get_hint_open_counts
++
++logger = logging.getLogger(__name__)
++
++#: Провенанс ручного зачёта преподавателем (синтетическая попытка, tsk-297).
++_MANUAL_SOURCE = "manual_teacher"
++
++_checking = CheckingService()
++
++
++async def course_of_task(db: AsyncSession, task_id: int) -> Optional[int]:
++    """Курс задания (для scoped-ACL до сборки данных). None — задания нет."""
++    row = (
++        await db.execute(
++            text("SELECT course_id FROM tasks WHERE id = :task_id"),
++            {"task_id": task_id},
++        )
++    ).fetchone()
++    return int(row[0]) if row is not None and row[0] is not None else None
++
++
++def _attempt_status(is_correct: Optional[bool]) -> str:
++    """Статус строки результата: passed | failed | pending_review."""
++    if is_correct is None:
++        return "pending_review"
++    return "passed" if is_correct else "failed"
++
++
++def _table_columns(task_content: Any) -> Optional[int]:
++    """Число столбцов табличного ответа (TBL_COM) из task_content.table.columns."""
++    if not isinstance(task_content, dict):
++        return None
++    table = task_content.get("table")
++    if not isinstance(table, dict):
++        return None
++    cols = table.get("columns")
++    return int(cols) if isinstance(cols, int) else None
++
++
++async def _load_task_meta(db: AsyncSession, task_id: int) -> Optional[Dict[str, Any]]:
++    """Мета задания + курс + сырые solution_rules (для ветки эталона). None — нет задания."""
++    row = (
++        await db.execute(
++            text(
++                "SELECT t.id, t.external_uid, t.course_id, t.max_score, "
++                "       t.task_content, t.solution_rules, c.title AS course_title "
++                "FROM tasks t "
++                "LEFT JOIN courses c ON c.id = t.course_id "
++                "WHERE t.id = :task_id"
++            ),
++            {"task_id": task_id},
++        )
++    ).mappings().fetchone()
++    return dict(row) if row is not None else None
++
++
++async def _load_attempts(
++    db: AsyncSession, *, user_id: int, task_id: int
++) -> List[Dict[str, Any]]:
++    """Попытки ученика по заданию (неотменённые), в хронологическом порядке.
++
++    Один запрос независимо от числа попыток. ``attempt_no`` — 1-based порядковый
++    номер по времени сдачи. ``manual`` — синтетическая попытка ручного зачёта.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT tr.id AS task_result_id, tr.attempt_id, tr.submitted_at, "
++                "       tr.score, COALESCE(tr.max_score, 0) AS max_score, "
++                "       tr.is_correct, tr.answer_json, tr.metrics->>'comment' AS comment, "
++                "       tr.checked_at, tr.source_system "
++                "FROM task_results tr "
++                "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
++                "WHERE tr.user_id = :user_id AND tr.task_id = :task_id "
++                "ORDER BY tr.submitted_at ASC, tr.id ASC"
++            ),
++            {"user_id": user_id, "task_id": task_id},
++        )
++    ).mappings().fetchall()
++
++    attempts: List[Dict[str, Any]] = []
++    for idx, r in enumerate(rows, start=1):
++        attempts.append(
++            {
++                "task_result_id": int(r["task_result_id"]),
++                "attempt_id": int(r["attempt_id"]) if r["attempt_id"] is not None else None,
++                "attempt_no": idx,
++                "submitted_at": r["submitted_at"],
++                "score": int(r["score"] or 0),
++                "max_score": int(r["max_score"] or 0),
++                "is_correct": r["is_correct"],
++                "status": _attempt_status(r["is_correct"]),
++                "answer_json": r["answer_json"],
++                "comment": r["comment"],
++                "checked_at": r["checked_at"],
++                "manual": (r["source_system"] == _MANUAL_SOURCE),
++            }
++        )
++    return attempts
++
++
++async def _load_help_requests(
++    db: AsyncSession, *, user_id: int, task_id: int
++) -> List[Dict[str, Any]]:
++    """Заявки помощи ученика по заданию + диалог ответов.
++
++    Два запроса на всё (заявки + все реплаи по IN), без N+1 на заявку.
++    """
++    hr_rows = (
++        await db.execute(
++            text(
++                "SELECT id AS request_id, status, request_type, message, "
++                "       created_at, closed_at, resolution_comment "
++                "FROM help_requests "
++                "WHERE student_id = :user_id AND task_id = :task_id "
++                "ORDER BY created_at ASC, id ASC"
++            ),
++            {"user_id": user_id, "task_id": task_id},
++        )
++    ).mappings().fetchall()
++
++    requests: List[Dict[str, Any]] = [dict(r) for r in hr_rows]
++    if not requests:
++        return []
++
++    request_ids = [int(r["request_id"]) for r in requests]
++    reply_rows = (
++        await db.execute(
++            text(
++                "SELECT request_id, id AS reply_id, teacher_id, body, "
++                "       close_after_reply, created_at "
++                "FROM help_request_replies "
++                "WHERE request_id = ANY(:request_ids) "
++                "ORDER BY created_at ASC, id ASC"
++            ),
++            {"request_ids": request_ids},
++        )
++    ).mappings().fetchall()
++
++    replies_by_request: Dict[int, List[Dict[str, Any]]] = {}
++    for rr in reply_rows:
++        replies_by_request.setdefault(int(rr["request_id"]), []).append(
++            {
++                "reply_id": int(rr["reply_id"]),
++                "teacher_id": int(rr["teacher_id"]),
++                "body": rr["body"],
++                "close_after_reply": bool(rr["close_after_reply"]),
++                "created_at": rr["created_at"],
++            }
++        )
++
++    for req in requests:
++        req["replies"] = replies_by_request.get(int(req["request_id"]), [])
++    return requests
++
++
++def _build_solution(task_meta: Dict[str, Any]) -> Dict[str, Any]:
++    """Собрать блок правила проверки/эталона (ТОЛЬКО для преподавателя).
++
++    Использует безопасный парс ``build_solution_rules`` (JSON null → деградированный
++    объект без эталона), поэтому не падает на заданиях без заведённого правила.
++    """
++    rules = _checking.build_solution_rules(
++        task_meta.get("solution_rules"), task_meta.get("max_score")
++    )
++    short = rules.short_answer
++    accepted = (
++        [{"value": a.value, "score": a.score} for a in short.accepted_answers]
++        if short is not None
++        else []
++    )
++    task_content = task_meta.get("task_content")
++    task_type = (
++        task_content.get("type") if isinstance(task_content, dict) else None
++    )
++    return {
++        "type": task_type,
++        "max_score": rules.max_score,
++        "scoring_mode": rules.scoring_mode,
++        "auto_check": rules.auto_check,
++        "manual_review_required": rules.manual_review_required,
++        "requires_attachment": rules.requires_attachment,
++        "accepted_answers": accepted,
++        "correct_option_ids": list(rules.correct_options),
++        "row_order_matters": rules.table.row_order_matters if rules.table is not None else None,
++        "normalization": list(short.normalization) if short is not None else [],
++        "use_regex": short.use_regex if short is not None else False,
++        "regex": short.regex if short is not None else None,
++    }
++
++
++async def build_task_history(
++    db: AsyncSession,
++    *,
++    user_id: int,
++    task_id: int,
++    include_solution: bool,
++) -> Optional[Dict[str, Any]]:
++    """Собрать историю по паре (ученик, задание). None — задания нет (404 у вызова).
++
++    :param include_solution: True (преподаватель) — добавить блок ``solution``
++        (правило проверки/эталон). False (ученик) — блок не собирается вовсе.
++    """
++    task_meta = await _load_task_meta(db, task_id)
++    if task_meta is None:
++        return None
++
++    attempts = await _load_attempts(db, user_id=user_id, task_id=task_id)
++    help_requests = await _load_help_requests(db, user_id=user_id, task_id=task_id)
++    hints_total, hints_text, hints_video = await get_hint_open_counts(
++        db, user_id=user_id, task_id=task_id
++    )
++
++    task_content = task_meta.get("task_content")
++    task_type = task_content.get("type") if isinstance(task_content, dict) else None
++    title = task_content.get("title") if isinstance(task_content, dict) else None
++    stem = task_content.get("stem") if isinstance(task_content, dict) else None
++
++    result: Dict[str, Any] = {
++        "user_id": user_id,
++        "task": {
++            "task_id": int(task_meta["id"]),
++            "external_uid": task_meta.get("external_uid"),
++            "type": task_type,
++            "title": title,
++            "stem": stem,
++            "max_score": task_meta.get("max_score"),
++            "course_id": task_meta.get("course_id"),
++            "course_title": task_meta.get("course_title"),
++            "table_columns": _table_columns(task_content),
++        },
++        "attempts": attempts,
++        "help_requests": help_requests,
++        "hints": {"total": hints_total, "text": hints_text, "video": hints_video},
++        "solution": _build_solution(task_meta) if include_solution else None,
++    }
++    return result
+diff --git a/app/api/v1/teacher_task_history.py b/app/api/v1/teacher_task_history.py
+new file mode 100644
+index 0000000..450ba34
+--- /dev/null
++++ b/app/api/v1/teacher_task_history.py
+@@ -0,0 +1,80 @@
++"""API «история выполнения задания» для преподавателя (tsk-349).
++
++``GET /api/v1/teacher/students/{student_id}/tasks/{task_id}/history``
++
++Отдаёт всё по паре (ученик, задание): попытки с комментариями преподавателя,
++заявки помощи с диалогом, подсказки, полное условие задания И правило проверки /
++эталонный ответ (блок ``solution``) — учителю негде было увидеть эталон, кроме
++прямого запроса к БД.
++
++Гейт: роль ``teacher`` / ``methodist`` / ``admin`` (или сервисный токен) плюс
++scoped-ACL портала (тот же, что у правки прогресса, tsk-297): teacher видит
++историю только своих учеников или учеников на закреплённых за ним курсах.
++
++Read-only: ни одной записи в БД.
++
++Строительный блок для поиска задания в кабинете преподавателя (tsk-353) — карточка
++не привязана к экрану прогресса, тот же эндпоинт питает результат поиска.
++"""
++from __future__ import annotations
++
++import logging
++
++from fastapi import APIRouter, Depends, HTTPException, Path, status
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db, require_role
++from app.auth.current_user import CurrentUser
++from app.schemas.task_history import TaskHistoryResponse
++from app.services import manual_progress_service, task_history_service
++
++logger = logging.getLogger("api.teacher_task_history")
++
++router = APIRouter(tags=["teacher_task_history"])
++
++_GATE = require_role("teacher", "methodist", "admin")
++
++
++@router.get(
++    "/teacher/students/{student_id}/tasks/{task_id}/history",
++    response_model=TaskHistoryResponse,
++    summary="История выполнения задания учеником (для преподавателя)",
++)
++async def get_task_history_for_teacher(
++    student_id: int = Path(..., ge=1, description="ID ученика"),
++    task_id: int = Path(..., ge=1, description="ID задания"),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_GATE),
++) -> TaskHistoryResponse:
++    """Полная история по заданию + условие + правило проверки/эталон.
++
++    ACL до сборки данных: курс задания резолвится первым, доступ проверяется тем
++    же ACL портала, что и правка прогресса. Ответ содержит блок ``solution`` —
++    эталон отдаётся только этому (преподавательскому) эндпоинту.
++    """
++    course_id = await task_history_service.course_of_task(db, task_id)
++    if course_id is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
++        )
++
++    if not await manual_progress_service.can_edit_progress(
++        db, current_user, student_id, course_id
++    ):
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            detail=(
++                "Смотреть историю ученика может преподаватель — только своих "
++                "учеников или учеников на закреплённых за ним курсах; полный "
++                "доступ у методиста и админа"
++            ),
++        )
++
++    data = await task_history_service.build_task_history(
++        db, user_id=student_id, task_id=task_id, include_solution=True
++    )
++    if data is None:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
++        )
++    return TaskHistoryResponse(**data)
+diff --git a/tests/test_task_history_tsk349.py b/tests/test_task_history_tsk349.py
+new file mode 100644
+index 0000000..7361d49
+--- /dev/null
++++ b/tests/test_task_history_tsk349.py
+@@ -0,0 +1,385 @@
++"""История выполнения задания по паре (ученик, задание) — tsk-349.
++
++Проверяем на НАСТОЯЩЕЙ БД: сборка агрегата (попытки + комментарии + заявки помощи
++с диалогом + подсказки + эталон) и — главное — РАЗГРАНИЧЕНИЕ ВИДИМОСТИ:
++
++* преподаватель видит полную историю И блок ``solution`` (правило проверки/эталон);
++* ученик видит свою историю, но ``solution`` всегда ``null`` (эталон ему не отдаём —
++  инвариант answer-in-stem, tsk-254; утечка = регресс);
++* ученический эндпоинт строго self-scoped (``/me/...``) — чужую историю не отдаёт;
++* teacher видит только своих учеников (ACL портала); methodist/admin — bypass;
++* ученик не может прочитать историю/условие задания вне своих курсов (403).
++
++Граф фикстуры:
++    root (ученик записан) ──> task_sa (SA_COM с эталоном)
++    foreign (ученик НЕ записан) ──> task_foreign
++    student1 (2 попытки + заявка помощи + подсказка), student2 (пусто),
++    teacher (связан со student1), other (не связан), methodist.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import learning_events_service, task_history_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++_TAG = "tsk349"
++
++
++async def _new_user(db, role: str | None, name: str) -> tuple[int, str]:
++    """Пользователь с сессией и (опционально) ролью → (id, session_token)."""
++    u = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG}-{name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    await db.commit()
++    return u.id, token
++
++
++async def _insert_attempt_result(
++    db, *, user_id, task_id, course_id, score, is_correct,
++    checked_by: int | None, comment: str | None, source: str = "test",
++) -> None:
++    """Реальная попытка + результат по заданию (напрямую в БД).
++
++    ``checked_by`` не None → результат проверен преподавателем (checked_at=now()).
++    """
++    attempt_id = (
++        await db.execute(
++            text(
++                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                "VALUES (:u, :c, :c, :src) RETURNING id"
++            ),
++            {"u": user_id, "c": course_id, "src": source},
++        )
++    ).scalar()
++    metrics = json.dumps({"comment": comment}) if comment is not None else None
++    await db.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++            "  is_correct, submitted_at, received_at, count_retry, checked_at, checked_by, "
++            "  source_system, metrics) "
++            "VALUES (:u, :t, :a, :sc, 10, :ok, now(), now(), 0, "
++            "        CASE WHEN CAST(:chk AS integer) IS NULL THEN NULL ELSE now() END, "
++            "        CAST(:chk AS integer), "
++            "        :src, CAST(:m AS jsonb))"
++        ),
++        {
++            "u": user_id, "t": task_id, "a": attempt_id, "sc": score, "ok": is_correct,
++            "chk": checked_by, "src": source, "m": metrics,
++        },
++    )
++
++
++@pytest.fixture
++async def hgraph(db):
++    ids: dict[str, int] = {}
++    try:
++        async def new_course(title: str) -> int:
++            return (
++                await db.execute(
++                    text(
++                        "INSERT INTO courses (title, access_level) "
++                        "VALUES (:t, 'self_guided') RETURNING id"
++                    ),
++                    {"t": title},
++                )
++            ).scalar()
++
++        difficulty_id = (
++            await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++        ).scalar()
++
++        async def new_task(course_id: int, uid: str, rules: dict) -> int:
++            content = {"type": "SA_COM", "stem": f"{_TAG} условие задания", "title": f"{_TAG} задание"}
++            return (
++                await db.execute(
++                    text(
++                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
++                        "difficulty_id, external_uid, max_score, order_position) "
++                        "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, "
++                        ":uid, 10, 1) RETURNING id"
++                    ),
++                    {
++                        "tc": json.dumps(content),
++                        "sr": json.dumps(rules),
++                        "cid": course_id,
++                        "did": difficulty_id,
++                        "uid": f"{_TAG}-{uid}-{random.randint(10**8, 10**10)}",
++                    },
++                )
++            ).scalar()
++
++        ids["root"] = await new_course(f"{_TAG} корень")
++        ids["foreign"] = await new_course(f"{_TAG} чужой курс")
++        # Эталон: короткий ответ "42" (для проверки блока solution учителю).
++        ids["task_sa"] = await new_task(
++            ids["root"], "sa",
++            {
++                "max_score": 10,
++                "short_answer": {
++                    "accepted_answers": [{"value": "42", "score": 10}],
++                    "normalization": ["trim", "lower"],
++                },
++            },
++        )
++        ids["task_foreign"] = await new_task(ids["foreign"], "foreign", {"max_score": 10})
++
++        student1, tok_s1 = await _new_user(db, "student", "stud1")
++        student2, tok_s2 = await _new_user(db, "student", "stud2")
++        teacher_id, tok_teacher = await _new_user(db, "teacher", "teach")
++        other_id, tok_other = await _new_user(db, "teacher", "other")
++        methodist_id, tok_met = await _new_user(db, "methodist", "met")
++        ids.update(student1=student1, student2=student2, teacher=teacher_id,
++                   other=other_id, methodist=methodist_id)
++
++        # student1 и student2 записаны на root; teacher связан со student1.
++        for sid in (student1, student2):
++            await db.execute(
++                text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++                {"u": sid, "c": ids["root"]},
++            )
++        await db.execute(
++            text(
++                "INSERT INTO student_teacher_links (student_id, teacher_id) "
++                "VALUES (:s, :t) ON CONFLICT DO NOTHING"
++            ),
++            {"s": student1, "t": teacher_id},
++        )
++
++        # История student1 по task_sa: 2 попытки (неверная + верная с комментарием).
++        await _insert_attempt_result(
++            db, user_id=student1, task_id=ids["task_sa"], course_id=ids["root"],
++            score=0, is_correct=False, checked_by=None, comment=None,
++        )
++        await _insert_attempt_result(
++            db, user_id=student1, task_id=ids["task_sa"], course_id=ids["root"],
++            score=10, is_correct=True, checked_by=teacher_id, comment="проверено вручную",
++        )
++
++        # Заявка помощи + сообщение + ответ преподавателя.
++        req_id = (
++            await db.execute(
++                text(
++                    "INSERT INTO help_requests (status, request_type, student_id, task_id, "
++                    "course_id, message, created_at, updated_at) "
++                    "VALUES ('open', 'manual_help', :s, :t, :c, :msg, now(), now()) RETURNING id"
++                ),
++                {"s": student1, "t": ids["task_sa"], "c": ids["root"], "msg": "не понимаю задачу"},
++            )
++        ).scalar()
++        msg_id = (
++            await db.execute(
++                text(
++                    "INSERT INTO messages (message_type, content, recipient_id) "
++                    "VALUES ('help_reply', CAST(:c AS jsonb), :r) RETURNING id"
++                ),
++                {"c": json.dumps({"text": "смотри пример в теории"}), "r": student1},
++            )
++        ).scalar()
++        await db.execute(
++            text(
++                "INSERT INTO help_request_replies (request_id, teacher_id, message_id, body, "
++                "close_after_reply, created_at) "
++                "VALUES (:rq, :tid, :mid, :body, false, now())"
++            ),
++            {"rq": req_id, "tid": teacher_id, "mid": msg_id, "body": "смотри пример в теории"},
++        )
++        ids["help_request"] = int(req_id)
++
++        # Одна открытая подсказка student1 по task_sa.
++        await learning_events_service.record_hint_open(
++            db, student_id=student1, attempt_id=1, task_id=ids["task_sa"],
++            hint_type="text", hint_index=0, action="open", source="test",
++        )
++        await db.commit()
++
++        yield {
++            "ids": ids,
++            "db": db,
++            "tokens": {
++                "student1": tok_s1, "student2": tok_s2, "teacher": tok_teacher,
++                "other": tok_other, "methodist": tok_met,
++            },
++        }
++    finally:
++        await db.rollback()
++        user_ids = [ids.get(k) for k in ("student1", "student2", "teacher", "other", "methodist") if k in ids]
++        task_ids = [ids[k] for k in ("task_sa", "task_foreign") if k in ids]
++        course_ids = [ids[k] for k in ("root", "foreign") if k in ids]
++        if user_ids:
++            await db.execute(
++                text("DELETE FROM help_request_replies WHERE teacher_id = ANY(:u)"), {"u": user_ids}
++            )
++            if "help_request" in ids:
++                await db.execute(
++                    text("DELETE FROM help_requests WHERE id = :r"), {"r": ids["help_request"]}
++                )
++            await db.execute(text("DELETE FROM messages WHERE recipient_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM learning_events WHERE student_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM task_results WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM attempts WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM user_courses WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(
++                text("DELETE FROM student_teacher_links WHERE student_id = ANY(:u) OR teacher_id = ANY(:u)"),
++                {"u": user_ids},
++            )
++            await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": user_ids})
++        if task_ids:
++            await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
++        if course_ids:
++            await db.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": course_ids})
++        await db.commit()
++
++
++def _teacher_url(ids, student_key="student1", task_key="task_sa") -> str:
++    return f"/api/v1/teacher/students/{ids[student_key]}/tasks/{ids[task_key]}/history"
++
++
++# ─── Преподаватель: полная история + эталон ─────────────────────────────────
++
++
++async def test_teacher_sees_full_history_and_solution(hgraph, client):
++    ids = hgraph["ids"]
++    resp = await client.get(
++        _teacher_url(ids),
++        headers={"Authorization": f"Bearer {hgraph['tokens']['teacher']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++
++    # Попытки в хронологии: неверная (1) → верная с комментарием (2).
++    assert [a["attempt_no"] for a in body["attempts"]] == [1, 2]
++    assert [a["status"] for a in body["attempts"]] == ["failed", "passed"]
++    assert body["attempts"][1]["comment"] == "проверено вручную"
++
++    # Заявка помощи с диалогом.
++    assert len(body["help_requests"]) == 1
++    hr = body["help_requests"][0]
++    assert hr["request_type"] == "manual_help"
++    assert hr["message"] == "не понимаю задачу"
++    assert len(hr["replies"]) == 1
++    assert hr["replies"][0]["body"] == "смотри пример в теории"
++
++    # Подсказки.
++    assert body["hints"]["total"] == 1 and body["hints"]["text"] == 1
++
++    # Условие задания.
++    assert body["task"]["stem"] == f"{_TAG} условие задания"
++
++    # Эталон — учителю виден.
++    assert body["solution"] is not None
++    assert body["solution"]["accepted_answers"] == [{"value": "42", "score": 10}]
++    assert "trim" in body["solution"]["normalization"]
++
++
++async def test_methodist_bypass_sees_solution(hgraph, client):
++    ids = hgraph["ids"]
++    resp = await client.get(
++        _teacher_url(ids),
++        headers={"Authorization": f"Bearer {hgraph['tokens']['methodist']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["solution"] is not None
++
++
++async def test_other_teacher_forbidden(hgraph, client):
++    """Посторонний преподаватель не видит историю чужого ученика — 403."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        _teacher_url(ids),
++        headers={"Authorization": f"Bearer {hgraph['tokens']['other']}"},
++    )
++    assert resp.status_code == 403, resp.text
++
++
++async def test_teacher_task_not_found(hgraph, client):
++    ids = hgraph["ids"]
++    resp = await client.get(
++        f"/api/v1/teacher/students/{ids['student1']}/tasks/999000111/history",
++        headers={"Authorization": f"Bearer {hgraph['tokens']['teacher']}"},
++    )
++    assert resp.status_code == 404, resp.text
++
++
++# ─── Ученик: своя история БЕЗ эталона ───────────────────────────────────────
++
++
++async def test_student_sees_own_history_without_solution(hgraph, client):
++    """Ключевой инвариант: ученик видит свою историю, но solution = null."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        f"/api/v1/me/tasks/{ids['task_sa']}/history",
++        headers={"Authorization": f"Bearer {hgraph['tokens']['student1']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert len(body["attempts"]) == 2
++    assert len(body["help_requests"]) == 1
++    assert body["hints"]["total"] == 1
++    # Эталон ученику НЕ отдаётся — регресс класса answer-in-stem, если появится.
++    assert body["solution"] is None
++
++
++async def test_student_endpoint_is_self_scoped(hgraph, client):
++    """Другой ученик по тому же заданию видит ПУСТУЮ историю, не student1."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        f"/api/v1/me/tasks/{ids['task_sa']}/history",
++        headers={"Authorization": f"Bearer {hgraph['tokens']['student2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["attempts"] == []
++    assert body["help_requests"] == []
++    assert body["solution"] is None
++
++
++async def test_student_cannot_read_task_outside_courses(hgraph, client):
++    """Условие/историю задания вне своих курсов ученик не читает — 403."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        f"/api/v1/me/tasks/{ids['task_foreign']}/history",
++        headers={"Authorization": f"Bearer {hgraph['tokens']['student1']}"},
++    )
++    assert resp.status_code == 403, resp.text
++
++
++# ─── Сервис: структурное разграничение видимости эталона ────────────────────
++
++
++async def test_service_gates_solution_by_flag(hgraph):
++    """build_task_history собирает solution ТОЛЬКО при include_solution=True."""
++    ids, db = hgraph["ids"], hgraph["db"]
++    without = await task_history_service.build_task_history(
++        db, user_id=ids["student1"], task_id=ids["task_sa"], include_solution=False
++    )
++    assert without is not None and without["solution"] is None
++
++    with_sol = await task_history_service.build_task_history(
++        db, user_id=ids["student1"], task_id=ids["task_sa"], include_solution=True
++    )
++    assert with_sol is not None and with_sol["solution"] is not None
++    assert with_sol["solution"]["accepted_answers"] == [{"value": "42", "score": 10}]

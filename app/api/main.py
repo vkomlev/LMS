@@ -345,6 +345,10 @@ app.include_router(teacher_assignments_router, prefix=API_PREFIX)
 from app.api.v1.teacher_progress import router as teacher_progress_router
 app.include_router(teacher_progress_router, prefix=API_PREFIX)
 
+# История выполнения задания учеником для преподавателя (tsk-349)
+from app.api.v1.teacher_task_history import router as teacher_task_history_router
+app.include_router(teacher_task_history_router, prefix=API_PREFIX)
+
 # Upsert правил назначения из публикатора (tsk-120, ADR-0042)
 from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
 app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)

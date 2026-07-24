@@ -47,7 +47,9 @@ from app.schemas.me import (
     StreakRead,
     SyllabusStatesResponse,
 )
-from app.services import me_service, roles_service
+from app.schemas.task_history import TaskHistoryResponse
+from app.services import me_service, roles_service, task_history_service
+from app.services.tasks_acl_service import assert_task_access
 from app.services.audit_service import log_event
 from app.services.full_name_validator import validate_full_name
 from app.services.auth import (
@@ -267,6 +269,43 @@ async def get_history(
         db, current_user.id, filter_=filter_, limit=limit, offset=offset
     )
     return [HistoryItem(**row) for row in rows]
+
+
+# ── GET /me/tasks/{task_id}/history (tsk-349) ───────────────────────────────
+
+@router.get(
+    "/tasks/{task_id}/history",
+    response_model=TaskHistoryResponse,
+    summary="Моя история по конкретному заданию",
+)
+async def get_my_task_history(
+    task_id: int = Path(..., ge=1, description="ID задания"),
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> TaskHistoryResponse:
+    """История ученика по одному заданию: свои попытки, комментарии преподавателя,
+    свои обращения за помощью, подсказки.
+
+    Правило проверки и эталонный ответ ученику НЕ отдаются — ``solution`` всегда
+    ``null`` (эталон только преподавателю, tsk-349/tsk-254). Доступ ограничен
+    задачами в дереве курсов ученика (`assert_task_access`), чтобы условие чужого
+    задания нельзя было прочитать перебором ``task_id``.
+    """
+    course_id = await task_history_service.course_of_task(db, task_id)
+    if course_id is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
+        )
+    await assert_task_access(db, current_user=current_user, task_course_id=course_id)
+
+    data = await task_history_service.build_task_history(
+        db, user_id=current_user.id, task_id=task_id, include_solution=False
+    )
+    if data is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail=f"Задание {task_id} не найдено"
+        )
+    return TaskHistoryResponse(**data)
 
 
 # ── POST /me/identity/{kind}/link ───────────────────────────────────────────
