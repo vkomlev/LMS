@@ -1,0 +1,933 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 72dccb4..7fe96a8 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -349,6 +349,10 @@ app.include_router(teacher_progress_router, prefix=API_PREFIX)
+ from app.api.v1.teacher_task_history import router as teacher_task_history_router
+ app.include_router(teacher_task_history_router, prefix=API_PREFIX)
+ 
++# Поиск задания в кабинете преподавателя по номеру/тексту (tsk-353)
++from app.api.v1.teacher_task_search import router as teacher_task_search_router
++app.include_router(teacher_task_search_router, prefix=API_PREFIX)
++
+ # Upsert правил назначения из публикатора (tsk-120, ADR-0042)
+ from app.api.v1.assignment_rules_admin import router as assignment_rules_admin_router
+ app.include_router(assignment_rules_admin_router, prefix=API_PREFIX)
+diff --git a/app/api/v1/teacher_task_search.py b/app/api/v1/teacher_task_search.py
+new file mode 100644
+index 0000000..3af97f8
+--- /dev/null
++++ b/app/api/v1/teacher_task_search.py
+@@ -0,0 +1,68 @@
++"""API «поиск задания в кабинете преподавателя» (tsk-353).
++
++``GET /api/v1/teacher/students/{student_id}/tasks/search?q=...``
++
++На живом уроке ученик называет номер или содержание задания — преподавателю
++нужно быстро найти его в контексте открытой карточки прогресса конкретного
++ученика, не листая дерево курсов. Результат ведёт в уже существующую детальную
++карточку (tsk-349, ``GET /teacher/students/{student_id}/tasks/{task_id}/history``) —
++этот эндпоинт только помогает найти ``task_id``, правило проверки/эталон здесь
++не отдаются.
++
++Два режима одного ``q`` (см. ``task_search_service``): число/``id-<N>`` — точный
++поиск по видимому номеру задания (tsk-309/311); иначе — полнотекстовый поиск по
++условию/заголовку.
++
++Гейт: роль ``teacher``/``methodist``/``admin`` плюс тот же scoped-ACL портала,
++что у истории задания (``can_edit_progress``, tsk-297) — teacher видит только
++задания своих учеников/закреплённых курсов, реально достижимые учеником.
++
++Read-only: ни одной записи в БД.
++"""
++from __future__ import annotations
++
++import logging
++
++from fastapi import APIRouter, Depends, Path, Query
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db, require_role
++from app.auth.current_user import CurrentUser
++from app.schemas.task_search import TaskSearchResponse, TaskSearchResult
++from app.services import task_search_service
++
++logger = logging.getLogger("api.teacher_task_search")
++
++router = APIRouter(tags=["teacher_task_search"])
++
++_GATE = require_role("teacher", "methodist", "admin")
++
++
++@router.get(
++    "/teacher/students/{student_id}/tasks/search",
++    response_model=TaskSearchResponse,
++    summary="Поиск задания в кабинете преподавателя (по номеру или тексту, в контексте ученика)",
++)
++async def search_student_tasks(
++    student_id: int = Path(..., ge=1, description="ID ученика, в контексте которого ищем"),
++    q: str = Query(
++        ...,
++        min_length=1,
++        max_length=200,
++        description="Номер задания (110 / id-110) или текст условия",
++    ),
++    limit: int = Query(20, ge=1, le=50, description="Максимум результатов"),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_GATE),
++) -> TaskSearchResponse:
++    """Найти задания, доступные преподавателю в контексте ученика.
++
++    ACL и исключение заданий с ``course_id=NULL`` — в ``task_search_service``,
++    он же выбирает режим поиска (номер vs текст) по содержимому ``q``.
++    """
++    results = await task_search_service.search_tasks_for_teacher(
++        db, current_user=current_user, student_id=student_id, query=q, limit=limit,
++    )
++    return TaskSearchResponse(
++        query=q, results=[TaskSearchResult(**r) for r in results]
++    )
+diff --git a/app/schemas/task_search.py b/app/schemas/task_search.py
+new file mode 100644
+index 0000000..99afde6
+--- /dev/null
++++ b/app/schemas/task_search.py
+@@ -0,0 +1,36 @@
++"""Схема ответа «поиск задания в кабинете преподавателя» (tsk-353).
++
++Краткая карточка результата поиска — ровно то, что нужно преподавателю на живом
++уроке, чтобы опознать нужное задание среди списка и кликнуть в уже существующую
++детальную карточку (tsk-349, ``GET /teacher/students/{student_id}/tasks/{task_id}/history``).
++Сама схема НЕ содержит правила проверки/эталона — это отдаёт только эндпоинт
++истории; поиск лишь помогает найти ``task_id``.
++"""
++from __future__ import annotations
++
++from typing import List, Optional
++
++from pydantic import BaseModel, Field
++
++
++class TaskSearchResult(BaseModel):
++    """Одна карточка результата поиска."""
++
++    task_id: int
++    visible_id: str = Field(
++        ..., description="Видимый ученику/учителю номер задания, формат id-<task_id> (tsk-309/311)"
++    )
++    title: str = Field(
++        ..., description="Человекочитаемый заголовок/обрезанное условие (см. humanize_task_title)"
++    )
++    task_type: Optional[str] = Field(default=None, description="Тип задания (SC/MC/SA/SA_COM/TBL_COM/TA/…)")
++    course_id: int
++    course_title: Optional[str] = None
++    difficulty: Optional[str] = Field(default=None, description="Название уровня сложности (difficulties.name_ru)")
++
++
++class TaskSearchResponse(BaseModel):
++    """Ответ поиска — запрос + список найденных заданий (может быть пустым)."""
++
++    query: str
++    results: List[TaskSearchResult] = Field(...)
+diff --git a/app/services/task_search_service.py b/app/services/task_search_service.py
+new file mode 100644
+index 0000000..e430204
+--- /dev/null
++++ b/app/services/task_search_service.py
+@@ -0,0 +1,190 @@
++"""Поиск задания в кабинете преподавателя по номеру или тексту (tsk-353).
++
++На живом уроке ученик называет номер задания или пересказывает условие —
++преподавателю нужно быстро найти его, не листая дерево прогресса. Поиск ведётся
++**в контексте открытого ученика** (переиспользует ACL из tsk-297/tsk-349), а
++результат — краткая карточка, ведущая в уже существующую детальную карточку
++(``task_history_service.build_task_history``, эндпоинт tsk-349).
++
++Два режима одного параметра ``q``:
++
++* число или ``id-<N>`` (см. видимый номер задания, tsk-309/311) — точный поиск
++  по ``tasks.id``;
++* иначе — полнотекстовый ``ILIKE`` по условию/заголовку задания
++  (``task_content->>'stem'``/``'title'``), кандидатный пул + ACL-фильтр в Python,
++  без ``pg_trgm`` (по объёму задачи достаточно).
++
++ACL — ``manual_progress_service.can_edit_progress`` (тот же гейт, что у правки
++прогресса и у истории задания): teacher видит только заданиями учеников,
++закреплённых за ним, либо курсов под его ACL, при условии что ученик реально
++достиг этого узла (``list_active_roots_of_node`` внутри). **Задания с
++``course_id IS NULL`` (легаси, tsk-349 follow-up) исключены всегда** — по ним
++эндпоинт истории отдаёт 404, и попадание такого задания в выдачу вело бы клик
++в тупик.
++
++Read-only: ни одной записи в БД.
++"""
++from __future__ import annotations
++
++import logging
++import re
++from typing import Any, Dict, List, Optional
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.auth.current_user import CurrentUser
++from app.services import manual_progress_service
++from app.utils.task_title import humanize_task_title
++
++logger = logging.getLogger(__name__)
++
++#: Обрезка снипета в результате поиска — длиннее обычного заголовка (80), чтобы
++#: преподаватель успел опознать задание по началу условия, но не весь текст.
++_SNIPPET_MAX_LEN = 200
++
++#: Минимальная длина текстового запроса — короче двух символов ILIKE по всему
++#: массиву заданий даёт бесполезный полный скан без пользы для поиска.
++_MIN_TEXT_QUERY_LEN = 2
++
++#: Кандидатный пул полнотекстового поиска ДО ACL-фильтра. С запасом сверх
++#: итогового лимита — часть кандидатов ACL отсеет.
++_CANDIDATE_POOL = 200
++
++#: "110" или "id-110" / "ID-110" — видимый номер задания (tsk-309/311).
++_NUMBER_RE = re.compile(r"^id-(\d+)$", re.IGNORECASE)
++
++_TASK_ROW_SQL = (
++    "SELECT t.id, t.course_id, t.external_uid, "
++    "       t.task_content->>'type' AS task_type, "
++    "       t.task_content->>'title' AS tc_title, "
++    "       t.task_content->>'stem' AS tc_stem, "
++    "       c.title AS course_title, d.name_ru AS difficulty_name "
++    "FROM tasks t "
++    "LEFT JOIN courses c ON c.id = t.course_id "
++    "LEFT JOIN difficulties d ON d.id = t.difficulty_id "
++)
++
++
++def _parse_task_number(query: str) -> Optional[int]:
++    """"110" / "id-110" / "ID-110" -> 110. Иначе None (текстовый режим)."""
++    stripped = query.strip()
++    if stripped.isdigit():
++        return int(stripped)
++    match = _NUMBER_RE.match(stripped)
++    return int(match.group(1)) if match else None
++
++
++def _escape_ilike(raw: str) -> str:
++    """Экранировать `\\`, `%`, `_` — иначе буквальные % / _ в запросе учителя
++    сработали бы как wildcard ILIKE, а не как искомый текст."""
++    return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
++
++
++def _to_result(row: Dict[str, Any]) -> Dict[str, Any]:
++    task_id = int(row["id"])
++    return {
++        "task_id": task_id,
++        "visible_id": f"id-{task_id}",
++        "title": humanize_task_title(
++            task_id, row.get("tc_title"), row.get("tc_stem"), row.get("external_uid"),
++            max_len=_SNIPPET_MAX_LEN,
++        ),
++        "task_type": row.get("task_type"),
++        "course_id": int(row["course_id"]),
++        "course_title": row.get("course_title"),
++        "difficulty": row.get("difficulty_name"),
++    }
++
++
++async def _load_task_by_id(db: AsyncSession, task_id: int) -> Optional[Dict[str, Any]]:
++    row = (
++        await db.execute(
++            text(_TASK_ROW_SQL + "WHERE t.id = :task_id AND t.is_active = true"),
++            {"task_id": task_id},
++        )
++    ).mappings().fetchone()
++    return dict(row) if row is not None else None
++
++
++async def _search_by_text(
++    db: AsyncSession, query_text: str, *, candidate_limit: int
++) -> List[Dict[str, Any]]:
++    pattern = f"%{_escape_ilike(query_text)}%"
++    rows = (
++        await db.execute(
++            text(
++                _TASK_ROW_SQL
++                + "WHERE t.is_active = true AND t.course_id IS NOT NULL "
++                "  AND (t.task_content->>'stem' ILIKE :pattern ESCAPE '\\' "
++                "       OR t.task_content->>'title' ILIKE :pattern ESCAPE '\\') "
++                "ORDER BY t.id "
++                "LIMIT :candidate_limit"
++            ),
++            {"pattern": pattern, "candidate_limit": candidate_limit},
++        )
++    ).mappings().fetchall()
++    return [dict(r) for r in rows]
++
++
++async def search_tasks_for_teacher(
++    db: AsyncSession,
++    *,
++    current_user: CurrentUser,
++    student_id: int,
++    query: str,
++    limit: int,
++) -> List[Dict[str, Any]]:
++    """Найти задания, доступные преподавателю в контексте ученика.
++
++    :param query: номер (``110``/``id-110``) или текст условия.
++    :param limit: максимум результатов после ACL-фильтра.
++    :returns: список словарей, готовых для ``TaskSearchResult(**row)``.
++    """
++    task_id = _parse_task_number(query)
++
++    if task_id is not None:
++        row = await _load_task_by_id(db, task_id)
++        # course_id=NULL (легаси, tsk-349 follow-up) — эндпоинт истории даст 404,
++        # находить такое задание поиском незачем.
++        if row is None or row["course_id"] is None:
++            return []
++        if not await manual_progress_service.can_edit_progress(
++            db, current_user, student_id, int(row["course_id"])
++        ):
++            return []
++        return [_to_result(row)]
++
++    stripped = query.strip()
++    if len(stripped) < _MIN_TEXT_QUERY_LEN:
++        return []
++
++    candidates = await _search_by_text(db, stripped, candidate_limit=_CANDIDATE_POOL)
++    if len(candidates) >= _CANDIDATE_POOL:
++        logger.debug(
++            "tsk-353: полнотекстовый поиск задания достиг кандидатного пула (%s) "
++            "до ACL-фильтра — часть совпадений могла быть не показана",
++            _CANDIDATE_POOL,
++        )
++
++    # ACL проверяется на уровне course_id, а не задания — кэш на запрос, чтобы
++    # не дёргать can_edit_progress повторно для заданий одного курса.
++    acl_cache: Dict[int, bool] = {}
++    results: List[Dict[str, Any]] = []
++    for row in candidates:
++        course_id = row.get("course_id")
++        if course_id is None:
++            continue
++        course_id = int(course_id)
++        if course_id not in acl_cache:
++            acl_cache[course_id] = await manual_progress_service.can_edit_progress(
++                db, current_user, student_id, course_id
++            )
++        if acl_cache[course_id]:
++            results.append(_to_result(row))
++            if len(results) >= limit:
++                break
++    return results
++
++
++__all__ = ["search_tasks_for_teacher"]
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 4ae3679..568bcf0 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -16112,6 +16112,135 @@
+         }
+       }
+     },
++    "/api/v1/teacher/students/{student_id}/tasks/search": {
++      "get": {
++        "tags": [
++          "teacher_task_search"
++        ],
++        "summary": "Поиск задания в кабинете преподавателя (по номеру или тексту, в контексте ученика)",
++        "description": "Найти задания, доступные преподавателю в контексте ученика.\n\nACL и исключение заданий с ``course_id=NULL`` — в ``task_search_service``,\nон же выбирает режим поиска (номер vs текст) по содержимому ``q``.",
++        "operationId": "search_student_tasks_api_v1_teacher_students__student_id__tasks_search_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "student_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "minimum": 1,
++              "description": "ID ученика, в контексте которого ищем",
++              "title": "Student Id"
++            },
++            "description": "ID ученика, в контексте которого ищем"
++          },
++          {
++            "name": "q",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "minLength": 1,
++              "maxLength": 200,
++              "description": "Номер задания (110 / id-110) или текст условия",
++              "title": "Q"
++            },
++            "description": "Номер задания (110 / id-110) или текст условия"
++          },
++          {
++            "name": "limit",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "integer",
++              "maximum": 50,
++              "minimum": 1,
++              "description": "Максимум результатов",
++              "default": 20,
++              "title": "Limit"
++            },
++            "description": "Максимум результатов"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/TaskSearchResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/assignment-rules/bulk-upsert": {
+       "post": {
+         "tags": [
+@@ -30176,6 +30305,94 @@
+         "title": "TaskResultUpdate",
+         "description": "Схема обновления результата по задаче."
+       },
++      "TaskSearchResponse": {
++        "properties": {
++          "query": {
++            "type": "string",
++            "title": "Query"
++          },
++          "results": {
++            "items": {
++              "$ref": "#/components/schemas/TaskSearchResult"
++            },
++            "type": "array",
++            "title": "Results"
++          }
++        },
++        "type": "object",
++        "required": [
++          "query",
++          "results"
++        ],
++        "title": "TaskSearchResponse",
++        "description": "Ответ поиска — запрос + список найденных заданий (может быть пустым)."
++      },
++      "TaskSearchResult": {
++        "properties": {
++          "task_id": {
++            "type": "integer",
++            "title": "Task Id"
++          },
++          "visible_id": {
++            "type": "string",
++            "title": "Visible Id",
++            "description": "Видимый ученику/учителю номер задания, формат id-<task_id> (tsk-309/311)"
++          },
++          "title": {
++            "type": "string",
++            "title": "Title",
++            "description": "Человекочитаемый заголовок/обрезанное условие (см. humanize_task_title)"
++          },
++          "task_type": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Task Type",
++            "description": "Тип задания (SC/MC/SA/SA_COM/TBL_COM/TA/…)"
++          },
++          "course_id": {
++            "type": "integer",
++            "title": "Course Id"
++          },
++          "course_title": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Course Title"
++          },
++          "difficulty": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Difficulty",
++            "description": "Название уровня сложности (difficulties.name_ru)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "task_id",
++          "visible_id",
++          "title",
++          "course_id"
++        ],
++        "title": "TaskSearchResult",
++        "description": "Одна карточка результата поиска."
++      },
+       "TaskStateResponse": {
+         "properties": {
+           "task_id": {
+diff --git a/tests/test_task_search_tsk353.py b/tests/test_task_search_tsk353.py
+new file mode 100644
+index 0000000..0e852c4
+--- /dev/null
++++ b/tests/test_task_search_tsk353.py
+@@ -0,0 +1,365 @@
++"""Поиск задания в кабинете преподавателя по номеру/тексту — tsk-353.
++
++Проверяем на НАСТОЯЩЕЙ БД оба режима поиска (номер / текст) и, главное, ACL: тот
++же гейт, что у tsk-297/tsk-349 (``manual_progress_service.can_edit_progress``) —
++teacher видит только задания, которые СТУДЕНТ реально может достичь (его
++дерево курсов) И которые попадают под ACL преподавателя (прямая связка
++ученик-учитель ИЛИ иерархический ``teacher_courses``). Задание вне ACL или вне
++дерева ученика должно быть НЕВИДИМО в результатах — иначе клик по нему вёл бы
++в тупиковый 404 на эндпоинте истории (tsk-349 follow-up).
++
++Граф фикстуры::
++
++    root (top-level; teacher2 ACL здесь через teacher_courses)
++      └── sub (child курс, course_parents)
++            └── task_sub  — текст содержит уникальный маркер
++    unrelated (top-level; БЕЗ ACL у teacher2, student1 НЕ записан)
++      └── task_unrelated — другой уникальный маркер
++
++    student1 записан на root (user_courses). teacher связан со student1 напрямую
++    (student_teacher_links) — видит всё в контексте student1, включая task_unrelated
++    (прямая связка «ученик закреплён» не завязана на конкретный курс — см.
++    ``can_edit_progress``, документированное поведение). teacher2 привязан к root
++    только через ``teacher_courses`` (без прямой связки с учеником) — видит
++    task_sub (root → sub по иерархии), но НЕ task_unrelated (курс вне его ACL).
++    teacher3 не связан ни с чем — не видит ничего.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++_TAG = "tsk353"
++
++
++async def _new_user(db, role: str | None, name: str) -> tuple[int, str]:
++    """Пользователь с сессией и (опционально) ролью → (id, session_token)."""
++    u = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG}-{name}",
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    await db.commit()
++    return u.id, token
++
++
++@pytest.fixture
++async def sgraph(db):
++    ids: dict[str, int] = {}
++    try:
++        async def new_course(title: str) -> int:
++            return (
++                await db.execute(
++                    text(
++                        "INSERT INTO courses (title, access_level) "
++                        "VALUES (:t, 'self_guided') RETURNING id"
++                    ),
++                    {"t": title},
++                )
++            ).scalar()
++
++        difficulty_id = (
++            await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++        ).scalar()
++
++        async def new_task(course_id: int, uid: str, stem: str) -> int:
++            content = {"type": "SA", "stem": stem, "title": ""}
++            rules = {"max_score": 10, "short_answer": {
++                "accepted_answers": [{"value": "42", "score": 10}],
++                "normalization": ["trim", "lower"],
++            }}
++            return (
++                await db.execute(
++                    text(
++                        "INSERT INTO tasks (task_content, solution_rules, course_id, "
++                        "difficulty_id, external_uid, max_score, order_position) "
++                        "VALUES (CAST(:tc AS jsonb), CAST(:sr AS jsonb), :cid, :did, "
++                        ":uid, 10, 1) RETURNING id"
++                    ),
++                    {
++                        "tc": json.dumps(content, ensure_ascii=False),
++                        "sr": json.dumps(rules),
++                        "cid": course_id,
++                        "did": difficulty_id,
++                        "uid": f"{_TAG}-{uid}-{random.randint(10**8, 10**10)}",
++                    },
++                )
++            ).scalar()
++
++        ids["root"] = await new_course(f"{_TAG} корень")
++        ids["sub"] = await new_course(f"{_TAG} подкурс")
++        ids["unrelated"] = await new_course(f"{_TAG} чужой курс")
++
++        await db.execute(
++            text(
++                "INSERT INTO course_parents (course_id, parent_course_id) "
++                "VALUES (:c, :p) ON CONFLICT DO NOTHING"
++            ),
++            {"c": ids["sub"], "p": ids["root"]},
++        )
++
++        ids["task_sub"] = await new_task(
++            ids["sub"], "sub", f"{_TAG} условие с маркером маркерсёрч7331 внутри"
++        )
++        ids["task_unrelated"] = await new_task(
++            ids["unrelated"], "unrel", f"{_TAG} условие с маркером маркерчужой9042 внутри"
++        )
++        # Пара заданий для проверки экранирования ILIKE: без экранирования "%"
++        # в запросе учителя работал бы как wildcard и нашёл бы ОБА (100%ok
++        # буквально совпадает, а 100Xok совпадает по маске "100" + любой + "ok").
++        ids["task_percent_literal"] = await new_task(
++            ids["sub"], "pct-lit", f"{_TAG} процент100%okмаркер"
++        )
++        ids["task_percent_decoy"] = await new_task(
++            ids["sub"], "pct-decoy", f"{_TAG} процент100Xokмаркер"
++        )
++
++        student1, tok_s1 = await _new_user(db, "student", "stud1")
++        teacher_id, tok_teacher = await _new_user(db, "teacher", "teach")
++        teacher2_id, tok_teacher2 = await _new_user(db, "teacher", "teach2")
++        teacher3_id, tok_teacher3 = await _new_user(db, "teacher", "teach3")
++        ids.update(
++            student1=student1, teacher=teacher_id, teacher2=teacher2_id, teacher3=teacher3_id,
++        )
++
++        # student1 записан на root; teacher связан со student1 напрямую.
++        await db.execute(
++            text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++            {"u": student1, "c": ids["root"]},
++        )
++        await db.execute(
++            text(
++                "INSERT INTO student_teacher_links (student_id, teacher_id) "
++                "VALUES (:s, :t) ON CONFLICT DO NOTHING"
++            ),
++            {"s": student1, "t": teacher_id},
++        )
++        # teacher2 привязан к root ТОЛЬКО через teacher_courses (без прямой связки с учеником).
++        await db.execute(
++            text(
++                "INSERT INTO teacher_courses (teacher_id, course_id) "
++                "VALUES (:t, :c) ON CONFLICT DO NOTHING"
++            ),
++            {"t": teacher2_id, "c": ids["root"]},
++        )
++        await db.commit()
++
++        yield {
++            "ids": ids,
++            "tokens": {
++                "student1": tok_s1, "teacher": tok_teacher,
++                "teacher2": tok_teacher2, "teacher3": tok_teacher3,
++            },
++        }
++    finally:
++        await db.rollback()
++        user_ids = [ids.get(k) for k in ("student1", "teacher", "teacher2", "teacher3") if k in ids]
++        task_ids = [
++            ids[k]
++            for k in ("task_sub", "task_unrelated", "task_percent_literal", "task_percent_decoy")
++            if k in ids
++        ]
++        course_ids = [ids[k] for k in ("root", "sub", "unrelated") if k in ids]
++        if user_ids:
++            await db.execute(text("DELETE FROM task_results WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM attempts WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM user_courses WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(
++                text("DELETE FROM teacher_courses WHERE teacher_id = ANY(:u)"), {"u": user_ids}
++            )
++            await db.execute(
++                text("DELETE FROM student_teacher_links WHERE student_id = ANY(:u) OR teacher_id = ANY(:u)"),
++                {"u": user_ids},
++            )
++            await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": user_ids})
++            await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": user_ids})
++        if task_ids:
++            await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
++        if course_ids:
++            await db.execute(text("DELETE FROM course_parents WHERE course_id = ANY(:c)"), {"c": course_ids})
++            await db.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": course_ids})
++        await db.commit()
++
++
++def _search_path(ids) -> str:
++    return f"/api/v1/teacher/students/{ids['student1']}/tasks/search"
++
++
++def _search_params(q: str, *, limit: int | None = None) -> dict:
++    params = {"q": q}
++    if limit is not None:
++        params["limit"] = limit
++    return params
++
++
++# ─── Режим «номер» ───────────────────────────────────────────────────────────
++
++
++async def test_number_search_finds_task_within_acl(sgraph, client):
++    """teacher2 (только teacher_courses на root) находит task_sub по голому числу."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params(str(ids["task_sub"])),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert len(body["results"]) == 1
++    result = body["results"][0]
++    assert result["task_id"] == ids["task_sub"]
++    assert result["visible_id"] == f"id-{ids['task_sub']}"
++    assert result["course_id"] == ids["sub"]
++
++
++async def test_number_search_id_prefix_case_insensitive(sgraph, client):
++    """"ID-<n>" (в любом регистре) распознаётся так же, как голое число."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params(f"ID-{ids['task_sub']}"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert [r["task_id"] for r in resp.json()["results"]] == [ids["task_sub"]]
++
++
++async def test_number_search_denies_task_outside_acl(sgraph, client):
++    """teacher2 не находит task_unrelated: курс вне его teacher_courses ACL."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params(str(ids["task_unrelated"])),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"] == []
++
++
++async def test_number_search_unknown_task_id_is_empty(sgraph, client):
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params("999000111"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"] == []
++
++
++# ─── Режим «текст» ────────────────────────────────────────────────────────────
++
++
++async def test_text_search_finds_matching_task_within_acl(sgraph, client):
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params("маркерсёрч7331"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert [r["task_id"] for r in resp.json()["results"]] == [ids["task_sub"]]
++
++
++async def test_text_search_excludes_task_outside_acl(sgraph, client):
++    """ILIKE нашёл бы task_unrelated по маркеру, но ACL-фильтр его отсеивает."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params("маркерчужой9042"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"] == []
++
++
++async def test_text_search_escapes_percent_wildcard(sgraph, client):
++    """"100%okмаркер" ищется как ЛИТЕРАЛЬНАЯ строка: без экранирования "%" в
++    ILIKE сработал бы как wildcard и нашёл бы decoy-задание тоже ("100Xok"
++    подходит под маску "100" + любой символ + "ok")."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params("процент100%okмаркер"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    found = [r["task_id"] for r in resp.json()["results"]]
++    assert found == [ids["task_percent_literal"]]
++    assert ids["task_percent_decoy"] not in found
++
++
++async def test_text_search_no_match_is_empty(sgraph, client):
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params("несуществующийтекст404"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"] == []
++
++
++# ─── ACL: прямая связка vs отсутствие связи ──────────────────────────────────
++
++
++async def test_directly_linked_teacher_sees_task_outside_own_course_acl(sgraph, client):
++    """teacher связан со student1 напрямую — видит task_unrelated тоже (тот же
++    инвариант, что у can_edit_progress/tsk-349: прямая связка ученик-учитель
++    не завязана на конкретный курс)."""
++    ids = sgraph["ids"]
++    resp = await client.get(
++        _search_path(ids), params=_search_params(str(ids["task_unrelated"])),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    assert [r["task_id"] for r in resp.json()["results"]] == [ids["task_unrelated"]]
++
++
++async def test_unrelated_teacher_gets_empty_results(sgraph, client):
++    """teacher3 не связан ни со student1, ни с одним из курсов — пусто в обоих режимах."""
++    ids = sgraph["ids"]
++    resp_number = await client.get(
++        _search_path(ids), params=_search_params(str(ids["task_sub"])),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher3']}"},
++    )
++    resp_text = await client.get(
++        _search_path(ids), params=_search_params("маркерсёрч7331"),
++        headers={"Authorization": f"Bearer {sgraph['tokens']['teacher3']}"},
++    )
++    assert resp_number.status_code == 200 and resp_number.json()["results"] == []
++    assert resp_text.status_code == 200 and resp_text.json()["results"] == []
++
++
++# ─── Результат поиска ведёт в существующую карточку истории (tsk-349) ───────
++
++
++async def test_search_result_opens_in_existing_history_endpoint(sgraph, client):
++    """Найденный task_id должен успешно открываться в эндпоинте истории tsk-349
++    (не тупиковый клик) — интеграционная сверка двух эндпоинтов."""
++    ids = sgraph["ids"]
++    headers = {"Authorization": f"Bearer {sgraph['tokens']['teacher2']}"}
++    search_resp = await client.get(
++        _search_path(ids), params=_search_params(str(ids["task_sub"])), headers=headers
++    )
++    assert search_resp.status_code == 200
++    found_task_id = search_resp.json()["results"][0]["task_id"]
++
++    history_resp = await client.get(
++        f"/api/v1/teacher/students/{ids['student1']}/tasks/{found_task_id}/history",
++        headers=headers,
++    )
++    assert history_resp.status_code == 200, history_resp.text

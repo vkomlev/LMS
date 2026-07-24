@@ -16112,6 +16112,135 @@
         }
       }
     },
+    "/api/v1/teacher/students/{student_id}/tasks/search": {
+      "get": {
+        "tags": [
+          "teacher_task_search"
+        ],
+        "summary": "Поиск задания в кабинете преподавателя (по номеру или тексту, в контексте ученика)",
+        "description": "Найти задания, доступные преподавателю в контексте ученика.\n\nACL и исключение заданий с ``course_id=NULL`` — в ``task_search_service``,\nон же выбирает режим поиска (номер vs текст) по содержимому ``q``.",
+        "operationId": "search_student_tasks_api_v1_teacher_students__student_id__tasks_search_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ID ученика, в контексте которого ищем",
+              "title": "Student Id"
+            },
+            "description": "ID ученика, в контексте которого ищем"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Номер задания (110 / id-110) или текст условия",
+              "title": "Q"
+            },
+            "description": "Номер задания (110 / id-110) или текст условия"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "Максимум результатов",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Максимум результатов"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/assignment-rules/bulk-upsert": {
       "post": {
         "tags": [
@@ -30175,6 +30304,94 @@
         "type": "object",
         "title": "TaskResultUpdate",
         "description": "Схема обновления результата по задаче."
+      },
+      "TaskSearchResponse": {
+        "properties": {
+          "query": {
+            "type": "string",
+            "title": "Query"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TaskSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "query",
+          "results"
+        ],
+        "title": "TaskSearchResponse",
+        "description": "Ответ поиска — запрос + список найденных заданий (может быть пустым)."
+      },
+      "TaskSearchResult": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "visible_id": {
+            "type": "string",
+            "title": "Visible Id",
+            "description": "Видимый ученику/учителю номер задания, формат id-<task_id> (tsk-309/311)"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Человекочитаемый заголовок/обрезанное условие (см. humanize_task_title)"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "Тип задания (SC/MC/SA/SA_COM/TBL_COM/TA/…)"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty",
+            "description": "Название уровня сложности (difficulties.name_ru)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "visible_id",
+          "title",
+          "course_id"
+        ],
+        "title": "TaskSearchResult",
+        "description": "Одна карточка результата поиска."
       },
       "TaskStateResponse": {
         "properties": {
