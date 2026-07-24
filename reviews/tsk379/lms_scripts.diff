@@ -1,0 +1,455 @@
+diff --git a/scripts/tsk379_fix_stems.py b/scripts/tsk379_fix_stems.py
+new file mode 100644
+index 0000000..9c0ffac
+--- /dev/null
++++ b/scripts/tsk379_fix_stems.py
+@@ -0,0 +1,163 @@
++# -*- coding: utf-8 -*-
++"""tsk-379, шаг 2: убрать из условий служебную шапку импорта («Уровень …» / «Решение
++задания NNNN»).
++
++ЧТО И ПОЧЕМУ
++Разбор `scripts/tsk379_scan.py` дал 170 активных заданий (84 `tg:ege`, 86 `crylov`, из
++них одно — 3156 — одновременно и «Решение задания», и «Уровень») с шапкой вида
++«Задание 24_24613 КЕГЭ. Уровень сложный.» перед условием. Уровень сложности дублирует
++`difficulty_id` (канон подтверждён по обеим партиям: [[tsk-381]], [[tsk-382]] закрыты
++2026-07-23 — у всех 112 активных на тот момент заданий Крылова есть обоснование канон 1
++или 2, ограничение «не резать 12 без канона» из исходной постановки [[tsk-379]] снято).
++«Решение задания N» вводит в заблуждение: дальше идёт условие, а не решение.
++
++ВНЕ ОХВАТА ЭТОЙ ПРАВКИ: 15 заданий `crylov` с шапкой БЕЗ строки «Уровень …» (только
++«Задание N Сборник Крылова С.С. вариант M.», без уровня — те самые 9525/9528/9530 и
++похожие из [[tsk-382]], где в тексте условия уровня никогда не было). Это отдельный,
++не описанный в постановке tsk-379 класс — решение по нему не принято, скрипт их не
++трогает. Список — `unmatched_levelless` в отчёте scan.
++
++Резать можно ровно шапку — «Задание/Решение задания … Уровень X» (плюс один соседний
++`<br>`, если шапка делит параграф с реальным текстом), а не «от маркера до конца»:
++у части заданий (`tg:ege:961` и подобные) в том же параграфе после шапки идёт
++комментарий оператора и сразу реальный вопрос — слепой срез отрезал бы часть условия
++(урок [[tsk-370]]).
++
++dry-run по умолчанию; `--apply` при DBCHECK_OK=1. Перед записью каждое условие
++сверяется с тем, на котором собиралась правка. После COMMIT — независимая проверка
++ПОСТРОЧНО по всему затронутому множеству (урок [[tsk-317]]).
++
++Запуск: python scripts/tsk379_fix_stems.py --backup <файл.json> [--apply]
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import os
++import re
++import sys
++from pathlib import Path
++
++import asyncpg
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++from tsk370_scan import ASK_RE, dsn, strip_html  # noqa: E402
++from tsk379_scan import LEVEL_WORD, cut_header  # noqa: E402
++
++LEVEL_IN_REMOVED_RE = re.compile(r"Уровень\s+" + LEVEL_WORD, re.IGNORECASE)
++
++
++def build_plan(rows: dict[int, asyncpg.Record]) -> tuple[dict[int, str], list[int]]:
++    """Карта id → новое условие для заданий с шапкой, где есть строка «Уровень …».
++
++    Заданий без «Уровень …» (только источник/сборник) в план не попадают — отдельный
++    неразобранный класс, второй элемент возврата — их id для отчёта.
++    """
++    plan: dict[int, str] = {}
++    levelless: list[int] = []
++    for tid, r in rows.items():
++        stem = r["stem"] or ""
++        new, removed = cut_header(stem)
++        if not removed:
++            raise RuntimeError(f"{tid}: шапка не найдена — условие в базе изменилось")
++        if not LEVEL_IN_REMOVED_RE.search("".join(removed)):
++            levelless.append(tid)
++            continue
++        if new == stem:
++            raise RuntimeError(f"{tid}: правка не собралась")
++
++        left = strip_html(new)
++        if not left:
++            raise RuntimeError(f"{tid}: после правки условие осталось без текста")
++        if not ASK_RE.search(left):
++            raise RuntimeError(f"{tid}: после правки в условии нет постановки задачи")
++        if LEVEL_IN_REMOVED_RE.search(new):
++            raise RuntimeError(f"{tid}: после правки осталась строка «Уровень …»")
++        plan[tid] = new
++    return plan, levelless
++
++
++async def main(backup_path: Path, apply: bool) -> None:
++    conn = await asyncpg.connect(dsn("learn_prod_db"))
++    try:
++        rows = {r["id"]: r for r in await conn.fetch(
++            "SELECT id, external_uid, is_active, task_content->>'stem' AS stem "
++            "FROM tasks WHERE is_active AND ("
++            "     split_part(external_uid, ':', 1) IN ('crylov', 'tg')"
++            "  OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d'"
++            ") AND (task_content->>'stem' ~* 'Уровень\\s+"
++            "(простой|лёгкий|легкий|средний|сложный)'"
++            "  OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d')")}
++
++        plan, levelless = build_plan(rows)
++        ids = sorted(plan)
++
++        backup_path.parent.mkdir(parents=True, exist_ok=True)
++        backup_path.write_text(json.dumps(
++            [{"id": i, "external_uid": rows[i]["external_uid"], "stem": rows[i]["stem"]}
++             for i in ids], ensure_ascii=False, indent=1), encoding="utf-8")
++        print(f"Бэкап прежних значений: {backup_path} ({len(ids)} заданий)")
++        print(f"Вне охвата (шапка без «Уровень …», {len(levelless)}): {sorted(levelless)}\n")
++
++        by_src: dict[str, int] = {}
++        for tid in ids:
++            src = rows[tid]["external_uid"].split(":")[0]
++            by_src[src] = by_src.get(src, 0) + 1
++        for src, n in sorted(by_src.items(), key=lambda kv: -kv[1]):
++            print(f"  {src}: {n}")
++        cut = sum(len(rows[i]["stem"]) - len(plan[i]) for i in ids)
++        print(f"\nВсего заданий: {len(ids)}; срезано {cut} символов разметки")
++
++        print("\nПримеры до/после (начало условия):")
++        for tid in ([3156] + ids[:2] + ids[-2:]):
++            if tid not in plan:
++                continue
++            was = strip_html(rows[tid]["stem"])
++            now = strip_html(plan[tid])
++            print(f"\n[{tid}] {rows[tid]['external_uid']}")
++            print(f"  было:  {was[:160]}")
++            print(f"  стало: {now[:160]}")
++
++        if not apply:
++            print("\nDRY-RUN: в базу ничего не записано. Повторить с --apply.")
++            return
++
++        async with conn.transaction():
++            for tid in ids:
++                await conn.execute(
++                    "UPDATE tasks SET task_content = jsonb_set("
++                    "  task_content, '{stem}', to_jsonb($2::text), true) "
++                    "WHERE id = $1", tid, plan[tid])
++        print("\nCOMMIT выполнен. Построчная проверка после записи:")
++
++        check = {r["id"]: r["stem"] for r in await conn.fetch(
++            "SELECT id, task_content->>'stem' AS stem FROM tasks WHERE id = ANY($1::int[])",
++            ids)}
++        bad = [i for i in ids if check.get(i) != plan[i]]
++        print(f"  сверено заданий: {len(ids)}; совпало: {len(ids) - len(bad)}")
++        if bad:
++            raise RuntimeError(f"после COMMIT не совпало: {bad}")
++        left = await conn.fetchval(
++            "SELECT count(*) FROM tasks WHERE is_active AND id = ANY($1::int[]) AND ("
++            "     task_content->>'stem' ~* 'Уровень\\s+"
++            "(простой|лёгкий|легкий|средний|сложный)'"
++            "  OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d')", ids)
++        print(f"  осталось заданий из плана с шапкой: {left}")
++        if left:
++            raise RuntimeError("шапка осталась у части заданий — разбирать руками")
++    finally:
++        await conn.close()
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--backup", type=Path, required=True)
++    ap.add_argument("--apply", action="store_true")
++    args = ap.parse_args()
++    asyncio.run(main(args.backup, args.apply))
+diff --git a/scripts/tsk379_scan.py b/scripts/tsk379_scan.py
+new file mode 100644
+index 0000000..c8d9321
+--- /dev/null
++++ b/scripts/tsk379_scan.py
+@@ -0,0 +1,159 @@
++# -*- coding: utf-8 -*-
++"""tsk-379, шаг 1: разбор служебной шапки импорта в условии заданий (read-only).
++
++ЗАЧЕМ
++В `task_content.stem` партий `crylov` и `tg:ege` осела шапка импорта вида
++«Задание 24_24613 КЕГЭ. Уровень сложный.» (иногда «Решение задания 9_58322 Уровень
++простой») перед самим условием. Утечки ответа нет — это выяснено в [[tsk-379]] отдельно, —
++но ученик читает её как часть задачи, а «Решение задания N» прямо вводит в заблуждение:
++дальше идёт условие, а не решение. Уровень сложности дублирует поле `difficulty_id`
++(канон уже подтверждён по обеим партиям — [[tsk-381]], [[tsk-382]]).
++
++ПОЧЕМУ ДВА РЕЖИМА СРЕЗА, А НЕ ОДИН
++Шапка либо занимает ВЕСЬ первый содержательный `<p>…</p>` (тогда убирается целиком,
++вместе с закрывающим тегом и последующим пробелом — иначе остаётся пустой параграф),
++либо делит `<p>` с реальным текстом через `<br>` (частый случай live-данных: следом идёт
++«Вариант …», комментарий оператора или сразу вопрос). Во втором случае режется только
++сама шапка «Задание/Решение задания … Уровень X» плюс один соседний `<br>`, а всё
++остальное в параграфе остаётся — резать «от маркера до конца» запрещает урок [[tsk-370]]
++(обрыв условия снаружи не виден).
++
++Границы среза: захват НЕ пересекает теги, кроме `<br>` — если между «Задание» и «Уровень»
++встречается `<a>`, `<strong>` или граница параграфа, шапка на этой записи не считается
++разобранной и попадает в `unmatched` для ручного разбора.
++
++Ничего не пишет в БД. На выходе JSON для шага 2 (`tsk379_fix_stems.py`).
++
++Запуск:  python scripts/tsk379_scan.py --out <файл.json>
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import os
++import re
++import sys
++from pathlib import Path
++
++import asyncpg
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++from tsk370_scan import ASK_RE, dsn, strip_html  # noqa: E402
++
++LEVEL_WORD = r"(?:простой|лёгкий|легкий|средний|сложный)"
++LEADER = r"(?:Решение\s+задания|Задание)"
++
++# Шапка занимает ровно весь параграф — убирается вместе с тегами и хвостовым пробелом.
++WHOLE_HEADER_P_RE = re.compile(
++    rf"<p>\s*{LEADER}\s+(?:<br\s*/?>|[^<])*?Уровень\s+{LEVEL_WORD}\.?\s*</p>\s*",
++    re.IGNORECASE,
++)
++# Шапка — начало параграфа, дальше в том же <p> реальный текст через <br>.
++INLINE_HEADER_RE = re.compile(
++    rf"{LEADER}\s+(?:<br\s*/?>|[^<])*?Уровень\s+{LEVEL_WORD}\.?\s*(?:<br\s*/?>\s*)?",
++    re.IGNORECASE,
++)
++# Тем же способом ловится шапка без уровня — только у crylov, там номер/сборник есть,
++# а строки «Уровень …» нет (примеры 9525/9528/9530 из tsk-382).
++LEVELLESS_LEADER = r"Задание\s+\d+[\w_]*\s+Сборник\s+Крылова\s+С\.?С\.?\s+вариант\s+\d+\.?"
++WHOLE_HEADER_NOLEVEL_P_RE = re.compile(
++    rf"<p>\s*{LEVELLESS_LEADER}\s*</p>\s*", re.IGNORECASE)
++INLINE_HEADER_NOLEVEL_RE = re.compile(
++    rf"{LEVELLESS_LEADER}\s*(?:<br\s*/?>\s*)?", re.IGNORECASE)
++
++# «Уровень …» где-то в тексте — сигнал кандидата на разбор (широкий, дальше фильтруется).
++CANDIDATE_RE = re.compile(r"Уровень\s+" + LEVEL_WORD, re.IGNORECASE)
++LEADER_ANY_RE = re.compile(LEADER, re.IGNORECASE)
++
++
++def cut_header(stem: str) -> tuple[str, list[str]]:
++    """Условие без шапки импорта. Возвращает (новое условие, что срезано)."""
++    removed: list[str] = []
++    out = stem
++
++    for whole_re, inline_re in (
++        (WHOLE_HEADER_P_RE, INLINE_HEADER_RE),
++        (WHOLE_HEADER_NOLEVEL_P_RE, INLINE_HEADER_NOLEVEL_RE),
++    ):
++        hit = [m.group(0) for m in whole_re.finditer(out)]
++        out = whole_re.sub("", out)
++        hit2 = [m.group(0) for m in inline_re.finditer(out)]
++        out = inline_re.sub("", out)
++        removed += hit + hit2
++
++    return out, removed
++
++
++async def main(out_path: Path) -> None:
++    conn = await asyncpg.connect(dsn("learn_prod_db"))
++    try:
++        rows = await conn.fetch(
++            "SELECT id, external_uid, "
++            "       task_content->>'stem' AS stem, "
++            "       difficulty_id "
++            "FROM tasks WHERE is_active AND ("
++            "     split_part(external_uid, ':', 1) IN ('crylov', 'tg')"
++            "  OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d'"
++            ") ORDER BY id")
++    finally:
++        await conn.close()
++
++    report: dict[str, list[dict]] = {"fixed": [], "unmatched": [], "levelless": []}
++    for r in rows:
++        stem = r["stem"] or ""
++        has_candidate = bool(CANDIDATE_RE.search(stem)) or bool(
++            re.search(r"Решение\s+задания\s+\d", stem, re.IGNORECASE))
++        has_levelless = bool(WHOLE_HEADER_NOLEVEL_P_RE.search(stem)) or bool(
++            re.search(LEVELLESS_LEADER, stem, re.IGNORECASE) and not has_candidate)
++        if not has_candidate and not has_levelless:
++            continue
++
++        item = {"id": r["id"], "external_uid": r["external_uid"],
++                 "difficulty_id": r["difficulty_id"], "len_before": len(stem)}
++        new, removed = cut_header(stem)
++        left = strip_html(new)
++
++        if not removed:
++            report["unmatched"].append(item | {"stem_head": stem[:200]})
++            continue
++
++        entry = item | {
++            "removed": removed,
++            "len_after": len(new),
++            "residual_leader": bool(LEADER_ANY_RE.search(strip_html(new))),
++            "residual_uroven": bool(re.search(r"Уровень\s+" + LEVEL_WORD, new, re.IGNORECASE)),
++            "has_ask": bool(ASK_RE.search(left)),
++            "text_len_before": len(strip_html(stem)),
++            "text_len_after": len(left),
++            "head_after": left[:160],
++        }
++        key = "levelless" if not re.search(r"Уровень\s+" + LEVEL_WORD, "".join(removed), re.I) else "fixed"
++        report[key].append(entry)
++
++    out_path.parent.mkdir(parents=True, exist_ok=True)
++    out_path.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
++
++    total = len(report["fixed"]) + len(report["levelless"])
++    print(f"Кандидатов разобрано: {total}, из них с шапкой без уровня: {len(report['levelless'])}")
++    print(f"Не разобрано (unmatched, нужен ручной разбор): {len(report['unmatched'])}")
++    for u in report["unmatched"]:
++        print(f"  {u['id']} {u['external_uid']}: {u['stem_head'][:120]!r}")
++    bad = [e for e in report["fixed"] + report["levelless"]
++           if e["residual_leader"] or e["residual_uroven"] or not e["has_ask"]]
++    print(f"Подозрительных после среза (остаток шапки / нет вопроса): {len(bad)}")
++    for b in bad:
++        print(f"  {b['id']} {b['external_uid']}: residual_leader={b['residual_leader']} "
++              f"residual_uroven={b['residual_uroven']} has_ask={b['has_ask']}")
++    print(f"\nОтчёт: {out_path}")
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--out", type=Path, required=True)
++    asyncio.run(main(ap.parse_args().out))
+diff --git a/scripts/tsk379_verify.py b/scripts/tsk379_verify.py
+new file mode 100644
+index 0000000..f38de82
+--- /dev/null
++++ b/scripts/tsk379_verify.py
+@@ -0,0 +1,115 @@
++# -*- coding: utf-8 -*-
++"""tsk-379, шаг 3: независимая построчная проверка среза шапки импорта (read-only).
++
++ЗАЧЕМ ОТДЕЛЬНЫМ СКРИПТОМ
++Проверка внутри `tsk379_fix_stems.py` сравнивает базу с планом, который сама же и
++записала: общая ошибка в сборке правки такой проверкой не ловится. Здесь ожидаемое
++значение собирается заново — из БЭКАПА прежних условий через `cut_header()`, — и
++сверяется с тем, что реально лежит в базе, по каждой строке отдельно, а не агрегатом
++(урок [[tsk-317]]).
++
++Проверяется по каждому из 170 заданий:
++  * условие в базе совпадает с ожидаемым посимвольно;
++  * шапки не осталось: ни «Задание … Уровень X», ни «Решение задания N»;
++  * условие не опустело и в нём осталась постановка задачи (ASK_RE);
++  * то, что шапкой не было, не пострадало: новый текст — подпоследовательность
++    прежнего (только удаление, ничего не переписано).
++
++Запуск: python scripts/tsk379_verify.py --backup <файл.json>
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import hashlib
++import json
++import os
++import re
++import sys
++from pathlib import Path
++
++import asyncpg
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++sys.path.insert(0, str(Path(__file__).resolve().parent))
++from tsk370_scan import ASK_RE, dsn, strip_html  # noqa: E402
++from tsk379_scan import LEVEL_WORD, cut_header  # noqa: E402
++
++HEADER_LEFT_RE = re.compile(
++    r"Уровень\s+" + LEVEL_WORD + r"|Решение\s+задания\s+\d", re.IGNORECASE)
++
++
++def words(text: str) -> list[str]:
++    """Слова текста без знаков препинания (см. tsk374_verify.py)."""
++    return re.findall(r"[^\W_]+", text, re.UNICODE)
++
++
++def is_subsequence(small: str, big: str) -> bool:
++    it = iter(words(big))
++    return all(w in it for w in words(small))
++
++
++async def main(backup_path: Path) -> None:
++    backup = json.loads(backup_path.read_text(encoding="utf-8"))
++    ids = [r["id"] for r in backup]
++    conn = await asyncpg.connect(dsn("learn_prod_db"))
++    try:
++        rows = {r["id"]: r for r in await conn.fetch(
++            "SELECT id, is_active, task_content->>'stem' AS stem "
++            "FROM tasks WHERE id = ANY($1::int[])", ids)}
++        leftover = await conn.fetchval(
++            "SELECT count(*) FROM tasks WHERE is_active AND ("
++            "     task_content->>'stem' ~* 'Уровень\\s+"
++            "(простой|лёгкий|легкий|средний|сложный)'"
++            "  OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d')"
++            "  AND (split_part(external_uid, ':', 1) IN ('crylov', 'tg')"
++            "       OR task_content->>'stem' ~* 'Решение\\s+задания\\s+\\d')")
++    finally:
++        await conn.close()
++
++    bad: list[str] = []
++    for rec in backup:
++        tid, old = rec["id"], rec["stem"] or ""
++        row = rows.get(tid)
++        if row is None or not row["is_active"]:
++            bad.append(f"{tid}: задания нет или оно неактивно")
++            continue
++        now = row["stem"] or ""
++        want, removed = cut_header(old)
++        if not removed:
++            bad.append(f"{tid}: в бэкапе не нашёл шапку заново — расхождение с планом")
++            continue
++        if now != want:
++            bad.append(f"{tid}: условие не совпало с ожидаемым "
++                       f"(md5 {hashlib.md5(now.encode()).hexdigest()[:8]} "
++                       f"!= {hashlib.md5(want.encode()).hexdigest()[:8]})")
++            continue
++        text = strip_html(now)
++        if HEADER_LEFT_RE.search(now):
++            bad.append(f"{tid}: осталась шапка")
++        if not text:
++            bad.append(f"{tid}: условие осталось без текста")
++        if not ASK_RE.search(text):
++            bad.append(f"{tid}: в условии нет постановки задачи")
++        if not is_subsequence(text, strip_html(old)):
++            bad.append(f"{tid}: текст условия не подпоследовательность прежнего — "
++                       f"что-то переписано, а не удалено")
++
++    print(f"Сверено заданий: {len(backup)} (построчно, ожидаемое пересобрано из бэкапа)")
++    print(f"Расхождений: {len(bad)}")
++    for b in bad:
++        print(f"  {b}")
++    print(f"Заданий с шапкой во всей затронутой области (crylov/tg/«Решение задания»): {leftover}")
++    if bad or leftover:
++        sys.exit(1)
++    print("\nПроверка пройдена.")
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--backup", type=Path, required=True)
++    asyncio.run(main(ap.parse_args().backup))

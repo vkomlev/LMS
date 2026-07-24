@@ -1,0 +1,2967 @@
+{
+ "fixed": [
+  {
+   "id": 2998,
+   "external_uid": "tg:ege:984",
+   "difficulty_id": 3,
+   "len_before": 1566,
+   "removed": [
+    "<p>Задание 6_83164 РешуЕГЭ. Уровень средний</p>\n"
+   ],
+   "len_after": 1518,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1518,
+   "text_len_after": 1476,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится B начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 2999,
+   "external_uid": "tg:ege:983",
+   "difficulty_id": 4,
+   "len_before": 1919,
+   "removed": [
+    "Задание 26_3279f3d4-7062-408a-add0-f583bc63cb5e Яндекс<br>Уровень сложный.<br>"
+   ],
+   "len_after": 1841,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1695,
+   "text_len_after": 1623,
+   "head_after": "Файл к заданию: 26.txt . Вариант Яндекс простой ноябрь 2025 Входной файл содержит информацию о бронированиях переговорных комнат в офисе компании в течение рабо"
+  },
+  {
+   "id": 3000,
+   "external_uid": "tg:ege:982",
+   "difficulty_id": 3,
+   "len_before": 675,
+   "removed": [
+    "Задание 24_a23593f7-9ba4-422d-89f0-587d3bbacbb6 Яндекс. Уровень средний.<br>"
+   ],
+   "len_after": 599,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 493,
+   "text_len_after": 420,
+   "head_after": "Файл к заданию: 24.txt . Вариант Яндекс простой ноябрь 2025. Текстовый файл состоит из десятичных цифр и заглавных букв латинского алфавита. Определите в прилаг"
+  },
+  {
+   "id": 3001,
+   "external_uid": "tg:ege:981",
+   "difficulty_id": 4,
+   "len_before": 379,
+   "removed": [
+    "<p>Задание 15 вариант Зимний гроб КЕГЭ Уровень сложный</p>\n"
+   ],
+   "len_after": 320,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 355,
+   "text_len_after": 302,
+   "head_after": "Операция m↑n — поразрядная импликация натуральных чисел: бит результата на позиции i равен (НЕ m_i) OR n_i. Пример: 19↑7 = 10011₂ ↑ 00111₂ = 01111₂ = 15.. Найти"
+  },
+  {
+   "id": 3002,
+   "external_uid": "tg:ege:980",
+   "difficulty_id": 2,
+   "len_before": 504,
+   "removed": [
+    "Задание 24_5139 КЕГЭ. Уровень простой. <br>"
+   ],
+   "len_after": 461,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 318,
+   "text_len_after": 279,
+   "head_after": "Файл к заданию: 24.txt . Вариант Рогова 1. Текстовый файл состоит из символов A, B, C, D, E, F и U. Определите максимальное количество идущих подряд троек симво"
+  },
+  {
+   "id": 3004,
+   "external_uid": "tg:ege:977",
+   "difficulty_id": 3,
+   "len_before": 2696,
+   "removed": [
+    "Задание 27_26678 КЕГЭ. Уровень средний.<br>"
+   ],
+   "len_after": 2653,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2337,
+   "text_len_after": 2297,
+   "head_after": "Файл к заданию: 27_A.txt &middot; 27_B.txt . Вариант Шастина 5 Фрагмент звёздного неба спроецирован на плоскость с декартовой системой координат. Учёный решил п"
+  },
+  {
+   "id": 3005,
+   "external_uid": "tg:ege:976",
+   "difficulty_id": 2,
+   "len_before": 670,
+   "removed": [
+    "Задание 24_26285 КЕГЭ. Уровень простой.<br>"
+   ],
+   "len_after": 627,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 487,
+   "text_len_after": 447,
+   "head_after": "Файл к заданию: 24.txt . Вариант Шастина 5 Текстовый файл состоит из символов A, B, C, D, E и F. Назовем «пятёркой» ровно пять идущих подряд символов, среди кот"
+  },
+  {
+   "id": 3010,
+   "external_uid": "tg:ege:971",
+   "difficulty_id": 4,
+   "len_before": 2348,
+   "removed": [
+    "Задание 26_25976 КЕГЭ. Уровень сложный.<br>"
+   ],
+   "len_after": 2305,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2136,
+   "text_len_after": 2096,
+   "head_after": "Файл к заданию: 26.txt . Вариант Л. Шастина 5 2026. В магазине для упаковки подарков есть N кубических коробок. Самой интересной считается упаковка подарка по п"
+  },
+  {
+   "id": 3011,
+   "external_uid": "tg:ege:970",
+   "difficulty_id": 3,
+   "len_before": 345,
+   "removed": [
+    "Задание 15_25992 КЕГЭ. Уровень средний.<br>"
+   ],
+   "len_after": 302,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 315,
+   "text_len_after": 275,
+   "head_after": "Вариант Л. Шастина 5 2026 Решаем кодом задания с большими числами!!! Обязательно к просмотру всем!!! Для какого наибольшего натурального числа А формула (3x+4y<"
+  },
+  {
+   "id": 3012,
+   "external_uid": "tg:ege:969",
+   "difficulty_id": 3,
+   "len_before": 430,
+   "removed": [
+    "Задание 16_c2de1849-f600-4507-8972-bf4117c7fc31 (Яндекс Учебник). Уровень средний<br>"
+   ],
+   "len_after": 345,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 396,
+   "text_len_after": 314,
+   "head_after": "Вариант средний октябрь 2025. Алгоритм вычисления значения функции F(n), где n — натуральное число, задан так: F(41)=41 при n=41 F(n)=F(n−1)−n, если n>41 и при "
+  },
+  {
+   "id": 3015,
+   "external_uid": "tg:ege:966",
+   "difficulty_id": 3,
+   "len_before": 1817,
+   "removed": [
+    "<p>Задание 27_13495a81-a647-4626-9907-8620f31c1e93 Вариант Яндекс простой 10.25. Уровень средний</p>\n"
+   ],
+   "len_after": 1716,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1496,
+   "text_len_after": 1401,
+   "head_after": "Файл к заданию: 27_А.txt &middot; 27_Б.txt . В файле A хранятся данные о звёздах двух кластеров, где H=6,W=4,5 для каждого кластера. В каждой строке записана ин"
+  },
+  {
+   "id": 3016,
+   "external_uid": "tg:ege:965",
+   "difficulty_id": 3,
+   "len_before": 1631,
+   "removed": [
+    "Задание 26_f702f7af-87ae-4eab-b8f7-a8a16590cbcf Вариант Яндекс простой 10.25. Уровень средний<br>"
+   ],
+   "len_after": 1534,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1440,
+   "text_len_after": 1346,
+   "head_after": "Файл к заданию: 26.txt . На 39 минуте получили верный ответ в Excel, далее искал ошибку в Python (смотреть, если интересны методики поиска ошибок без отладчика)"
+  },
+  {
+   "id": 3017,
+   "external_uid": "tg:ege:964",
+   "difficulty_id": 4,
+   "len_before": 1018,
+   "removed": [
+    "Задание 24_79093caa-18f3-4e6f-80d5-7e4135f2741a Вариант Яндекс простой 10.25. Уровень сложный<br>"
+   ],
+   "len_after": 921,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 839,
+   "text_len_after": 745,
+   "head_after": "Файл к заданию: 24.txt . 🔤Внимание! Долго искал ошибку, можно поиск ошибки промотать, но. Специально его оставил, чтобы вы поучились ходу рассуждений при поиске"
+  },
+  {
+   "id": 3020,
+   "external_uid": "tg:ege:961",
+   "difficulty_id": 3,
+   "len_before": 900,
+   "removed": [
+    "Задание 25_da2c6045-4247-4271-9a42-41599f6b1322 Яндекс<br>Вариант Яндекс простой 10.25. Уровень средний<br>"
+   ],
+   "len_after": 793,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 873,
+   "text_len_after": 772,
+   "head_after": "Ребята, в разборе не сделал важную вещь, вы делайте! В задании есть пример. Проверяйте свою функцию на примере!!! Пусть М — разность максимального и минимальног"
+  },
+  {
+   "id": 3021,
+   "external_uid": "tg:ege:960",
+   "difficulty_id": 2,
+   "len_before": 1271,
+   "removed": [
+    "Задание 22_0791d62b-45e2-49e1-9972-647a074b969f Яндекс. Вариант Яндекс простой 10.25. Уровень простой<br>"
+   ],
+   "len_after": 1166,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1095,
+   "text_len_after": 993,
+   "head_after": "Файл к заданию: 22.ods . В файле хранится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или последовательно. Приос"
+  },
+  {
+   "id": 3022,
+   "external_uid": "tg:ege:959",
+   "difficulty_id": 2,
+   "len_before": 587,
+   "removed": [
+    "Задание 12_3334a7f0-b179-4a80-9882-9591b4019f9b Яндекс<br>Вариант Яндекс простой 10.25. Уровень простой<br>"
+   ],
+   "len_after": 480,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 554,
+   "text_len_after": 453,
+   "head_after": "На ленте в соседних ячейках записана последовательность из 1200 1200 символов, включающая только нули, единицы и двойки. Ячейки слева и справа от последовательн"
+  },
+  {
+   "id": 3023,
+   "external_uid": "tg:ege:958",
+   "difficulty_id": 2,
+   "len_before": 694,
+   "removed": [
+    "Задание 7_8b48a42c-7141-46ee-bdd7-30c11ea92d99 Яндекс Вариант Яндекс простой 10.25. Уровень простой<br>"
+   ],
+   "len_after": 591,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 673,
+   "text_len_after": 573,
+   "head_after": "Документ (без упаковки) можно передать по каналу связи с одного компьютера на другой за 75 секунд.. Если предварительно упаковать документ архиватором, передать"
+  },
+  {
+   "id": 3024,
+   "external_uid": "tg:ege:957",
+   "difficulty_id": 2,
+   "len_before": 1257,
+   "removed": [
+    "<p>Задание 6_0aebbdc8-7167-41bd-a6c8-a3ee9d3f58e6 Яндекс учебник. Вариант Яндекс простой 10.25. Уровень простой</p>\n"
+   ],
+   "len_after": 1141,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1203,
+   "text_len_after": 1093,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 3025,
+   "external_uid": "tg:ege:956",
+   "difficulty_id": 2,
+   "len_before": 657,
+   "removed": [
+    "<p>Задание 2_4b22ad8f-1eea-4f4f-9f2e-00d45f1a56d9 (Яндекс учебник). Вариант Яндекс простой 10.25. Уровень простой</p>\n"
+   ],
+   "len_after": 539,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 600,
+   "text_len_after": 488,
+   "head_after": "Миша составлял таблицу истинности логической функции F = w∨(y∧¬x)∨¬z. Но успел заполнить только фрагмент из трёх различных строк и даже не указал, какому столбц"
+  },
+  {
+   "id": 3026,
+   "external_uid": "tg:ege:955",
+   "difficulty_id": 2,
+   "len_before": 1873,
+   "removed": [
+    "Задание 26_25363 КЕГЭ. Уровень простой. "
+   ],
+   "len_after": 1833,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1667,
+   "text_len_after": 1627,
+   "head_after": "Файл к заданию: 26.txt . ЕГКР 12.25. Менеджеры интернет-магазина составляют рейтинговый список новых моделей смартфонов по данным о продолжительности автономной"
+  },
+  {
+   "id": 3027,
+   "external_uid": "tg:ege:954",
+   "difficulty_id": 3,
+   "len_before": 651,
+   "removed": [
+    "Задание 24_25361 КЕГЭ. Уровень средний. "
+   ],
+   "len_after": 611,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 475,
+   "text_len_after": 435,
+   "head_after": "Файл к заданию: 24.txt . ЕГКР 12.25. Текстовый файл состоит из десятичных цифр и заглавных букв латинского алфавита. Определите в прилагаемом файле максимальное"
+  },
+  {
+   "id": 3031,
+   "external_uid": "tg:ege:949",
+   "difficulty_id": 2,
+   "len_before": 669,
+   "removed": [
+    "Задание 23_25360 КЕГЭ. Уровень простой. "
+   ],
+   "len_after": 629,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 639,
+   "text_len_after": 599,
+   "head_after": "ЕГКР 12.25 Исполнитель преобразует число, записанное на экране. У исполнителя есть три команды, которые обозначены латинскими буквами: A. вычти 3 В. вычти 6 C. "
+  },
+  {
+   "id": 3032,
+   "external_uid": "tg:ege:948",
+   "difficulty_id": 3,
+   "len_before": 343,
+   "removed": [
+    "Задание 16_25355 КЕГЭ. Уровень средний. "
+   ],
+   "len_after": 303,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 302,
+   "text_len_after": 262,
+   "head_after": "ЕГКР 12.25 Алгоритм вычисления функций F(n) и G(n), где n - целое число, задан следующими соотношениями: F(n)=F(n−4)+3580, если n >= 19 F(n)=6×(G(n−7)−36), если"
+  },
+  {
+   "id": 3033,
+   "external_uid": "tg:ege:947",
+   "difficulty_id": 3,
+   "len_before": 479,
+   "removed": [
+    "Задание 12_25351 КЕГЭ. Уровень средний. "
+   ],
+   "len_after": 439,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 461,
+   "text_len_after": 421,
+   "head_after": "ЕГКР 12.25. На ленте в соседних ячейках записано двоичное представление числа 2028 без ведущих нулей. Ячейки справа и слева от последовательности заполнены пуст"
+  },
+  {
+   "id": 3034,
+   "external_uid": "tg:ege:946",
+   "difficulty_id": 3,
+   "len_before": 609,
+   "removed": [
+    "Задание 11_25350 КЕГЭ. Уровень средний. "
+   ],
+   "len_after": 569,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 597,
+   "text_len_after": 557,
+   "head_after": "ЕГКР 12.25. На предприятии каждой изготовленной детали присваивают серийный номер, состоящий из 105 символов. В базе данных каждый серийный номер занимает одина"
+  },
+  {
+   "id": 3038,
+   "external_uid": "tg:ege:941",
+   "difficulty_id": 2,
+   "len_before": 621,
+   "removed": [
+    "Задание 3_25342 КЕГЭ. Уровень простой.<br>"
+   ],
+   "len_after": 579,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 445,
+   "text_len_after": 406,
+   "head_after": "Файл к заданию: 3.ods . ЕГКР 13.12.25 В файле приведён фрагмент базы данных «Театр» о продаже билетов в театр города. База данных состоит из трёх таблиц. Исполь"
+  },
+  {
+   "id": 3042,
+   "external_uid": "tg:ege:934",
+   "difficulty_id": 2,
+   "len_before": 753,
+   "removed": [
+    "<p>Задание 17_23757 Демоверсия 2026. Уровень простой</p>\n"
+   ],
+   "len_after": 696,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 580,
+   "text_len_after": 529,
+   "head_after": "Файл к заданию: 17.txt . В файле содержится последовательность натуральных чисел. Её элементы могут принимать целые значения от 1 до 100 000 включительно. Опред"
+  },
+  {
+   "id": 3056,
+   "external_uid": "tg:ege:917",
+   "difficulty_id": 2,
+   "len_before": 797,
+   "removed": [
+    "<p>Задание 13_23751 Демоверсия 2026. Уровень простой</p>\n"
+   ],
+   "len_after": 740,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 779,
+   "text_len_after": 728,
+   "head_after": "В терминологии сетей TCP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая – к адресу"
+  },
+  {
+   "id": 3057,
+   "external_uid": "tg:ege:916",
+   "difficulty_id": 3,
+   "len_before": 623,
+   "removed": [
+    "<p>Задание 11_23749 Демоверсия 2026. Уровень средний</p>\n"
+   ],
+   "len_after": 566,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 608,
+   "text_len_after": 557,
+   "head_after": "На предприятии каждой изготовленной детали присваивают серийный номер, состоящий из 2783 символов. В базе данных каждый серийный номер занимает одинаковое и мин"
+  },
+  {
+   "id": 3058,
+   "external_uid": "tg:ege:915",
+   "difficulty_id": 3,
+   "len_before": 634,
+   "removed": [
+    "Задание 9_23747 Демоверсия 2026. Уровень средний<br>"
+   ],
+   "len_after": 582,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 455,
+   "text_len_after": 406,
+   "head_after": "Файл к заданию: 9.ods . Откройте файл электронной таблицы, содержащей в каждой строке семь натуральных чисел. Определите сумму чисел в строке с наибольшим номер"
+  },
+  {
+   "id": 3059,
+   "external_uid": "tg:ege:914",
+   "difficulty_id": 3,
+   "len_before": 540,
+   "removed": [
+    "Задание 8_23746 Демоверсия 2026. Уровень средний<br>"
+   ],
+   "len_after": 488,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 501,
+   "text_len_after": 452,
+   "head_after": "Все пятибуквенные слова, составленные из букв С, Т, Р, О, К, А, записаны в алфавитном порядке и пронумерованы. Вот начало списка: 1. ААААА 2. ААААК 3. ААААО 4. "
+  },
+  {
+   "id": 3060,
+   "external_uid": "tg:ege:913",
+   "difficulty_id": 2,
+   "len_before": 1554,
+   "removed": [
+    "<p>Задание 6_23743 КЕГЭ. Демоверсия 2026. Уровень простой</p>\n"
+   ],
+   "len_after": 1492,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1510,
+   "text_len_after": 1454,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 3080,
+   "external_uid": "tg:ege:893",
+   "difficulty_id": 3,
+   "len_before": 1271,
+   "removed": [
+    "Задание 22 Крылов С.С. вариант 1. Уровень средний<br>"
+   ],
+   "len_after": 1218,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1086,
+   "text_len_after": 1036,
+   "head_after": "Файл к заданию: скачать . Решил 2 способами: ВПР и диаграммой. В данной ситуации, ВПР гораздо эффективнее!!! В файле содержится информация о совокупности N вычи"
+  },
+  {
+   "id": 3081,
+   "external_uid": "tg:ege:892",
+   "difficulty_id": 2,
+   "len_before": 439,
+   "removed": [
+    "Задание 14 Крылов С.С. вариант 1. Уровень простой<br>"
+   ],
+   "len_after": 386,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 365,
+   "text_len_after": 315,
+   "head_after": "Значение арифметического выражения 3 · 2187 1801 + 729 2000 – 4 · 243 2100 + 81 2200 – 2 · 27 2400 – 13122 записали в системе счисления с основанием 27. Определ"
+  },
+  {
+   "id": 3083,
+   "external_uid": "tg:ege:890",
+   "difficulty_id": 2,
+   "len_before": 906,
+   "removed": [
+    "<p>Задание 13 Крылов С.С. 2026 вариант 1. Уровень простой.</p>\n"
+   ],
+   "len_after": 843,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 882,
+   "text_len_after": 825,
+   "head_after": "В терминологии сетей ТСP/IP маской сети называют двоичное число, которое оказывает, какая часть IP-адреса узла сети относится к адресу сети, а какая - адресу уз"
+  },
+  {
+   "id": 3084,
+   "external_uid": "tg:ege:889",
+   "difficulty_id": 2,
+   "len_before": 501,
+   "removed": [
+    "<p>Задание 10 Крылов С.С. 2026. Вариант 1. Уровень простой.</p>\n"
+   ],
+   "len_after": 437,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 328,
+   "text_len_after": 270,
+   "head_after": "Файл к заданию: скачать . С помощью текстового редактора определите, сколько раз встречается сочетание букв «был» со строчной буквы в составе других слов, но не"
+  },
+  {
+   "id": 3087,
+   "external_uid": "tg:ege:886",
+   "difficulty_id": 3,
+   "len_before": 1263,
+   "removed": [
+    "Задание 22_5ca26435-f5bf-4f47-9b13-80a66952b81d Яндекс( Рогов А.) Уровень средний.<br>"
+   ],
+   "len_after": 1177,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1081,
+   "text_len_after": 998,
+   "head_after": "Файл к заданию: 22.xls . Внимание. На мой взгляд, ошибка в правильном ответе. Если я не прав, напишите в комментариях. В файле содержится информация о совокупно"
+  },
+  {
+   "id": 3096,
+   "external_uid": "tg:ege:875",
+   "difficulty_id": 3,
+   "len_before": 1748,
+   "removed": [
+    "Задание 26_150e8d92-f069-48fc-8fc9-19abe03284de (Яндекс Учебник). Уровень средний<br>"
+   ],
+   "len_after": 1663,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1537,
+   "text_len_after": 1455,
+   "head_after": "Файл к заданию: 26.txt . Вариант средний октябрь 2025 На складе логистической компании хранится N N товаров нескольких артикулов. У товаров одного артикула один"
+  },
+  {
+   "id": 3097,
+   "external_uid": "tg:ege:874",
+   "difficulty_id": 3,
+   "len_before": 860,
+   "removed": [
+    "Задание 24_150e8d92-f069-48fc-8fc9-19abe03284de (Яндекс Учебник). Уровень средний.<br>"
+   ],
+   "len_after": 774,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 675,
+   "text_len_after": 592,
+   "head_after": "Файл к заданию: 24.txt . Вариант средний октябрь 2025 Текстовый файл состоит из символов P, Q, R и S. В прилагаемом файле определите максимальное количество сим"
+  },
+  {
+   "id": 3098,
+   "external_uid": "tg:ege:873",
+   "difficulty_id": 2,
+   "len_before": 477,
+   "removed": [
+    "Задание 15_150e8d92-f069-48fc-8fc9-19abe03284de (Яндекс учебник) Уровень простой<br>"
+   ],
+   "len_after": 393,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 458,
+   "text_len_after": 377,
+   "head_after": "Вариант средний октябрь 2025 Обозначим через ДЕЛ(n,m) утверждение «натуральное число n делится без остатка на натуральное число m». Пусть на числовой прямой дан"
+  },
+  {
+   "id": 3105,
+   "external_uid": "tg:ege:865",
+   "difficulty_id": 3,
+   "len_before": 613,
+   "removed": [
+    "Задание 9 Вариант 1 Крылова С.С.2026. Уровень средний. <br>"
+   ],
+   "len_after": 554,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 433,
+   "text_len_after": 378,
+   "head_after": "Файл к заданию: скачать . Откройте файл электронной таблицы, содержащей в каждой строке семь натуральных чисел. Определите наибольший номер строки таблицы, для "
+  },
+  {
+   "id": 3106,
+   "external_uid": "tg:ege:864",
+   "difficulty_id": 3,
+   "len_before": 1137,
+   "removed": [
+    "Задание 5_25344 ЕГКР (московский пробник) декабрь 2025. Уровень средний<br>"
+   ],
+   "len_after": 1062,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1019,
+   "text_len_after": 947,
+   "head_after": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится троичная запись числа N. 2. Далее эта запис"
+  },
+  {
+   "id": 3112,
+   "external_uid": "tg:ege:856",
+   "difficulty_id": 3,
+   "len_before": 666,
+   "removed": [
+    "<p>Задание 11_yandex. Уровень средний</p>\n"
+   ],
+   "len_after": 624,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 648,
+   "text_len_after": 612,
+   "head_after": "На предприятии каждой изготовленной детали присваивают серийный номер, содержащий десятичные цифры, 52 латинские буквы (с учётом регистра) и символы из 458-симв"
+  },
+  {
+   "id": 3119,
+   "external_uid": "tg:ege:848",
+   "difficulty_id": 2,
+   "len_before": 1340,
+   "removed": [
+    "Задание 3_27615 КЕГЭ. Уровень простой.<br>"
+   ],
+   "len_after": 1298,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1152,
+   "text_len_after": 1113,
+   "head_after": "Файл к заданию: 3.ods . ‼️ Внимание, предварительно есть ошибка в ответе! В файле приведён фрагмент базы данных «Кондитерские изделия» о поставках конфет и пече"
+  },
+  {
+   "id": 3120,
+   "external_uid": "tg:ege:847",
+   "difficulty_id": 3,
+   "len_before": 749,
+   "removed": [
+    "<p>Задание 12_25239 КЕГЭ. Уровень средний.</p>\n"
+   ],
+   "len_after": 702,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 597,
+   "text_len_after": 556,
+   "head_after": "Выполните задание. На ленте в соседних ячейках записана двоичная запись числа 32 768, с неизвестным количеством ведущих нулей. Ячейки справа и слева от последов"
+  },
+  {
+   "id": 3122,
+   "external_uid": "tg:ege:845",
+   "difficulty_id": 2,
+   "len_before": 522,
+   "removed": [
+    "Задание 3_81787 Решу ЕГЭ. Уровень простой.<br>"
+   ],
+   "len_after": 476,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 343,
+   "text_len_after": 300,
+   "head_after": "Файл к заданию: Файл к заданию . Решаю без ВПР для новичков. И потом с ВПР.. Используя информацию из приведённой базы данных, определите, на какую сумму (в руб."
+  },
+  {
+   "id": 3127,
+   "external_uid": "tg:ege:840",
+   "difficulty_id": 4,
+   "len_before": 676,
+   "removed": [
+    "<p>Задание 24_24613 КЕГЭ. Уровень сложный.</p>\n"
+   ],
+   "len_after": 629,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 494,
+   "text_len_after": 453,
+   "head_after": "Файл к заданию: 24.txt . Текстовый файл состоит из десятичных цифр и заглавных букв латинского алфавита. Определите, сколько в этом файле подпоследовательностей"
+  },
+  {
+   "id": 3129,
+   "external_uid": "tg:ege:838",
+   "difficulty_id": 4,
+   "len_before": 511,
+   "removed": [
+    "<p>Задание 14_24619 Решу ЕГЭ Уровень сложный.</p>\n"
+   ],
+   "len_after": 461,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 453,
+   "text_len_after": 409,
+   "head_after": "Дано арифметическое выражение: SLADOST 36 + GADOST 10x = HALLOWEEN 50−x − 16672986176044910 В записи оснований переменной х обозначена неизвестная десятичная ци"
+  },
+  {
+   "id": 3153,
+   "external_uid": "tg:ege:800",
+   "difficulty_id": 3,
+   "len_before": 986,
+   "removed": [
+    "Задание 24 Вариант Крылова С.С. 5. Уровень средний.<br>"
+   ],
+   "len_after": 931,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 804,
+   "text_len_after": 752,
+   "head_after": "Файл к заданию: скачать . Решаем через циклы. Внимание, видео заканчивается на моменте запуска программы. Запуск прошел успешно, программа выполнилась за 22 сек"
+  },
+  {
+   "id": 3156,
+   "external_uid": "tg:ege:785",
+   "difficulty_id": 2,
+   "len_before": 651,
+   "removed": [
+    "<p>Решение задания 9_58322 Уровень простой</p>\n"
+   ],
+   "len_after": 604,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 449,
+   "text_len_after": 408,
+   "head_after": "Файл к заданию: скачать . Откройте файл электронной таблицы, содержащей в каждой строке четыре натуральных числа.. Задание 9. Определите количество строк таблиц"
+  },
+  {
+   "id": 3168,
+   "external_uid": "tg:ege:744",
+   "difficulty_id": 3,
+   "len_before": 1353,
+   "removed": [
+    "Задание 26_v1 (Сборник Крылова С.С. 2026)<br>Уровень средний<br>"
+   ],
+   "len_after": 1289,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1165,
+   "text_len_after": 1107,
+   "head_after": "Файл к заданию: скачать . Организаторам спортивных соревнований необходимо доставить как можно больше число команд в некоторый город. Для доставки используются "
+  },
+  {
+   "id": 3169,
+   "external_uid": "tg:ege:743",
+   "difficulty_id": 3,
+   "len_before": 557,
+   "removed": [
+    "Задание 15_v1 (Сборник Крылова С.С. 2026)<br>Уровень средний.<br>"
+   ],
+   "len_after": 492,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 535,
+   "text_len_after": 476,
+   "head_after": "На числовой прямой дан отрезок А - [3;60]; В - множество всех натуральных делителей числа 177, отличных от единицы и от самого числа 177; С - множество всех нат"
+  },
+  {
+   "id": 3177,
+   "external_uid": "tg:ege:733",
+   "difficulty_id": 3,
+   "len_before": 1191,
+   "removed": [
+    "Задание 22_23760 КЕГЭ Уровень средний. "
+   ],
+   "len_after": 1152,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1008,
+   "text_len_after": 969,
+   "head_after": "Файл к заданию: 22.ods . Демоверсия 2026. В файле содержится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или пос"
+  },
+  {
+   "id": 3212,
+   "external_uid": "tg:ege:683",
+   "difficulty_id": 4,
+   "len_before": 527,
+   "removed": [
+    "<p>Задание 1_e0c82d2c-51be-45ea-943e-8e85b9a3e46c (Яндекс). Уровень сложный.</p>\n"
+   ],
+   "len_after": 446,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 509,
+   "text_len_after": 434,
+   "head_after": "На рисунке схема дорог N-ского района изображена в виде графа, в таблице содержатся сведения о протяженности каждой из этих дорог (в километрах).. Так как табли"
+  },
+  {
+   "id": 3229,
+   "external_uid": "tg:ege:659",
+   "difficulty_id": 3,
+   "len_before": 355,
+   "removed": [
+    "<p>Задание 7_яндекс Уровень средний.</p>\n"
+   ],
+   "len_after": 314,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 337,
+   "text_len_after": 302,
+   "head_after": "Сжатый звуковой файл, записанный в формате стерео, был передан по каналу связи с пропускной способностью 256000 бит/с за 18 минут. Сжатый файл меньше исходного "
+  },
+  {
+   "id": 3270,
+   "external_uid": "tg:ege:603",
+   "difficulty_id": 3,
+   "len_before": 278,
+   "removed": [
+    "<p>Задание 16_23375 (КЕГЭ). Уровень средний.</p>\n"
+   ],
+   "len_after": 229,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 251,
+   "text_len_after": 208,
+   "head_after": "Алгоритм вычисления значения функции F(n) и G(n), где n – целое число, задан следующими соотношениями: F(n)=G(n−1)+G(n−3); G(n)=3×n, если n≤9. G(n)=G(n−4)+2, ес"
+  },
+  {
+   "id": 3275,
+   "external_uid": "tg:ege:598",
+   "difficulty_id": 2,
+   "len_before": 1262,
+   "removed": [
+    "<p>Задание 3_23262 (КомпЕГЭ) Уровень легкий</p>\n"
+   ],
+   "len_after": 1214,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1059,
+   "text_len_after": 1017,
+   "head_after": "Файл к заданию: 3.xls . В файле приведён фрагмент базы данных «Молочные продукты» о поставках товаров в магазины районов города. База данных состоит из трёх таб"
+  },
+  {
+   "id": 3281,
+   "external_uid": "tg:ege:592",
+   "difficulty_id": 3,
+   "len_before": 908,
+   "removed": [
+    "Задание 19-21_23203 (КомпЕГЭ). Уровень средний. "
+   ],
+   "len_after": 860,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 896,
+   "text_len_after": 848,
+   "head_after": "Основная волна 2025. Два игрока играют в игру. Перед игроками лежит куча камней. Первый ход делает Петя. За один ход игрок может: убрать из кучи 3 камня - убрат"
+  },
+  {
+   "id": 3282,
+   "external_uid": "tg:ege:591",
+   "difficulty_id": 3,
+   "len_before": 208,
+   "removed": [
+    "Задание 16_23200 (КомпЕГЭ). Уровень средний. "
+   ],
+   "len_after": 163,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 182,
+   "text_len_after": 137,
+   "head_after": "Основная волна 2025. F(n)=n, если и < 10; F(n)= 3n + F(n - 3), если n>=10. Чему равно значение выражения (F(6250) + 2 × F(6244)) /6238)?."
+  },
+  {
+   "id": 3283,
+   "external_uid": "tg:ege:585",
+   "difficulty_id": 3,
+   "len_before": 448,
+   "removed": [
+    "<p>Задание 14 (Яндекс). Уровень средний.</p>\n"
+   ],
+   "len_after": 403,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 403,
+   "text_len_after": 364,
+   "head_after": "Значение арифметического выражения 12 457 +12 48 –x, где x – целое положительное число, не превышающее 3500, записали системе счисления с основание 12. Определи"
+  },
+  {
+   "id": 3284,
+   "external_uid": "tg:ege:584",
+   "difficulty_id": 3,
+   "len_before": 466,
+   "removed": [
+    "<p>Задание 25 (Яндекс). Уровень средний.</p>\n"
+   ],
+   "len_after": 421,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 448,
+   "text_len_after": 409,
+   "head_after": "Напишите программу, которая ищет среди целых чисел, принадлежащих числовому отрезку [625681; 758641], числа, имеющие ровно семь различных натуральных делителей,"
+  },
+  {
+   "id": 3285,
+   "external_uid": "tg:ege:583",
+   "difficulty_id": 3,
+   "len_before": 847,
+   "removed": [
+    "<p>Задание 17 (яндекс) Уровень средний.</p>\n"
+   ],
+   "len_after": 803,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 662,
+   "text_len_after": 624,
+   "head_after": "Файл к заданию: 17.txt . В файле содержится последовательность целых чисел. Элементы последовательности могут принимать целые значения от —100 000 до 100 000 вк"
+  },
+  {
+   "id": 3295,
+   "external_uid": "tg:ege:569",
+   "difficulty_id": 4,
+   "len_before": 913,
+   "removed": [
+    "<p>Задание 3 (Яндекс). Уровень сложный</p>\n"
+   ],
+   "len_after": 870,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 708,
+   "text_len_after": 671,
+   "head_after": "Файл к заданию: 3.xlsx . В файле приведён фрагмент базы данных «Родственники» о родственных отношениях между людьми. База данных состоит из двух таблиц.. Таблиц"
+  },
+  {
+   "id": 3296,
+   "external_uid": "tg:ege:568",
+   "difficulty_id": 2,
+   "len_before": 493,
+   "removed": [
+    "<p>Задание 17 (Яндекс). Уровень легкий.</p>\n"
+   ],
+   "len_after": 449,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 314,
+   "text_len_after": 276,
+   "head_after": "Файл к заданию: 17.txt . В файле содержится последовательность целых чисел. Элементы последовательности могут принимать целые значения от –10 000 до 10 000 вклю"
+  },
+  {
+   "id": 3301,
+   "external_uid": "tg:ege:559",
+   "difficulty_id": 3,
+   "len_before": 795,
+   "removed": [
+    "<p>Задание 17_6757 (Поляков) Уровень средний.</p>\n"
+   ],
+   "len_after": 745,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 622,
+   "text_len_after": 578,
+   "head_after": "Файл к заданию: 17-379.txt . В файле 17-379.txt содержится последовательность натуральных чисел. Элементы последовательности могут принимать целые значения от 1"
+  },
+  {
+   "id": 3305,
+   "external_uid": "tg:ege:554",
+   "difficulty_id": 4,
+   "len_before": 916,
+   "removed": [
+    "<p>Задание 12_4163 (Поляков). Уровень сложный.</p>\n"
+   ],
+   "len_after": 865,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 867,
+   "text_len_after": 822,
+   "head_after": "Исполнитель Редактор получает на вход строку цифр и преобразовывает её. Редактор может выполнять две команды, в обеих командах v и w обозначают цепочки символов"
+  },
+  {
+   "id": 3307,
+   "external_uid": "tg:ege:545",
+   "difficulty_id": 3,
+   "len_before": 1404,
+   "removed": [
+    "<p>Задание 19-21_4109 (Поляков) Уровень средний.</p>\n"
+   ],
+   "len_after": 1351,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1346,
+   "text_len_after": 1299,
+   "head_after": "Два игрока, Петя и Ваня, играют в следующую игру. Перед игроками лежит куча камней. Игроки ходят по очереди, первый ход делает Петя. За один ход игрок может а) "
+  },
+  {
+   "id": 3316,
+   "external_uid": "tg:ege:533",
+   "difficulty_id": 3,
+   "len_before": 727,
+   "removed": [
+    "Задание 23 (Вариант Яндекса).<br>Уровень средний.<br>"
+   ],
+   "len_after": 674,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 679,
+   "text_len_after": 632,
+   "head_after": "Исполнитель преобразует число на экране с помощью трёх команд, которым присвоены буквы латинского алфавита:. A. Вычесть 5 B. Сделать кратным трём C. Поделить на"
+  },
+  {
+   "id": 3317,
+   "external_uid": "tg:ege:531",
+   "difficulty_id": 3,
+   "len_before": 448,
+   "removed": [
+    "<p>Задание 14. Вариант Яндекса. Уровень средний.</p>\n"
+   ],
+   "len_after": 395,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 396,
+   "text_len_after": 349,
+   "head_after": "Значение арифметического выражения 25 340 +25 79 - 5 60 +x где x — целое положительное число, не превышающее 1000000, записали в 25-ричной системе счисления. Оп"
+  },
+  {
+   "id": 3318,
+   "external_uid": "tg:ege:530",
+   "difficulty_id": 3,
+   "len_before": 608,
+   "removed": [
+    "Задание 12. Вариант Яндекса.<br>Уровень средний.<br> "
+   ],
+   "len_after": 555,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 528,
+   "text_len_after": 482,
+   "head_after": "Исполнитель Редактор получает на вход строку символов и преобразует её. Редактор может выполнять две команды, в обеих Дана программа для Редактора: НАЧАЛО. ПОКА"
+  },
+  {
+   "id": 3319,
+   "external_uid": "tg:ege:529",
+   "difficulty_id": 2,
+   "len_before": 424,
+   "removed": [
+    "<p>Задание 8. Вариант Яндекса. Уровень простой.</p>\n"
+   ],
+   "len_after": 372,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 377,
+   "text_len_after": 331,
+   "head_after": "Все 5-буквенные слова, в составе которых могут быть только буквы В, Е, С, Н, А, записаны в алфавитном порядке и пронумерованы.. Вот начало списка: ААААА ААААВ А"
+  },
+  {
+   "id": 3320,
+   "external_uid": "tg:ege:528",
+   "difficulty_id": 2,
+   "len_before": 1327,
+   "removed": [
+    "<p>Задание 3_17622 (Комп ЕГЭ) Уровень легкий.</p>\n"
+   ],
+   "len_after": 1277,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1122,
+   "text_len_after": 1078,
+   "head_after": "Файл к заданию: 3.xlsx . В файле приведён фрагмент базы данных «Хозтовары» о поставках товаров для ухода, уборки и дома. База данных состоит из трёх таблиц.. Та"
+  },
+  {
+   "id": 3323,
+   "external_uid": "tg:ege:524",
+   "difficulty_id": 2,
+   "len_before": 1043,
+   "removed": [
+    "<p>Задание 3_2054 (Комп ЕГЭ). Уровень легкий</p>\n"
+   ],
+   "len_after": 994,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 864,
+   "text_len_after": 821,
+   "head_after": "Файл к заданию: 03.xls . В файле приведён фрагмент базы данных «Оператор» об оказанных услугах. База данных состоит из трёх таблиц. Таблица «Клиенты» содержит з"
+  },
+  {
+   "id": 3338,
+   "external_uid": "tg:ege:508",
+   "difficulty_id": 3,
+   "len_before": 2318,
+   "removed": [
+    "<p>Задание 27_21932 (Комп ЕГЭ). Файл А. Уровень средний.</p>\n"
+   ],
+   "len_after": 2257,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1946,
+   "text_len_after": 1891,
+   "head_after": "Файл к заданию: 27_A.txt &middot; 27_B.txt . Фрагмент звёздного неба спроецирован на плоскость с декартовой системой координат. Учёный решил провести кластериза"
+  },
+  {
+   "id": 3340,
+   "external_uid": "tg:ege:506",
+   "difficulty_id": 2,
+   "len_before": 2065,
+   "removed": [
+    "<p>Задание 26_17881(Комп ЕГЭ). Уровень легкий.</p>\n"
+   ],
+   "len_after": 2014,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1871,
+   "text_len_after": 1826,
+   "head_after": "Файл к заданию: 26.txt . Во время сессии студенты сдают 4 экзамена, за каждый из которых можно получить от 2 до 5 баллов. Студенты, получившие хотя бы одну «дво"
+  },
+  {
+   "id": 3355,
+   "external_uid": "tg:ege:491",
+   "difficulty_id": 2,
+   "len_before": 615,
+   "removed": [
+    "<p>Задание 27_28130 (Решу ЕГЭ). Уровень легкий.</p>\n"
+   ],
+   "len_after": 563,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 299,
+   "text_len_after": 253,
+   "head_after": "Файл к заданию: Файл А &middot; Файл Б . Дана последовательность N целых положительных чисел. Необходимо определить количество пар элементов этой последовательн"
+  },
+  {
+   "id": 3356,
+   "external_uid": "tg:ege:490",
+   "difficulty_id": 3,
+   "len_before": 2633,
+   "removed": [
+    "Задание 27_21425 (Комп ЕГЭ). Досрок 2025. Уровень средний.<br>"
+   ],
+   "len_after": 2571,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1929,
+   "text_len_after": 1870,
+   "head_after": "Файл к заданию: 27_A.xlsx &middot; 27_A.txt &middot; 27_B.xlsx &middot; 27_B.txt . Фрагмент звёздного неба спроецирован на плоскость с декартовой системой коорд"
+  },
+  {
+   "id": 3368,
+   "external_uid": "tg:ege:475",
+   "difficulty_id": 2,
+   "len_before": 1416,
+   "removed": [
+    "<p>Задание 12_21707 (Комп ЕГЭ). Уровень легкий.</p>\n"
+   ],
+   "len_after": 1364,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1273,
+   "text_len_after": 1227,
+   "head_after": "Исполнитель Редактор получает на вход строку цифр и преобразовывает её. Редактор может выполнять две команды, в обеих командах v и w обозначают цепочки цифр. А)"
+  },
+  {
+   "id": 3379,
+   "external_uid": "tg:ege:461",
+   "difficulty_id": 2,
+   "len_before": 283,
+   "removed": [
+    "<p>Задание 14_16325 (Комп егэ) Уровень легкий.</p>\n"
+   ],
+   "len_after": 232,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 222,
+   "text_len_after": 177,
+   "head_after": "Определите количество цифр с числовым значением, превышающим 9, в 27-ричной записи числа, заданного выражением: n = 2*729 2014 +2*243 2016 -2*81 2018 +2*27 2020"
+  },
+  {
+   "id": 3380,
+   "external_uid": "tg:ege:460",
+   "difficulty_id": 4,
+   "len_before": 1511,
+   "removed": [
+    "<p>Задание 19-21_47016 (Решу ЕГЭ). Уровень сложный.</p>\n"
+   ],
+   "len_after": 1455,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1469,
+   "text_len_after": 1419,
+   "head_after": "Два игрока, Петя и Ваня, играют в следующую игру. Перед игроками лежит куча камней. Игроки ходят по очереди, первый ход делает Петя. За один ход игрок может доб"
+  },
+  {
+   "id": 3408,
+   "external_uid": "tg:ege:426",
+   "difficulty_id": 2,
+   "len_before": 1330,
+   "removed": [
+    "Задание 22_17683k (Комп ЕГЭ) Уровень  легкий. "
+   ],
+   "len_after": 1284,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1145,
+   "text_len_after": 1100,
+   "head_after": "Файл к заданию: 22.xls . Пересдача 2024.. В файле содержится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или пос"
+  },
+  {
+   "id": 3409,
+   "external_uid": "tg:ege:425",
+   "difficulty_id": 2,
+   "len_before": 1292,
+   "removed": [
+    "<p>Задание 22_17876k (Комп ЕГЭ). Демоверсия 2024. Уровень легкий.</p>\n"
+   ],
+   "len_after": 1222,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1110,
+   "text_len_after": 1046,
+   "head_after": "Файл к заданию: 22.xls . В файле содержится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или последовательно. При"
+  },
+  {
+   "id": 3410,
+   "external_uid": "tg:ege:424",
+   "difficulty_id": 2,
+   "len_before": 1169,
+   "removed": [
+    "<p>Задание 22_10103k (Комп ЕГЭ). Демоверсия 2024. Уровень легкий.</p>\n"
+   ],
+   "len_after": 1099,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 993,
+   "text_len_after": 929,
+   "head_after": "Файл к заданию: 22.xls . В файле содержится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или последовательно. Буд"
+  },
+  {
+   "id": 3411,
+   "external_uid": "tg:ege:423",
+   "difficulty_id": 2,
+   "len_before": 1133,
+   "removed": [
+    "<p>Задание 22_4708k (Комп ЕГЭ). Демоверсия 2023. Уровень легкий.</p>\n"
+   ],
+   "len_after": 1064,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 948,
+   "text_len_after": 885,
+   "head_after": "Файл к заданию: 22.xlsx . В файле содержится информация о совокупности N вычислительных процессов, которые могут выполняться параллельно или последовательно. Бу"
+  },
+  {
+   "id": 4550,
+   "external_uid": "crylov:v1t1",
+   "difficulty_id": 2,
+   "len_before": 605,
+   "removed": [
+    "Задание 1 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 544,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 491,
+   "text_len_after": 433,
+   "head_after": "На рисунке изображена схема дорог N-ского района изображена в виде графа, в таблице содержатся сведения о протяжённости каждой из этих дорог (в километрах). Так"
+  },
+  {
+   "id": 4551,
+   "external_uid": "crylov:v1t2",
+   "difficulty_id": 3,
+   "len_before": 796,
+   "removed": [
+    "<p>Задание 2_v1 (Сборник Крылова С.С. 2026 вариант 1). Уровень средний.</p>\n"
+   ],
+   "len_after": 720,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 670,
+   "text_len_after": 600,
+   "head_after": "Миша заполнял таблицу истинности логической функции F x-> not ((y -> z) and (z == not w)), но успел заполнить лишь фрагмент из трёх различных её строк, даже не "
+  },
+  {
+   "id": 4552,
+   "external_uid": "crylov:v16t2",
+   "difficulty_id": 3,
+   "len_before": 482,
+   "removed": [
+    "<p>Задание 2 Сборник Крылова С.С. вариант 16 Уровень средний.</p>\n"
+   ],
+   "len_after": 416,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 362,
+   "text_len_after": 302,
+   "head_after": "Миша заполнял таблицу истинности логической функции F ¬(w→¬(x→y))∧(¬x→(¬y≡z)), но успел заполнить лишь фрагмент из трёх различных её строк, даже не указав, како"
+  },
+  {
+   "id": 4553,
+   "external_uid": "crylov:v1t3",
+   "difficulty_id": 2,
+   "len_before": 1171,
+   "removed": [
+    "Задание 3_v1 (Сборник Крылова С.С. 2026 вариант 1). Уровень простой<br>"
+   ],
+   "len_after": 1100,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1003,
+   "text_len_after": 935,
+   "head_after": "Файл к заданию . В файле приведён фрагмент базы данных «Электросамокаты», принадлежащей компании, предлагающей электросамокаты для краткосрочной аренды для пере"
+  },
+  {
+   "id": 4554,
+   "external_uid": "crylov:v11t3",
+   "difficulty_id": 2,
+   "len_before": 1589,
+   "removed": [
+    "Задание 3 Сборник Крылова С.С. вариант 11 Уровень простой.<br>"
+   ],
+   "len_after": 1527,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1376,
+   "text_len_after": 1317,
+   "head_after": "Файл к заданию . В файле приведён фрагмент базы данных «Лекарства» о поставках лекарственных средств в аптеки города. База данных состоит из трёх таблиц. Таблиц"
+  },
+  {
+   "id": 4555,
+   "external_uid": "crylov:v1t5",
+   "difficulty_id": 2,
+   "len_before": 1064,
+   "removed": [
+    "<p>Задание 5 Сборник Крылова С.С. вариант 1 Уровень простой.</p>\n"
+   ],
+   "len_after": 999,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1031,
+   "text_len_after": 972,
+   "head_after": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится двоичная запись числа N. 2. Далее эта запис"
+  },
+  {
+   "id": 4556,
+   "external_uid": "crylov:v11t5",
+   "difficulty_id": 3,
+   "len_before": 931,
+   "removed": [
+    "<p>Задание 5 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 864,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 895,
+   "text_len_after": 834,
+   "head_after": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится четверичная запись числа N. 2. Далее эта за"
+  },
+  {
+   "id": 4557,
+   "external_uid": "crylov:v5t6",
+   "difficulty_id": 2,
+   "len_before": 1459,
+   "removed": [
+    "<p>Задание 6 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 1393,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1426,
+   "text_len_after": 1366,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 4558,
+   "external_uid": "crylov:v11t6",
+   "difficulty_id": 2,
+   "len_before": 1630,
+   "removed": [
+    "<p>Задание 6 Сборник Крылова С.С. вариант 11 Уровень простой.</p>\n"
+   ],
+   "len_after": 1564,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1594,
+   "text_len_after": 1534,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат, в которой единица длины по каждой их осей соответствует одному сантиметру. В началь"
+  },
+  {
+   "id": 4559,
+   "external_uid": "crylov:v1t8",
+   "difficulty_id": 3,
+   "len_before": 560,
+   "removed": [
+    "Задание 8 Сборник Крылова С.С. Вариант 1. Уровень средний.<br>"
+   ],
+   "len_after": 498,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 524,
+   "text_len_after": 465,
+   "head_after": "Все пятибуквенные слова, составленные из букв С, Т, Р, Е, Л, А, записаны в алфавитном порядке и пронумерованы. Вот начало списка: 1. AAAAA 2. AAAAE 3. ААААЛ 4. "
+  },
+  {
+   "id": 4560,
+   "external_uid": "crylov:v11t9",
+   "difficulty_id": 3,
+   "len_before": 689,
+   "removed": [
+    "Задание 9_v11 (Сборник Крылова С.С. 2026 вариант 11). Уровень средний.<br>"
+   ],
+   "len_after": 615,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 527,
+   "text_len_after": 456,
+   "head_after": "Файл к заданию . Откройте файл электронной таблицы, содержащей в каждой строке восемь натуральных чисел. Определите количество строк таблицы, для чисел которых "
+  },
+  {
+   "id": 4561,
+   "external_uid": "crylov:v5t11",
+   "difficulty_id": 2,
+   "len_before": 718,
+   "removed": [
+    "<p>Задание 11 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 651,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 706,
+   "text_len_after": 645,
+   "head_after": "При регистрации в компьютерной системе каждому объекту присваивается идентификатор, состоящий из некоторого количества символов и содержащий только десятичные ц"
+  },
+  {
+   "id": 4562,
+   "external_uid": "crylov:v5t12",
+   "difficulty_id": 2,
+   "len_before": 617,
+   "removed": [
+    "<p>Задание 12 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 550,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 500,
+   "text_len_after": 439,
+   "head_after": "На ленте в соседних ячейках записана последовательность из 255 символов, среди которых могут быть только нули и единицы. Ячейки справа и слева от последовательн"
+  },
+  {
+   "id": 4563,
+   "external_uid": "crylov:v11t12",
+   "difficulty_id": 2,
+   "len_before": 534,
+   "removed": [
+    "Задание 12 Сборник Крылова С.С. вариант 11. Уровень простой.<br>"
+   ],
+   "len_after": 470,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 415,
+   "text_len_after": 354,
+   "head_after": "Выполните задание. На ленте в соседних ячейках записана последовательность из 103 единиц. Ячейки справа и слева от последовательности заполнены пустыми символам"
+  },
+  {
+   "id": 4564,
+   "external_uid": "crylov:v5t13",
+   "difficulty_id": 2,
+   "len_before": 527,
+   "removed": [
+    "<p>Задание 13 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 460,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 515,
+   "text_len_after": 454,
+   "head_after": "В терминологии сетей ТСP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая - к адресу"
+  },
+  {
+   "id": 4565,
+   "external_uid": "crylov:v11t13",
+   "difficulty_id": 3,
+   "len_before": 637,
+   "removed": [
+    "Задание 13 Сборник Крылова С.С. вариант 11 Уровень средний.<br>"
+   ],
+   "len_after": 574,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 622,
+   "text_len_after": 562,
+   "head_after": "В терминологии сетей ТСP/IP маской сети называют двоичное число, которое показывает, какая часть IP-адреса узла сети относится к адресу сети, а какая к адресу у"
+  },
+  {
+   "id": 4566,
+   "external_uid": "crylov:v16t13",
+   "difficulty_id": 3,
+   "len_before": 435,
+   "removed": [
+    "<p>Задание 13 Сборник Крылова С.С. вариант 16 Уровень средний.</p>\n"
+   ],
+   "len_after": 368,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 423,
+   "text_len_after": 362,
+   "head_after": "Сеть задана IP-адресом 191.239.130.3 и маской сети 255.255.A.0, где A — некоторое допустимое для записи маски число. Определите минимальное значение A, для кото"
+  },
+  {
+   "id": 4567,
+   "external_uid": "crylov:v5t14",
+   "difficulty_id": 2,
+   "len_before": 460,
+   "removed": [
+    "<p>Задание 14 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 393,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 425,
+   "text_len_after": 364,
+   "head_after": "Значение арифметического выражения 9 2025 + 9 1000 - х, где х - целое положительное число, не превышающее 5769, записали в 9-ричной системе счисления. Определит"
+  },
+  {
+   "id": 4568,
+   "external_uid": "crylov:v11t14",
+   "difficulty_id": 2,
+   "len_before": 609,
+   "removed": [
+    "Задание 14 Сборник Крылова С.С. вариант 11 Уровень простой.<br>"
+   ],
+   "len_after": 546,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 564,
+   "text_len_after": 504,
+   "head_after": "Операнды арифметического выражения записаны в системе счисления с основанием 25. 1x2x3x4x5 25 + 2x024 25 + 1x099 25 В записи чисел переменной х обозначена неизв"
+  },
+  {
+   "id": 4569,
+   "external_uid": "crylov:v16t14",
+   "difficulty_id": 3,
+   "len_before": 308,
+   "removed": [
+    "<p>Задание 14 Сборник Крылова С.С. вариант 16 Уровень средний.</p>\n"
+   ],
+   "len_after": 241,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 250,
+   "text_len_after": 189,
+   "head_after": "Значение арифметического выражения 1331 650 - 55 * 121 610 + 77 * 11 510 - 3 * 11 100 - 221 записали в системе счисления с основанием 11. Определите количество "
+  },
+  {
+   "id": 4570,
+   "external_uid": "crylov:v5t15",
+   "difficulty_id": 2,
+   "len_before": 522,
+   "removed": [
+    "Задание 15  Сборник Крылова С.С. вариант 5 Уровень простой.<br>"
+   ],
+   "len_after": 459,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 488,
+   "text_len_after": 429,
+   "head_after": "Решаю двумя способами 1. Традиционный вложенными циклами 2. С помощью генераторного выражения и функции `all` Обозначим через ДЕЛ(п, т) утверждение «натуральное"
+  },
+  {
+   "id": 4571,
+   "external_uid": "crylov:v11t15",
+   "difficulty_id": 2,
+   "len_before": 262,
+   "removed": [
+    "Задание 15 Сборник Крылова С.С. вариант 11. Уровень простой.<br>"
+   ],
+   "len_after": 198,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 241,
+   "text_len_after": 180,
+   "head_after": "Для какого наибольшего целого числа А формула (x < 4) v (x 2 20) v (y 2 3x + A) v (y < 100) тождественно истинна, т. е. принимает значение 1 при любых целых нео"
+  },
+  {
+   "id": 4572,
+   "external_uid": "crylov:v16t15",
+   "difficulty_id": 3,
+   "len_before": 479,
+   "removed": [
+    "Задание 15 Сборник Крылова С.С. вариант 16. Уровень средний<br>"
+   ],
+   "len_after": 416,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 448,
+   "text_len_after": 388,
+   "head_after": "Обозначим через ТРЕУГ(п, m, k) утверждение «существует невырожденный треугольник1 с длинами сторон п, т и k». Для какого наибольшего натурального числа А формул"
+  },
+  {
+   "id": 4573,
+   "external_uid": "crylov:v1t16",
+   "difficulty_id": 2,
+   "len_before": 325,
+   "removed": [
+    "<p>Задание  16 Сборник Крылова С.С. вариант 1 Уровень простой</p>\n"
+   ],
+   "len_after": 259,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 288,
+   "text_len_after": 229,
+   "head_after": "Алгоритм вычисления значения функции F(n), где n – натуральное число, задан следующими соотношениями: F(1) = 2; F(n)= 3 ⋅ F(n-1) — n, если n ≥ 2. Чему равно зна"
+  },
+  {
+   "id": 4574,
+   "external_uid": "crylov:v11t16",
+   "difficulty_id": 2,
+   "len_before": 353,
+   "removed": [
+    "Задание 16 Сборник Крылова С.С. вариант 11 Уровень простой.<br>"
+   ],
+   "len_after": 290,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 329,
+   "text_len_after": 269,
+   "head_after": "Алгоритм вычисления значения функции F(n), где п - натуральное число, задан следующими соотношениями: F(n) = 1 при n = 1; F(n) = 2 при n = 2; F(n) = n • (n - 1)"
+  },
+  {
+   "id": 4575,
+   "external_uid": "crylov:v16t16",
+   "difficulty_id": 3,
+   "len_before": 386,
+   "removed": [
+    "<p>Задание 16 Сборник Крылова С.С. вариант 16 Уровень средний.</p>\n"
+   ],
+   "len_after": 319,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 347,
+   "text_len_after": 286,
+   "head_after": "Алгоритм вычисления значения функции F(n), где n — целое неотрицательное число, задан следующими соотношениями:. F(n) = 1 при n < 3; F(n) = F(n − 1) − F(n − 2),"
+  },
+  {
+   "id": 4576,
+   "external_uid": "crylov:v5t17",
+   "difficulty_id": 2,
+   "len_before": 702,
+   "removed": [
+    "<p>Задание 17 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 635,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 546,
+   "text_len_after": 485,
+   "head_after": "Файл к заданию . В файле содержится последовательность натуральных чисел. Её элементы могут принимать целые значения от 1 до 100 000 включительно. Определите ко"
+  },
+  {
+   "id": 4577,
+   "external_uid": "crylov:v11t17",
+   "difficulty_id": 3,
+   "len_before": 824,
+   "removed": [
+    "Задание 17 Сборник Крылова С.С. вариант 11 Уровень средний.<br>"
+   ],
+   "len_after": 761,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 668,
+   "text_len_after": 608,
+   "head_after": "Файл к заданию . Решаю без циклов, только генераторы!!! В файле содержится последовательность целых чисел. Элементы последовательности могут принимать целые зна"
+  },
+  {
+   "id": 4578,
+   "external_uid": "crylov:v16t17",
+   "difficulty_id": 2,
+   "len_before": 749,
+   "removed": [
+    "<p>Задание 17 Сборник Крылова С.С. вариант 16 Уровень простой.</p>\n"
+   ],
+   "len_after": 682,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 593,
+   "text_len_after": 532,
+   "head_after": "Файл к заданию . B файле содержится последовательность натуральных чисел. Элементы последовательности могут принимать целые значения от 1 до 100 000 включительн"
+  },
+  {
+   "id": 4580,
+   "external_uid": "crylov:v16t19",
+   "difficulty_id": 2,
+   "len_before": 1231,
+   "removed": [
+    "<p>Задание 19-21 Сборник Крылова С.С. вариант 16 Уровень простой.</p>\n"
+   ],
+   "len_after": 1161,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1201,
+   "text_len_after": 1137,
+   "head_after": "Два игрока, Петя и Ваня, играют в следующую игру. Перед игроками лежат две кучи камней. Игроки ходят по очереди, первый ход делает Петя. За один ход игрок может"
+  },
+  {
+   "id": 4581,
+   "external_uid": "crylov:v16t23",
+   "difficulty_id": 2,
+   "len_before": 776,
+   "removed": [
+    "Задание 23 Сборник Крылова С.С. вариант 16 Уровень простой.<br>"
+   ],
+   "len_after": 713,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 746,
+   "text_len_after": 686,
+   "head_after": "Исполнитель преобразует число на экране. У исполнителя есть две команды, которые обозначены латинскими буквами: A. Вычти 1 B. Найди целую часть от деления на 2 "
+  },
+  {
+   "id": 4582,
+   "external_uid": "crylov:v11t24",
+   "difficulty_id": 3,
+   "len_before": 557,
+   "removed": [
+    "Задание 24 Сборник Крылова С.С. вариант 11 Уровень средний.<br>"
+   ],
+   "len_after": 494,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 395,
+   "text_len_after": 335,
+   "head_after": "Файл к заданию . Решаем методом скользящих окон Текстовый файл состоит из символов А, B, C, D, E, F и G. Определите в прилагаемом файле минимальное количество и"
+  },
+  {
+   "id": 4583,
+   "external_uid": "crylov:v16t24",
+   "difficulty_id": 3,
+   "len_before": 490,
+   "removed": [
+    "<p>Задание 24 Сборник Крылова С.С. вариант 16 Уровень средний.</p>\n"
+   ],
+   "len_after": 423,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 328,
+   "text_len_after": 267,
+   "head_after": "Файл к заданию . Текстовый файл состоит из символов А, В, С, D и E. Определите в прилагаемом файле максимальное количество идущих подряд символов, среди которых"
+  },
+  {
+   "id": 4584,
+   "external_uid": "crylov:v11t25",
+   "difficulty_id": 2,
+   "len_before": 724,
+   "removed": [
+    "<p>Задание 25 Сборник Крылова С.С. вариант 11 Уровень простой.</p>\n"
+   ],
+   "len_after": 657,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 700,
+   "text_len_after": 639,
+   "head_after": "Назовём маской числа последовательность цифр, в которой также могут встречаться следующие символы: символ «?» означает ровно одну произвольную цифру; - символ «"
+  },
+  {
+   "id": 4585,
+   "external_uid": "crylov:v11t26",
+   "difficulty_id": 4,
+   "len_before": 1489,
+   "removed": [
+    "Задание 26 Сборник Крылова С.С. вариант 11 Уровень сложный.<br>"
+   ],
+   "len_after": 1426,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1330,
+   "text_len_after": 1270,
+   "head_after": "Файл к заданию . В ответе ошибка. Дети играют в следующую игру. На бесконечном разлинованном на клетки листе введена декартова система координат, при этом клетк"
+  },
+  {
+   "id": 9478,
+   "external_uid": "crylov:v1t4",
+   "difficulty_id": 2,
+   "len_before": 818,
+   "removed": [
+    "Задание 4 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 757,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 704,
+   "text_len_after": 646,
+   "head_after": "Для кодирования восьми сторон горизонта (север, юг, восток, запад и четыре промежуточные стороны) применили неравномерный двоичный код, удовлетворяющий условию "
+  },
+  {
+   "id": 9479,
+   "external_uid": "crylov:v1t6",
+   "difficulty_id": 3,
+   "len_before": 1542,
+   "removed": [
+    "Задание 6 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 1481,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1509,
+   "text_len_after": 1451,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 9480,
+   "external_uid": "crylov:v1t7",
+   "difficulty_id": 2,
+   "len_before": 615,
+   "removed": [
+    "Задание 7 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 554,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 593,
+   "text_len_after": 535,
+   "head_after": "Путешественник фотографирует достопримечательности с помощью камеры смартфона. Каждая фотография представляет собой растровое изображение размером 2000×1000 пик"
+  },
+  {
+   "id": 9482,
+   "external_uid": "crylov:v1t10",
+   "difficulty_id": 2,
+   "len_before": 533,
+   "removed": [
+    "Задание 10 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 471,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 377,
+   "text_len_after": 318,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. С помощью текстового редактора определите, сколько раз встречается сочетание букв «был"
+  },
+  {
+   "id": 9483,
+   "external_uid": "crylov:v1t11",
+   "difficulty_id": 3,
+   "len_before": 621,
+   "removed": [
+    "Задание 11 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 559,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 612,
+   "text_len_after": 553,
+   "head_after": "Каждому изготовленному на заводе двигателю присваивается уникальный серийный номер, содержащий десятичные цифры и символы из 70-символьного специального алфавит"
+  },
+  {
+   "id": 9484,
+   "external_uid": "crylov:v1t12",
+   "difficulty_id": 3,
+   "len_before": 3984,
+   "removed": [
+    "Задание 12 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 3922,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 3834,
+   "text_len_after": 3775,
+   "head_after": "Исполнитель МТ представляет собой читающую и записывающую головку, которая может передвигаться вдоль бесконечной горизонтальной ленты, разделённой на равные яче"
+  },
+  {
+   "id": 9487,
+   "external_uid": "crylov:v1t15",
+   "difficulty_id": 3,
+   "len_before": 535,
+   "removed": [
+    "Задание 15 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 473,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 526,
+   "text_len_after": 467,
+   "head_after": "На числовой прямой дан отрезок A = [3;60]; B — множество всех натуральных делителей числа 177, отличных от единицы и от самого числа 177; C — множество всех нат"
+  },
+  {
+   "id": 9488,
+   "external_uid": "crylov:v1t17",
+   "difficulty_id": 2,
+   "len_before": 872,
+   "removed": [
+    "Задание 17 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 810,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 716,
+   "text_len_after": 657,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле содержится последовательность целых чисел. Её элементы могут принимать целые з"
+  },
+  {
+   "id": 9489,
+   "external_uid": "crylov:v1t18",
+   "difficulty_id": 2,
+   "len_before": 1722,
+   "removed": [
+    "Задание 18 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 1660,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1554,
+   "text_len_after": 1495,
+   "head_after": "Файл к заданию . Квадрат разлинован на N × N клеток (1 < N < 30). Исполнитель Робот может перемещаться по клеткам, выполняя за одно перемещение одну из двух ком"
+  },
+  {
+   "id": 9490,
+   "external_uid": "crylov:v1t20",
+   "difficulty_id": 2,
+   "len_before": 419,
+   "removed": [
+    "Задание 20 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 357,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 401,
+   "text_len_after": 342,
+   "head_after": "Для игры, описанной в задании 19, найдите два наименьших значения S, при которых у Пети есть выигрышная стратегия, причём одновременно выполняются два условия: "
+  },
+  {
+   "id": 9491,
+   "external_uid": "crylov:v1t21",
+   "difficulty_id": 2,
+   "len_before": 379,
+   "removed": [
+    "Задание 21 Сборник Крылова С.С. вариант 1 Уровень сложный.<br>"
+   ],
+   "len_after": 317,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 364,
+   "text_len_after": 305,
+   "head_after": "Для игры, описанной в задании 19, найдите минимальное значение S, при котором одновременно выполняются два условия: – у Вани есть выигрышная стратегия, позволяю"
+  },
+  {
+   "id": 9493,
+   "external_uid": "crylov:v1t23",
+   "difficulty_id": 3,
+   "len_before": 669,
+   "removed": [
+    "Задание 23 Сборник Крылова С.С. вариант 1 Уровень простой.<br>"
+   ],
+   "len_after": 607,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 642,
+   "text_len_after": 583,
+   "head_after": "Исполнитель преобразует число на экране. У исполнителя есть две команды, которые обозначены номерами: 1. Прибавь 1 2. Поменяй местами Первая из этих команд увел"
+  },
+  {
+   "id": 9494,
+   "external_uid": "crylov:v1t24",
+   "difficulty_id": 3,
+   "len_before": 721,
+   "removed": [
+    "Задание 24 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 659,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 565,
+   "text_len_after": 506,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Текстовый файл состоит из десятичных цифр и заглавных букв латинского алфавита. Опреде"
+  },
+  {
+   "id": 9495,
+   "external_uid": "crylov:v1t25",
+   "difficulty_id": 3,
+   "len_before": 582,
+   "removed": [
+    "Задание 25 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 520,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 570,
+   "text_len_after": 511,
+   "head_after": "Напишите программу, которая перебирает все целые шестизначные числа в порядке возрастания и ищет среди них те, которые не содержат в своей записи цифру 1 и кото"
+  },
+  {
+   "id": 9497,
+   "external_uid": "crylov:v1t27",
+   "difficulty_id": 4,
+   "len_before": 3219,
+   "removed": [
+    "Задание 27 Сборник Крылова С.С. вариант 1 Уровень средний.<br>"
+   ],
+   "len_after": 3157,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2900,
+   "text_len_after": 2841,
+   "head_after": "Файл А &middot; Файл Б . Задание выполняется с использованием прилагаемых файлов. Фрагмент звёздного неба спроецирован на плоскость с декартовой системой коорди"
+  },
+  {
+   "id": 9498,
+   "external_uid": "crylov:v5t1",
+   "difficulty_id": 2,
+   "len_before": 599,
+   "removed": [
+    "<p>Задание 1 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 533,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 482,
+   "text_len_after": 422,
+   "head_after": "На рисунке схема дорог N-ского района изображена в виде графа, в таблице содержатся сведения о протяжённости каждой их этих дорог (в километрах). Так как таблиц"
+  },
+  {
+   "id": 9499,
+   "external_uid": "crylov:v5t2",
+   "difficulty_id": 3,
+   "len_before": 773,
+   "removed": [
+    "<p>Задание 2 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 707,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 653,
+   "text_len_after": 593,
+   "head_after": "Миша заполнял таблицу истинности логической функции F (x → y) ∧ (z ≡ (w → x)) ∧ ¬w, но успел заполнить лишь фрагмент из трёх различных её строк, даже не указав,"
+  },
+  {
+   "id": 9500,
+   "external_uid": "crylov:v5t3",
+   "difficulty_id": 3,
+   "len_before": 1789,
+   "removed": [
+    "<p>Задание 3 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 1723,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1615,
+   "text_len_after": 1555,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле приведён фрагмент базы данных «Агротовары», принадлежащей агрохолдингу, предла"
+  },
+  {
+   "id": 9501,
+   "external_uid": "crylov:v5t4",
+   "difficulty_id": 3,
+   "len_before": 655,
+   "removed": [
+    "<p>Задание 4 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 589,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 538,
+   "text_len_after": 478,
+   "head_after": "Для кодирования нот одной октавы применили неравномерный двоичный код. Для кодирования нот используют кодовые слова. Укажите кратчайшее кодовое слово для кодиро"
+  },
+  {
+   "id": 9502,
+   "external_uid": "crylov:v5t5",
+   "difficulty_id": 2,
+   "len_before": 837,
+   "removed": [
+    "<p>Задание 5 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 771,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 801,
+   "text_len_after": 741,
+   "head_after": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится двоичная запись числа N. 2. Далее эта запис"
+  },
+  {
+   "id": 9503,
+   "external_uid": "crylov:v5t10",
+   "difficulty_id": 3,
+   "len_before": 541,
+   "removed": [
+    "<p>Задание 10 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 474,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 382,
+   "text_len_after": 321,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. С помощью текстового редактора определите, сколько раз встречается сочетание букв «он»"
+  },
+  {
+   "id": 9504,
+   "external_uid": "crylov:v5t18",
+   "difficulty_id": 2,
+   "len_before": 1666,
+   "removed": [
+    "<p>Задание 18 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 1599,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1495,
+   "text_len_after": 1434,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Квадрат разлинован на N × N клеток (1 < N < 30). Исполнитель Робот может перемещаться "
+  },
+  {
+   "id": 9505,
+   "external_uid": "crylov:v5t19",
+   "difficulty_id": 2,
+   "len_before": 1001,
+   "removed": [
+    "<p>Задание 19 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 934,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 977,
+   "text_len_after": 916,
+   "head_after": "Два игрока, Петя и Ваня, играют в следующую игру. Перед игроками лежит куча камней. Игроки ходят по очереди, первый ход делает Петя. За один ход игрок может: уб"
+  },
+  {
+   "id": 9506,
+   "external_uid": "crylov:v5t20",
+   "difficulty_id": 2,
+   "len_before": 424,
+   "removed": [
+    "<p>Задание 20 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 357,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 403,
+   "text_len_after": 342,
+   "head_after": "Для игры, описанной в задании 19, найдите два наименьших значения S, при которых у Пети есть выигрышная стратегия, причём одновременно выполняются два условия: "
+  },
+  {
+   "id": 9507,
+   "external_uid": "crylov:v5t21",
+   "difficulty_id": 2,
+   "len_before": 384,
+   "removed": [
+    "<p>Задание 21 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 317,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 366,
+   "text_len_after": 305,
+   "head_after": "Для игры, описанной в задании 19, найдите минимальное значение S, при котором одновременно выполняются два условия: — у Вани есть выигрышная стратегия, позволяю"
+  },
+  {
+   "id": 9508,
+   "external_uid": "crylov:v5t22",
+   "difficulty_id": 2,
+   "len_before": 1457,
+   "removed": [
+    "<p>Задание 22 Сборник Крылова С.С. вариант 5. Уровень средний.</p>\n"
+   ],
+   "len_after": 1390,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1289,
+   "text_len_after": 1228,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле содержится информация о совокупности N вычислительных процессов, которые могут"
+  },
+  {
+   "id": 9509,
+   "external_uid": "crylov:v5t23",
+   "difficulty_id": 2,
+   "len_before": 653,
+   "removed": [
+    "<p>Задание 23 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 586,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 620,
+   "text_len_after": 559,
+   "head_after": "Исполнитель преобразует число на экране. У исполнителя есть две команды, которые обозначены латинскими буквами: A. Вычти 2 B. Найди целую часть от деления на 2 "
+  },
+  {
+   "id": 9511,
+   "external_uid": "crylov:v5t25",
+   "difficulty_id": 2,
+   "len_before": 578,
+   "removed": [
+    "<p>Задание 25 Сборник Крылова С.С. вариант 5. Уровень простой.</p>\n"
+   ],
+   "len_after": 511,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 566,
+   "text_len_after": 505,
+   "head_after": "Напишите программу, которая перебирает целые числа, бо́льшие 700 000, в порядке возрастания и ищет среди них такие, у которых есть натуральный делитель, оканчив"
+  },
+  {
+   "id": 9512,
+   "external_uid": "crylov:v5t27",
+   "difficulty_id": 4,
+   "len_before": 3167,
+   "removed": [
+    "<p>Задание 27 Сборник Крылова С.С. вариант 5. Уровень сложный.</p>\n"
+   ],
+   "len_after": 3100,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2845,
+   "text_len_after": 2784,
+   "head_after": "Файл А &middot; Файл Б . Задание выполняется с использованием прилагаемых файлов. Фрагмент звёздного неба спроецирован на плоскость с декартовой системой коорди"
+  },
+  {
+   "id": 9513,
+   "external_uid": "crylov:v11t4",
+   "difficulty_id": 2,
+   "len_before": 780,
+   "removed": [
+    "<p>Задание 4 Сборник Крылова С.С. вариант 11. Уровень простой.</p>\n"
+   ],
+   "len_after": 713,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 651,
+   "text_len_after": 590,
+   "head_after": "По каналу связи передаются сообщения, содержащие только восемь букв: А, Б, В, Г, Д, Е, Ж и З. Для передачи используется двоичный код, удовлетворяющий условию Фа"
+  },
+  {
+   "id": 9514,
+   "external_uid": "crylov:v11t7",
+   "difficulty_id": 2,
+   "len_before": 335,
+   "removed": [
+    "<p>Задание 7 Сборник Крылова С.С. вариант 11. Уровень простой.</p>\n"
+   ],
+   "len_after": 268,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 323,
+   "text_len_after": 262,
+   "head_after": "Сколько секунд потребуется обычному модему, передающему сообщения со скоростью 28 800 бит/с, чтобы передать музыкальный фрагмент, записанный в формате стерео (д"
+  },
+  {
+   "id": 9515,
+   "external_uid": "crylov:v11t8",
+   "difficulty_id": 3,
+   "len_before": 460,
+   "removed": [
+    "<p>Задание 8 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 393,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 418,
+   "text_len_after": 357,
+   "head_after": "Все пятибуквенные слова, составленные из букв Ф, Л, А, М, И, Н, Г, О, записаны в алфавитном порядке и пронумерованы. Вот начало списка: 1. ААААА 2. ААААГ 3. ААА"
+  },
+  {
+   "id": 9516,
+   "external_uid": "crylov:v11t10",
+   "difficulty_id": 2,
+   "len_before": 508,
+   "removed": [
+    "<p>Задание 10 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 440,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 349,
+   "text_len_after": 287,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Определите, сколько раз в тексте главы I тома 1 поэмы Н. В. Гоголя «Мёртвые души» встр"
+  },
+  {
+   "id": 9517,
+   "external_uid": "crylov:v11t18",
+   "difficulty_id": 2,
+   "len_before": 1731,
+   "removed": [
+    "<p>Задание 18 Сборник Крылова С.С. вариант 11. Уровень сложный.</p>\n"
+   ],
+   "len_after": 1663,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1545,
+   "text_len_after": 1483,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Квадрат разлинован на N × N клеток (1 < N < 30). Исполнитель Робот может перемещаться "
+  },
+  {
+   "id": 9518,
+   "external_uid": "crylov:v11t19",
+   "difficulty_id": 2,
+   "len_before": 918,
+   "removed": [
+    "<p>Задание 19 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 850,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 897,
+   "text_len_after": 835,
+   "head_after": "Два игрока, Петя и Ваня, играют в следующую игру. Перед игроками лежит куча камней. Игроки ходят по очереди, первый ход делает Петя. За один ход игрок может доб"
+  },
+  {
+   "id": 9519,
+   "external_uid": "crylov:v11t20",
+   "difficulty_id": 2,
+   "len_before": 425,
+   "removed": [
+    "<p>Задание 20 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 357,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 404,
+   "text_len_after": 342,
+   "head_after": "Для игры, описанной в задании 19, найдите два наименьших значения S, при которых у Пети есть выигрышная стратегия, причём одновременно выполняются два условия: "
+  },
+  {
+   "id": 9520,
+   "external_uid": "crylov:v11t21",
+   "difficulty_id": 2,
+   "len_before": 460,
+   "removed": [
+    "<p>Задание 21 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 392,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 439,
+   "text_len_after": 377,
+   "head_after": "Для игры, описанной в задании 19, найдите минимальное значение S, при котором одновременно выполняются два условия: — у Вани есть выигрышная стратегия, позволяю"
+  },
+  {
+   "id": 9521,
+   "external_uid": "crylov:v11t22",
+   "difficulty_id": 3,
+   "len_before": 1348,
+   "removed": [
+    "<p>Задание 22 Сборник Крылова С.С. вариант 11. Уровень сложный.</p>\n"
+   ],
+   "len_after": 1280,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1180,
+   "text_len_after": 1118,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле содержится информация о совокупности N вычислительных процессов, которые могут"
+  },
+  {
+   "id": 9522,
+   "external_uid": "crylov:v11t23",
+   "difficulty_id": 2,
+   "len_before": 680,
+   "removed": [
+    "<p>Задание 23 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 612,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 647,
+   "text_len_after": 585,
+   "head_after": "Исполнитель преобразует число на экране. У исполнителя есть три команды, которые обозначены латинскими буквами: A. Прибавить 2 B. Прибавить 3 C. Умножить на 5 П"
+  },
+  {
+   "id": 9523,
+   "external_uid": "crylov:v11t27",
+   "difficulty_id": 4,
+   "len_before": 2779,
+   "removed": [
+    "<p>Задание 27 Сборник Крылова С.С. вариант 11. Уровень сложный.</p>\n"
+   ],
+   "len_after": 2711,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2457,
+   "text_len_after": 2395,
+   "head_after": "Файл А &middot; Файл Б . Задание выполняется с использованием прилагаемых файлов. Фрагмент звёздного неба спроецирован на плоскость с декартовой системой коорди"
+  },
+  {
+   "id": 9555,
+   "external_uid": "crylov:v11t1",
+   "difficulty_id": 3,
+   "len_before": 648,
+   "removed": [
+    "<p>Задание 1 Сборник Крылова С.С. вариант 11. Уровень простой.</p>\n"
+   ],
+   "len_after": 581,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 534,
+   "text_len_after": 473,
+   "head_after": "На рисунке изображена схема дорог N-ского района. В таблице звёздочкой обозначено наличие дороги из одного населённого пункта в другой. Отсутствие звёздочки озн"
+  },
+  {
+   "id": 9556,
+   "external_uid": "crylov:v11t2",
+   "difficulty_id": 2,
+   "len_before": 770,
+   "removed": [
+    "<p>Задание 2 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 703,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 650,
+   "text_len_after": 589,
+   "head_after": "Миша заполнял таблицу истинности логической функции F ¬(x → y) ∨ (¬w → ¬z) ∨ w, но успел заполнить лишь фрагмент из трёх различных её строк, даже не указав, как"
+  },
+  {
+   "id": 9557,
+   "external_uid": "crylov:v11t11",
+   "difficulty_id": 2,
+   "len_before": 663,
+   "removed": [
+    "<p>Задание 11 Сборник Крылова С.С. вариант 11. Уровень средний.</p>\n"
+   ],
+   "len_after": 595,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 645,
+   "text_len_after": 583,
+   "head_after": "При регистрации в компьютерной системе каждому объекту присваивается идентификатор, состоящий из 404 символов и содержащий только десятичные цифры и символы из "
+  },
+  {
+   "id": 9558,
+   "external_uid": "crylov:v16t1",
+   "difficulty_id": 3,
+   "len_before": 579,
+   "removed": [
+    "Задание 1 Сборник Крылова С.С. вариант 16 Уровень простой.<br>"
+   ],
+   "len_after": 517,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 465,
+   "text_len_after": 406,
+   "head_after": "На рисунке схема дорог N-ского района изображена в виде графа, в таблице содержатся сведения о протяжённости каждой из этих дорог (в километрах). Так как таблиц"
+  },
+  {
+   "id": 9559,
+   "external_uid": "crylov:v16t5",
+   "difficulty_id": 2,
+   "len_before": 898,
+   "removed": [
+    "Задание 5 Сборник Крылова С.С. вариант 16 Уровень средний.<br>"
+   ],
+   "len_after": 836,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 868,
+   "text_len_after": 809,
+   "head_after": "На вход алгоритма подаётся натуральное число N. Алгоритм строит по нему новое число R следующим образом. 1. Строится двоичная запись числа N. 2. Далее эта запис"
+  },
+  {
+   "id": 9560,
+   "external_uid": "crylov:v16t9",
+   "difficulty_id": 3,
+   "len_before": 606,
+   "removed": [
+    "Задание 9 Сборник Крылова С.С. вариант 16 Уровень средний.<br>"
+   ],
+   "len_after": 544,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 441,
+   "text_len_after": 382,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Откройте файл электронной таблицы, содержащей в каждой строке четыре натуральных числа"
+  },
+  {
+   "id": 9561,
+   "external_uid": "crylov:v16t10",
+   "difficulty_id": 2,
+   "len_before": 513,
+   "removed": [
+    "Задание 10 Сборник Крылова С.С. вариант 16 Уровень простой.<br>"
+   ],
+   "len_after": 450,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 354,
+   "text_len_after": 294,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Определите, сколько раз в тексте поэмы Н. В. Гоголя «Мёртвые души» встречается слово «"
+  },
+  {
+   "id": 9562,
+   "external_uid": "crylov:v16t18",
+   "difficulty_id": 2,
+   "len_before": 1347,
+   "removed": [
+    "Задание 18 Сборник Крылова С.С. вариант 16 Уровень средний.<br>"
+   ],
+   "len_after": 1284,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1179,
+   "text_len_after": 1119,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Прямоугольник разлинован на N × M клеток (1 < N < 30, 1 < M < 30). Исполнитель Робот м"
+  },
+  {
+   "id": 9563,
+   "external_uid": "crylov:v16t20",
+   "difficulty_id": 2,
+   "len_before": 420,
+   "removed": [
+    "Задание 20 Сборник Крылова С.С. вариант 16 Уровень простой.<br>"
+   ],
+   "len_after": 357,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 402,
+   "text_len_after": 342,
+   "head_after": "Для игры, описанной в задании 19, найдите два наименьших значения S, при которых у Пети есть выигрышная стратегия, причём одновременно выполняются два условия: "
+  },
+  {
+   "id": 9564,
+   "external_uid": "crylov:v16t25",
+   "difficulty_id": 2,
+   "len_before": 775,
+   "removed": [
+    "Задание 25 Сборник Крылова С.С. вариант 16 Уровень простой.<br>"
+   ],
+   "len_after": 712,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 748,
+   "text_len_after": 688,
+   "head_after": "Назовём маской числа последовательность цифр, в которой также могут встречаться следующие символы: — символ «?» означает ровно одну произвольную цифру; — символ"
+  },
+  {
+   "id": 9565,
+   "external_uid": "crylov:v16t26",
+   "difficulty_id": 3,
+   "len_before": 1888,
+   "removed": [
+    "Задание 26 Сборник Крылова С.С. вариант 16 Уровень сложный.<br>"
+   ],
+   "len_after": 1825,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1723,
+   "text_len_after": 1663,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В магазине для упаковки подарков есть N кубических коробок красного цвета и M кубическ"
+  }
+ ],
+ "unmatched": [],
+ "levelless": [
+  {
+   "id": 9524,
+   "external_uid": "crylov:v16t3",
+   "difficulty_id": 3,
+   "len_before": 1509,
+   "removed": [
+    "Задание 3 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 1463,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1335,
+   "text_len_after": 1292,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле приведён фрагмент базы данных «Одежда», принадлежащей предприятию по производс"
+  },
+  {
+   "id": 9525,
+   "external_uid": "crylov:v16t4",
+   "difficulty_id": 3,
+   "len_before": 586,
+   "removed": [
+    "Задание 4 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 540,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 577,
+   "text_len_after": 534,
+   "head_after": "По каналу связи передаются сообщения, содержащие только буквы из набора: А, К, Л, Н, О, Я. Для передачи используется двоичный код, удовлетворяющий условию Фано."
+  },
+  {
+   "id": 9526,
+   "external_uid": "crylov:v16t6",
+   "difficulty_id": 4,
+   "len_before": 1211,
+   "removed": [
+    "Задание 6 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 1165,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1190,
+   "text_len_after": 1147,
+   "head_after": "Исполнитель Черепаха действует на плоскости с декартовой системой координат. В начальный момент Черепаха находится в начале координат, её голова направлена вдол"
+  },
+  {
+   "id": 9527,
+   "external_uid": "crylov:v16t7",
+   "difficulty_id": 2,
+   "len_before": 571,
+   "removed": [
+    "Задание 7 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 525,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 562,
+   "text_len_after": 519,
+   "head_after": "Музыкальный фрагмент был записан в формате стерео (двухканальная запись), оцифрован и сохранён в виде файла без использования сжатия данных. Размер полученного "
+  },
+  {
+   "id": 9528,
+   "external_uid": "crylov:v16t8",
+   "difficulty_id": 3,
+   "len_before": 469,
+   "removed": [
+    "Задание 8 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 423,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 430,
+   "text_len_after": 387,
+   "head_after": "Все шестибуквенные слова, в составе которых могут быть только русские буквы П, О, Л, Ь, З, А, записаны в алфавитном порядке и пронумерованы начиная с 1. Ниже пр"
+  },
+  {
+   "id": 9529,
+   "external_uid": "crylov:v16t11",
+   "difficulty_id": 2,
+   "len_before": 642,
+   "removed": [
+    "Задание 11 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 595,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 627,
+   "text_len_after": 583,
+   "head_after": "При регистрации в компьютерной системе каждому объекту присваивается идентификатор, состоящий из 141 символа и содержащий только десятичные цифры и символы из 4"
+  },
+  {
+   "id": 9530,
+   "external_uid": "crylov:v16t12",
+   "difficulty_id": 3,
+   "len_before": 3649,
+   "removed": [
+    "Задание 12 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 3602,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 3499,
+   "text_len_after": 3455,
+   "head_after": "Исполнитель МТ представляет собой читающую и записывающую головку, которая может передвигаться вдоль бесконечной горизонтальной ленты, разделённой на равные яче"
+  },
+  {
+   "id": 9531,
+   "external_uid": "crylov:v16t21",
+   "difficulty_id": 2,
+   "len_before": 364,
+   "removed": [
+    "Задание 21 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 317,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 349,
+   "text_len_after": 305,
+   "head_after": "Для игры, описанной в задании 19, найдите минимальное значение S, при котором одновременно выполняются два условия: — у Вани есть выигрышная стратегия, позволяю"
+  },
+  {
+   "id": 9532,
+   "external_uid": "crylov:v16t22",
+   "difficulty_id": 3,
+   "len_before": 1327,
+   "removed": [
+    "Задание 22 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 1280,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 1162,
+   "text_len_after": 1118,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. В файле содержится информация о совокупности N вычислительных процессов, которые могут"
+  },
+  {
+   "id": 9533,
+   "external_uid": "crylov:v16t27",
+   "difficulty_id": 3,
+   "len_before": 3089,
+   "removed": [
+    "Задание 27 Сборник Крылова С.С. вариант 16.<br>"
+   ],
+   "len_after": 3042,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2767,
+   "text_len_after": 2723,
+   "head_after": "Файл А &middot; Файл Б . Задание выполняется с использованием прилагаемых файлов. Фрагмент звёздного неба спроецирован на плоскость с декартовой системой коорди"
+  },
+  {
+   "id": 9550,
+   "external_uid": "crylov:v5t7",
+   "difficulty_id": 2,
+   "len_before": 594,
+   "removed": [
+    "<p>Задание 7 Сборник Крылова С.С. вариант 5.</p>\n"
+   ],
+   "len_after": 545,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 579,
+   "text_len_after": 536,
+   "head_after": "Автоматическая фотоловушка в заповеднике, оснащённая датчиком движения, делает цветные фотографии проходящих мимо леопардов. Размер каждой фотографии 768 × 5120"
+  },
+  {
+   "id": 9551,
+   "external_uid": "crylov:v5t8",
+   "difficulty_id": 3,
+   "len_before": 205,
+   "removed": [
+    "<p>Задание 8 Сборник Крылова С.С. вариант 5.</p>\n"
+   ],
+   "len_after": 156,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 193,
+   "text_len_after": 150,
+   "head_after": "Определите количество шестеричных шестизначных чисел, в записи которых ровно одна цифра 0, при этом никакая нечётная цифра не стоит рядом с цифрой 0.."
+  },
+  {
+   "id": 9552,
+   "external_uid": "crylov:v5t9",
+   "difficulty_id": 2,
+   "len_before": 568,
+   "removed": [
+    "<p>Задание 9 Сборник Крылова С.С. вариант 5.</p>\n"
+   ],
+   "len_after": 519,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 400,
+   "text_len_after": 357,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Откройте файл электронной таблицы, содержащей в каждой строке четыре натуральных числа"
+  },
+  {
+   "id": 9553,
+   "external_uid": "crylov:v5t16",
+   "difficulty_id": 3,
+   "len_before": 284,
+   "removed": [
+    "<p>Задание 16 Сборник Крылова С.С. вариант 5.</p>\n"
+   ],
+   "len_after": 234,
+   "residual_leader": false,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 263,
+   "text_len_after": 219,
+   "head_after": "Алгоритм вычисления значения функции F(n), где n — натуральное число, задан следующими соотношениями: F(n) = 1 при n = 1; F(n) = n · F(n − 1), если n > 1. Чему "
+  },
+  {
+   "id": 9554,
+   "external_uid": "crylov:v5t26",
+   "difficulty_id": 3,
+   "len_before": 2228,
+   "removed": [
+    "<p>Задание 26 Сборник Крылова С.С. вариант 5.</p>\n"
+   ],
+   "len_after": 2178,
+   "residual_leader": true,
+   "residual_uroven": false,
+   "has_ask": true,
+   "text_len_before": 2054,
+   "text_len_after": 2010,
+   "head_after": "Файл к заданию . Задание выполняется с использованием прилагаемых файлов. Петя участвует в расширенной версии игры «Морской бой». В данной версии игры, в отличи"
+  }
+ ]
+}

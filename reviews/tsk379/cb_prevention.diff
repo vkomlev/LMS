@@ -1,0 +1,127 @@
+diff --git a/monolith/external_tasks/tg_ege_import.py b/monolith/external_tasks/tg_ege_import.py
+index 1301cfe..b2d872f 100644
+--- a/monolith/external_tasks/tg_ege_import.py
++++ b/monolith/external_tasks/tg_ege_import.py
+@@ -33,6 +33,48 @@ KNOWN_URL_RE = re.compile(
+     re.IGNORECASE,
+ )
+ URL_RE = re.compile(r"https?://[^\s<>)\"']+", re.IGNORECASE)
++
++# tsk-379 (LMS): автор канала предваряет разбор служебной шапкой вида «Задание
++# 24_24613 КЕГЭ. Уровень сложный.» или «Задание 9 Сборник Крылова С.С. вариант 3.
++# Уровень средний.» — это его собственная привычка форматирования поста, а не
++# артефакт скрейпа/OCR, поэтому чистка стоит здесь (на входе в LMS-импорт), а не в
++# web_stem_hygiene.py/stem_hygiene.py (те режут мусор конкретно со страниц
++# источников и PDF-разметки). Уровень сложности дублирует difficulty_id
++# (канон — сам пост, tsk-381/tsk-382); внутренний ID/название сборника ученику
++# не нужны. Приземлённый прод-мусор чинился LMS `scripts/tsk379_fix_stems.py` —
++# тот же паттерн вырезки (не «от маркера до конца», урок tsk-370: если после
++# шапки в том же абзаце сразу идёт реальный вопрос через <br>, срезаем только
++# шапку и один соседний <br>, остальное оставляем).
++_LEVEL_WORD = r"(?:простой|лёгкий|легкий|средний|сложный)"
++_HEADER_LEADER = r"(?:Решение\s+задания|Задание)"
++_WHOLE_HEADER_P_RE = re.compile(
++    rf"<p>\s*{_HEADER_LEADER}\s+(?:<br\s*/?>|[^<])*?Уровень\s+{_LEVEL_WORD}\.?\s*</p>\s*",
++    re.IGNORECASE,
++)
++_INLINE_HEADER_RE = re.compile(
++    rf"{_HEADER_LEADER}\s+(?:<br\s*/?>|[^<])*?Уровень\s+{_LEVEL_WORD}\.?\s*(?:<br\s*/?>\s*)?",
++    re.IGNORECASE,
++)
++_HTML_TAG_RE = re.compile(r"<[^>]+>")
++
++
++def strip_operator_header(html_body: str) -> str:
++    """Условие без служебной шапки «Задание … Уровень X» / «Решение задания N …».
++
++    Применяется к УЖЕ собранному HTML (после ``text_to_html``), а не к сырому
++    телу поста: шапка и реальный текст иногда делят один абзац через ``<br>``,
++    а границы абзацев к этому моменту уже расставлены.
++
++    Если после среза от условия не осталось видимого текста — шапка была ВСЕМ
++    телом поста (нет самого разбора, только идентификатор), срез откатывается:
++    пустой stem хуже, чем оставшаяся шапка, и такой пост нужен ручному разбору.
++    """
++    out = _INLINE_HEADER_RE.sub("", _WHOLE_HEADER_P_RE.sub("", html_body))
++    if not _HTML_TAG_RE.sub("", out).strip():
++        return html_body
++    return out
++
++
+ TASK_CODE_RE = re.compile(
+     r"(?:задание|задача|№)\s*(\d{1,2})(?:\s*[_-]\s*([0-9a-zа-я][0-9a-zа-я-]{0,80}))?",
+     re.IGNORECASE,
+@@ -123,7 +165,7 @@ class DryRunRow:
+             "lms_import_preview": {
+                 "external_uid": self.tg.external_uid_candidate,
+                 "type": "SA_COM",
+-                "stem": text_to_html(self.tg.body),
++                "stem": strip_operator_header(text_to_html(self.tg.body)),
+                 "stem_source": stem_source,
+                 "canonical_source_url": canonical_url,
+                 "correct_answer": "",
+@@ -540,6 +582,7 @@ __all__ = [
+     "report_digest",
+     "stable_report_hash",
+     "rows_from_dry_run_report",
++    "strip_operator_header",
+     "text_to_html",
+     "tg_post_url",
+     "write_lms_import_xlsx",
+diff --git a/tests/test_tg_ege_import.py b/tests/test_tg_ege_import.py
+index a377461..4f37026 100644
+--- a/tests/test_tg_ege_import.py
++++ b/tests/test_tg_ege_import.py
+@@ -19,6 +19,7 @@ from monolith.external_tasks.tg_ege_import import (
+     extract_task_identity,
+     match_vk_hints,
+     rows_from_dry_run_report,
++    strip_operator_header,
+     text_to_html,
+     write_lms_import_xlsx,
+ )
+@@ -155,6 +156,44 @@ def test_text_to_html_escapes_code_like_text() -> None:
+     assert "<br>" in html
+ 
+ 
++def test_strip_operator_header_whole_paragraph() -> None:
++    # tsk-379: шапка — весь первый абзац, реальный разбор идёт отдельным <p>.
++    html = text_to_html(
++        "Задание 24_24613 КЕГЭ. Уровень сложный.\n\nОпределите количество строк.")
++    cleaned = strip_operator_header(html)
++    assert "Уровень" not in cleaned
++    assert "24_24613" not in cleaned
++    assert "Определите количество строк." in cleaned
++
++
++def test_strip_operator_header_krylov_variant() -> None:
++    html = text_to_html(
++        "Задание 9 Сборник Крылова С.С. вариант 3. Уровень средний.\n\n"
++        "Исполнитель Черепаха действует на плоскости.")
++    cleaned = strip_operator_header(html)
++    assert "Сборник Крылова" not in cleaned
++    assert "Исполнитель Черепаха действует на плоскости." in cleaned
++
++
++def test_strip_operator_header_inline_same_paragraph() -> None:
++    # Шапка и вопрос в одном абзаце через перенос строки (<br> после сборки HTML).
++    html = text_to_html("Задание 6_83164 РешуЕГЭ. Уровень средний\nИсполнитель Черепаха.")
++    cleaned = strip_operator_header(html)
++    assert "Уровень" not in cleaned
++    assert "Исполнитель Черепаха." in cleaned
++
++
++def test_strip_operator_header_keeps_body_when_header_is_all_there_is() -> None:
++    # Пост — только идентификатор, разбора нет: пустой stem хуже шапки, откат.
++    html = text_to_html("Задание 12_25239 КЕГЭ. Уровень средний.")
++    assert strip_operator_header(html) == html
++
++
++def test_strip_operator_header_no_marker_is_noop() -> None:
++    html = text_to_html("Обычный текст без служебной шапки.")
++    assert strip_operator_header(html) == html
++
++
+ def test_rows_from_dry_run_report_only_ready() -> None:
+     ready = build_dry_run([_tg()], [_vk()])[0].to_report_dict()
+     skipped = build_dry_run([_tg(task_n=None, task_code=None, course_uid=None)], [])[0].to_report_dict()
