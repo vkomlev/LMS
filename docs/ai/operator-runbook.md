@@ -412,6 +412,63 @@ ssh lms-spw-vds "sudo -u app git -C /opt/lms fetch origin && sudo -u app git -C 
 зафиксировать ожидание до записи).
 
 **Профилактика:** в `/opt/lms` не запускать git от root — только `sudo -u app git …`.
+Общее правило запуска прод-скриптов под `app` — см. R-009 ниже.
+
+---
+
+## R-009: Прод-скрипты в `/opt/lms` запускать под `app`, не под root (владелец дерева)
+
+**Правило (главное):** любой прод-скрипт, который что-то создаёт/пишет в `/opt/lms`
+(выгрузки в `reviews/`, бэкапы, data-скрипты, инварианты, ad-hoc SELECT-диагностика),
+запускать **под `app`**, а не под root:
+```bash
+ssh lms-spw-vds 'sudo -u app bash -lc "cd /opt/lms && venv/bin/python scripts/X.py"'
+```
+Read-only прогонам (инварианты `scripts/*_answer_invariant.py`, SELECT) root тоже не нужен —
+их запускать так же под `app`.
+
+**Почему:** `ssh lms-spw-vds` логинится **root'ом**. Скрипт, запущенный без `sudo -u app`,
+создаёт файлы `root:root` в `/opt/lms`. Деплой же (`deploy/vps/deploy.sh`) идёт под `app`
+и делает `git reset --hard origin/main` — reset переписывает рабочее дерево и **падает
+Permission denied** на любом root-файле. Это брат-близнец R-008 (там root-объекты в
+`.git/objects` рушат `git fetch`; здесь root-файлы рабочего дерева рушат `reset --hard`).
+
+**Симптом:** `deploy/vps/deploy.sh` (или `rollback.sh`) падает на шаге git reset:
+```
+error: unable to unlink old '<путь>': Permission denied
+fatal: Could not reset index file to revision 'origin/main'.
+```
+Разово всплыло 2026-07-24 при деплое tsk-393: reset упал на каталоге `reviews/tsk381/`
+(`root:root`), в дереве накопилось 198 не-app объектов.
+
+### Autonomous workaround (Claude делает сам)
+```bash
+# диагностика: какие объекты дерева не под app (кроме .git и venv)
+ssh lms-spw-vds "find /opt/lms -mindepth 1 \( -path /opt/lms/.git -o -path /opt/lms/venv \) -prune -o \! -user app -printf '%u:%g %p\n' | head -20"
+# лечение: вернуть владельца рабочего дерева (выполняется под root — это ssh-логин)
+ssh lms-spw-vds "chown -R app:app /opt/lms"
+# проверка
+ssh lms-spw-vds "sudo -u app git -C /opt/lms status --short | head"
+```
+Права `/opt/lms` — инфраструктура, не БД: `DBCHECK_OK` не нужен. Но деплой гонит
+`alembic upgrade head` на боевой БД → сам деплой запускать по протоколу `/db-check`.
+
+**Механическая страховка (tsk-394):** `deploy/vps/deploy.sh` и `rollback.sh` перед
+`git reset --hard` проверяют владельца дерева и, найдя не-app объекты, **падают заранее
+с внятной ошибкой** и готовой командой лечения (`chown -R app:app /opt/lms`) вместо
+голого Permission denied. Guard бежит под `app` без привилегий (каталоги читаемы).
+Само-лечение через `sudo chown` внутри deploy.sh **не** сделано: у `app` беспарольный
+`sudo` только на `systemctl restart lms/spw`, а расширять sudoers ради `chown -R`
+(риск symlink-трюков) не стали — дешевле и безопаснее соблюдать правило + guard.
+
+### Operator instruction (если guard уже сработал при деплое)
+1. Выполнить на сервере (ssh логинит root, права есть):
+   ```bash
+   ssh lms-spw-vds "chown -R app:app /opt/lms"
+   ```
+   Ожидаемый результат: команда без вывода, код 0.
+2. Повторить деплой. Guard пропустит (0 не-app объектов), reset пройдёт.
+3. Впредь любой прод-скрипт запускать через `sudo -u app bash -lc "..."` (см. правило выше).
 
 ---
 

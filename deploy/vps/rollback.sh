@@ -16,6 +16,26 @@ set -euo pipefail
 main() {
   cd /opt/lms
 
+  echo "== проверка владельца рабочего дерева (страховка tsk-394) =="
+  # Тот же git reset --hard, что и в deploy.sh, — та же уязвимость к root-файлам.
+  # Прод-скрипты под root оставляют в /opt/lms объекты root:root, на которых
+  # reset падает Permission denied. Ловим ДО reset. Правило: прод-скрипты под app
+  # (sudo -u app ...), см. docs/ai/operator-runbook.md. .git и venv исключены.
+  local foreign
+  foreign=$(find /opt/lms -mindepth 1 \
+      \( -path /opt/lms/.git -o -path /opt/lms/venv \) -prune -o \
+      \! -user app -printf '%u:%g %p\n' 2>/dev/null)
+  if [[ -n "$foreign" ]]; then
+    echo "ОШИБКА: в /opt/lms есть объекты не под владельцем app — git reset --hard упадёт." >&2
+    echo "Первые 20:" >&2
+    echo "$foreign" | head -20 >&2
+    echo "" >&2
+    echo "Причина: прод-скрипт запускали под root, а не под app (tsk-394)." >&2
+    echo "Лечение (на сервере под root): chown -R app:app /opt/lms" >&2
+    echo "Затем повторить откат. Впредь прод-скрипты запускать под app." >&2
+    exit 1
+  fi
+
   if [[ ! -f .last-deploy-sha ]]; then
     echo "ОШИБКА: .last-deploy-sha не найден — нечего откатывать" \
          "(ни одного деплоя через deploy.sh ещё не было на этом сервере)." >&2
