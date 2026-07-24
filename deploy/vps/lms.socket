@@ -1,0 +1,10 @@
+[Unit]
+Description=LMS Core API socket (zero-downtime restart, tsk-403)
+
+[Socket]
+ListenStream=127.0.0.1:8000
+# соединения встают в очередь во время рестарта сервиса, а не connect refused
+Backlog=128
+
+[Install]
+WantedBy=sockets.target

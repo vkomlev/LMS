@@ -39,11 +39,15 @@ sudo -u app nano /opt/lms/.env
 #              CORS_ALLOWED_ORIGINS=https://learn.victor-komlev.ru
 #              ENV=production, COOKIE_SECURE=true
 
-# systemd
+# systemd (+ socket activation, tsk-403: zero-downtime рестарт, без 502 при деплое)
 sudo cp deploy/vps/lms.service /etc/systemd/system/lms.service
+sudo cp deploy/vps/lms.socket  /etc/systemd/system/lms.socket
+sudo mkdir -p /etc/systemd/system/lms.service.d
+sudo cp deploy/vps/lms.service.d/socket.conf /etc/systemd/system/lms.service.d/socket.conf
 sudo systemctl daemon-reload
+sudo systemctl enable --now lms.socket   # держит :8000 через рестарты сервиса
 sudo systemctl enable --now lms
-sudo systemctl status lms
+sudo systemctl status lms.socket lms
 
 # Nginx (сначала без SSL-блока, чтобы certbot смог пройти ACME-challenge)
 sudo cp deploy/vps/nginx-lms.conf /etc/nginx/sites-available/lms.conf
