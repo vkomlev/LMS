@@ -1,0 +1,566 @@
+warning: in the working copy of 'monolith/external_tasks/tg_ege_import.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'monolith/external_tasks/wp_nav_import.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'tests/test_tg_ege_import.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'monolith/external_tasks/normalizer/katex_latex.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/monolith/external_tasks/normalizer/katex_latex.py b/monolith/external_tasks/normalizer/katex_latex.py
+new file mode 100644
+index 0000000..7bcce1c
+--- /dev/null
++++ b/monolith/external_tasks/normalizer/katex_latex.py
+@@ -0,0 +1,223 @@
++r"""Нормализация математической разметки stem веб-скрейпа (tsk-398).
++
++Проблема (аудит прод-БД `learn` 2026-07-24, tsk-391 чинил ДАННЫЕ, здесь — ИСТОЧНИК):
++парсеры внешних источников (`decode_contents()`) тащат в stem готовую KaTeX-вёрстку
++чужого сайта — `<span class="katex">…</span>` с десятками вложенных `<span style=…>`.
++Санитайзер CB (`sanitizer.py`) вырезает `<annotation encoding="application/x-tex">`
++(исходный LaTeX внутри katex) и снимает `style`, поэтому в LMS уезжает «голая»
++геометрия KaTeX, а клиент SPW рендерит её сломанной (индекс/степень отдельной строкой).
++
++Три класса дефекта, которые здесь закрываются ДО санитайза:
++
++- **B — KaTeX-вёрстка → `$LaTeX$`.** Весь `<span class="katex">…</span>` заменяется
++  на исходный LaTeX из вложенного `<annotation>`, обёрнутый в `$…$`. SPW рендерит `$…$`
++  штатным react-katex (`KaTeXRender`), минуя санитайзер, — так уже рендерятся сотни
++  заданий. Границы katex-блока считаются БАЛАНСОМ span-тегов, а не жадным regex (внутри
++  десятки вложенных span — жадность схлопнула бы две формулы в одну).
++
++- **C — суррогатная степень `**` / `^`.** `9**2025` (питон) / `9^2025` переводятся в
++  `9<sup>2025</sup>` (тег `sup` в whitelist санитайзера). Реальный Python-код внутри
++  `<code>`/`<pre>` защищён — там `**` это оператор, а не степень ЕГЭ.
++
++- **D — знак сравнения в математике.** Извлечённый из annotation LaTeX может содержать
++  сырой `<` / `>` (напр. `n<10`). Сырой `<` в stem HTML-санитайзер (nh3/DOMPurify) видит
++  как начало тега и съедает `<10` — условие становится неоднозначным ученику. Поэтому
++  внутри выдаваемого `$…$` `<`/`>` заменяются на KaTeX-эквиваленты `\lt`/`\gt`
++  (идентичный рендер, но HTML-безопасно). Правка применяется ТОЛЬКО к LaTeX, который
++  модуль сам извлёк из annotation, — произвольные существующие `$…$` не трогаются
++  (их разбор рискован; их ловит инвариант-детектор на стороне LMS).
++
++Функции чистые (без БД/HTTP), идемпотентные: повторный прогон даёт `changed=False`.
++Порядок в pipeline: сначала `katex_html_to_latex` (снимает вёрстку), затем
++`surrogate_powers_to_sup` (по уже очищенному тексту), оба — ДО `sanitize_html`.
++"""
++from __future__ import annotations
++
++import html as html_mod
++import re
++
++from monolith.external_tasks.normalizer.stem_hygiene import StemCleanResult
++
++# Открывающий тег katex-контейнера. Внешняя обёртка <span>…</span> вокруг него
++# (если есть) прихватывается отдельно, чтобы не оставить висящий пустой span.
++_KATEX_OPEN_RE = re.compile(r'<span class="katex">', re.IGNORECASE)
++_SPAN_TAG_RE = re.compile(r"<(/?)span\b[^>]*>", re.IGNORECASE)
++_ANNOT_RE = re.compile(
++    r'<annotation encoding="application/x-tex">(.*?)</annotation>',
++    re.IGNORECASE | re.DOTALL,
++)
++_TRAILING_WRAP_RE = re.compile(r"<span>\s*$", re.IGNORECASE)
++
++
++def _katex_block_end(html: str, start: int) -> int:
++    """Позиция конца сбалансированного `<span class="katex">…</span>` от `start`.
++
++    Считаем баланс span-тегов: внутри katex-контейнера десятки вложенных span,
++    жадный `.*?</span>` закрыл бы блок на первом же внутреннем `</span>`.
++    """
++    depth = 0
++    i = start
++    n = len(html)
++    while i < n:
++        m = _SPAN_TAG_RE.search(html, i)
++        if not m:
++            return n
++        depth += -1 if m.group(1) else 1
++        i = m.end()
++        if depth == 0:
++            return i
++    return n
++
++
++def _latex_relations_safe(latex: str) -> str:
++    """Сырые `<`/`>` в LaTeX → `\\lt`/`\\gt` (HTML-безопасно, рендер идентичен).
++
++    KaTeX рендерит `\\lt`/`\\gt` ровно как `<`/`>`, но сырой `<` в строке stem
++    HTML-санитайзер съел бы как начало тега (класс D). Уже экранированные формы
++    (`\\lt`, `\\leq`, `<=` внутри команды) не трогаем: заменяется ровно одиночный
++    символ `<`/`>`, а `\\lt`/`\\gt` его не содержат.
++    """
++    latex = latex.replace("<", r"\lt ").replace(">", r"\gt ")
++    # Схлопнуть возможный двойной пробел после подстановки (косметика LaTeX).
++    return re.sub(r"[ ]{2,}", " ", latex)
++
++
++def katex_html_to_latex(raw: str) -> StemCleanResult:
++    """Заменяет KaTeX-вёрстку её LaTeX-исходником в долларах (класс B + D).
++
++    Args:
++        raw: исходный stem (HTML со страницы источника, возможно с katex).
++
++    Returns:
++        StemCleanResult: очищенный HTML, флаг изменения и аудит `removed`
++        (`katex_html` для каждого снятого блока).
++    """
++    if not raw or "class=\"katex\"" not in raw.replace("'", '"'):
++        return StemCleanResult(cleaned=raw or "", changed=False)
++
++    removed: list[tuple[str, str]] = []
++    out: list[str] = []
++    i = 0
++    while True:
++        m = _KATEX_OPEN_RE.search(raw, i)
++        if not m:
++            out.append(raw[i:])
++            break
++        pre = raw[i:m.start()]
++        # Прихватываем внешнюю обёртку <span> перед katex, если она есть.
++        wrap = _TRAILING_WRAP_RE.search(pre)
++        out.append(pre[: wrap.start()] if wrap else pre)
++
++        end = _katex_block_end(raw, m.start())
++        # Съесть закрывающий </span> внешней обёртки, если её открыли.
++        tail = re.match(r"\s*</span>", raw[end:])
++        if wrap and tail:
++            end += tail.end()
++
++        block = raw[m.start():end]
++        annot = _ANNOT_RE.search(block)
++        if annot:
++            latex = _latex_relations_safe(html_mod.unescape(annot.group(1)).strip())
++            out.append(f"${latex}$")
++            removed.append(("katex_html", block))
++        else:
++            # annotation нет — исходный LaTeX недоступен, вёрстку не трогаем
++            # (лучше сломанный рендер, чем потеря выражения).
++            out.append(block)
++        i = end
++
++    cleaned = "".join(out)
++    return StemCleanResult(
++        cleaned=cleaned,
++        changed=cleaned != raw,
++        removed=removed,
++    )
++
++
++# --- Класс C: суррогат `**` / `^` → <sup> ----------------------------------------
++
++_CODE_BLOCK_RE = re.compile(r"<(code|pre)\b.*?</\1>", re.DOTALL | re.IGNORECASE)
++# Инлайн-код в markdown-бэктиках: `print(23**45)`, `i**3 <= n` — тоже Python,
++# не суррогат ЕГЭ (авторские курсы Python пишут код бэктиками, а не <code>).
++_INLINE_CODE_RE = re.compile(r"`[^`]+`")
++# Математика в долларах: там `^`/`**` — это LaTeX (показатель `10^{2024}`), а НЕ
++# суррогат. Защищаем целиком, иначе перевод в <sup> сломал бы формулу.
++_MATH_SPAN_RE = re.compile(r"\$[^$]+\$")
++_POW_STARSTAR_RE = re.compile(
++    r"([0-9A-Za-zА-Яа-яё\)\]])\s*\*\*\s*([0-9A-Za-z]{1,4})\b")
++_POW_CARET_RE = re.compile(
++    r"([0-9A-Za-zА-Яа-яё\)\]])\s*\^\{?([0-9A-Za-z]{1,4})\}?")
++
++
++def surrogate_powers_to_sup(raw: str) -> StemCleanResult:
++    """Питоновскую/markdown-запись степени (`**`/`^`) переводит в `<sup>` (класс C).
++
++    Защищены (НЕ суррогат, не трогаем):
++    - `<code>`/`<pre>` и markdown-бэктики `` `…` `` — там `**` это оператор Python
++      (`print(23**45)`, `i**3 <= n`, `**kwargs`), а не показатель ЕГЭ;
++    - `$…$` — там `^`/`**` это LaTeX-математика (`10^{2024}`), перевод в <sup>
++      сломал бы формулу (найдено на проде: 34 задания с `^` внутри `$…$`).
++
++    Подстрочник `_NN` НЕ трогаем — «Задание 14_13» это номер задания, а не основание
++    системы счисления (ловушка tsk-391); такие случаи правятся точечно.
++
++    Args:
++        raw: исходный stem (HTML).
++
++    Returns:
++        StemCleanResult: очищенный HTML и флаг изменения.
++    """
++    if not raw or ("**" not in raw and "^" not in raw):
++        return StemCleanResult(cleaned=raw or "", changed=False)
++
++    guards: list[str] = []
++
++    def _stash(m: re.Match) -> str:
++        guards.append(m.group(0))
++        return f"\x00G{len(guards) - 1}\x00"
++
++    # Прячем неприкосновенное: математику в долларах, код-блоки и инлайн-бэктики.
++    s = _MATH_SPAN_RE.sub(_stash, raw)
++    s = _CODE_BLOCK_RE.sub(_stash, s)
++    s = _INLINE_CODE_RE.sub(_stash, s)
++    # base ** exp → base<sup>exp</sup>; последний символ основания остаётся слева
++    # (2187**2020 → 2187<sup>2020</sup>).
++    s = _POW_STARSTAR_RE.sub(r"\1<sup>\2</sup>", s)
++    s = _POW_CARET_RE.sub(r"\1<sup>\2</sup>", s)
++
++    for idx, g in enumerate(guards):
++        s = s.replace(f"\x00G{idx}\x00", g)
++
++    return StemCleanResult(cleaned=s, changed=s != raw)
++
++
++def normalize_math_markup(raw: str) -> StemCleanResult:
++    """Полная нормализация мат-разметки stem: katex→LaTeX (B/D) + суррогат (C).
++
++    Порядок важен: сначала снимаем katex-вёрстку (внутри неё `**`/`^` не бывает),
++    затем переводим суррогатную степень по уже очищенному тексту.
++
++    Args:
++        raw: исходный stem (HTML со страницы источника).
++
++    Returns:
++        StemCleanResult: итоговый HTML, объединённый флаг изменения и аудит
++        `removed` (какие katex-блоки сняты).
++    """
++    if not raw or not raw.strip():
++        return StemCleanResult(cleaned=raw or "", changed=False)
++
++    step_b = katex_html_to_latex(raw)
++    step_c = surrogate_powers_to_sup(step_b.cleaned)
++    return StemCleanResult(
++        cleaned=step_c.cleaned,
++        changed=step_c.cleaned != raw,
++        removed=step_b.removed,
++    )
++
++
++__all__ = [
++    "katex_html_to_latex",
++    "surrogate_powers_to_sup",
++    "normalize_math_markup",
++]
+diff --git a/monolith/external_tasks/normalizer/pipeline.py b/monolith/external_tasks/normalizer/pipeline.py
+index edf6b2f..e81869f 100644
+--- a/monolith/external_tasks/normalizer/pipeline.py
++++ b/monolith/external_tasks/normalizer/pipeline.py
+@@ -20,6 +20,7 @@ from typing import Any, Union
+ from monolith.external_tasks.normalizer.contracts import NormalizedTask
+ from monolith.external_tasks.normalizer.difficulty import resolve_difficulty_id
+ from monolith.external_tasks.normalizer.image_resolver import _resolve_in_html
++from monolith.external_tasks.normalizer.katex_latex import normalize_math_markup
+ from monolith.external_tasks.normalizer.sanitizer import sanitize_html
+ from monolith.external_tasks.normalizer.stem_hygiene import clean_pdf_stem
+ from monolith.external_tasks.normalizer.url_filter import filter_urls
+@@ -71,6 +72,11 @@ class Normalizer:
+         # PDF-ветке (tsk-213), веб-скрейп шёл мимо неё — отсюда 133 задания с
+         # мусором в условии на проде.
+         html = self._clean_web_stem(parsed.stem_html, parsed.source_task_id)
++        # tsk-398: снять готовую KaTeX-вёрстку чужого сайта → $LaTeX$ из
++        # <annotation> (класс B), суррогат `**`/`^` → <sup> (класс C), сырой
++        # `<`/`>` в LaTeX → \lt/\gt (класс D). ДО санитайза: он вырезает
++        # <annotation> и `style`, оставляя сломанную геометрию KaTeX.
++        html = normalize_math_markup(html).cleaned
+         sanitized, xss_warnings = sanitize_html(html)
+         resolved = _resolve_in_html(sanitized, parsed.source_url)
+         filtered, url_warnings = filter_urls(resolved)
+@@ -127,6 +133,9 @@ class Normalizer:
+         # tsk-213: гигиена OCR-мусора/©/пагинации до санитайза — защита будущих
+         # PDF-импортов от того же захламления, что нашли в проде (класс A4).
+         html = clean_pdf_stem(html).cleaned
++        # tsk-398: суррогат степени `**`/`^` → <sup> и (на всякий) katex→$LaTeX$.
++        # PDF-источники (Крылов) несут `1331**650` — питон-запись вместо степени.
++        html = normalize_math_markup(html).cleaned
+         sanitized, xss_warnings = sanitize_html(html)
+         resolved = _resolve_in_html(sanitized, None)
+         filtered, url_warnings = filter_urls(resolved)
+diff --git a/monolith/external_tasks/tg_ege_import.py b/monolith/external_tasks/tg_ege_import.py
+index a6f88d8..1301cfe 100644
+--- a/monolith/external_tasks/tg_ege_import.py
++++ b/monolith/external_tasks/tg_ege_import.py
+@@ -96,6 +96,14 @@ class DryRunRow:
+             "manual_review_required": True,
+             "source_tg_global_uid": self.tg.global_uid,
+         }
++        # tsk-398: тело ТГ-поста уже ПЛОСКОЕ — автор канала вставляет «223» вместо
++        # 2²³, «8569x16» вместо 8569x₁₆; разметку степени/основания из него не
++        # восстановить. Если в посте есть ссылка на первоисточник (КомпЕГЭ/Поляков/
++        # sdamgia/Яндекс), stem обязан прийти ИЗ НЕГО через D4-конвейер, а не из
++        # лоссового ТГ-тела. Помечаем провенанс; выпуск лоссового stem в импорт
++        # блокируется в rows_from_dry_run_report (защита восстановленного tsk-391).
++        canonical_url = self.tg.known_urls[0] if self.tg.known_urls else ""
++        stem_source = "canonical_by_id" if canonical_url else "tg_body"
+         return {
+             "source_item_id": self.tg.source_item_id,
+             "global_uid": self.tg.global_uid,
+@@ -116,6 +124,8 @@ class DryRunRow:
+                 "external_uid": self.tg.external_uid_candidate,
+                 "type": "SA_COM",
+                 "stem": text_to_html(self.tg.body),
++                "stem_source": stem_source,
++                "canonical_source_url"warning: in the working copy of 'tests/test_katex_latex_normalizer.py', LF will be replaced by CRLF the next time Git touches it
+: canonical_url,
+                 "correct_answer": "",
+                 "accepted_answers": "",
+                 "max_score": 1,
+@@ -451,7 +461,13 @@ def stable_report_hash(payload: Any) -> str:
+ 
+ 
+ def rows_from_dry_run_report(payload: dict[str, Any]) -> list[dict[str, Any]]:
+-    """Extract LMS import rows from dry-run report payload."""
++    """Extract LMS import rows from dry-run report payload.
++
++    tsk-398: строки с ``stem_source == "canonical_by_id"`` в импорт НЕ попадают —
++    их stem обязан прийти из первоисточника через D4-конвейер, а не из плоского
++    ТГ-тела. Иначе ре-импорт этой партии перезатёр бы разметку, восстановленную
++    tsk-391 (степень/основание, которых в ТГ-посте уже нет).
++    """
+     rows: list[dict[str, Any]] = []
+     for item in payload.get("rows") or []:
+         if not isinstance(item, dict):
+@@ -461,6 +477,8 @@ def rows_from_dry_run_report(payload: dict[str, Any]) -> list[dict[str, Any]]:
+         preview = item.get("lms_import_preview")
+         if not isinstance(preview, dict):
+             continue
++        if preview.get("stem_source") == "canonical_by_id":
++            continue
+         row = {col: preview.get(col, "") for col in COLUMNS}
+         rows.append(row)
+     return rows
+diff --git a/monolith/external_tasks/wp_nav_import.py b/monolith/external_tasks/wp_nav_import.py
+index 5755839..67eadff 100644
+--- a/monolith/external_tasks/wp_nav_import.py
++++ b/monolith/external_tasks/wp_nav_import.py
+@@ -22,6 +22,7 @@ from sqlalchemy import bindparam, text
+ from sqlalchemy.dialects.postgresql import ARRAY, TEXT
+ from sqlalchemy.engine import Engine
+ 
++from monolith.external_tasks.normalizer.katex_latex import normalize_math_markup
+ from monolith.external_tasks.parsers.registry import resolve_source_from_url
+ from scripts.build_prod_lms_import import TASK_N_TO_COURSE
+ 
+@@ -636,6 +637,11 @@ def build_task_upsert_item(
+     """
+     out = outcome or {}
+     stem_html = str(out.get("stem_html") or "")
++    # tsk-398: wp_nav идёт МИМО Normalizer (CB-санитайза нет вовсе) — снимаем
++    # готовую KaTeX-вёрстку → $LaTeX$ (класс B), суррогат `**`/`^` → <sup>
++    # (класс C) и делаем `<`/`>` в LaTeX HTML-безопасными (класс D) здесь,
++    # до отправки в LMS. Иначе сырую вёрстку снимет клиент SPW и рендер сломается.
++    stem_html = normalize_math_markup(stem_html).cleaned
+     answer_raw = out.get("answer_raw")
+     answer = "" if answer_raw is None else str(answer_raw)
+     hints_video = list(report_row.get("hints_video") or [])
+diff --git a/tests/test_katex_latex_normalizer.py b/tests/test_katex_latex_normalizer.py
+new file mode 100644
+index 0000000..a5aff66
+--- /dev/null
++++ b/tests/test_katex_latex_normalizer.py
+@@ -0,0 +1,174 @@
++"""tsk-398 — тесты нормализатора математической разметки stem.
++
++Покрывают три класса дефекта импорта заданий ЕГЭ (follow-up tsk-391):
++  - B: KaTeX-вёрстка чужого сайта → `$LaTeX$` из <annotation>;
++  - C: суррогатная степень `**`/`^` → <sup> (код защищён);
++  - D: сырой `<`/`>` в извлечённом LaTeX → `\\lt`/`\\gt` (HTML-безопасно).
++
++Образец katex — реальный stem задания 2949 (прод `learn`, партия ext:d4),
++класс B из инвентаря tsk-391.
++"""
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++_root = Path(__file__).resolve().parent.parent
++if str(_root) not in sys.path:
++    sys.path.insert(0, str(_root))
++
++from monolith.external_tasks.normalizer.katex_latex import (
++    katex_html_to_latex,
++    normalize_math_markup,
++    surrogate_powers_to_sup,
++)
++
++# Реальный katex-блок из прод-stem задания 2949 (усечён после annotation —
++# для проверки достаточно, границы блока считаются балансом span-тегов).
++_REAL_KATEX = (
++    '<p>Операнды записаны в системе счисления с основанием 19.<br/>'
++    '<span><span class="katex"><span class="katex-mathml">'
++    '<math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow>'
++    '<mn>98897</mn><mi>x</mi><mn>2</mn><msub><mn>1</mn><mn>19</mn></msub>'
++    '<mo>+</mo><mn>2</mn><mi>x</mi><mn>92</mn><msub><mn>3</mn><mn>19</mn></msub>'
++    '</mrow><annotation encoding="application/x-tex"> 98897x21_{19} + 2x923_{19} '
++    '</annotation></semantics></math></span>'
++    '<span aria-hidden="true" class="katex-html">'
++    '<span class="base"><span class="strut" style="height: 0.79em;"></span>'
++    '<span class="mord">98897</span></span></span></span></span> — найдите x.</p>'
++)
++
++
++# ---------- класс B: katex → $LaTeX$ ----------
++
++def test_katex_block_replaced_with_dollar_latex() -> None:
++    res = katex_html_to_latex(_REAL_KATEX)
++    assert res.changed
++    assert "$98897x21_{19} + 2x923_{19}$" in res.cleaned
++    # вся katex-вёрстка снята: ни контейнера, ни inline-style не осталось
++    assert "class=\"katex\"" not in res.cleaned
++    assert "katex-html" not in res.cleaned
++    assert "style=" not in res.cleaned
++    assert len(res.removed) == 1 and res.removed[0][0] == "katex_html"
++
++
++def test_katex_preserves_surrounding_text() -> None:
++    res = katex_html_to_latex(_REAL_KATEX)
++    assert "Операнды записаны в системе счисления" in res.cleaned
++    assert "— найдите x." in res.cleaned
++    # внешняя обёртка <span>…</span> вокруг katex не оставила висящих тегов
++    assert "<span></span>" not in res.cleaned
++
++
++def test_katex_idempotent() -> None:
++    once = katex_html_to_latex(_REAL_KATEX).cleaned
++    twice = katex_html_to_latex(once)
++    assert not twice.changed
++    assert twice.cleaned == once
++
++
++def test_no_katex_is_noop() -> None:
++    plain = "<p>Сколько бит в килобайте?</p>"
++    res = katex_html_to_latex(plain)
++    assert not res.changed and res.cleaned == plain
++
++
++def test_katex_without_annotation_left_intact() -> None:
++    # Без <annotation> исходный LaTeX недоступен — не трогаем (лучше сломанный
++    # рендер, чем потеря выражения).
++    no_annot = '<p>x <span class="katex"><span class="katex-html">2</span></span></p>'
++    res = katex_html_to_latex(no_annot)
++    assert not res.changed
++
++
++# ---------- класс D: знак сравнения ----------
++
++def test_comparison_sign_made_html_safe() -> None:
++    # annotation с сырым `<` (класс D: «f(n)=1 при n<10»)
++    src = (
++        '<p>при <span><span class="katex"><span class="katex-mathml">'
++        '<math><semantics><mrow><mi>n</mi></mrow>'
++        '<annotation encoding="application/x-tex">n<10</annotation>'
++        '</semantics></math></span></span></span></p>'
++    )
++    res = katex_html_to_latex(src)
++    assert res.changed
++    # сырой `<` заменён на KaTeX-эквивалент \lt (рендер тот же, HTML-безопасно)
++    assert r"\lt" in res.cleaned
++    assert "n<10" not in res.cleaned
++
++
++# ---------- класс C: суррогат `**` / `^` ----------
++
++def test_double_star_power_to_sup() -> None:
++    res = surrogate_powers_to_sup("<p>Найдите 9**2025 mod 7.</p>")
++    assert res.changed
++    assert "9<sup>2025</sup>" in res.cleaned
++
++
++def test_caret_power_to_sup() -> None:
++    res = surrogate_powers_to_sup("<p>2^32 битов</p>")
++    assert res.changed
++    assert "2<sup>32</sup>" in res.cleaned
++
++
++def test_python_code_power_protected() -> None:
++    # Внутри <code>/<pre> `**` — оператор Python, не степень ЕГЭ.
++    src = "<p>Оператор:</p><pre>result = base ** exp</pre>"
++    res = surrogate_powers_to_sup(src)
++    assert not res.changed
++    assert "<sup>" not in res.cleaned
++
++
++def test_backtick_inline_code_protected() -> None:
++    # markdown-бэктики — Python-код, не суррогат ЕГЭ (авторские курсы Python).
++    src = "<p>Выполните `print(23**45)` и проверьте `i**3 <= n`.</p>"
++    res = surrogate_powers_to_sup(src)
++    assert not res.changed
++    assert "`print(23**45)`" in res.cleaned
++    assert "<sup>" not in res.cleaned
++
++
++def test_latex_exponent_in_dollars_protected() -> None:
++    # `^` внутри $…$ — это корректный LaTeX-показатель, а НЕ суррогат.
++    # Перевод в <sup> сломал бы формулу (на проде 34 таких задания).
++    src = "<p>Найдите $10^{2024}$ и $2^8$.</p>"
++    res = surrogate_powers_to_sup(src)
++    assert not res.changed
++    assert "<sup>" not in res.cleaned
++    assert "$10^{2024}$" in res.cleaned
++
++
++def test_surrogate_outside_dollars_but_latex_inside() -> None:
++    # Смешанный stem: суррогат вне долларов чиним, LaTeX внутри — нет.
++    src = "<p>вне 3**16, внутри $x^2$</p>"
++    res = surrogate_powers_to_sup(src)
++    assert "3<sup>16</sup>" in res.cleaned
++    assert "$x^2$" in res.cleaned
++
++
++def test_surrogate_idempotent() -> None:
++    once = surrogate_powers_to_sup("<p>9**2025</p>").cleaned
++    twice = surrogate_powers_to_sup(once)
++    assert not twice.changed
++
++
++# ---------- комбинированный конвейер ----------
++
++def test_normalize_math_markup_combines_classes() -> None:
++    src = _REAL_KATEX + "<p>также 3**16</p>"
++    res = normalize_math_markup(src)
++    assert res.changed
++    assert "$98897x21_{19} + 2x923_{19}$" in res.cleaned
++    assert "3<sup>16</sup>" in res.cleaned
++
++
++def test_normalize_math_markup_idempotent() -> None:
++    once = normalize_math_markup(_REAL_KATEX + "<p>3**16</p>").cleaned
++    twice = normalize_math_markup(once)
++    assert not twice.changed
++
++
++def test_empty_input() -> None:
++    assert normalize_math_markup("").cleaned == ""
++    assert not normalize_math_markup("   ").changed
+diff --git a/tests/test_tg_ege_import.py b/tests/test_tg_ege_import.py
+index db62900..a377461 100644
+--- a/tests/test_tg_ege_import.py
++++ b/tests/test_tg_ege_import.py
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import dataclasses
+ import json
+ import sys
+ from pathlib import Path
+@@ -163,6 +164,30 @@ def test_rows_from_dry_run_report_only_ready() -> None:
+     assert rows[0]["course_uid"] == "wp:zadanie-12-ege-po-informatike-mashina-tyuringa"
+ 
+ 
++def test_tg_body_stem_source_marked_and_imported() -> None:
++    # tsk-398: пост без ссылки на первоисточник — ТГ-тело единственный источник.
++    preview = build_dry_run([_tg()], [_vk()])[0].to_report_dict()["lms_import_preview"]
++    assert preview["stem_source"] == "tg_body"
++    assert preview["canonical_source_url"] == ""
++    rows = rows_from_dry_run_report({"rows": [build_dry_run([_tg()], [_vk()])[0].to_report_dict()]})
++    assert len(rows) == 1  # импортируется
++
++
++def test_canonical_source_excluded_from_import() -> None:
++    # tsk-398: в посте есть ссылка на КомпЕГЭ — stem обязан прийти из первоисточника
++    # через D4, а плоское ТГ-тело в импорт НЕ выпускается (защита восстановленного tsk-391).
++    tg_canon = dataclasses.replace(
++        _tg(body="Задание 7_21893 (КомпЕГЭ). https://kompege.ru/task?id=21893"),
++        known_urls=["https://kompege.ru/task?id=21893"],
++    )
++    row = build_dry_run([tg_canon], [_vk()])[0]
++    preview = row.to_report_dict()["lms_import_preview"]
++    assert preview["stem_source"] == "canonical_by_id"
++    assert preview["canonical_source_url"] == "https://kompege.ru/task?id=21893"
++    rows = rows_from_dry_run_report({"rows": [row.to_report_dict()]})
++    assert rows == []  # лоссовый ТГ-stem не попал в импорт
++
++
+ def test_write_lms_import_xlsx(tmp_path) -> None:
+     ready = build_dry_run([_tg()], [_vk()])[0].to_report_dict()
+     rows = rows_from_dry_run_report({"rows": [ready]})
