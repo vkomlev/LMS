@@ -22,6 +22,7 @@ Migrations: `app/db/migrations/versions/` (Alembic, schema=public)
 - `D:\Work\LMS\docs\frontend-contract-sa-com.md` — формат ответов SA_COM
 - `D:\Work\LMS\docs\learning-engine-next-item.md` — техдок учебного движка
 - `D:\Work\LMS\docs\ai\adr\0001-auth-passwordless-multi-identity.md` — LMS-side ADR
+- **`D:\Work\ContentBackbone\docs\ai\ege-import-playbook.md`** — плейбук импорта заданий ЕГЭ/ОГЭ/Python (карта источников, дефекты F1–F10, durable-инварианты). Читать до любой работы с заданиями ЕГЭ/ОГЭ, внешними источниками, `solution_rules`/`difficulty`/`order_position`/стемами/медиа. LMS-стаб: `docs/qa/2026-07-24-ege-import-playbook-pointer.md` (tsk-399)
 
 ## Cross-project memory (ОБЯЗАТЕЛЬНО)
 
