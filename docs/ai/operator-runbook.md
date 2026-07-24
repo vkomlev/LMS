@@ -461,6 +461,14 @@ ssh lms-spw-vds "sudo -u app git -C /opt/lms status --short | head"
 `sudo` только на `systemctl restart lms/spw`, а расширять sudoers ради `chown -R`
 (риск symlink-трюков) не стали — дешевле и безопаснее соблюдать правило + guard.
 
+**Смежные проекты (tsk-397):** тот же guard добавлен и задеплоен в SPW
+(`/opt/spw` на `lms-spw-vds`, `deploy.sh` + `rollback.sh`, исключения
+`.git`/`node_modules`/`.next`, commit `679bd16`) и TG_LMS (`/opt/tg_lms` на **отдельном**
+сервере `tg-lms-vds` 72.56.247.22, только `deploy.sh` — rollback.sh нет, исключения
+`.git`/`venv`, commit `ad778a5`). Правило «прод-скрипты под app» и лечение
+`chown -R app:app /opt/<project>` действуют одинаково для всех трёх. Хосты: LMS+SPW →
+`lms-spw-vds`, TG_LMS → `tg-lms-vds`.
+
 ### Operator instruction (если guard уже сработал при деплое)
 1. Выполнить на сервере (ssh логинит root, права есть):
    ```bash
