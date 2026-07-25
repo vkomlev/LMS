@@ -13,10 +13,11 @@ Sheets), поэтому любое переиздание задания или 
 Payload переиздания — ровно те ключи, которые кладёт ContentBackbone
 (`task_payload_to_dict` / `material_payload_to_dict`), а не синтетический полный.
 
-Отдельно закреплено текущее поведение `is_active` (тот же дефолт-паттерн):
-переиздание по-прежнему включает элемент. Это не чинится здесь намеренно —
-тест сторожит, что правка уровня не изменила активность молча (tsk-377,
-раздел «Риски» ревью-артефакта).
+`is_active` тем же дефолт-паттерном закрыт отдельно в tsk-378 (см.
+`test_tsk378_is_active_order_position_preserved.py`) — сторожевые тесты
+`test_task_reissue_still_activates` / `test_material_reissue_still_activates`
+из ревью tsk-377 переписаны здесь под новое поведение: переиздание больше
+НЕ реактивирует то, что выключил методист.
 """
 from __future__ import annotations
 
@@ -166,11 +167,13 @@ async def test_task_create_defaults_to_required(client, db):
 
 
 @pytest.mark.asyncio
-async def test_task_reissue_still_activates(client, db):
-    """Сторож: активность правка НЕ трогала — переиздание по-прежнему включает задание.
+async def test_task_reissue_preserves_deactivation(client, db):
+    """tsk-378: переиздание больше НЕ реактивирует задание, выключенное методистом.
 
-    Тот же дефолт-паттерн, что был у уровня; чинить его здесь не входит в
-    охват tsk-377. Тест падает, если поведение изменилось молча.
+    До tsk-378 этот тест (`test_task_reissue_still_activates`) сознательно
+    пиннил старое поведение: `TaskPayload` в ContentBackbone не имеет поля
+    `is_active`, а сервис на UPDATE подставлял дефолт `True` — переиздание
+    молча возвращало погашенный методистом дубликат (tsk-112).
     """
     course_id = await _new_course(db)
     uid = f"tsk377-task-{uuid.uuid4().hex[:8]}"
@@ -182,7 +185,7 @@ async def test_task_reissue_still_activates(client, db):
     assert (await _task_row(db, uid))[1] is False
 
     await _post_tasks(client, [_cb_task_payload(uid, course_id)])
-    assert (await _task_row(db, uid))[1] is True
+    assert (await _task_row(db, uid))[1] is False, "переиздание реактивировало выключенное задание"
 
 
 @pytest.mark.asyncio
@@ -289,8 +292,8 @@ async def test_material_create_defaults_to_required(client, db):
 
 
 @pytest.mark.asyncio
-async def test_material_reissue_still_activates(client, db):
-    """Сторож активности материала — зеркало теста для заданий."""
+async def test_material_reissue_preserves_deactivation(client, db):
+    """tsk-378: переиздание больше НЕ реактивирует материал, выключенный методистом (зеркало заданий)."""
     course_id = await _new_course(db)
     uid = f"tsk377-mat-{uuid.uuid4().hex[:8]}"
 
@@ -302,4 +305,4 @@ async def test_material_reissue_still_activates(client, db):
     assert (await _material_row(db, course_id, uid))[1] is False
 
     await _post_materials(client, [_cb_material_payload(uid, course_id)])
-    assert (await _material_row(db, course_id, uid))[1] is True
+    assert (await _material_row(db, course_id, uid))[1] is False, "переиздание реактивировало выключенный материал"

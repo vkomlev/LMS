@@ -1,0 +1,502 @@
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index 6f19874..22fe136 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -178,10 +178,23 @@ class MaterialsBulkUpsertItem(BaseModel):
+     content: Any = Field(..., description="Содержимое (структура по type)")
+     description: Optional[str] = None
+     caption: Optional[str] = None
+-    is_active: bool = Field(True, description="Активность материала")
++    is_active: bool = Field(
++        True,
++        description=(
++            "Активность материала. Поле не передано: при создании ставится "
++            "`True`, при обновлении активность НЕ меняется (tsk-378 — иначе "
++            "переиздание материала реактивировало то, что выключил методист). "
++            "Передано явно — применяется в обоих случаях."
++        ),
++    )
+     order_position: Optional[int] = Field(
+         default=None,
+-        description="Позиция в курсе; None — поведение как при CRUD (триггер БД)",
++        description=(
++            "Позиция в курсе. Поле не передано: при создании — None (триггер "
++            "БД проставит MAX+1), при обновлении позиция НЕ меняется (tsk-378 — "
++            "иначе переиздание без позиции утаскивало материал в конец курса). "
++            "Передано явно (в т.ч. null) — триггер БД пересчитывает позицию."
++        ),
+     )
+ 
+     requirement_level: RequirementLevel = Field(
+diff --git a/app/services/materials_service.py b/app/services/materials_service.py
+index ce96125..f029634 100644
+--- a/app/services/materials_service.py
++++ b/app/services/materials_service.py
+@@ -215,10 +215,11 @@ class MaterialsService(BaseService[Materials]):
+     def _material_unchanged(self, existing: Materials, item: MaterialsBulkUpsertItem) -> bool:
+         """Сравнение снимка полей (для статуса unchanged без лишнего UPDATE).
+ 
+-        `requirement_level` участвует в сравнении только если клиент прислал
+-        поле явно (tsk-377): иначе материал с уровнем методиста считался бы
+-        изменённым на каждом переиздании — при том что UPDATE уровень уже не
+-        трогает, и статус `updated` был бы неправдой.
++        `requirement_level`, `is_active` и `order_position` участвуют в
++        сравнении только если клиент прислал поле явно (tsk-377 / tsk-378):
++        иначе материал, который методист выключил или переставил, считался
++        бы изменённым на каждом переиздании — при том что UPDATE это поле
++        уже не трогает, и статус `updated` был бы неправдой.
+         """
+         if existing.title != item.title:
+             return False
+@@ -228,14 +229,20 @@ class MaterialsService(BaseService[Materials]):
+             return False
+         if existing.type != item.type:
+             return False
+-        if bool(existing.is_active) != bool(item.is_active):
++        if (
++            "is_active" in item.model_fields_set
++            and bool(existing.is_active) != bool(item.is_active)
++        ):
+             return False
+         if (
+             "requirement_level" in item.model_fields_set
+             and (existing.requirement_level or "required") != item.requirement_level
+         ):
+             return False
+-        if item.order_position is not None and existing.order_position != item.order_position:
++        if (
++            "order_position" in item.model_fields_set
++            and existing.order_position != item.order_position
++        ):
+             return False
+         try:
+             left = json.dumps(existing.content, sort_keys=True, default=str)
+@@ -378,21 +385,28 @@ class MaterialsService(BaseService[Materials]):
+                         "content": item.content,
+                         "description": item.description,
+                         "caption": item.caption,
+-                        "order_position": item.order_position,
+-                        "is_active": item.is_active,
+                         "external_uid": item.external_uid,
+                     }
+-                    # Уровень обязательности при UPDATE перезаписываем ТОЛЬКО
+-                    # при явной передаче (tsk-377): payload-модели конвейеров
+-                    # поля не имеют (MaterialPayload в ContentBackbone), а схема
+-                    # подставляет дефолт `required` — без этой развилки любое
+-                    # переиздание материала сбрасывало уровень методиста.
+-                    # `model_fields_set` здесь — ровно ключи входного JSON:
+-                    # сервис валидирует сырые словари сам (см. эндпоинт).
++                    # is_active/order_position/requirement_level при UPDATE
++                    # перезаписываем ТОЛЬКО при явной передаче (tsk-377/tsk-378):
++                    # payload-модели конвейеров (MaterialPayload в ContentBackbone)
++                    # либо вовсе не имеют поля, либо шлют его условно, а схема
++                    # подставляет дефолт — без этой развилки переиздание молча
++                    # реактивировало выключенный материал (is_active) или
++                    # утаскивало его в конец курса (order_position: NULL — сигнал
++                    # триггеру trg_set_material_order_position поставить в конец).
++                    # `model_fields_set` здесь — ровно ключи входного JSON: сервис
++                    # валидирует сырые словари сам (см. эндпоинт).
++                    active_given = "is_active" in item.model_fields_set
++                    position_given = "order_position" in item.model_fields_set
+                     level_given = "requirement_level" in item.model_fields_set
+                     row_key = (cid, ext)
+                     existing = existing_map.get(row_key)
+                     if existing:
++                        if active_given:
++                            payload_data["is_active"] = item.is_active
++                        if position_given:
++                            payload_data["order_position"] = item.order_position
+                         if level_given:
+                             payload_data["requirement_level"] = item.requirement_level
+                         if self._material_unchanged(existing, item):
+@@ -413,11 +427,17 @@ class MaterialsService(BaseService[Materials]):
+                                 material_id=existing.id,
+                             )
+                     else:
+-                        # CREATE: уровень ставим всегда — не передан, значит
+-                        # дефолт схемы `required` (поведение прежнее).
++                        # CREATE: is_active/order_position/уровень ставим
++                        # всегда — не переданы, значит дефолт схемы (`True`,
++                        # `None` → триггер MAX+1, `required`), поведение прежнее.
+                         new_m = await self.repo.create(
+                             db,
+-                            {**payload_data, "requirement_level": item.requirement_level},
++                            {
++                                **payload_data,
++                                "is_active": item.is_active,
++                                "order_position": item.order_position,
++                                "requirement_level": item.requirement_level,
++                            },
+                             commit=False,
+                         )
+                         existing_map[row_key] = new_m
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 192cec5..cfafe8f 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -321,8 +321,14 @@ class TasksService(BaseService[Tasks]):
+                     "task_content": data["task_content"],
+                     "solution_rules": data.get("solution_rules"),
+                     "max_score": data.get("max_score"),
+-                    "is_active": data.get("is_active", True),
+                 }
++                # UPDATE: is_active перезаписываем ТОЛЬКО при явной передаче
++                # (tsk-378, тот же класс, что requirement_level в tsk-377).
++                # Ни один конвейер поля не шлёт (TaskPayload в ContentBackbone
++                # его не имеет), а дефолт схемы `True` без этой развилки
++                # молча реактивировал задание, погашенное методистом (tsk-112).
++                if "is_active" in data:
++                    obj_in["is_active"] = data["is_active"]
+                 # UPDATE: уровень обязательности перезаписываем ТОЛЬКО при явной
+                 # передаче — «ключа нет в payload» значит «не менять» (tsk-377),
+                 # та же семантика, что у order_position ниже. Ни один конвейер
+diff --git a/tests/test_tsk377_requirement_level_preserved.py b/tests/test_tsk377_requirement_level_preserved.py
+index b75b79a..4bf349a 100644
+--- a/tests/test_tsk377_requirement_level_preserved.py
++++ b/tests/test_tsk377_requirement_level_preserved.py
+@@ -13,10 +13,11 @@ Sheets), поэтому любое переиздание задания или
+ Payload переиздания — ровно те ключи, которые кладёт ContentBackbone
+ (`task_payload_to_dict` / `material_payload_to_dict`), а не синтетический полный.
+ 
+-Отдельно закреплено текущее поведение `is_active` (тот же дефолт-паттерн):
+-переиздание по-прежнему включает элемент. Это не чинится здесь намеренно —
+-тест сторожит, что правка уровня не изменила активность молча (tsk-377,
+-раздел «Риски» ревью-артефакта).
++`is_active` тем же дефолт-паттерном закрыт отдельно в tsk-378 (см.
++`test_tsk378_is_active_order_position_preserved.py`) — сторожевые тесты
++`test_task_reissue_still_activates` / `test_material_reissue_still_activates`
++из ревью tsk-377 переписаны здесь под новое поведение: переиздание больше
++НЕ реактивирует то, что выключил методист.
+ """
+ from __future__ import annotations
+ 
+@@ -166,11 +167,13 @@ async def test_task_create_defaults_to_required(client, db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_task_reissue_still_activates(client, db):
+-    """Сторож: активность правка НЕ трогала — переиздание по-прежнему включает задание.
++async def test_task_reissue_preserves_deactivation(client, db):
++    """tsk-378: переиздание больше НЕ реактивирует задание, выключенное методистом.
+ 
+-    Тот же дефолт-паттерн, что был у уровня; чинить его здесь не входит в
+-    охват tsk-377. Тест падает, если поведение изменилось молча.
++    До tsk-378 этот тест (`test_task_reissue_still_activates`) сознательно
++    пиннил старое поведение: `TaskPayload` в ContentBackbone не имеет поля
++    `is_active`, а сервис на UPDATE подставлял дефолт `True` — переиздание
++    молча возвращало погашенный методистом дубликат (tsk-112).
+     """
+     course_id = await _new_course(db)
+     uid = f"tsk377-task-{uuid.uuid4().hex[:8]}"
+@@ -182,7 +185,7 @@ async def test_task_reissue_still_activates(client, db):
+     assert (await _task_row(db, uid))[1] is False
+ 
+     await _post_tasks(client, [_cb_task_payload(uid, course_id)])
+-    assert (await _task_row(db, uid))[1] is True
++    assert (await _task_row(db, uid))[1] is False, "переиздание реактивировало выключенное задание"
+ 
+ 
+ @pytest.mark.asyncio
+@@ -289,8 +292,8 @@ async def test_material_create_defaults_to_required(client, db):
+ 
+ 
+ @pytest.mark.asyncio
+-async def test_material_reissue_still_activates(client, db):
+-    """Сторож активности материала — зеркало теста для заданий."""
++async def test_material_reissue_preserves_deactivation(client, db):
++    """tsk-378: переиздание больше НЕ реактивирует материал, выключенный методистом (зеркало заданий)."""
+     course_id = await _new_course(db)
+     uid = f"tsk377-mat-{uuid.uuid4().hex[:8]}"
+ 
+@@ -302,4 +305,4 @@ async def test_material_reissue_still_activates(client, db):
+     assert (await _material_row(db, course_id, uid))[1] is False
+ 
+     await _post_materials(client, [_cb_material_payload(uid, course_id)])
+-    assert (await _material_row(db, course_id, uid))[1] is True
++    assert (await _material_row(db, course_id, uid))[1] is False, "переиздание реактивировало выключенный материал"
+diff --git a/tests/test_tsk378_is_active_order_position_preserved.py b/tests/test_tsk378_is_active_order_position_preserved.py
+new file mode 100644
+index 0000000..641ee89
+--- /dev/null
++++ b/tests/test_tsk378_is_active_order_position_preserved.py
+@@ -0,0 +1,280 @@
++"""tsk-378: переиздание через bulk-upsert не реактивирует и не двигает материал.
++
++Тот же класс дефекта, что tsk-377 закрыл для `requirement_level` («дефолт схемы
++затирает состояние при UPDATE через bulk-upsert»), теперь для двух соседних
++полей:
++
++1. `is_active` (задания и материалы) — ни `TaskPayload`, ни `MaterialPayload`
++   в `D:\\Work\\ContentBackbone\\monolith\\lms_client\\contracts.py` поле не
++   имеют/не шлют его, если явно не задано (`material_payload_to_dict` кладёт
++   ключ в JSON только при `p.is_active is not None`). Сервис раньше
++   материализовал дефолт схемы `True` на UPDATE — переиздание молча
++   возвращало элемент, погашенный методистом (tsk-112).
++2. `order_position` материалов — `MaterialsService.bulk_upsert` раньше клал
++   в UPDATE `None`, если клиент его не прислал; колонка nullable, поэтому
++   `trg_set_material_order_position` (`docs/database-triggers-contract.md`
++   §7) трактовал `NULL` на UPDATE как «поставить следующий номер» — материал
++   уезжал в конец курса. У заданий тот же класс закрыт в tsk-345 (там
++   `order_position` в UPDATE-словарь просто не кладётся, если не передан).
++
++Payload переиздания — ровно те ключи, которые кладут `task_payload_to_dict` /
++`material_payload_to_dict`, а не синтетический полный (дефект жил в
++материализации дефолта схемой, вызов сервиса напрямую его не воспроизводит).
++"""
++from __future__ import annotations
++
++import uuid
++from typing import Any
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++
++_settings = Settings()
++
++TASKS_URL = "/api/v1/tasks/bulk-upsert"
++MATERIALS_URL = "/api/v1/materials/bulk-upsert"
++
++EASY = 2  # не HARD: маршрутизация tsk-347 в блок сложных здесь не участвует
++
++
++def _api_key() -> str:
++    return next(iter(_settings.valid_api_keys))
++
++
++async def _new_course(db) -> int:
++    row = (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, description, access_level, is_required, course_uid) "
++                "VALUES (:t, 'tsk-378', 'self_guided', false, :uid) RETURNING id"
++            ),
++            {"t": "test_tsk378_is_active_order_position", "uid": f"lms:test:tsk378:{uuid.uuid4().hex[:12]}"},
++        )
++    ).first()
++    await db.flush()
++    return int(row.id)
++
++
++def _cb_task_payload(external_uid: str, course_id: int) -> dict[str, Any]:
++    """Ровно то, что кладёт ContentBackbone `task_payload_to_dict`: is_active в ключах нет."""
++    return {
++        "external_uid": external_uid,
++        "course_id": course_id,
++        "task_content": {"type": "SA_COM", "stem": "tsk-378", "accepted_answers": ["1"]},
++        "solution_rules": {"type": "SC", "correct_options": ["a"], "max_score": 1},
++        "difficulty_id": EASY,
++        "max_score": 1,
++    }
++
++
++def _cb_material_payload(
++    external_uid: str, course_id: int, *, order_position: int | None = None
++) -> dict[str, Any]:
++    """Ровно то, что кладёт `material_payload_to_dict`: ключ есть, только если значение не None."""
++    d: dict[str, Any] = {
++        "course_id": course_id,
++        "external_uid": external_uid,
++        "title": "tsk-378 материал",
++        "type": "link",
++        "content": {"url": "https://example.com/tsk378"},
++    }
++    if order_position is not None:
++        d["order_position"] = order_position
++    return d
++
++
++async def _post_tasks(client, items: list[dict[str, Any]]):
++    return await client.post(TASKS_URL, params={"api_key": _api_key()}, json={"items": items})
++
++
++async def _post_materials(client, items: list[dict[str, Any]]):
++    return await client.post(MATERIALS_URL, params={"api_key": _api_key()}, json={"items": items})
++
++
++async def _task_row(db, external_uid: str) -> tuple[bool, int]:
++    row = (
++        await db.execute(
++            text("SELECT is_active, order_position FROM tasks WHERE external_uid = :uid"),
++            {"uid": external_uid},
++        )
++    ).first()
++    assert row is not None, f"задание {external_uid} не найдено"
++    return bool(row.is_active), row.order_position
++
++
++async def _material_row(db, course_id: int, external_uid: str) -> tuple[bool, int]:
++    row = (
++        await db.execute(
++            text(
++                "SELECT is_active, order_position FROM materials "
++                "WHERE course_id = :cid AND external_uid = :uid"
++            ),
++            {"cid": course_id, "uid": external_uid},
++        )
++    ).first()
++    assert row is not None, f"материал {external_uid} не найден"
++    return bool(row.is_active), row.order_position
++
++
++# --------------------------------------------------------------------------
++# Задания — is_active
++# --------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_task_explicit_is_active_still_applied(client, db):
++    """Явно переданный is_active по-прежнему перезаписывает существующий (оба направления)."""
++    course_id = await _new_course(db)
++    uid = f"tsk378-task-{uuid.uuid4().hex[:8]}"
++
++    await _post_tasks(client, [_cb_task_payload(uid, course_id)])
++    assert (await _task_row(db, uid))[0] is True
++
++    resp = await _post_tasks(client, [{**_cb_task_payload(uid, course_id), "is_active": False}])
++    assert resp.status_code == 200, resp.text
++    assert (await _task_row(db, uid))[0] is False
++
++    resp = await _post_tasks(client, [{**_cb_task_payload(uid, course_id), "is_active": True}])
++    assert resp.status_code == 200, resp.text
++    assert (await _task_row(db, uid))[0] is True
++
++
++@pytest.mark.asyncio
++async def test_task_create_defaults_active(client, db):
++    """CREATE без is_active — прежний дефолт `True` (регресс)."""
++    course_id = await _new_course(db)
++    uid = f"tsk378-task-{uuid.uuid4().hex[:8]}"
++
++    resp = await _post_tasks(client, [_cb_task_payload(uid, course_id)])
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["results"][0]["action"] == "created"
++    assert (await _task_row(db, uid))[0] is True
++
++
++# --------------------------------------------------------------------------
++# Материалы — is_active
++# --------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_material_explicit_is_active_still_applied(client, db):
++    """Явно переданный is_active материала по-прежнему применяется (оба направления)."""
++    course_id = await _new_course(db)
++    uid = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    await _post_materials(client, [_cb_material_payload(uid, course_id)])
++    assert (await _material_row(db, course_id, uid))[0] is True
++
++    resp = await _post_materials(client, [{**_cb_material_payload(uid, course_id), "is_active": False}])
++    assert resp.status_code == 200, resp.text
++    assert (await _material_row(db, course_id, uid))[0] is False
++
++    resp = await _post_materials(client, [{**_cb_material_payload(uid, course_id), "is_active": True}])
++    assert resp.status_code == 200, resp.text
++    assert (await _material_row(db, course_id, uid))[0] is True
++
++
++@pytest.mark.asyncio
++async def test_material_create_defaults_active(client, db):
++    """CREATE материала без is_active — прежний дефолт `True` (регресс)."""
++    course_id = await _new_course(db)
++    uid = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    resp = await _post_materials(client, [_cb_material_payload(uid, course_id)])
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["items"][0]["status"] == "created", resp.text
++    assert (await _material_row(db, course_id, uid))[0] is True
++
++
++# --------------------------------------------------------------------------
++# Материалы — order_position
++# --------------------------------------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_material_reissue_without_position_does_not_move_to_end(client, db):
++    """Главный регресс: переиздание без order_position не утаскивает материал в конец курса.
++
++    Курс из трёх материалов; переиздаём СРЕДНИЙ payload'ом без order_position
++    (как шлёт CB, когда позиция неизвестна на этом шаге) — позиция должна
++    остаться прежней, а не съехать на MAX+1 (описание бага в tsk-378).
++    """
++    course_id = await _new_course(db)
++    uid_a = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++    uid_b = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++    uid_c = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    resp = await _post_materials(
++        client,
++        [
++            _cb_material_payload(uid_a, course_id, order_position=1),
++            _cb_material_payload(uid_b, course_id, order_position=2),
++            _cb_material_payload(uid_c, course_id, order_position=3),
++        ],
++    )
++    assert resp.status_code == 200, resp.text
++    assert (await _material_row(db, course_id, uid_b))[1] == 2
++
++    # Round-trip переиздание среднего материала без order_position в payload.
++    resp = await _post_materials(client, [_cb_material_payload(uid_b, course_id)])
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["items"][0]["status"] == "unchanged", resp.text
++
++    position, = ((await _material_row(db, course_id, uid_b))[1],)
++    assert position == 2, "переиздание без order_position утащило материал в конец курса"
++
++
++@pytest.mark.asyncio
++async def test_material_explicit_position_still_applied(client, db):
++    """Явно переданный order_position по-прежнему двигает материал (тот же payload с новым значением)."""
++    course_id = await _new_course(db)
++    uid_a = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++    uid_b = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    await _post_materials(
++        client,
++        [
++            _cb_material_payload(uid_a, course_id, order_position=1),
++            _cb_material_payload(uid_b, course_id, order_position=2),
++        ],
++    )
++    assert (await _material_row(db, course_id, uid_a))[1] == 1
++
++    resp = await _post_materials(client, [_cb_material_payload(uid_a, course_id, order_position=2)])
++    assert resp.status_code == 200, resp.text
++
++    assert (await _material_row(db, course_id, uid_a))[1] == 2
++    assert (await _material_row(db, course_id, uid_b))[1] == 1
++
++
++@pytest.mark.asyncio
++async def test_material_create_without_position_defaults_to_trigger(client, db):
++    """CREATE без order_position — прежнее поведение: триггер ставит MAX+1 (регресс)."""
++    course_id = await _new_course(db)
++    uid_a = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++    uid_b = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    await _post_materials(client, [_cb_material_payload(uid_a, course_id, order_position=1)])
++    resp = await _post_materials(client, [_cb_material_payload(uid_b, course_id)])
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["items"][0]["status"] == "created", resp.text
++
++    assert (await _material_row(db, course_id, uid_b))[1] == 2
++
++
++@pytest.mark.asyncio
++async def test_material_reissue_without_is_active_or_position_is_unchanged(client, db):
++    """Отсутствие is_active/order_position в payload не считается изменением: статус `unchanged`.
++
++    Иначе сервис сообщал бы `updated` там, где ничего не менял (тот же риск,
++    что tsk-377 закрыл для requirement_level).
++    """
++    course_id = await _new_course(db)
++    uid = f"tsk378-mat-{uuid.uuid4().hex[:8]}"
++
++    await _post_materials(client, [_cb_material_payload(uid, course_id, order_position=1)])
++    resp = await _post_materials(client, [_cb_material_payload(uid, course_id)])
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["items"][0]["status"] == "unchanged", resp.text

@@ -321,8 +321,14 @@ class TasksService(BaseService[Tasks]):
                     "task_content": data["task_content"],
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
-                    "is_active": data.get("is_active", True),
                 }
+                # UPDATE: is_active перезаписываем ТОЛЬКО при явной передаче
+                # (tsk-378, тот же класс, что requirement_level в tsk-377).
+                # Ни один конвейер поля не шлёт (TaskPayload в ContentBackbone
+                # его не имеет), а дефолт схемы `True` без этой развилки
+                # молча реактивировал задание, погашенное методистом (tsk-112).
+                if "is_active" in data:
+                    obj_in["is_active"] = data["is_active"]
                 # UPDATE: уровень обязательности перезаписываем ТОЛЬКО при явной
                 # передаче — «ключа нет в payload» значит «не менять» (tsk-377),
                 # та же семантика, что у order_position ниже. Ни один конвейер

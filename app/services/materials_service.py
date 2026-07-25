@@ -215,10 +215,11 @@ class MaterialsService(BaseService[Materials]):
     def _material_unchanged(self, existing: Materials, item: MaterialsBulkUpsertItem) -> bool:
         """Сравнение снимка полей (для статуса unchanged без лишнего UPDATE).
 
-        `requirement_level` участвует в сравнении только если клиент прислал
-        поле явно (tsk-377): иначе материал с уровнем методиста считался бы
-        изменённым на каждом переиздании — при том что UPDATE уровень уже не
-        трогает, и статус `updated` был бы неправдой.
+        `requirement_level`, `is_active` и `order_position` участвуют в
+        сравнении только если клиент прислал поле явно (tsk-377 / tsk-378):
+        иначе материал, который методист выключил или переставил, считался
+        бы изменённым на каждом переиздании — при том что UPDATE это поле
+        уже не трогает, и статус `updated` был бы неправдой.
         """
         if existing.title != item.title:
             return False
@@ -228,14 +229,20 @@ class MaterialsService(BaseService[Materials]):
             return False
         if existing.type != item.type:
             return False
-        if bool(existing.is_active) != bool(item.is_active):
+        if (
+            "is_active" in item.model_fields_set
+            and bool(existing.is_active) != bool(item.is_active)
+        ):
             return False
         if (
             "requirement_level" in item.model_fields_set
             and (existing.requirement_level or "required") != item.requirement_level
         ):
             return False
-        if item.order_position is not None and existing.order_position != item.order_position:
+        if (
+            "order_position" in item.model_fields_set
+            and existing.order_position != item.order_position
+        ):
             return False
         try:
             left = json.dumps(existing.content, sort_keys=True, default=str)
@@ -378,21 +385,28 @@ class MaterialsService(BaseService[Materials]):
                         "content": item.content,
                         "description": item.description,
                         "caption": item.caption,
-                        "order_position": item.order_position,
-                        "is_active": item.is_active,
                         "external_uid": item.external_uid,
                     }
-                    # Уровень обязательности при UPDATE перезаписываем ТОЛЬКО
-                    # при явной передаче (tsk-377): payload-модели конвейеров
-                    # поля не имеют (MaterialPayload в ContentBackbone), а схема
-                    # подставляет дефолт `required` — без этой развилки любое
-                    # переиздание материала сбрасывало уровень методиста.
-                    # `model_fields_set` здесь — ровно ключи входного JSON:
-                    # сервис валидирует сырые словари сам (см. эндпоинт).
+                    # is_active/order_position/requirement_level при UPDATE
+                    # перезаписываем ТОЛЬКО при явной передаче (tsk-377/tsk-378):
+                    # payload-модели конвейеров (MaterialPayload в ContentBackbone)
+                    # либо вовсе не имеют поля, либо шлют его условно, а схема
+                    # подставляет дефолт — без этой развилки переиздание молча
+                    # реактивировало выключенный материал (is_active) или
+                    # утаскивало его в конец курса (order_position: NULL — сигнал
+                    # триггеру trg_set_material_order_position поставить в конец).
+                    # `model_fields_set` здесь — ровно ключи входного JSON: сервис
+                    # валидирует сырые словари сам (см. эндпоинт).
+                    active_given = "is_active" in item.model_fields_set
+                    position_given = "order_position" in item.model_fields_set
                     level_given = "requirement_level" in item.model_fields_set
                     row_key = (cid, ext)
                     existing = existing_map.get(row_key)
                     if existing:
+                        if active_given:
+                            payload_data["is_active"] = item.is_active
+                        if position_given:
+                            payload_data["order_position"] = item.order_position
                         if level_given:
                             payload_data["requirement_level"] = item.requirement_level
                         if self._material_unchanged(existing, item):
@@ -413,11 +427,17 @@ class MaterialsService(BaseService[Materials]):
                                 material_id=existing.id,
                             )
                     else:
-                        # CREATE: уровень ставим всегда — не передан, значит
-                        # дефолт схемы `required` (поведение прежнее).
+                        # CREATE: is_active/order_position/уровень ставим
+                        # всегда — не переданы, значит дефолт схемы (`True`,
+                        # `None` → триггер MAX+1, `required`), поведение прежнее.
                         new_m = await self.repo.create(
                             db,
-                            {**payload_data, "requirement_level": item.requirement_level},
+                            {
+                                **payload_data,
+                                "is_active": item.is_active,
+                                "order_position": item.order_position,
+                                "requirement_level": item.requirement_level,
+                            },
                             commit=False,
                         )
                         existing_map[row_key] = new_m

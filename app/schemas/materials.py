@@ -178,10 +178,23 @@ class MaterialsBulkUpsertItem(BaseModel):
     content: Any = Field(..., description="Содержимое (структура по type)")
     description: Optional[str] = None
     caption: Optional[str] = None
-    is_active: bool = Field(True, description="Активность материала")
+    is_active: bool = Field(
+        True,
+        description=(
+            "Активность материала. Поле не передано: при создании ставится "
+            "`True`, при обновлении активность НЕ меняется (tsk-378 — иначе "
+            "переиздание материала реактивировало то, что выключил методист). "
+            "Передано явно — применяется в обоих случаях."
+        ),
+    )
     order_position: Optional[int] = Field(
         default=None,
-        description="Позиция в курсе; None — поведение как при CRUD (триггер БД)",
+        description=(
+            "Позиция в курсе. Поле не передано: при создании — None (триггер "
+            "БД проставит MAX+1), при обновлении позиция НЕ меняется (tsk-378 — "
+            "иначе переиздание без позиции утаскивало материал в конец курса). "
+            "Передано явно (в т.ч. null) — триггер БД пересчитывает позицию."
+        ),
     )
 
     requirement_level: RequirementLevel = Field(
