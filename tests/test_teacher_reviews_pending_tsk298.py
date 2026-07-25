@@ -229,6 +229,55 @@ async def test_attachment_acl_service_helper(db):
 
 
 @pytest.mark.asyncio
+async def test_attachment_acl_allows_directly_linked_teacher(db):
+    """tsk-409: teacher без course-tree ACL, но с student_teacher_links → true.
+
+    До фикса teacher_can_review_attempt проверял только REVIEW_ACL_SQL
+    (course-tree teacher / methodist) — расходилось с can_edit_progress
+    (гейт карточки истории задания tsk-349), которая пускает и по прямой
+    привязке student_teacher_links. Карточка теперь показывает ссылку на
+    вложение таким преподавателям — без этого фикса они получали бы 403.
+    """
+    teacher_id, _ = await _create_user_with_session(db, "linked-teach")
+    await db.execute(
+        text(
+            "INSERT INTO user_roles (user_id, role_id) "
+            "SELECT :u, r.id FROM roles r WHERE r.name = 'teacher' ON CONFLICT DO NOTHING"
+        ),
+        {"u": teacher_id},
+    )
+    await db.commit()
+    stud_id, _ = await _create_user_with_session(db, "stud")
+    task_id = await _create_task(db, manual=True)
+    aid = await _create_attempt(db, stud_id)
+    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, attempt_id=aid, is_correct=None)
+    try:
+        # Без привязки — нет доступа (задача на course_id=1, teacher не в его ACL).
+        assert await teacher_queue_service.teacher_can_review_attempt(db, aid, teacher_id) is False
+
+        await db.execute(
+            text(
+                "INSERT INTO student_teacher_links (student_id, teacher_id) "
+                "VALUES (:s, :t) ON CONFLICT DO NOTHING"
+            ),
+            {"s": stud_id, "t": teacher_id},
+        )
+        await db.commit()
+
+        assert await teacher_queue_service.teacher_can_review_attempt(db, aid, teacher_id) is True
+    finally:
+        await db.execute(
+            text(
+                "DELETE FROM student_teacher_links WHERE student_id = :s AND teacher_id = :t"
+            ),
+            {"s": stud_id, "t": teacher_id},
+        )
+        await db.commit()
+        await _cleanup(db, user_ids=[teacher_id, stud_id], task_ids=[task_id],
+                       rids=[rid], attempt_ids=[aid])
+
+
+@pytest.mark.asyncio
 async def test_attachment_endpoint_extends_acl_to_reviewer(db, client):
     """Download-эндпоинт: посторонний → 403; авторизованный препод проходит ACL
     (файла нет → 404, но НЕ 403 — значит ACL расширен)."""

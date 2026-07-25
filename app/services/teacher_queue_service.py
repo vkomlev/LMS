@@ -1084,6 +1084,12 @@ async def teacher_can_review_attempt(
     (`REVIEW_ACL_SQL`: teacher на course-tree задачи ИЛИ methodist) хотя бы на
     одну задачу этой попытки. Read-only.
 
+    tsk-409: плюс прямая привязка `student_teacher_links` — тот же принцип, что
+    у `manual_progress_service.can_edit_progress`, которым гейтится карточка
+    истории задания (откуда теперь видна ссылка на вложение). Без этого
+    преподаватель, закреплённый за учеником напрямую (без course-tree ACL),
+    видел бы кнопку файла в истории, но получал 403 при скачивании.
+
     :returns: True — доступ разрешён; False — нет.
     """
     r = await db.execute(
@@ -1093,9 +1099,13 @@ async def teacher_can_review_attempt(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.attempt_id = :attempt_id
-                  AND {REVIEW_ACL_SQL}
+                  AND ({REVIEW_ACL_SQL}
+                       OR EXISTS (
+                           SELECT 1 FROM student_teacher_links stl
+                           WHERE stl.student_id = tr.user_id AND stl.teacher_id = :teacher_id
+                       ))
             )
-        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов модуля
+        """),  # nosec B608 — REVIEW_ACL_SQL из закрытого набора литералов модуля + bind :teacher_id
         {"attempt_id": attempt_id, "teacher_id": teacher_id},
     )
     return bool(r.scalar())
