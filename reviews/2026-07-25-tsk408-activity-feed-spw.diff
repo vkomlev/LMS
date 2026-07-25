@@ -1,0 +1,609 @@
+diff --git a/app/(teacher)/teacher/activity-feed/page.tsx b/app/(teacher)/teacher/activity-feed/page.tsx
+new file mode 100644
+index 0000000..068ef1e
+--- /dev/null
++++ b/app/(teacher)/teacher/activity-feed/page.tsx
+@@ -0,0 +1,20 @@
++import type { Metadata } from "next";
++import { ActivityFeed } from "@/components/teacher/ActivityFeed";
++
++/**
++ * tsk-408 — лента активности учеников преподавателя: единый поток событий
++ * (решение задания/запрос помощи/изучение материала), не листать каждого
++ * ученика отдельно. Роль-guard — в `(teacher)/layout.tsx`.
++ */
++export const metadata: Metadata = {
++  title: "Лента активности",
++};
++
++export default function TeacherActivityFeedPage() {
++  return (
++    <main className="mx-auto w-full max-w-3xl px-4 py-6 md:py-8">
++      <h1 className="font-heading mb-4 text-xl font-semibold md:text-2xl">Лента активности</h1>
++      <ActivityFeed />
++    </main>
++  );
++}
+diff --git a/components/layout/TeacherHeader.tsx b/components/layout/TeacherHeader.tsx
+index fa87758..e43e455 100644
+--- a/components/layout/TeacherHeader.tsx
++++ b/components/layout/TeacherHeader.tsx
+@@ -3,7 +3,7 @@
+ import Link from "next/link";
+ import type { Route } from "next";
+ import { usePathname } from "next/navigation";
+-import { GraduationCap, User, LogOut, ArrowLeftRight, ClipboardList, Users, HelpCircle, MessageCircle } from "lucide-react";
++import { GraduationCap, User, LogOut, ArrowLeftRight, ClipboardList, Users, HelpCircle, MessageCircle, Activity } from "lucide-react";
+ import { cn } from "@/lib/utils";
+ import {
+   DropdownMenu,
+@@ -29,6 +29,7 @@ const NAV: { href: Route; label: string; icon: typeof ClipboardList }[] = [
+   { href: "/teacher/help-requests" as Route, label: "Помощь", icon: HelpCircle },
+   { href: "/teacher/messages" as Route, label: "Сообщения", icon: MessageCircle },
+   { href: "/teacher/students" as Route, label: "Ученики", icon: Users },
++  { href: "/teacher/activity-feed" as Route, label: "Лента", icon: Activity },
+ ];
+ 
+ function isActive(pathname: string, href: string): boolean {
+diff --git a/components/teacher/ActivityFeed.tsx b/components/teacher/ActivityFeed.tsx
+new file mode 100644
+index 0000000..2d18eca
+--- /dev/null
++++ b/components/teacher/ActivityFeed.tsx
+@@ -0,0 +1,188 @@
++"use client";
++
++import { useState } from "react";
++import { CheckCircle2, XCircle, Clock, HelpCircle, BookOpen, User } from "lucide-react";
++import { cn } from "@/lib/utils";
++import { readApiErrorMessage } from "@/lib/auth/error-utils";
++import { LoadingState } from "@/components/reliability/LoadingState";
++import { TaskHistoryTrigger } from "@/components/task-history/TaskHistoryTrigger";
++import { useApiClient } from "@/hooks/use-api-client";
++import {
++  useActivityFeed,
++  fetchOlderActivity,
++  type ActivityFeedEvent,
++} from "@/lib/teacher/use-activity-feed";
++
++/**
++ * tsk-408 — лента активности: единый поток событий по всем ученикам
++ * преподавателя (решение задания, запрос помощи, изучение материала),
++ * топ-100 по убыванию времени. Не листать каждого ученика отдельно.
++ *
++ * Клик по событию про задание переиспользует `TaskHistoryTrigger` (tsk-406) —
++ * ту же боковую карточку, что и на экране прогресса/заявок/очереди. Событие
++ * про материал не кликабельно (детальной карточки материала в кабинете нет).
++ *
++ * «Показать ещё» — курсорная пагинация по времени (`before`), а не offset:
++ * лента собрана слиянием трёх независимых источников, единого offset у них нет.
++ */
++export function ActivityFeed() {
++  const client = useApiClient();
++  const q = useActivityFeed();
++  const [older, setOlder] = useState<ActivityFeedEvent[]>([]);
++  const [cursor, setCursor] = useState<string | null>(null);
++  const [hasMore, setHasMore] = useState(false);
++  const [loadingMore, setLoadingMore] = useState(false);
++  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
++
++  const firstPage = q.data?.events ?? [];
++  const events = [...firstPage, ...older];
++  const effectiveHasMore = older.length > 0 ? hasMore : (q.data?.has_more ?? false);
++  const effectiveCursor = older.length > 0 ? cursor : (q.data?.next_before ?? null);
++
++  async function loadMore() {
++    if (!effectiveCursor) return;
++    setLoadingMore(true);
++    setLoadMoreError(null);
++    try {
++      const page = await fetchOlderActivity(client, effectiveCursor);
++      setOlder((prev) => [...prev, ...page.events]);
++      setCursor(page.next_before ?? null);
++      setHasMore(page.has_more);
++    } catch (e) {
++      setLoadMoreError(readApiErrorMessage(e, "Не удалось загрузить более старые события."));
++    } finally {
++      setLoadingMore(false);
++    }
++  }
++
++  return (
++    <div className="space-y-3">
++      {q.isLoading && (
++        <LoadingState testId="activity-feed-loading">Загружаем ленту…</LoadingState>
++      )}
++      {q.isError && (
++        <p data-testid="activity-feed-error" className="text-sm text-destructive" role="alert">
++          {readApiErrorMessage(q.error, "Не удалось загрузить ленту активности.")}
++        </p>
++      )}
++
++      {!q.isLoading && !q.isError && events.length === 0 && (
++        <div
++          data-testid="activity-feed-empty"
++          className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card px-6 py-12 text-center"
++        >
++          <Clock className="h-9 w-9 text-muted-foreground" aria-hidden />
++          <p className="text-sm text-muted-foreground">Пока нет событий.</p>
++        </div>
++      )}
++
++      {events.length > 0 && (
++        <ul className="space-y-2" data-testid="activity-feed-list">
++          {events.map((e, i) => (
++            <ActivityCard key={`${e.type}-${e.student_id}-${e.timestamp}-${i}`} event={e} />
++          ))}
++        </ul>
++      )}
++
++      {loadMoreError && (
++        <p role="alert" className="text-sm text-destructive">
++          {loadMoreError}
++        </p>
++      )}
++
++      {effectiveHasMore && (
++        <button
++          type="button"
++          data-testid="activity-feed-load-more"
++          disabled={loadingMore}
++          onClick={() => void loadMore()}
++          className="w-full rounded-md border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-60"
++        >
++          {loadingMore ? "Загружаем…" : "Показать ещё"}
++        </button>
++      )}
++    </div>
++  );
++}
++
++const TYPE_META: Record<
++  ActivityFeedEvent["type"],
++  { icon: typeof BookOpen; badge: string; label: string }
++> = {
++  task_solved: { icon: CheckCircle2, badge: "", label: "Задание" },
++  help_requested: {
++    icon: HelpCircle,
++    badge: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
++    label: "Помощь",
++  },
++  material_studied: {
++    icon: BookOpen,
++    badge: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
++    label: "Материал",
++  },
++};
++
++function outcomeBadge(event: ActivityFeedEvent): { icon: typeof CheckCircle2; className: string } {
++  if (event.type === "task_solved") {
++    if (event.outcome === "correct") {
++      return { icon: CheckCircle2, className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" };
++    }
++    if (event.outcome === "incorrect") {
++      return { icon: XCircle, className: "bg-red-500/10 text-red-700 dark:text-red-300" };
++    }
++    return { icon: Clock, className: "bg-blue-500/10 text-blue-700 dark:text-blue-300" };
++  }
++  const meta = TYPE_META[event.type];
++  return { icon: meta.icon, className: meta.badge };
++}
++
++function ActivityCard({ event }: { event: ActivityFeedEvent }) {
++  const meta = TYPE_META[event.type];
++  const { icon: BadgeIcon, className: badgeClassName } = outcomeBadge(event);
++  const when = new Date(event.timestamp).toLocaleString("ru-RU", {
++    day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
++  });
++  const canOpenTaskHistory = event.type !== "material_studied" && event.task_id != null;
++
++  return (
++    <li
++      data-testid="activity-card"
++      data-event-type={event.type}
++      data-student-id={event.student_id}
++      className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3"
++    >
++      <div className="flex items-center justify-between gap-2">
++        <span className="inline-flex items-center gap-1.5 text-sm font-medium">
++          <User className="h-4 w-4 text-muted-foreground" aria-hidden />
++          {event.student_name ?? `Ученик #${event.student_id}`}
++        </span>
++        <span
++          className={cn(
++            "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
++            badgeClassName,
++          )}
++        >
++          <BadgeIcon className="h-3 w-3" aria-hidden />
++          {meta.label}
++        </span>
++      </div>
++
++      {canOpenTaskHistory ? (
++        <TaskHistoryTrigger
++          studentId={event.student_id}
++          taskId={event.task_id}
++          className="truncate text-sm text-muted-foreground"
++        >
++          {event.summary}
++        </TaskHistoryTrigger>
++      ) : (
++        <span className="truncate text-sm text-muted-foreground">{event.summary}</span>
++      )}
++
++      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
++        <Clock className="h-3.5 w-3.5" aria-hidden />
++        {when}
++      </span>
++    </li>
++  );
++}
+diff --git a/lib/api-types.ts b/lib/api-types.ts
+index 3146564..66a2580 100644
+--- a/lib/api-types.ts
++++ b/lib/api-types.ts
+@@ -3608,6 +3608,26 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/teacher/activity-feed": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Лента активности учеников преподавателя (решение заданий, помощь, материалы)
++         * @description Топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени.
++         */
++        get: operations["get_teacher_activity_feed_api_v1_teacher_activity_feed_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/assignment-rules/bulk-upsert": {
+         parameters: {
+             query?: never;
+@@ -4501,6 +4521,60 @@ export interface components {
+             /** Is Recurring */
+             is_recurring?: boolean | null;
+         };
++        /**
++         * ActivityFeedEvent
++         * @description Одно событие в ленте активности.
++         */
++        ActivityFeedEvent: {
++            /**
++             * Type
++             * @enum {string}
++             */
++            type: "task_solved" | "help_requested" | "material_studied";
++            /** Student Id */
++            student_id: number;
++            /** Student Name */
++            student_name?: string | null;
++            /** Task Id */
++            task_id?: number | null;
++            /** Material Id */
++            material_id?: number | null;
++            /** Course Id */
++            course_id?: number | null;
++            /**
++             * Timestamp
++             * Format: date-time
++             */
++            timestamp: string;
++            /**
++             * Summary
++             * @description Человекочитаемое описание события
++             */
++            summary: string;
++            /**
++             * Outcome
++             * @description task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null
++             */
++            outcome?: string | null;
++        };
++        /**
++         * ActivityFeedResponse
++         * @description Лента активности, топ-N по убыванию времени.
++         */
++        ActivityFeedResponse: {
++            /** Events */
++            events: components["schemas"]["ActivityFeedEvent"][];
++            /**
++             * Has More
++             * @description Есть ли более старые события за пределами текущей страницы
++             */
++            has_more: boolean;
++            /**
++             * Next Before
++             * @description Курсор для следующей страницы («показать ещё») — передать в `before`
++             */
++            next_before?: string | null;
++        };
+         /**
+          * AssignmentRuleUpsertItem
+          * @description Одно правило назначения для пакетного upsert (ключ идемпотентности — ``code``).
+@@ -20380,6 +20454,45 @@ export interface operations {
+             };
+         };
+     };
++    get_teacher_activity_feed_api_v1_teacher_activity_feed_get: {
++        parameters: {
++            query?: {
++                /** @description Размер страницы */
++                limit?: number;
++                /** @description Курсор пагинации — только события строго раньше этого момента */
++                before?: string | null;
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["ActivityFeedResponse"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
+     assignment_rules_bulk_upsert_api_v1_assignment_rules_bulk_upsert_post: {
+         parameters: {
+             query?: never;
+diff --git a/lib/teacher/use-activity-feed.ts b/lib/teacher/use-activity-feed.ts
+new file mode 100644
+index 0000000..8e2dcab
+--- /dev/null
++++ b/lib/teacher/use-activity-feed.ts
+@@ -0,0 +1,48 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { components } from "@/lib/api-types";
++import { useApiClient } from "@/hooks/use-api-client";
++import { useCurrentUser } from "@/hooks/use-current-user";
++
++/**
++ * tsk-408 — лента активности учеников преподавателя: решение задания
++ * (успешно/неуспешно/на проверке), запрос помощи, изучение материала —
++ * единый поток по всем ученикам, топ-N по убыванию времени.
++ *
++ * Отличие от `use-help-requests.ts`: тот список — то, что ждёт ДЕЙСТВИЯ
++ * учителя (inbox), эта лента — просто поток произошедшего, без обязательства
++ * реагировать (tsk-303 остаётся отдельной задачей).
++ */
++export type ActivityFeedResponse = components["schemas"]["ActivityFeedResponse"];
++export type ActivityFeedEvent = components["schemas"]["ActivityFeedEvent"];
++
++const PAGE_SIZE = 100;
++
++/** GET /teacher/activity-feed — первая страница (последние `PAGE_SIZE` событий). */
++export function useActivityFeed() {
++  const client = useApiClient();
++  const { data: user } = useCurrentUser();
++  const teacherId = user?.id ?? null;
++
++  return useQuery<ActivityFeedResponse>({
++    queryKey: ["teacher", "activity-feed", teacherId],
++    queryFn: () =>
++      client.get<ActivityFeedResponse>(
++        `/api/v1/teacher/activity-feed?limit=${PAGE_SIZE}`,
++      ),
++    enabled: teacherId != null,
++    staleTime: 15 * 1_000,
++    retry: false,
++  });
++}
++
++/** GET /teacher/activity-feed?before=... — следующая страница («показать ещё»). */
++export async function fetchOlderActivity(
++  client: ReturnType<typeof useApiClient>,
++  before: string,
++): Promise<ActivityFeedResponse> {
++  return client.get<ActivityFeedResponse>(
++    `/api/v1/teacher/activity-feed?limit=${PAGE_SIZE}&before=${encodeURIComponent(before)}`,
++  );
++}
+diff --git a/tests/unit/activity-feed.test.tsx b/tests/unit/activity-feed.test.tsx
+new file mode 100644
+index 0000000..f1b8f58
+--- /dev/null
++++ b/tests/unit/activity-feed.test.tsx
+@@ -0,0 +1,170 @@
++/**
++ * @vitest-environment jsdom
++ * tsk-408 — лента активности учеников преподавателя: рендер карточек по типу
++ * события, клик по task_solved/help_requested открывает TaskHistoryTrigger,
++ * material_studied не кликабелен, курсорная пагинация «показать ещё».
++ */
++import { describe, it, expect, vi, beforeEach } from "vitest";
++import { render, screen, fireEvent, waitFor } from "@testing-library/react";
++
++const useActivityFeed = vi.fn();
++const fetchOlderActivity = vi.fn();
++vi.mock("@/lib/teacher/use-activity-feed", () => ({
++  useActivityFeed: () => useActivityFeed(),
++  fetchOlderActivity: (...args: unknown[]) => fetchOlderActivity(...args),
++}));
++
++const useApiClientMock = vi.fn(() => ({ get: vi.fn(), post: vi.fn() }));
++vi.mock("@/hooks/use-api-client", () => ({
++  useApiClient: (...args: unknown[]) => useApiClientMock(...args),
++}));
++
++const useStudentTaskHistory = vi.fn();
++vi.mock("@/lib/task-history/use-task-history", () => ({
++  useStudentTaskHistory: (...args: unknown[]) => useStudentTaskHistory(...args),
++}));
++
++import { ActivityFeed } from "@/components/teacher/ActivityFeed";
++
++const solvedEvent = {
++  type: "task_solved",
++  student_id: 142,
++  student_name: "Иванов Иван",
++  task_id: 110,
++  material_id: null,
++  course_id: 5,
++  timestamp: "2026-07-25T10:00:00Z",
++  summary: "Иванов Иван — решил задание «Задание 110» (верно)",
++  outcome: "correct",
++};
++
++const failedEvent = {
++  type: "task_solved",
++  student_id: 143,
++  student_name: "Петров Пётр",
++  task_id: 111,
++  material_id: null,
++  course_id: 5,
++  timestamp: "2026-07-25T09:00:00Z",
++  summary: "Петров Пётр — решил задание «Задание 111» (неверно)",
++  outcome: "incorrect",
++};
++
++const helpEvent = {
++  type: "help_requested",
++  student_id: 142,
++  student_name: "Иванов Иван",
++  task_id: 205,
++  material_id: null,
++  course_id: 5,
++  timestamp: "2026-07-25T08:00:00Z",
++  summary: "Иванов Иван — запросил помощь по заданию «Задание 205»",
++  outcome: "open",
++};
++
++const materialEvent = {
++  type: "material_studied",
++  student_id: 142,
++  student_name: "Иванов Иван",
++  task_id: null,
++  material_id: 77,
++  course_id: 5,
++  timestamp: "2026-07-25T07:00:00Z",
++  summary: "Иванов Иван — изучил материал «Введение»",
++  outcome: null,
++};
++
++describe("ActivityFeed", () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++    useStudentTaskHistory.mockReturnValue({ isLoading: false, isError: false, data: undefined });
++  });
++
++  it("показывает загрузку", () => {
++    useActivityFeed.mockReturnValue({ isLoading: true, isError: false, data: undefined });
++    render(<ActivityFeed />);
++    expect(screen.getByTestId("activity-feed-loading")).toBeInTheDocument();
++  });
++
++  it("показывает ошибку", () => {
++    useActivityFeed.mockReturnValue({ isLoading: false, isError: true, error: null, data: undefined });
++    render(<ActivityFeed />);
++    expect(screen.getByTestId("activity-feed-error")).toBeInTheDocument();
++  });
++
++  it("пустая лента", () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [], has_more: false, next_before: null },
++    });
++    render(<ActivityFeed />);
++    expect(screen.getByTestId("activity-feed-empty")).toBeInTheDocument();
++  });
++
++  it("рендерит события всех трёх типов с бейджами", () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [solvedEvent, failedEvent, helpEvent, materialEvent], has_more: false, next_before: null },
++    });
++    render(<ActivityFeed />);
++    const cards = screen.getAllByTestId("activity-card");
++    expect(cards).toHaveLength(4);
++    expect(cards[0]).toHaveAttribute("data-event-type", "task_solved");
++    expect(cards[2]).toHaveAttribute("data-event-type", "help_requested");
++    expect(cards[3]).toHaveAttribute("data-event-type", "material_studied");
++    expect(screen.getByText(/решил задание «Задание 110» \(верно\)/)).toBeInTheDocument();
++    expect(screen.getByText(/решил задание «Задание 111» \(неверно\)/)).toBeInTheDocument();
++  });
++
++  it("клик по task_solved открывает карточку истории задания", () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [solvedEvent], has_more: false, next_before: null },
++    });
++    render(<ActivityFeed />);
++    expect(screen.queryByTestId("task-history-sheet")).not.toBeInTheDocument();
++    fireEvent.click(screen.getByTestId("task-history-trigger"));
++    expect(screen.getByTestId("task-history-sheet")).toBeInTheDocument();
++    expect(useStudentTaskHistory).toHaveBeenCalledWith(142, 110, { enabled: true });
++  });
++
++  it("material_studied не кликабелен (нет task-history-trigger)", () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [materialEvent], has_more: false, next_before: null },
++    });
++    render(<ActivityFeed />);
++    expect(screen.queryByTestId("task-history-trigger")).not.toBeInTheDocument();
++    expect(screen.getByText(/изучил материал «Введение»/)).toBeInTheDocument();
++  });
++
++  it("«показать ещё» дозагружает старые события по курсору", async () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [solvedEvent], has_more: true, next_before: "2026-07-25T10:00:00Z" },
++    });
++    fetchOlderActivity.mockResolvedValue({
++      events: [helpEvent], has_more: false, next_before: null,
++    });
++    render(<ActivityFeed />);
++    expect(screen.getAllByTestId("activity-card")).toHaveLength(1);
++
++    fireEvent.click(screen.getByTestId("activity-feed-load-more"));
++
++    await waitFor(() => {
++      expect(screen.getAllByTestId("activity-card")).toHaveLength(2);
++    });
++    expect(fetchOlderActivity).toHaveBeenCalledWith(expect.anything(), "2026-07-25T10:00:00Z");
++    // has_more стало false после дозагрузки -> кнопки больше нет.
++    expect(screen.queryByTestId("activity-feed-load-more")).not.toBeInTheDocument();
++  });
++
++  it("нет кнопки «показать ещё», если has_more=false", () => {
++    useActivityFeed.mockReturnValue({
++      isLoading: false, isError: false,
++      data: { events: [solvedEvent], has_more: false, next_before: null },
++    });
++    render(<ActivityFeed />);
++    expect(screen.queryByTestId("activity-feed-load-more")).not.toBeInTheDocument();
++  });
++});

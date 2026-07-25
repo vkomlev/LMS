@@ -16365,6 +16365,129 @@
         }
       }
     },
+    "/api/v1/teacher/activity-feed": {
+      "get": {
+        "tags": [
+          "teacher_activity_feed"
+        ],
+        "summary": "Лента активности учеников преподавателя (решение заданий, помощь, материалы)",
+        "description": "Топ-``limit`` событий по всем ученикам преподавателя, по убыванию времени.",
+        "operationId": "get_teacher_activity_feed_api_v1_teacher_activity_feed_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Размер страницы",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "Размер страницы"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Курсор пагинации — только события строго раньше этого момента",
+              "title": "Before"
+            },
+            "description": "Курсор пагинации — только события строго раньше этого момента"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityFeedResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/assignment-rules/bulk-upsert": {
       "post": {
         "tags": [
@@ -19349,6 +19472,134 @@
         },
         "type": "object",
         "title": "AchievementUpdate"
+      },
+      "ActivityFeedEvent": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "task_solved",
+              "help_requested",
+              "material_studied"
+            ],
+            "title": "Type"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "description": "Человекочитаемое описание события"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome",
+            "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "student_id",
+          "timestamp",
+          "summary"
+        ],
+        "title": "ActivityFeedEvent",
+        "description": "Одно событие в ленте активности."
+      },
+      "ActivityFeedResponse": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityFeedEvent"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
+            "description": "Есть ли более старые события за пределами текущей страницы"
+          },
+          "next_before": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Before",
+            "description": "Курсор для следующей страницы («показать ещё») — передать в `before`"
+          }
+        },
+        "type": "object",
+        "required": [
+          "events",
+          "has_more"
+        ],
+        "title": "ActivityFeedResponse",
+        "description": "Лента активности, топ-N по убыванию времени."
       },
       "AssignmentRuleUpsertItem": {
         "properties": {
