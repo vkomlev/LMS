@@ -437,6 +437,47 @@ async def test_course_search_finds_by_course_uid(client, db):
         await db.commit()
 
 
+async def test_course_search_excludes_subcourse(client, db):
+    """Подкурс графа (есть родитель в course_parents) не должен назначаться
+    ученику отдельно — не открывается вне родителя. Поиск отдаёт только
+    родительский (корневой) курс, подкурс с совпадающим маркером в title —
+    не в выдаче (находка оператора tsk-031, 2026-07-25)."""
+    marker = uuid.uuid4().hex[:8]
+    root_id = await _make_course(db, uid=None)
+    await db.execute(
+        text("UPDATE courses SET title = :t WHERE id = :cid"),
+        {"t": f"Root-{marker}", "cid": root_id},
+    )
+    sub_id = await _make_course(db, uid=None)
+    await db.execute(
+        text("UPDATE courses SET title = :t WHERE id = :cid"),
+        {"t": f"Sub-{marker}", "cid": sub_id},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO course_parents (course_id, parent_course_id) "
+            "VALUES (:c, :p)"
+        ),
+        {"c": sub_id, "p": root_id},
+    )
+    await db.commit()
+    api_key = next(iter(_settings.valid_api_keys))
+    try:
+        resp = await client.get(
+            "/api/v1/teacher/courses/search",
+            params={"q": marker},
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 200, resp.text
+        found = [c["id"] for c in resp.json()]
+        assert found == [root_id]
+        assert sub_id not in found
+    finally:
+        await db.execute(text("DELETE FROM course_parents WHERE course_id = :c"), {"c": sub_id})
+        await db.execute(text("DELETE FROM courses WHERE id = ANY(:ids)"), {"ids": [root_id, sub_id]})
+        await db.commit()
+
+
 async def test_course_search_denies_role_without_access(db, client):
     """Пользователь с ролью вне teacher/methodist/admin (customer) получает 403.
 

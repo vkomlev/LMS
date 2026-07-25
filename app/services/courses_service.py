@@ -171,6 +171,29 @@ class CoursesService(BaseService[Courses]):
         """
         return await self.repo.get_root_courses(db)
 
+    async def search_root_courses(
+        self,
+        db: AsyncSession,
+        *,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Courses]:
+        """
+        Поиск ТОЛЬКО среди корневых курсов (title/course_uid ILIKE) — подкурсы
+        графа исключены (tsk-031: ученику нельзя назначить подкурс отдельно от
+        родителя, только самостоятельный корневой курс).
+
+        :param db: асинхронная сессия БД.
+        :param query: поисковый запрос (title/course_uid).
+        :param limit: максимум результатов.
+        :param offset: смещение.
+        :return: Список найденных корневых курсов.
+        """
+        return await self.repo.search_root_courses(
+            db, query=query, limit=limit, offset=offset
+        )
+
     async def validate_hierarchy(
         self,
         db: AsyncSession,

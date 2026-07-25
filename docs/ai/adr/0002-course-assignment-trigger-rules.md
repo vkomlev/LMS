@@ -132,9 +132,16 @@ LMS умеет привязывать курсы ученику (`user_courses`)
 `GET /api/v1/teacher/courses/search?q=&limit=` — источник данных для UI-кнопки «Назначить
 курс» (SPW `CourseAssignButton`). Гейт `require_role("teacher","methodist","admin")` —
 cookie-сессия учителя из браузера. Существующий `GET /courses/search` (`courses_extra.py`)
-требует X-API-Key и недоступен из SPW; новый эндпоинт — тот же ILIKE-поиск
-(`courses_service.search_text` по `title`+`course_uid`), только с browser-совместимым
-гейтом. Read-only, схема ответа — `CourseRead[]` (та же, что у `/courses/search`).
+требует X-API-Key и недоступен из SPW; новый эндпоинт — browser-совместимый гейт поверх
+того же ILIKE-поиска по `title`+`course_uid`. Read-only, схема ответа — `CourseRead[]`
+(та же, что у `/courses/search`).
+
+**Только корневые курсы** (`courses_service.search_root_courses`, находка оператора
+2026-07-25): подкурс графа (`course_parents`) не открывается ученику вне родительского
+курса, поэтому назначать его отдельно бессмысленно — исходная версия эндпоинта (тот же
+день) искала по всему графу через общий `search_text`, что позволяло назначить подкурс
+изолированно. Фильтр — тот же `outerjoin(course_parents) ... WHERE course_id IS NULL`,
+что и в уже проверенном `get_root_courses`.
 
 ## Альтернативы (отклонены)
 

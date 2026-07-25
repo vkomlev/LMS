@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
-from app.models.courses import Courses
 from app.schemas.assignment_rules import ManualAssignRequest, ManualAssignResponse
 from app.schemas.courses import CourseRead
 from app.services import assignment_rules_service
@@ -159,12 +158,15 @@ async def assign_course_to_student_endpoint(
     description=(
         "Поиск курсов по названию или коду (`course_uid`) — источник данных для "
         "селектора курса в кнопке «Назначить курс» на карточке ученика.\n\n"
+        "Только **корневые** курсы (без родителя в `course_parents`): подкурс "
+        "графа не открывается ученику в отрыве от родителя, назначать его "
+        "отдельно бессмысленно.\n\n"
         "Read-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — "
-        "тот же поиск, что и `/courses/search`, но доступен по cookie-сессии учителя "
-        "в браузере (тот эндпоинт требует X-API-Key, недоступный SPW)."
+        "доступен по cookie-сессии учителя в браузере (в отличие от `/courses/search`, "
+        "который требует X-API-Key и ищет по всему графу, включая подкурсы)."
     ),
     responses={
-        200: {"description": "Список найденных курсов (может быть пустым)"},
+        200: {"description": "Список найденных корневых курсов (может быть пустым)"},
         403: {"description": "Недостаточно прав"},
     },
 )
@@ -174,14 +176,6 @@ async def search_courses_for_teacher_endpoint(
     db: AsyncSession = Depends(get_bare_db),
     current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
 ) -> List[CourseRead]:
-    """Найти курсы по названию/коду для селектора ручного назначения."""
-    courses = await courses_service.search_text(
-        db,
-        field=["title", "course_uid"],
-        query=q,
-        mode="contains",
-        case_insensitive=True,
-        limit=limit,
-        order_by=Courses.title,
-    )
+    """Найти корневые курсы по названию/коду для селектора ручного назначения."""
+    courses = await courses_service.search_root_courses(db, query=q, limit=limit)
     return [CourseRead.model_validate(course) for course in courses]

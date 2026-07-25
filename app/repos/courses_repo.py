@@ -1,7 +1,7 @@
 # app/repos/courses_repo.py
 
 from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
-from sqlalchemy import select, text, delete, insert, update as sql_update
+from sqlalchemy import select, text, delete, insert, or_, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -106,6 +106,48 @@ class CoursesRepository(BaseRepository[Courses]):
             .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
             .where(t_course_parents.c.course_id.is_(None))
             .options(selectinload(Courses.parent_courses))
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def search_root_courses(
+        self,
+        db: AsyncSession,
+        *,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> List[Courses]:
+        """
+        Поиск ТОЛЬКО среди корневых курсов (без родителя) по title/course_uid (ILIKE).
+
+        Подкурс графа (`course_parents`) не назначается ученику отдельно от
+        родителя — вне родительского курса он не открывается (tsk-031, находка
+        оператора 2026-07-25: поиск для UI-кнопки «Назначить курс» отдавал весь
+        граф, включая подкурсы). Тот же outerjoin/IS NULL фильтр, что и в
+        `get_root_courses`, плюс параметризованный ILIKE (экранирование
+        `%`/`_`/`\\`, как в `BaseRepository.search_text`).
+        """
+        if not query:
+            return []
+
+        def _escape_like(val: str) -> str:
+            return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+        pattern = f"%{_escape_like(query)}%"
+        stmt = (
+            select(Courses)
+            .outerjoin(t_course_parents, Courses.id == t_course_parents.c.course_id)
+            .where(
+                t_course_parents.c.course_id.is_(None),
+                or_(
+                    Courses.title.ilike(pattern, escape="\\"),
+                    Courses.course_uid.ilike(pattern, escape="\\"),
+                ),
+            )
+            .order_by(Courses.title)
+            .offset(offset)
+            .limit(limit)
         )
         result = await db.execute(stmt)
         return list(result.scalars().all())
