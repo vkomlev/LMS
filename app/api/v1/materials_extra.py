@@ -425,23 +425,37 @@ async def import_materials_from_google_sheets(
             for row_index, data in rows_for_course:
                 course_id_val = course_uid_to_id[data["course_uid"]]
                 existing = await materials_repo.get_by_keys(db, {"course_id": course_id_val, "external_uid": data["external_uid"]})
-                payload_data = {
+                payload_data: Dict[str, Any] = {
                     "course_id": course_id_val,
                     "title": data["title"],
                     "type": data["type"],
                     "content": data["content"],
                     "description": data.get("description"),
                     "caption": data.get("caption"),
-                    "order_position": data.get("order_position"),
-                    "is_active": data.get("is_active", True),
                     "external_uid": data["external_uid"],
                 }
                 try:
                     if existing:
+                        # order_position/is_active перезаписываем ТОЛЬКО если
+                        # колонка была в таблице (tsk-407, по аналогии с
+                        # tsk-378 для JSON bulk-upsert): parse_material_row
+                        # кладёт эти ключи в data только при непустой
+                        # замапленной колонке — иначе переиздание без них
+                        # молча реактивировало бы выключенный материал или
+                        # утаскивало бы его в конец курса (order_position:
+                        # NULL -> trg_set_material_order_position).
+                        if "order_position" in data:
+                            payload_data["order_position"] = data["order_position"]
+                        if "is_active" in data:
+                            payload_data["is_active"] = data["is_active"]
                         await materials_repo.update(db, existing, payload_data)
                         updated_c += 1
                         updated_total += 1
                     else:
+                        # CREATE: дефолты применяются как раньше — не
+                        # переданы, значит True / None->триггер MAX+1.
+                        payload_data["order_position"] = data.get("order_position")
+                        payload_data["is_active"] = data.get("is_active", True)
                         await materials_repo.create(db, payload_data)
                         imported_c += 1
                         imported_total += 1

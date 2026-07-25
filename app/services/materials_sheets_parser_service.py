@@ -189,7 +189,7 @@ class MaterialsSheetsParserService:
             if type_str != "link":
                 content = {"sources": [{"type": "url", "url": url_val or ""}], "default_source": 0}
 
-        return {
+        result: Dict[str, Any] = {
             "course_uid": course_uid.strip(),
             "external_uid": external_uid.strip(),
             "title": title.strip(),
@@ -197,9 +197,19 @@ class MaterialsSheetsParserService:
             "content": content,
             "description": description.strip() if description else None,
             "caption": caption.strip() if caption else None,
-            "order_position": order_position,
-            "is_active": is_active,
         }
+        # order_position/is_active кладём в результат только если колонка
+        # реально присутствует в таблице и ячейка не пуста (tsk-407, по
+        # аналогии с tsk-378 для JSON bulk-upsert): иначе переиздание без
+        # этих колонок реактивирует материал, выключенный методистом, или
+        # утаскивает его в конец курса (order_position: NULL — сигнал
+        # триггеру trg_set_material_order_position поставить в конец).
+        # Отсутствие ключа в dict — сигнал вызывающему коду «не менять».
+        if order_position_str is not None:
+            result["order_position"] = order_position
+        if is_active_str is not None:
+            result["is_active"] = is_active
+        return result
 
     def _get_field(
         self,

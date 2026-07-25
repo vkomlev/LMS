@@ -1,0 +1,278 @@
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index 239db11..56b8b15 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -425,23 +425,37 @@ async def import_materials_from_google_sheets(
+             for row_index, data in rows_for_course:
+                 course_id_val = course_uid_to_id[data["course_uid"]]
+                 existing = await materials_repo.get_by_keys(db, {"course_id": course_id_val, "external_uid": data["external_uid"]})
+-                payload_data = {
++                payload_data: Dict[str, Any] = {
+                     "course_id": course_id_val,
+                     "title": data["title"],
+                     "type": data["type"],
+                     "content": data["content"],
+                     "description": data.get("description"),
+                     "caption": data.get("caption"),
+-                    "order_position": data.get("order_position"),
+-                    "is_active": data.get("is_active", True),
+                     "external_uid": data["external_uid"],
+                 }
+                 try:
+                     if existing:
++                        # order_position/is_active перезаписываем ТОЛЬКО если
++                        # колонка была в таблице (tsk-407, по аналогии с
++                        # tsk-378 для JSON bulk-upsert): parse_material_row
++                        # кладёт эти ключи в data только при непустой
++                        # замапленной колонке — иначе переиздание без них
++                        # молча реактивировало бы выключенный материал или
++                        # утаскивало бы его в конец курса (order_position:
++                        # NULL -> trg_set_material_order_position).
++                        if "order_position" in data:
++                            payload_data["order_position"] = data["order_position"]
++                        if "is_active" in data:
++                            payload_data["is_active"] = data["is_active"]
+                         await materials_repo.update(db, existing, payload_data)
+                         updated_c += 1
+                         updated_total += 1
+                     else:
++                        # CREATE: дефолты применяются как раньше — не
++                        # переданы, значит True / None->триггер MAX+1.
++                        payload_data["order_position"] = data.get("order_position")
++                        payload_data["is_active"] = data.get("is_active", True)
+                         await materials_repo.create(db, payload_data)
+                         imported_c += 1
+                         imported_total += 1
+diff --git a/app/services/materials_sheets_parser_service.py b/app/services/materials_sheets_parser_service.py
+index 02553f1..f1be9b2 100644
+--- a/app/services/materials_sheets_parser_service.py
++++ b/app/services/materials_sheets_parser_service.py
+@@ -189,7 +189,7 @@ class MaterialsSheetsParserService:
+             if type_str != "link":
+                 content = {"sources": [{"type": "url", "url": url_val or ""}], "default_source": 0}
+ 
+-        return {
++        result: Dict[str, Any] = {
+             "course_uid": course_uid.strip(),
+             "external_uid": external_uid.strip(),
+             "title": title.strip(),
+@@ -197,9 +197,19 @@ class MaterialsSheetsParserService:
+             "content": content,
+             "description": description.strip() if description else None,
+             "caption": caption.strip() if caption else None,
+-            "order_position": order_position,
+-            "is_active": is_active,
+         }
++        # order_position/is_active кладём в результат только если колонка
++        # реально присутствует в таблице и ячейка не пуста (tsk-407, по
++        # аналогии с tsk-378 для JSON bulk-upsert): иначе переиздание без
++        # этих колонок реактивирует материал, выключенный методистом, или
++        # утаскивает его в конец курса (order_position: NULL — сигнал
++        # триггеру trg_set_material_order_position поставить в конец).
++        # Отсутствие ключа в dict — сигнал вызывающему коду «не менять».
++        if order_position_str is not None:
++            result["order_position"] = order_position
++        if is_active_str is not None:
++            result["is_active"] = is_active
++        return result
+ 
+     def _get_field(
+         self,
+diff --git a/tests/test_tsk407_sheets_import_is_active_order_position.py b/tests/test_tsk407_sheets_import_is_active_order_position.py
+new file mode 100644
+index 0000000..9dea750
+--- /dev/null
++++ b/tests/test_tsk407_sheets_import_is_active_order_position.py
+@@ -0,0 +1,192 @@
++"""tsk-407: импорт материалов из Google Sheets не должен затирать is_active/order_position.
++
++Тот же класс дефекта, что tsk-378 закрыл для JSON bulk-upsert
++(`POST /materials/bulk-upsert`), но в другом, не затронутом той правкой коде:
++`POST /materials/import/google-sheets`. Источник данных здесь — не Pydantic-модель
++с `model_fields_set`, а `dict`, который строит `MaterialsSheetsParserService.parse_material_row`
++из строки таблицы. Правка (tsk-407): `parse_material_row` кладёт ключи
++`is_active`/`order_position` в результат только если соответствующая колонка
++присутствует в таблице и ячейка не пуста; `materials_extra.py` на UPDATE-ветке
++добавляет их в payload условно по наличию ключа, на CREATE-ветке — как раньше,
++безусловно.
++"""
++from __future__ import annotations
++
++import uuid
++from typing import Any
++
++import pytest
++from sqlalchemy import text
++
++from app.api.v1 import materials_extra
++from app.core.config import Settings
++
++_settings = Settings()
++
++IMPORT_URL = "/api/v1/materials/import/google-sheets"
++
++
++def _api_key() -> str:
++    return next(iter(_settings.valid_api_keys))
++
++
++def _rows(headers: list[str], data_rows: list[list[str]]) -> list[list[str]]:
++    return [headers, *data_rows]
++
++
++def _patch_sheet(monkeypatch: pytest.MonkeyPatch, rows: list[list[str]]) -> None:
++    def _fake_read_sheet(*, spreadsheet_id: str, range_name: str) -> list[list[str]]:
++        return rows
++
++    monkeypatch.setattr(materials_extra.gsheets_service, "read_sheet", _fake_read_sheet)
++
++
++async def _new_course(db) -> tuple[int, str]:
++    course_uid = f"lms:test:tsk407:{uuid.uuid4().hex[:12]}"
++    row = (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, description, access_level, is_required, course_uid) "
++                "VALUES (:t, 'tsk-407', 'self_guided', false, :uid) RETURNING id"
++            ),
++            {"t": "test_tsk407_sheets_import", "uid": course_uid},
++        )
++    ).first()
++    await db.flush()
++    return int(row.id), course_uid
++
++
++async def _material_row(db, course_id: int, external_uid: str) -> tuple[bool, int]:
++    row = (
++        await db.execute(
++            text(
++                "SELECT is_active, order_position FROM materials "
++                "WHERE course_id = :cid AND external_uid = :uid"
++            ),
++            {"cid": course_id, "uid": external_uid},
++        )
++    ).first()
++    assert row is not None, f"материал {external_uid} не найден"
++    return bool(row.is_active), row.order_position
++
++
++async def _import(client, monkeypatch, rows: list[list[str]]) -> Any:
++    _patch_sheet(monkeypatch, rows)
++    resp = await client.post(
++        IMPORT_URL,
++        params={"api_key": _api_key()},
++        json={"spreadsheet_url": "sheet-id", "sheet_name": "Materials", "dry_run": False},
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++@pytest.mark.asyncio
++async def test_reissue_without_is_active_column_does_not_reactivate(client, db, monkeypatch):
++    course_id, course_uid = await _new_course(db)
++    uid = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++
++    headers = ["course_uid", "external_uid", "title", "type", "url", "is_active"]
++    await _import(
++        client,
++        monkeypatch,
++        _rows(headers, [[course_uid, uid, "tsk-407 материал", "link", "https://example.com/tsk407", "true"]]),
++    )
++    assert (await _material_row(db, course_id, uid))[0] is True
++
++    # Методист выключает материал вручную (эмулируем прямой правкой строки).
++    await db.execute(
++        text("UPDATE materials SET is_active = false WHERE course_id = :cid AND external_uid = :uid"),
++        {"cid": course_id, "uid": uid},
++    )
++    await db.flush()
++    assert (await _material_row(db, course_id, uid))[0] is False
++
++    # Переиздание тем же материалом, но в таблице БЕЗ колонки is_active.
++    headers_no_active = ["course_uid", "external_uid", "title", "type", "url"]
++    result = await _import(
++        client,
++        monkeypatch,
++        _rows(headers_no_active, [[course_uid, uid, "tsk-407 материал", "link", "https://example.com/tsk407"]]),
++    )
++    assert result["updated"] == 1, result
++
++    assert (await _material_row(db, course_id, uid))[0] is False, (
++        "переиздание без колонки is_active реактивировало выключенный материал"
++    )
++
++
++@pytest.mark.asyncio
++async def test_reissue_without_order_position_column_does_not_move_to_end(client, db, monkeypatch):
++    course_id, course_uid = await _new_course(db)
++    uid_a = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++    uid_b = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++    uid_c = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++
++    headers = ["course_uid", "external_uid", "title", "type", "url", "order_position"]
++    await _import(
++        client,
++        monkeypatch,
++        _rows(
++            headers,
++            [
++                [course_uid, uid_a, "A", "link", "https://example.com/a", "1"],
++                [course_uid, uid_b, "B", "link", "https://example.com/b", "2"],
++                [course_uid, uid_c, "C", "link", "https://example.com/c", "3"],
++            ],
++        ),
++    )
++    assert (await _material_row(db, course_id, uid_b))[1] == 2
++
++    # Переиздание среднего материала таблицей БЕЗ колонки order_position.
++    headers_no_pos = ["course_uid", "external_uid", "title", "type", "url"]
++    result = await _import(
++        client,
++        monkeypatch,
++        _rows(headers_no_pos, [[course_uid, uid_b, "B", "link", "https://example.com/b"]]),
++    )
++    assert result["updated"] == 1, result
++
++    position = (await _material_row(db, course_id, uid_b))[1]
++    assert position == 2, "переиздание без order_position утащило материал в конец курса"
++
++
++@pytest.mark.asyncio
++async def test_explicit_values_in_sheet_still_applied(client, db, monkeypatch):
++    course_id, course_uid = await _new_course(db)
++    uid = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++
++    headers = ["course_uid", "external_uid", "title", "type", "url", "is_active", "order_position"]
++    await _import(
++        client,
++        monkeypatch,
++        _rows(headers, [[course_uid, uid, "tsk-407", "link", "https://example.com/tsk407", "true", "1"]]),
++    )
++    assert (await _material_row(db, course_id, uid)) == (True, 1)
++
++    # Явные значения в таблице по-прежнему применяются на переиздании.
++    result = await _import(
++        client,
++        monkeypatch,
++        _rows(headers, [[course_uid, uid, "tsk-407", "link", "https://example.com/tsk407", "false", "1"]]),
++    )
++    assert result["updated"] == 1, result
++    assert (await _material_row(db, course_id, uid))[0] is False
++
++
++@pytest.mark.asyncio
++async def test_create_without_columns_defaults_to_active_and_trigger_position(client, db, monkeypatch):
++    course_id, course_uid = await _new_course(db)
++    uid = f"tsk407-mat-{uuid.uuid4().hex[:8]}"
++
++    headers = ["course_uid", "external_uid", "title", "type", "url"]
++    result = await _import(
++        client,
++        monkeypatch,
++        _rows(headers, [[course_uid, uid, "tsk-407 новый", "link", "https://example.com/new"]]),
++    )
++    assert result["imported"] == 1, result
++
++    is_active, order_position = await _material_row(db, course_id, uid)
++    assert is_active is True
++    assert order_position is not None and order_position >= 1
