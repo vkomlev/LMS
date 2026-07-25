@@ -380,6 +380,95 @@ async def test_bulk_upsert_rules_idempotent(db):
         await db.commit()
 
 
+# --- Поиск курса для UI-кнопки «Назначить курс» (GET /teacher/courses/search) ---
+
+
+async def test_course_search_finds_by_title(client, db):
+    """Роль teacher (cookie/Bearer-сессия) находит курс по вхождению в title."""
+    from app.models.users import Users
+    from app.services.auth import identity_link_service
+    from app.services.auth.session_service import create_session
+
+    marker = uuid.uuid4().hex[:8]
+    course_id = await _make_course(db, uid=f"wp:search-{marker}")
+    await db.execute(
+        text("UPDATE courses SET title = :t WHERE id = :cid"),
+        {"t": f"Поиск-курс {marker}", "cid": course_id},
+    )
+    await db.commit()
+
+    u = Users(email=f"tsk031-search-{marker}@example.com", password_hash=None, full_name="t")
+    db.add(u)
+    await db.flush()
+    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
+    token, _, _ = await create_session(db, user_id=u.id)
+    await _grant_role(db, u.id, "teacher")
+    try:
+        resp = await client.get(
+            "/api/v1/teacher/courses/search",
+            params={"q": marker},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        found = [c["id"] for c in resp.json()]
+        assert found == [course_id]
+    finally:
+        await _cleanup(db, course_ids=[course_id], student_id=u.id)
+
+
+async def test_course_search_finds_by_course_uid(client, db):
+    """Поиск также ловит вхождение в course_uid, не только title. Сервисный
+    токен (X-API-Key) проходит гейт по require_role через is_service bypass."""
+    marker = uuid.uuid4().hex[:8]
+    uid = f"wp:uidsearch-{marker}"
+    course_id = await _make_course(db, uid=uid)
+    api_key = next(iter(_settings.valid_api_keys))
+    try:
+        resp = await client.get(
+            "/api/v1/teacher/courses/search",
+            params={"q": f"uidsearch-{marker}"},
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 200, resp.text
+        found = [c["id"] for c in resp.json()]
+        assert found == [course_id]
+    finally:
+        await db.execute(text("DELETE FROM courses WHERE id = :cid"), {"cid": course_id})
+        await db.commit()
+
+
+async def test_course_search_denies_role_without_access(db, client):
+    """Пользователь с ролью вне teacher/methodist/admin (customer) получает 403.
+
+    Роль назначается ДО первого запроса нарочно: у role-less пользователя
+    `get_current_user` запускает defensive self-heal (Y-4 pre-S5), который
+    пишет `audit_event` — append-only таблица, и последующий `DELETE FROM
+    users` в cleanup падает ("audit_event is append-only", ON DELETE SET NULL
+    на append-only таблице бьётся о её же UPDATE/DELETE-триггер). Роль
+    "customer" реалистичнее для 403 и не задевает эту дорожку.
+    """
+    from app.models.users import Users
+    from app.services.auth import identity_link_service
+    from app.services.auth.session_service import create_session
+
+    marker = uuid.uuid4().hex[:8]
+    u = Users(email=f"tsk031-norole-{marker}@example.com", password_hash=None, full_name="t")
+    db.add(u)
+    await db.flush()
+    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
+    token, _, _ = await create_session(db, user_id=u.id)
+    await _grant_role(db, u.id, "customer")
+    try:
+        resp = await client.get(
+            "/api/v1/teacher/courses/search",
+            params={"q": "python"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+    finally:
+        await _cleanup(db, course_ids=[], student_id=u.id)
+
+
 async def test_bulk_upsert_rules_unknown_task_uid_soft_error(db):
     """Неизвестный task_external_uid → action=error по элементу, не падение всего batch."""
     from app.schemas.assignment_rules import AssignmentRuleUpsertItem

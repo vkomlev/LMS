@@ -1,0 +1,208 @@
+diff --git a/app/api/v1/teacher_assignments.py b/app/api/v1/teacher_assignments.py
+index f8f1c02..b4888c3 100644
+--- a/app/api/v1/teacher_assignments.py
++++ b/app/api/v1/teacher_assignments.py
+@@ -8,20 +8,25 @@ Teacher-only: роль teacher/methodist/admin или сервисный ток
+ from __future__ import annotations
+ 
+ import logging
++from typing import List
+ 
+-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
++from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+ from sqlalchemy import select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_bare_db, get_current_user
++from app.api.deps import get_bare_db, get_current_user, require_role
+ from app.auth.current_user import CurrentUser
++from app.models.courses import Courses
+ from app.schemas.assignment_rules import ManualAssignRequest, ManualAssignResponse
++from app.schemas.courses import CourseRead
+ from app.services import assignment_rules_service
++from app.services.courses_service import CoursesService
+ from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger("api.teacher_assignments")
+ 
+ router = APIRouter(tags=["teacher_assignments"])
++courses_service = CoursesService()
+ 
+ # Роли с полным доступом (могут назначать курс любому ученику).
+ _ELEVATED_ROLES = {"admin", "methodist", "методист"}
+@@ -145,3 +150,38 @@ async def assign_course_to_student_endpoint(
+         already_enrolled=result.already_enrolled,
+         event_id=result.event_id,
+     )
++
++
++@router.get(
++    "/teacher/courses/search",
++    response_model=List[CourseRead],
++    summary="Поиск курса для ручного назначения (кабинет преподавателя)",
++    description=(
++        "Поиск курсов по названию или коду (`course_uid`) — источник данных для "
++        "селектора курса в кнопке «Назначить курс» на карточке ученика.\n\n"
++        "Read-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — "
++        "тот же поиск, что и `/courses/search`, но доступен по cookie-сессии учителя "
++        "в браузере (тот эндпоинт требует X-API-Key, недоступный SPW)."
++    ),
++    responses={
++        200: {"description": "Список найденных курсов (может быть пустым)"},
++        403: {"description": "Недостаточно прав"},
++    },
++)
++async def search_courses_for_teacher_endpoint(
++    q: str = Query(..., min_length=2, max_length=200, description="Название или course_uid курса"),
++    limit: int = Query(20, ge=1, le=50, description="Максимум результатов"),
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
++) -> List[CourseRead]:
++    """Найти курсы по названию/коду для селектора ручного назначения."""
++    courses = await courses_service.search_text(
++        db,
++        field=["title", "course_uid"],
++        query=q,
++        mode="contains",
++        case_insensitive=True,
++        limit=limit,
++        order_by=Courses.title,
++    )
++    return [CourseRead.model_validate(course) for course in courses]
+diff --git a/docs/ai/adr/0002-course-assignment-trigger-rules.md b/docs/ai/adr/0002-course-assignment-trigger-rules.md
+index 8dffc6a..e364f84 100644
+--- a/docs/ai/adr/0002-course-assignment-trigger-rules.md
++++ b/docs/ai/adr/0002-course-assignment-trigger-rules.md
+@@ -1,6 +1,6 @@
+ # ADR-0002 — Триггеры автоматического назначения курсов (assignment trigger rules)
+ 
+-- **Статус:** Accepted (фундамент), полная автоматизация — следующий шаг
++- **Статус:** Accepted, реализовано (фундамент + ручное назначение + UI-кнопка, 2026-07-25)
+ - **Дата:** 2026-06-24
+ - **Задача:** tsk-031 «Доп курсы для закрепления»
+ - **Связано:** ContentBackbone ADR-0042 (редизайн публикатора, граф курсов, `course_uid = wp:<slug>`); tsk-120 (LMS публикатор v2)
+@@ -127,6 +127,15 @@ LMS умеет привязывать курсы ученику (`user_courses`)
+ - роль `teacher` — только к своим ученикам (связь `student_teacher_links`); иначе 403;
+ - без подходящей роли — 403.
+ 
++### 6. Поиск курса для UI-селектора (2026-07-25)
++
++`GET /api/v1/teacher/courses/search?q=&limit=` — источник данных для UI-кнопки «Назначить
++курс» (SPW `CourseAssignButton`). Гейт `require_role("teacher","methodist","admin")` —
++cookie-сессия учителя из браузера. Существующий `GET /courses/search` (`courses_extra.py`)
++требует X-API-Key и недоступен из SPW; новый эндпоинт — тот же ILIKE-поиск
++(`courses_service.search_text` по `title`+`course_uid`), только с browser-совместимым
++гейтом. Read-only, схема ответа — `CourseRead[]` (та же, что у `/courses/search`).
++
+ ## Альтернативы (отклонены)
+ 
+ - **Триггеры/функции в БД** вместо сервис-слоя — нагляднее в коде приложения, проще тестировать, не плодит скрытую логику в PL/pgSQL.
+@@ -139,4 +148,7 @@ LMS умеет привязывать курсы ученику (`user_courses`)
+ - **+** Безопасно: feature-gated пустой таблицей, soft-fail хуки.
+ - **+** Cross-project-совместимо: правила ссылаются на `course_uid` публикатора.
+ - **−** Движок оценки правил — синхронный в request-цикле (приемлемо: правил на задачу мало, soft-fail). При росте — вынести в очередь событий (`learning_events` + worker).
+-- **Follow-up:** UI-кнопка в SPW/teacher API; админка правил; перенос оценки в асинхронный воркер; правило `course_failed` по накопленной истории (не только в рамках одной попытки).
++- **Follow-up:** ~~UI-кнопка в SPW/teacher API~~ (закрыто 2026-07-25, tsk-031 хвост —
++  `GET /teacher/courses/search` + SPW `CourseAssignButton`); админка правил; перенос
++  оценки в асинхронный воркер; правило `course_failed` по накопленной истории (не только
++  в рамках одной попытки).
+diff --git a/tests/test_assignment_rules_tsk031.py b/tests/test_assignment_rules_tsk031.py
+index ff87d79..8512d6a 100644
+--- a/tests/test_assignment_rules_tsk031.py
++++ b/tests/test_assignment_rules_tsk031.py
+@@ -380,6 +380,95 @@ async def test_bulk_upsert_rules_idempotent(db):
+         await db.commit()
+ 
+ 
++# --- Поиск курса для UI-кнопки «Назначить курс» (GET /teacher/courses/search) ---
++
++
++async def test_course_search_finds_by_title(client, db):
++    """Роль teacher (cookie/Bearer-сессия) находит курс по вхождению в title."""
++    from app.models.users import Users
++    from app.services.auth import identity_link_service
++    from app.services.auth.session_service import create_session
++
++    marker = uuid.uuid4().hex[:8]
++    course_id = await _make_course(db, uid=f"wp:search-{marker}")
++    await db.execute(
++        text("UPDATE courses SET title = :t WHERE id = :cid"),
++        {"t": f"Поиск-курс {marker}", "cid": course_id},
++    )
++    await db.commit()
++
++    u = Users(email=f"tsk031-search-{marker}@example.com", password_hash=None, full_name="t")
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await _grant_role(db, u.id, "teacher")
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/courses/search",
++            params={"q": marker},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        found = [c["id"] for c in resp.json()]
++        assert found == [course_id]
++    finally:
++        await _cleanup(db, course_ids=[course_id], student_id=u.id)
++
++
++async def test_course_search_finds_by_course_uid(client, db):
++    """Поиск также ловит вхождение в course_uid, не только title. Сервисный
++    токен (X-API-Key) проходит гейт по require_role через is_service bypass."""
++    marker = uuid.uuid4().hex[:8]
++    uid = f"wp:uidsearch-{marker}"
++    course_id = await _make_course(db, uid=uid)
++    api_key = next(iter(_settings.valid_api_keys))
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/courses/search",
++            params={"q": f"uidsearch-{marker}"},
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++        found = [c["id"] for c in resp.json()]
++        assert found == [course_id]
++    finally:
++        await db.execute(text("DELETE FROM courses WHERE id = :cid"), {"cid": course_id})
++        await db.commit()
++
++
++async def test_course_search_denies_role_without_access(db, client):
++    """Пользователь с ролью вне teacher/methodist/admin (customer) получает 403.
++
++    Роль назначается ДО первого запроса нарочно: у role-less пользователя
++    `get_current_user` запускает defensive self-heal (Y-4 pre-S5), который
++    пишет `audit_event` — append-only таблица, и последующий `DELETE FROM
++    users` в cleanup падает ("audit_event is append-only", ON DELETE SET NULL
++    на append-only таблице бьётся о её же UPDATE/DELETE-триггер). Роль
++    "customer" реалистичнее для 403 и не задевает эту дорожку.
++    """
++    from app.models.users import Users
++    from app.services.auth import identity_link_service
++    from app.services.auth.session_service import create_session
++
++    marker = uuid.uuid4().hex[:8]
++    u = Users(email=f"tsk031-norole-{marker}@example.com", password_hash=None, full_name="t")
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await _grant_role(db, u.id, "customer")
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/courses/search",
++            params={"q": "python"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 403
++    finally:
++        await _cleanup(db, course_ids=[], student_id=u.id)
++
++
+ async def test_bulk_upsert_rules_unknown_task_uid_soft_error(db):
+     """Неизвестный task_external_uid → action=error по элементу, не падение всего batch."""
+     from app.schemas.assignment_rules import AssignmentRuleUpsertItem

@@ -8,20 +8,25 @@ Teacher-only: роль teacher/methodist/admin или сервисный ток�
 from __future__ import annotations
 
 import logging
+from typing import List
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_bare_db, get_current_user
+from app.api.deps import get_bare_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
+from app.models.courses import Courses
 from app.schemas.assignment_rules import ManualAssignRequest, ManualAssignResponse
+from app.schemas.courses import CourseRead
 from app.services import assignment_rules_service
+from app.services.courses_service import CoursesService
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger("api.teacher_assignments")
 
 router = APIRouter(tags=["teacher_assignments"])
+courses_service = CoursesService()
 
 # Роли с полным доступом (могут назначать курс любому ученику).
 _ELEVATED_ROLES = {"admin", "methodist", "методист"}
@@ -145,3 +150,38 @@ async def assign_course_to_student_endpoint(
         already_enrolled=result.already_enrolled,
         event_id=result.event_id,
     )
+
+
+@router.get(
+    "/teacher/courses/search",
+    response_model=List[CourseRead],
+    summary="Поиск курса для ручного назначения (кабинет преподавателя)",
+    description=(
+        "Поиск курсов по названию или коду (`course_uid`) — источник данных для "
+        "селектора курса в кнопке «Назначить курс» на карточке ученика.\n\n"
+        "Read-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — "
+        "тот же поиск, что и `/courses/search`, но доступен по cookie-сессии учителя "
+        "в браузере (тот эндпоинт требует X-API-Key, недоступный SPW)."
+    ),
+    responses={
+        200: {"description": "Список найденных курсов (может быть пустым)"},
+        403: {"description": "Недостаточно прав"},
+    },
+)
+async def search_courses_for_teacher_endpoint(
+    q: str = Query(..., min_length=2, max_length=200, description="Название или course_uid курса"),
+    limit: int = Query(20, ge=1, le=50, description="Максимум результатов"),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(require_role("teacher", "methodist", "admin")),
+) -> List[CourseRead]:
+    """Найти курсы по названию/коду для селектора ручного назначения."""
+    courses = await courses_service.search_text(
+        db,
+        field=["title", "course_uid"],
+        query=q,
+        mode="contains",
+        case_insensitive=True,
+        limit=limit,
+        order_by=Courses.title,
+    )
+    return [CourseRead.model_validate(course) for course in courses]

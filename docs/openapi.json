@@ -15193,6 +15193,130 @@
         }
       }
     },
+    "/api/v1/teacher/courses/search": {
+      "get": {
+        "tags": [
+          "teacher_assignments"
+        ],
+        "summary": "Поиск курса для ручного назначения (кабинет преподавателя)",
+        "description": "Поиск курсов по названию или коду (`course_uid`) — источник данных для селектора курса в кнопке «Назначить курс» на карточке ученика.\n\nRead-only, гейт по роли (`teacher`/`methodist`/`admin` или сервисный токен) — тот же поиск, что и `/courses/search`, но доступен по cookie-сессии учителя в браузере (тот эндпоинт требует X-API-Key, недоступный SPW).",
+        "operationId": "search_courses_for_teacher_endpoint_api_v1_teacher_courses_search_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 200,
+              "description": "Название или course_uid курса",
+              "title": "Q"
+            },
+            "description": "Название или course_uid курса"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "description": "Максимум результатов",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Максимум результатов"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список найденных курсов (может быть пустым)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CourseRead"
+                  },
+                  "title": "Response Search Courses For Teacher Endpoint Api V1 Teacher Courses Search Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Недостаточно прав"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/progress": {
       "get": {
         "tags": [
