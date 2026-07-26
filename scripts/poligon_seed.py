@@ -208,8 +208,9 @@ async def seed_courses(conn) -> dict[str, int]:
     for uid_str, title, price in courses:
         result = await conn.execute(
             text(
-                "INSERT INTO courses (external_uid, title, price) VALUES (:uid, :title, :price) "
-                "ON CONFLICT (external_uid) DO UPDATE SET title = EXCLUDED.title "
+                "INSERT INTO courses (course_uid, title, price, access_level) "
+                "VALUES (:uid, :title, :price, 'self_guided') "
+                "ON CONFLICT (course_uid) DO UPDATE SET title = EXCLUDED.title "
                 "RETURNING id"
             ),
             {"uid": uid_str, "title": title, "price": price},
@@ -218,31 +219,29 @@ async def seed_courses(conn) -> dict[str, int]:
     return ids
 
 
-async def seed_sql_practice_inconsistencies(conn, course_ids: dict[str, int]) -> None:
-    """Намеренно противоречивые строки для упражнений Г9 (SQL).
+async def seed_sql_practice_inconsistencies(conn) -> None:
+    """Намеренно противоречивая строка для упражнений Г9 (SQL).
 
-    1 курс с отрицательной ценой (в каталоге НЕ виден — визуальной коллизии с
-    defect-seeding нет, только SQL-упражнение «найди аномалию»), 1 осиротевшая
-    запись user_courses на несуществующий course_id — соответствуют разделу
-    «Тестовая БД с предсказуемыми данными» из tsk-182.
+    Курс с отрицательной ценой (в каталоге НЕ виден — API-роутер явно исключает
+    `course_uid LIKE 'poligon-sql-anomaly-%'`, коллизии с UI-дефектами нет,
+    только прямой SQL-запрос `SELECT * FROM courses WHERE price < 0` находит
+    аномалию) — соответствует разделу «Тестовая БД с предсказуемыми данными»
+    из tsk-182.
+
+    Изначальный план (осиротевшая запись `user_courses` на несуществующий
+    `course_id`) оказался невыполним: `user_courses.course_id` — FK ON DELETE
+    CASCADE на `courses.id`, Postgres физически не даст вставить строку на
+    несуществующий курс (и не оставляет сирот при удалении — сам смысл
+    CASCADE). Второй анти-пример дан ниже, в `seed_promo_codes` — дубль
+    редемпшна STUDENT20 (та же аномалия, что и класс 8 дефект-реестра,
+    предсказуемая и валидная относительно реальных FK-ограничений).
     """
     await conn.execute(
         text(
-            "INSERT INTO courses (external_uid, title, price) VALUES "
-            "('poligon-sql-anomaly-negative-price', 'Полигон: аномалия (не публиковать)', -500) "
-            "ON CONFLICT (external_uid) DO NOTHING"
+            "INSERT INTO courses (course_uid, title, price, access_level) VALUES "
+            "('poligon-sql-anomaly-negative-price', 'Полигон: аномалия (не публиковать)', -500, 'self_guided') "
+            "ON CONFLICT (course_uid) DO NOTHING"
         )
-    )
-    any_student = await conn.execute(
-        text("SELECT id FROM users WHERE email = 'poligon-student-01@example.test'")
-    )
-    student_id = any_student.scalar_one()
-    await conn.execute(
-        text(
-            "INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, 999999, TRUE) "
-            "ON CONFLICT DO NOTHING"
-        ),
-        {"u": student_id},
     )
 
 
@@ -271,6 +270,25 @@ async def seed_promo_codes(conn) -> None:
         ],
     )
 
+    # Г9 SQL-аномалия (замена невыполнимой "осиротевшей" user_courses, см.
+    # seed_sql_practice_inconsistencies) — предсказуемый дубль редемпшна
+    # STUDENT20 для student-01, ровно демонстрирующий класс 8 дефект-реестра
+    # прямым SQL: `SELECT user_id, promo_code, COUNT(*) FROM
+    # poligon_promo_redemptions GROUP BY 1,2 HAVING COUNT(*) > 1`.
+    student_row = await conn.execute(
+        text("SELECT id FROM users WHERE email = 'poligon-student-01@example.test'")
+    )
+    student_id = student_row.scalar_one_or_none()
+    if student_id is not None:
+        for _ in range(2):
+            await conn.execute(
+                text(
+                    "INSERT INTO poligon_promo_redemptions (user_id, promo_code) "
+                    "VALUES (:u, 'STUDENT20')"
+                ),
+                {"u": student_id},
+            )
+
 
 async def run(tier: str, do_reset: bool) -> None:
     env_file = project_root / f".env.{tier}"
@@ -296,7 +314,7 @@ async def run(tier: str, do_reset: bool) -> None:
         await seed_roles(conn)
         user_ids = await seed_users(conn)
         course_ids = await seed_courses(conn)
-        await seed_sql_practice_inconsistencies(conn, course_ids)
+        await seed_sql_practice_inconsistencies(conn)
         await seed_promo_codes(conn)
 
         logger.info(

@@ -19099,6 +19099,330 @@
         }
       }
     },
+    "/api/v1/poligon/catalog": {
+      "get": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Get Catalog",
+        "description": "Публичный каталог — только курсы полигона (course_uid LIKE 'poligon-%'),\nаномалия для Г9 (`poligon-sql-anomaly-*`) сознательно НЕ включена в выдачу —\nона находится только прямым SQL-запросом к БД, не через API.",
+        "operationId": "get_catalog_api_v1_poligon_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CatalogCourseOut"
+                  },
+                  "type": "array",
+                  "title": "Response Get Catalog Api V1 Poligon Catalog Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/poligon/promo/apply": {
+      "post": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Apply Promo",
+        "operationId": "apply_promo_api_v1_poligon_promo_apply_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromoApplyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/poligon/checkout": {
+      "post": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Checkout",
+        "operationId": "checkout_api_v1_poligon_checkout_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/poligon/enroll": {
+      "post": {
+        "tags": [
+          "poligon"
+        ],
+        "summary": "Enroll",
+        "description": "DEFECT (класс 3 реестра): исключение из БД (например, гонка/конфликт)\nнамеренно проглатывается без re-raise и без отдельного commit — ответ\nвсегда 200/enrolled=true, даже если запись физически не создалась.\nЭто НЕ демонстрация «как правильно» — это воспроизведение реального\nкласса ошибок (см. project_lms_service_side_effects в памяти проекта:\nкоммит-в-чужой-транзакции — одна из самых частых причин именно такого\nрасхождения в проде).",
+        "operationId": "enroll_api_v1_poligon_enroll_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrollRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -20679,6 +21003,34 @@
         ],
         "title": "Body_upload_material_file_api_v1_materials_upload_post"
       },
+      "CatalogCourseOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "price": {
+            "type": "number",
+            "title": "Price"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "course_uid",
+          "title",
+          "price"
+        ],
+        "title": "CatalogCourseOut"
+      },
       "CheckFeedback": {
         "properties": {
           "general": {
@@ -20931,6 +21283,64 @@
         "type": "object",
         "title": "CheckResultDetails",
         "description": "Расширенная информация о проверке ответа.\n\nПоля опциональны и используются по ситуации:\n- для SC/MC: correct_options, user_options;\n- для SA/SA_COM: matched_short_answer;\n- для TA: rubric_scores."
+      },
+      "CheckoutRequest": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "promo_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promo Code"
+          },
+          "payment_method": {
+            "type": "string",
+            "pattern": "^(card|wallet)$",
+            "title": "Payment Method"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "payment_method"
+        ],
+        "title": "CheckoutRequest"
+      },
+      "CheckoutResponse": {
+        "properties": {
+          "order_id": {
+            "type": "integer",
+            "title": "Order Id"
+          },
+          "promo_applied": {
+            "type": "boolean",
+            "title": "Promo Applied"
+          },
+          "discount_percent": {
+            "type": "integer",
+            "title": "Discount Percent"
+          },
+          "amount_charged": {
+            "type": "number",
+            "title": "Amount Charged"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "promo_applied",
+          "discount_percent",
+          "amount_charged"
+        ],
+        "title": "CheckoutResponse"
       },
       "CourseCreate": {
         "properties": {
@@ -22160,6 +22570,32 @@
         ],
         "title": "EmbedTaskResponse",
         "description": "Ответ GET /embed-api/courses/{course_uid}/task/{external_uid}.\n\nWhitelisted поля. SA_COM/TA не отдаются (404). correct_answer\n/ solution_rules / max_attempts отсутствуют."
+      },
+      "EnrollRequest": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id"
+        ],
+        "title": "EnrollRequest"
+      },
+      "EnrollResponse": {
+        "properties": {
+          "enrolled": {
+            "type": "boolean",
+            "title": "Enrolled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enrolled"
+        ],
+        "title": "EnrollResponse"
       },
       "EscalationItem": {
         "properties": {
@@ -26808,6 +27244,39 @@
         ],
         "title": "ProgressTreeResponse",
         "description": "Прогресс ученика по дереву курса + список доступных курсов для селектора."
+      },
+      "PromoApplyRequest": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 11,
+            "minLength": 1,
+            "title": "Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "PromoApplyRequest"
+      },
+      "PromoApplyResponse": {
+        "properties": {
+          "promo_applied": {
+            "type": "boolean",
+            "title": "Promo Applied"
+          },
+          "discount_percent": {
+            "type": "integer",
+            "title": "Discount Percent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "promo_applied",
+          "discount_percent"
+        ],
+        "title": "PromoApplyResponse"
       },
       "QuizRules": {
         "properties": {

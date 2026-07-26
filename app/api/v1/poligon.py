@@ -36,18 +36,18 @@ router = APIRouter(prefix="/poligon", tags=["poligon"])
 
 @router.get("/catalog", response_model=list[CatalogCourseOut])
 async def get_catalog(db: AsyncSession = Depends(get_async_db)) -> list[CatalogCourseOut]:
-    """Публичный каталог — только курсы полигона (external_uid LIKE 'poligon-%'),
+    """Публичный каталог — только курсы полигона (course_uid LIKE 'poligon-%'),
     аномалия для Г9 (`poligon-sql-anomaly-*`) сознательно НЕ включена в выдачу —
     она находится только прямым SQL-запросом к БД, не через API."""
     result = await db.execute(
         select(Courses).where(
-            Courses.external_uid.like("poligon-%"),
-            ~Courses.external_uid.like("poligon-sql-anomaly-%"),
+            Courses.course_uid.like("poligon-%"),
+            ~Courses.course_uid.like("poligon-sql-anomaly-%"),
         )
     )
     return [
         CatalogCourseOut(
-            id=c.id, external_uid=c.external_uid, title=c.title, price=float(c.price)
+            id=c.id, course_uid=c.course_uid, title=c.title, price=float(c.price or 0)
         )
         for c in result.scalars().all()
     ]

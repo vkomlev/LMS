@@ -389,6 +389,10 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 from app.api.v1.methodist_escalations import router as methodist_escalations_router
 app.include_router(methodist_escalations_router, prefix=API_PREFIX)
 
+# tsk-182: учебный полигон QA — только ветка `poligon`, никогда не мержится в main.
+from app.api.v1.poligon import router as poligon_router
+app.include_router(poligon_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 

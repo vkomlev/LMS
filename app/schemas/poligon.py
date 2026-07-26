@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 class CatalogCourseOut(BaseModel):
     id: int
-    external_uid: str
+    course_uid: str
     title: str
     price: float
 

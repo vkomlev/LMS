@@ -1,7 +1,7 @@
 """poligon: promo/enrollment tables (tsk-182, ветка poligon — НЕ применять на main)
 
 Revision ID: poligon_20260725_010000
-Revises: <ПРОСТАВИТЬ актуальный head ветки poligon перед коммитом>
+Revises: tsk235_session_replaced_by
 Create Date: 2026-07-25
 
 Три новые таблицы, специфичные только для учебного полигона — не существуют
@@ -17,12 +17,18 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "poligon_20260725_010000"
-down_revision = "REPLACE_ME_WITH_POLIGON_BRANCH_HEAD"
+down_revision = "tsk235_session_replaced_by"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
+    # `courses` не имеет цены (реальный LMS не продаёт курсы напрямую) — полигону
+    # она нужна для checkout/промокода. Nullable — не задевает существующие прод-
+    # курсы по смыслу (эта миграция и не применяется на прод-БД `learn`, только на
+    # poligon_dev/test/stage, но колонка nullable в любом случае безопаснее).
+    op.add_column("courses", sa.Column("price", sa.Numeric(10, 2), nullable=True))
+
     op.create_table(
         "poligon_promo_codes",
         sa.Column("code", sa.String(length=32), primary_key=True),
@@ -59,3 +65,4 @@ def downgrade() -> None:
     op.drop_table("poligon_enrollments")
     op.drop_table("poligon_promo_redemptions")
     op.drop_table("poligon_promo_codes")
+    op.drop_column("courses", "price")
