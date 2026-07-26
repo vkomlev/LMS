@@ -42,6 +42,8 @@ docs/*
 !docs/operations/**
 !docs/briefs/
 !docs/briefs/**
+!docs/qa-poligon/
+!docs/qa-poligon/**
 .cursor/*
 !.cursor/rules/
 

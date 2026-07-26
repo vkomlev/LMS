@@ -1,0 +1,18 @@
+[Unit]
+Description=LMS Poligon — dev tier (tsk-182)
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/opt/lms-poligon
+EnvironmentFile=/opt/lms-poligon/.env.dev
+ExecStart=/opt/lms-poligon/venv/bin/uvicorn app.api.main:app --host 127.0.0.1 --port 8010
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/lms-poligon/dev.log
+StandardError=append:/var/log/lms-poligon/dev.log
+
+[Install]
+WantedBy=multi-user.target
