@@ -70,8 +70,11 @@ psql "postgresql://<admin>@5.42.107.253:5432/postgres" -c \
 psql "postgresql://<admin>@5.42.107.253:5432/postgres" -c \
   "ALTER ROLE poligon_stage_app IN DATABASE poligon_stage SET statement_timeout = '5s';"
 
-# Redis — переиспользуем УЖЕ работающий на lms-spw-vds Redis (прод LMS db=2),
-# полигон занимает db=3/4/5 (dev/test/stage) — НЕ ставим новый Redis-процесс.
+# Redis — ИСПРАВЛЕНО 2026-07-26 (проверено живым подключением): на самом
+# lms-spw-vds Redis НЕ запущен (systemctl redis-server = inactive). Прод LMS
+# использует удалённый managed-инстанс 94.141.162.219:6379 (db=2, см. прод
+# .env). Полигон переиспользует ТОТ ЖЕ managed-инстанс, db=3/4/5 —
+# отдельный Redis-процесс не ставим (сеть уже открыта, инстанс уже платный).
 
 # Клонировать репозиторий НА ВЕТКУ poligon (не main!), рядом с прод-чекаутом /opt/lms
 sudo -u app git clone --branch poligon https://github.com/vkomlev/LMS.git /opt/lms-poligon
