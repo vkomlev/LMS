@@ -169,3 +169,13 @@ class Settings:
         self.methodist_rate_limit_per_day_per_course: int = int(
             os.getenv("METHODIST_RATE_LIMIT_PER_DAY_PER_COURSE", "1")
         )
+
+        # tsk-428 (Календарь LMS, Фаза 1): скользящий горизонт генерации
+        # lesson_occurrence из активных lesson_slot вперёд, в днях.
+        self.lesson_occurrence_horizon_days: int = int(
+            os.getenv("LESSON_OCCURRENCE_HORIZON_DAYS", "14")
+        )
+        # Интервал APScheduler-тика генератора occurrence.
+        self.lesson_occurrence_cron_interval_min: int = int(
+            os.getenv("LESSON_OCCURRENCE_CRON_INTERVAL_MIN", "60")
+        )

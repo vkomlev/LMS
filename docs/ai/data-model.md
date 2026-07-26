@@ -79,6 +79,7 @@
 | `20260627_010000_tsk122_quiz_scale_scores` | tsk-122 Stage 1: `task_results.scale_scores` (JSONB) для квиз-шкал SC_Qw/MC_Qw |
 | `20260627_020000_tsk122_trigger_quiz_scale` | tsk-122 Stage 2: значение `quiz_scale` в CHECK `assignment_rule_trigger_event_check` |
 | `20260717_010000_tsk264_attempts_root_course` | tsk-264: `attempts.root_course_id` — контекст навигации, попытки по паре «курс + задание» |
+| `20260726_010000_tsk428_lesson_calendar_stage1` | tsk-428 (Календарь LMS Фаза 1): `operating_hours` + `lesson_slot` + `lesson_occurrence` + `attendance_event` — 4 новые таблицы, ноль изменений в существующих |
 
 ## Date/Time safety (критично)
 
@@ -114,6 +115,27 @@
 | `guest_attempt` | Попытки гостя; `attributed_user_id` + `attributed_at` при атрибуции. |
 
 Детали миграций (DDL, indexes, downgrade): [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md §4](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
+
+## Календарь LMS Фаза 1 (tsk-428, применено)
+
+Декомпозиция tsk-021 (блокер tsk-410 «Итоги занятия»), план —
+[docs/specs/2026-07-26-plan-kalendar-lms.md](../specs/2026-07-26-plan-kalendar-lms.md).
+4 новые таблицы, ноль изменений в существующих моделях:
+
+| Таблица | Назначение |
+|---|---|
+| `operating_hours` | Часы работы школы (общие на всю школу, не per-teacher): `weekday`(0-6)/`start_time`/`end_time`/`timezone` (DEFAULT `Europe/Moscow`) |
+| `lesson_slot` | Закреплённый повторяющийся слот пары ученик-преподаватель (индивидуальный, не групповой). `is_active` — деактивация вместо удаления |
+| `lesson_occurrence` | Конкретное занятие: из слота (генератор) или ad-hoc (`slot_id IS NULL`). `status`: scheduled/confirmed/declined/rescheduled/no_show/completed |
+| `attendance_event` | Append-only журнал действий по посещаемости (как `audit_event`); текущий статус — денормализованная проекция на `lesson_occurrence.status` |
+
+**Конвенция weekday:** `0=понедельник .. 6=воскресенье` (Python `date.weekday()`/ISO — НЕ cron/JS, где 0=воскресенье).
+
+**Генератор occurrence:** `app/services/lesson_occurrence_generator_service.py::lesson_occurrence_generator_tick` — APScheduler-тик (интервал `LESSON_OCCURRENCE_CRON_INTERVAL_MIN`, default 60 мин), горизонт `LESSON_OCCURRENCE_HORIZON_DAYS` (default 14 дней), идемпотентен через `ON CONFLICT (slot_id, scheduled_at) WHERE slot_id IS NOT NULL DO NOTHING`, multi-worker-safe через `pg_try_advisory_xact_lock` (паттерн `escalation_service.py`, отдельный lock-ключ `0x4C534E43`).
+
+**Таймзона:** MVP — захардкожен `Europe/Moscow` (без DST с 2014, UTC+3 круглый год). `users.timezone` не существует.
+
+**Границы Фазы 1:** только модель данных + admin CRUD расписания + генератор. Явка ученика, напоминания, no-show, панель преподавателя — Фазы 2-3 (`tsk-429`, `tsk-430`), ещё не реализованы.
 
 ## Read-контракты
 

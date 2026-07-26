@@ -389,6 +389,10 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 from app.api.v1.methodist_escalations import router as methodist_escalations_router
 app.include_router(methodist_escalations_router, prefix=API_PREFIX)
 
+# tsk-428 (Календарь LMS Фаза 1): admin-расписание (operating-hours, lesson-slots)
+from app.api.v1.lesson_calendar_admin import router as lesson_calendar_admin_router
+app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 
@@ -412,3 +416,24 @@ async def _stop_y6_escalation_scheduler() -> None:
         _y6_escalation_service.stop_scheduler()
     except Exception:
         logger.exception("Y-6: failed to stop escalation scheduler")
+
+
+# tsk-428 (Календарь LMS Фаза 1): APScheduler для генератора lesson_occurrence.
+# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+from app.services import lesson_occurrence_generator_service as _lesson_calendar_service
+
+
+@app.on_event("startup")
+async def _start_lesson_occurrence_generator_scheduler() -> None:
+    try:
+        _lesson_calendar_service.start_scheduler()
+    except Exception:
+        logger.exception("tsk-428: failed to start lesson_occurrence_generator scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_lesson_occurrence_generator_scheduler() -> None:
+    try:
+        _lesson_calendar_service.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-428: failed to stop lesson_occurrence_generator scheduler")
