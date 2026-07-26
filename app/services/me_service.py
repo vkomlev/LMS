@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.identity_link import IdentityLink
 from app.models.users import Users
-from app.schemas.task_content import QUIZ_TASK_TYPES, MANUAL_REVIEW_TASK_TYPES
+from app.schemas.task_content import QUIZ_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
 
@@ -707,6 +707,7 @@ SELECT
     t.is_active,
     t.requirement_level,
     t.task_content->>'type' AS task_type,
+    COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) AS manual_review_required,
     stp.status AS progress_status,
     stp.skipped_at,
     lp.is_correct AS last_is_correct,
@@ -805,15 +806,25 @@ def _compute_syllabus_task_status(row: dict) -> str:
 
     if is_correct is True:
         task_type = row.get("task_type") or ""
-        # Ручная проверка учителем (SA_COM/TBL_COM/TA, тот же whitelist, что в
-        # teacher_queue): passed только после checked_at, иначе optimistic
-        # pending_review (Y-6).
-        if task_type in MANUAL_REVIEW_TASK_TYPES:
+        # TA — всегда ручная (рубрики, submit ставит optimistic-PASSED is_correct=TRUE):
+        # passed только после checked_at, иначе pending_review (Y-6).
+        if task_type == "TA":
             return "passed" if checked_at is not None else "pending_review"
-        # Авто-проверяемые (SC/MC/SA): учителя нет, checked_at не ставится → верный
-        # ответ = passed сразу. tsk-214: раньше правило «checked_at обязателен»
-        # применялось ко ВСЕМ типам, и correct auto-задачи вечно висели pending_review,
-        # не попадая в % выполнения (пройденный на 100% курс показывал 37%).
+        # SA_COM/TBL_COM: ось обязательности проверки — НЕ тип задания, а
+        # manual_review_required (та же ось, что teacher_queue_service.mandatory_
+        # review_sql, tsk-247). Раньше здесь стоял blanket task_type-whitelist
+        # (MANUAL_REVIEW_TASK_TYPES) — «починили не тот слой» (см. tsk-420): для
+        # manual_review_required=false авто-чек уже вынес вердикт, учителю нечего
+        # проверять (очередь опциональная), checked_at может не проставиться никогда —
+        # верно решённое задание вечно висело pending_review и не попадало в % (QA,
+        # tsk-414: «решила все 6, а прогресс 5/6»).
+        if task_type in ("SA_COM", "TBL_COM") and row.get("manual_review_required"):
+            return "passed" if checked_at is not None else "pending_review"
+        # Авто-проверяемые (SC/MC/SA, и SA_COM/TBL_COM с manual_review_required=false):
+        # учителя нет, checked_at не ставится → верный ответ = passed сразу. tsk-214:
+        # раньше правило «checked_at обязателен» применялось ко ВСЕМ типам, и correct
+        # auto-задачи вечно висели pending_review, не попадая в % выполнения
+        # (пройденный на 100% курс показывал 37%).
         return "passed"
     if is_correct is None:
         if (row.get("task_type") or "") in QUIZ_TASK_TYPES:

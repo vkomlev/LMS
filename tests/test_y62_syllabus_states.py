@@ -145,30 +145,45 @@ async def _pick_task_in_course(db, course_id: int) -> tuple[int, int]:
     return int(row[0]), int(row[1])
 
 
-async def _pick_root_task_of_type(db, types: tuple[str, ...]) -> tuple[int, int]:
+async def _pick_root_task_of_type(
+    db, types: tuple[str, ...], *, require_mandatory_review: bool = False
+) -> tuple[int, int]:
     """(root_course_id, task_id) для root-курса с задачей нужного типа.
 
     tsk-214: статус зависит от типа задачи (авто SC/MC/SA vs ручной SA_COM/TA),
     поэтому тесты статусов должны брать задачу заведомо нужного типа.
+
+    tsk-420: для SA_COM/TBL_COM ось "нужен ли учитель" — НЕ тип задания, а
+    solution_rules.manual_review_required (TA — всегда ручная). Тест "ручного"
+    сценария обязан явно взять задачу с manual_review_required=true, иначе
+    случайно подобранный авто-проверяемый SA_COM ломает assert (и был бы багом
+    из tsk-414/420, если бы прошёл).
     """
+    mandatory_filter = (
+        "AND (t.task_content->>'type' = 'TA' "
+        "     OR COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) IS TRUE)"
+        if require_mandatory_review
+        else ""
+    )
     row = (
         await db.execute(
             text(
-                """
+                f"""
                 SELECT t.course_id, t.id
                 FROM tasks t
                 WHERE t.course_id NOT IN (SELECT course_id FROM course_parents)
                   AND t.is_active = true
                   AND t.task_content->>'type' = ANY(:tp)
+                  {mandatory_filter}
                 ORDER BY t.course_id, t.id
                 LIMIT 1
-                """
+                """  # nosec B608 — mandatory_filter собран из литералов модуля, без user-input
             ),
             {"tp": list(types)},
         )
     ).fetchone()
     if row is None:
-        pytest.skip(f"Нет root-задачи типов {types}")
+        pytest.skip(f"Нет root-задачи типов {types}" + (" с manual_review_required=true" if require_mandatory_review else ""))
     return int(row[0]), int(row[1])
 
 
@@ -602,7 +617,7 @@ async def test_status_pending_review_optimistic(db, client):
     ставят и в этом состоянии = passed (см. test_status_auto_passed_no_checked).
     """
     user_id, token, _ = await _create_student(db)
-    root_id, task_id = await _pick_root_task_of_type(db, ("SA_COM", "TA"))
+    root_id, task_id = await _pick_root_task_of_type(db, ("SA_COM", "TA"), require_mandatory_review=True)
     await _enroll(db, user_id, root_id)
     aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
     rid = await _create_task_result(
@@ -631,6 +646,45 @@ async def test_status_auto_passed_no_checked(db, client):
     """
     user_id, token, _ = await _create_student(db)
     root_id, task_id = await _pick_root_task_of_type(db, ("SC", "MC", "SA"))
+    await _enroll(db, user_id, root_id)
+    aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
+    rid = await _create_task_result(
+        db, user_id=user_id, task_id=task_id, attempt_id=aid,
+        is_correct=True, score=10, max_score=10, checked_at=None,
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/me/courses/{root_id}/syllabus-states",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        item = await _find_item(resp.json()["items"], kind="task", id_key="task_id", target_id=task_id)
+        assert item is not None
+        assert item["status"] == "passed", item
+    finally:
+        await _cleanup(db, user_ids=[user_id], attempt_ids=[aid], result_ids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_status_sa_com_optional_review_passed_no_checked(db, client):
+    """tsk-420: SA_COM/TBL_COM с manual_review_required=false, is_correct=TRUE +
+    checked_at IS NULL → passed сразу (не pending_review).
+
+    Регрессия на баг «решила все задачи, а прогресс 5/6»: раньше SA_COM/TBL_COM
+    считались ручными по ТИПУ задания (blanket MANUAL_REVIEW_TASK_TYPES), не глядя
+    на manual_review_required — авто-проверенный верный ответ вечно висел
+    pending_review, потому что учителю нечего было проверять (очередь опциональная,
+    checked_at не проставлялся никогда).
+    """
+    user_id, token, _ = await _create_student(db)
+    root_id, task_id = await _pick_root_task_of_type(db, ("SA_COM", "TBL_COM"))
+    row = (
+        await db.execute(
+            text("SELECT COALESCE((solution_rules->>'manual_review_required')::boolean, false) FROM tasks WHERE id=:id"),
+            {"id": task_id},
+        )
+    ).fetchone()
+    if row is None or row[0] is True:
+        pytest.skip("Нет root-задачи SA_COM/TBL_COM с manual_review_required=false")
     await _enroll(db, user_id, root_id)
     aid = await _create_attempt(db, user_id=user_id, course_id=root_id)
     rid = await _create_task_result(

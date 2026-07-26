@@ -690,6 +690,38 @@ async def submit_attempt_answers(
                     ),
                 )
 
+        # 2.3f tsk-419: для SA_COM/TBL_COM (задачи "с комментарием") обязателен
+        # комментарий ИЛИ файл — иначе ответ можно подобрать устно/угадыванием без
+        # доказательства решения (QA tsk-414, пример id-149 «курсор→танцор»).
+        # В отличие от 2.3e (requires_attachment — per-task opt-in флаг из
+        # solution_rules), это универсальное правило по ТИПУ задания, решение
+        # оператора. Гейт после форса вложения намеренно — если вложение уже
+        # обязательно и его нет, сообщение 2.3e важнее (файл конкретно требуется),
+        # а не общее "комментарий или файл".
+        if (
+            task_content.type in COMMENT_TASK_TYPES
+            and not attempt.time_expired
+            and not (solution_rules.requires_attachment and not bool(_attempt_attachment_files(attempt.id)))
+        ):
+            has_comment = bool((answer.response.comment or "").strip())
+            has_attachment = bool(_attempt_attachment_files(attempt.id))
+            if not has_comment and not has_attachment:
+                logger.info(
+                    "POST /attempts/%s/answers: task_id=%s (%s) без комментария и вложения → не зачёт (tsk-419)",
+                    attempt_id, task.id, task_content.type,
+                )
+                check_result = CheckResult(
+                    score=0,
+                    max_score=check_result.max_score,
+                    is_correct=False,
+                    feedback=CheckFeedback(
+                        general=(
+                            "Добавьте комментарий (например, ход решения) или приложите файл — "
+                            "без этого ответ не засчитывается."
+                        )
+                    ),
+                )
+
         # 2.4 Записываем в task_results.
         #
         # tsk-273: запись под точечным advisory-замком против гонки (TOCTOU).

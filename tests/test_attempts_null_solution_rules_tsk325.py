@@ -292,12 +292,15 @@ async def test_auto_task_with_media_empty_passes_autocheck(client, null_rules_gr
         resp = await client.post(
             f"/api/v1/attempts/{attempt_id}/answers",
             json={"items": [{"task_id": ids["task_auto"],
-                             "answer": {"type": "SA_COM", "response": {"value": "17"}}}]},
+                             "answer": {"type": "SA_COM", "response": {
+                                 "value": "17", "comment": "решил вычислением"}}}]},
         )
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
     assert resp.status_code == 200, f"приём должен пройти: {resp.text}"
     check = resp.json()["results"][0]["check_result"]
+    # tsk-419: SA_COM без comment/файла не засчитывается независимо от F1-пути —
+    # comment добавлен, чтобы не смешивать два разных гейта в одном тесте.
     assert check["is_correct"] is True, f"верный ответ '17' обязан зачесться: {check}"
     assert check["score"] == 1
