@@ -61,7 +61,20 @@ _FORBIDDEN_ROLES = {"lms_prod", "cb_prod"}
 
 # Роли из посевных данных (см. app/models/roles.py — свободные строки, id
 # заранее неизвестен, поэтому лукап по имени, не по id).
-ROLE_NAMES = ("student", "teacher", "methodist")
+# ID заданы явно, не auto-increment: `roles.id` — INTEGER NOT NULL БЕЗ
+# sequence/serial в реальной схеме (см. baseline_pre_alembic_schema — таблица
+# создана до появления Alembic, id всегда проставлялся вручную) — INSERT без
+# id падает NotNullViolationError. id=4 для 'student' ОБЯЗАН совпадать с
+# `STUDENT_ROLE_ID = 4`, захардкоженным в app/services/auth/
+# role_assign_service.py (self-heal при /auth/test/issue-session) — иначе
+# self-heal попытается вставить в user_roles ссылку на несуществующий
+# role_id и упадёт FK-нарушением. teacher/methodist ничем не хардкожены —
+# id выбраны произвольно, лишь бы не совпадали.
+ROLES = (
+    (4, "student"),
+    (1, "teacher"),
+    (2, "methodist"),
+)
 
 # Тестовые персоны — email на TLD `.test` (RFC 2606, никогда не резолвится в
 # реальный ящик) — гарантия отсутствия ПД на уровне формата данных.
@@ -133,10 +146,13 @@ async def reset_data(conn) -> None:
 
 
 async def seed_roles(conn) -> None:
-    for name in ROLE_NAMES:
+    for role_id, name in ROLES:
         await conn.execute(
-            text("INSERT INTO roles (name) VALUES (:name) ON CONFLICT (name) DO NOTHING"),
-            {"name": name},
+            text(
+                "INSERT INTO roles (id, name) VALUES (:id, :name) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"id": role_id, "name": name},
         )
 
 
