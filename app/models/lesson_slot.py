@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -19,15 +19,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
-if TYPE_CHECKING:
-    pass
-
 
 class LessonSlot(Base):
     """
-    Закреплённый повторяющийся слот пары ученик-преподаватель (tsk-428,
-    Календарь LMS Фаза 1). Индивидуальный, не групповой — по требованию
-    оператора (см. docs/specs/2026-07-26-plan-kalendar-lms.md).
+    Закреплённый повторяющийся слот преподавателя (tsk-435, Календарь LMS).
+    Групповой: участники — в отдельной таблице ``lesson_slot_student``
+    (историческая ревизия tsk-428 предполагала строго 1:1, реальные данные
+    показали практику групповых занятий — см. план rework tsk-435).
 
     Деактивация (``is_active=false``) вместо удаления — сохраняет историю
     уже сгенерированных ``lesson_occurrence``, привязанных к слоту.
@@ -35,10 +33,6 @@ class LessonSlot(Base):
 
     __tablename__ = "lesson_slot"
     __table_args__ = (
-        ForeignKeyConstraint(
-            ["student_id"], ["users.id"], ondelete="CASCADE",
-            name="lesson_slot_student_id_fkey",
-        ),
         ForeignKeyConstraint(
             ["teacher_id"], ["users.id"], ondelete="CASCADE",
             name="lesson_slot_teacher_id_fkey",
@@ -48,16 +42,12 @@ class LessonSlot(Base):
             name="lesson_slot_created_by_fkey",
         ),
         PrimaryKeyConstraint("id", name="lesson_slot_pkey"),
-        CheckConstraint(
-            "student_id <> teacher_id", name="lesson_slot_student_teacher_distinct_check"
-        ),
         CheckConstraint("weekday BETWEEN 0 AND 6", name="lesson_slot_weekday_check"),
         CheckConstraint("duration_minutes > 0", name="lesson_slot_duration_positive_check"),
-        {"comment": "Закреплённый повторяющийся слот пары ученик-преподаватель (tsk-428)"},
+        {"comment": "Закреплённый повторяющийся слот преподавателя, групповой (tsk-435)"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ID слота")
-    student_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="ID ученика")
     teacher_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="ID преподавателя")
     weekday: Mapped[int] = mapped_column(
         SmallInteger,

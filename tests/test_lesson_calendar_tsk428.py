@@ -1,13 +1,15 @@
-"""tsk-428 (Календарь LMS, Фаза 1): генератор occurrence + admin API.
+"""tsk-428/435 (Календарь LMS): генератор occurrence + admin API, групповые слоты.
 
 Покрывает:
 - `_iter_occurrence_datetimes`: конвенция weekday (0=понедельник), горизонт,
   пропуск уже прошедшего сегодня времени слота.
-- `lesson_occurrence_generator_tick`: генерация + идемпотентность (ON
-  CONFLICT DO NOTHING по partial unique index) + пропуск неактивных слотов.
-- Admin API `/lesson-slots`, `/operating-hours`: role-gate (403 не-admin),
-  бизнес-валидация ролей пары (422), пересечение слотов (409), деактивация
-  вместо удаления (204 + is_active=false, не физическое удаление).
+- `lesson_occurrence_generator_tick`: генерация occurrence + СИНК участников
+  из `lesson_slot_student` в `lesson_occurrence_participant`, идемпотентность
+  (ON CONFLICT DO NOTHING/DO UPDATE) + пропуск неактивных слотов.
+- Admin API `/lesson-slots` (групповой, tsk-435), `/operating-hours`:
+  role-gate (403 не-admin), бизнес-валидация ролей (422), пересечение слотов
+  ТОЛЬКО по преподавателю (409 — участники больше не участвуют в этой
+  проверке), деактивация вместо удаления, участники слота (add/list/remove).
 
 Тесты используют общую откатываемую транзакцию из `tests/conftest.py`
 (savepoint per test) — ручная очистка не нужна, но не помешает читаемости
@@ -22,6 +24,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.lesson_slot import LessonSlot
+from app.models.lesson_slot_student import LessonSlotStudent
 from app.models.users import Users
 from app.services.auth.session_service import create_session
 from app.services.lesson_occurrence_generator_service import (
@@ -58,6 +61,27 @@ async def _create_user(db, *, role: str | None = None, prefix: str = "tsk428") -
         )
     await db.commit()
     return u.id
+
+
+async def _create_slot_with_students(
+    db, *, teacher_id: int, student_ids: list[int],
+    weekday: int, start_time: time, duration_minutes: int = 60,
+) -> int:
+    slot = LessonSlot(
+        teacher_id=teacher_id,
+        weekday=weekday,
+        start_time=start_time,
+        duration_minutes=duration_minutes,
+        timezone="Europe/Moscow",
+        is_active=True,
+    )
+    db.add(slot)
+    await db.flush()
+    for student_id in student_ids:
+        db.add(LessonSlotStudent(slot_id=slot.id, student_id=student_id, is_active=True))
+    slot_id = slot.id
+    await db.commit()
+    return slot_id
 
 
 class _FakeSlot:
@@ -106,97 +130,109 @@ def test_iter_occurrence_datetimes_respects_horizon():
     assert results[0] == datetime(2026, 7, 20, 7, 0, tzinfo=dt_timezone.utc)
 
 
-# ============================== Generator tick (DB) ==============================
+# ============================== Generator tick (DB, групповой) ==============================
 
 
 @pytest.mark.asyncio
-async def test_generator_creates_occurrence_for_active_slot(db, db_session_factory):
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+async def test_generator_creates_occurrence_and_syncs_participants(db, db_session_factory):
+    """Групповой слот (3 участника) → 1 occurrence + 3 lesson_occurrence_participant."""
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_ids = [
+        await _create_user(db, role="student", prefix=f"tsk428-stud{i}") for i in range(3)
+    ]
 
-    slot = LessonSlot(
-        student_id=student_id,
-        teacher_id=teacher_id,
-        weekday=date.today().weekday(),
-        start_time=time(23, 59),  # заведомо ещё не наступило сегодня в большинстве TZ
-        duration_minutes=60,
-        timezone="Europe/Moscow",
-        is_active=True,
+    slot_id = await _create_slot_with_students(
+        db, teacher_id=teacher_id, student_ids=student_ids,
+        weekday=date.today().weekday(), start_time=time(23, 59),
     )
-    db.add(slot)
-    await db.flush()
-    slot_id = slot.id
-    await db.commit()
 
     summary = await lesson_occurrence_generator_tick(db_session_factory)
     assert summary["locked"] is True
     assert summary["active_slots"] >= 1
+    assert summary["participants_synced"] >= 3
 
-    rows = (
+    occ_rows = (
         await db.execute(
-            text(
-                "SELECT student_id, teacher_id, duration_minutes, status "
-                "FROM lesson_occurrence WHERE slot_id = :sid"
-            ),
+            text("SELECT id, teacher_id, duration_minutes FROM lesson_occurrence WHERE slot_id = :sid"),
             {"sid": slot_id},
         )
     ).fetchall()
-    assert len(rows) >= 1
-    row = rows[0]
-    assert row[0] == student_id
-    assert row[1] == teacher_id
-    assert row[2] == 60
-    assert row[3] == "scheduled"
+    assert len(occ_rows) >= 1
+    occurrence_id, occ_teacher_id, duration = occ_rows[0]
+    assert occ_teacher_id == teacher_id
+    assert duration == 60
+
+    participant_rows = (
+        await db.execute(
+            text(
+                "SELECT student_id, status FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :oid"
+            ),
+            {"oid": occurrence_id},
+        )
+    ).fetchall()
+    assert {r[0] for r in participant_rows} == set(student_ids)
+    assert all(r[1] == "scheduled" for r in participant_rows)
 
 
 @pytest.mark.asyncio
 async def test_generator_idempotent_second_tick(db, db_session_factory):
-    """Повторный тик не плодит дубли (ON CONFLICT DO NOTHING по slot_id+scheduled_at)."""
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+    """Повторный тик не плодит дубли ни occurrence, ни участников."""
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
 
-    slot = LessonSlot(
-        student_id=student_id,
-        teacher_id=teacher_id,
-        weekday=date.today().weekday(),
-        start_time=time(23, 59),
-        duration_minutes=45,
-        timezone="Europe/Moscow",
-        is_active=True,
+    slot_id = await _create_slot_with_students(
+        db, teacher_id=teacher_id, student_ids=[student_id],
+        weekday=date.today().weekday(), start_time=time(23, 59), duration_minutes=45,
     )
-    db.add(slot)
-    await db.flush()
-    slot_id = slot.id
-    await db.commit()
 
     summary1 = await lesson_occurrence_generator_tick(db_session_factory)
-    count1 = (
+    occ_count1 = (
         await db.execute(
-            text("SELECT COUNT(*) FROM lesson_occurrence WHERE slot_id = :sid"),
+            text("SELECT COUNT(*) FROM lesson_occurrence WHERE slot_id = :sid"), {"sid": slot_id},
+        )
+    ).scalar()
+    part_count1 = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM lesson_occurrence_participant lop "
+                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "WHERE lo.slot_id = :sid"
+            ),
             {"sid": slot_id},
         )
     ).scalar()
 
     summary2 = await lesson_occurrence_generator_tick(db_session_factory)
-    count2 = (
+    occ_count2 = (
         await db.execute(
-            text("SELECT COUNT(*) FROM lesson_occurrence WHERE slot_id = :sid"),
+            text("SELECT COUNT(*) FROM lesson_occurrence WHERE slot_id = :sid"), {"sid": slot_id},
+        )
+    ).scalar()
+    part_count2 = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM lesson_occurrence_participant lop "
+                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "WHERE lo.slot_id = :sid"
+            ),
             {"sid": slot_id},
         )
     ).scalar()
 
     assert summary1["locked"] is True and summary2["locked"] is True
-    assert count1 == count2
-    assert summary2["generated"] == 0  # второй тик не создал ни одной новой строки для этого слота
+    assert occ_count1 == occ_count2
+    assert part_count1 == part_count2
+    assert summary2["generated"] == 0
+    assert summary2["participants_synced"] == 0
 
 
 @pytest.mark.asyncio
 async def test_generator_skips_inactive_slot(db, db_session_factory):
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
 
     slot = LessonSlot(
-        student_id=student_id,
         teacher_id=teacher_id,
         weekday=date.today().weekday(),
         start_time=time(23, 59),
@@ -207,6 +243,7 @@ async def test_generator_skips_inactive_slot(db, db_session_factory):
     db.add(slot)
     await db.flush()
     slot_id = slot.id
+    db.add(LessonSlotStudent(slot_id=slot_id, student_id=student_id, is_active=True))
     await db.commit()
 
     await lesson_occurrence_generator_tick(db_session_factory)
@@ -220,46 +257,45 @@ async def test_generator_skips_inactive_slot(db, db_session_factory):
     assert count == 0
 
 
-# ============================== Admin API ==============================
+# ============================== Admin API (групповой слот) ==============================
 
 
 @pytest.mark.asyncio
-async def test_create_lesson_slot_admin_success(db, client):
+async def test_create_lesson_slot_admin_success_with_participants(db, client):
     admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
     admin_token, _, _ = await create_session(db, user_id=admin_id)
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+    student_a = await _create_user(db, role="student", prefix="tsk428-studA")
+    student_b = await _create_user(db, role="student", prefix="tsk428-studB")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
 
     resp = await client.post(
         "/api/v1/lesson-slots",
         json={
-            "student_id": student_id,
             "teacher_id": teacher_id,
             "weekday": 2,
             "start_time": "15:00:00",
             "duration_minutes": 60,
+            "student_ids": [student_a, student_b],
         },
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
-    assert body["student_id"] == student_id
     assert body["teacher_id"] == teacher_id
     assert body["is_active"] is True
     assert body["timezone"] == "Europe/Moscow"
+    assert set(body["student_ids"]) == {student_a, student_b}
 
 
 @pytest.mark.asyncio
 async def test_create_lesson_slot_403_for_non_admin(db, client):
     other_id = await _create_user(db, prefix="tsk428-other")
     other_token, _, _ = await create_session(db, user_id=other_id)
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
 
     resp = await client.post(
         "/api/v1/lesson-slots",
         json={
-            "student_id": student_id,
             "teacher_id": teacher_id,
             "weekday": 2,
             "start_time": "15:00:00",
@@ -271,21 +307,21 @@ async def test_create_lesson_slot_403_for_non_admin(db, client):
 
 
 @pytest.mark.asyncio
-async def test_create_lesson_slot_422_wrong_role_pair(db, client):
-    """teacher_id без роли 'teacher' → 422 (защита от опечатки id в админке)."""
+async def test_create_lesson_slot_422_wrong_role_participant(db, client):
+    """Один из student_ids без роли 'student' → 422 (защита от опечатки id в админке)."""
     admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
     admin_token, _, _ = await create_session(db, user_id=admin_id)
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
-    not_a_teacher_id = await _create_user(db, prefix="tsk428-plain")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    not_a_student_id = await _create_user(db, prefix="tsk428-plain")
 
     resp = await client.post(
         "/api/v1/lesson-slots",
         json={
-            "student_id": student_id,
-            "teacher_id": not_a_teacher_id,
+            "teacher_id": teacher_id,
             "weekday": 2,
             "start_time": "15:00:00",
             "duration_minutes": 60,
+            "student_ids": [not_a_student_id],
         },
         headers={"Authorization": f"Bearer {admin_token}"},
     )
@@ -293,18 +329,22 @@ async def test_create_lesson_slot_422_wrong_role_pair(db, client):
 
 
 @pytest.mark.asyncio
-async def test_create_lesson_slot_409_overlap(db, client):
+async def test_create_lesson_slot_409_overlap_teacher_only(db, client):
+    """Групповая модель: пересечение блокируется ТОЛЬКО по преподавателю —
+    разные ученики на то же время того же учителя всё равно 409 (это должно
+    решаться участниками ОДНОГО слота, не двумя разными слотами)."""
     admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
     admin_token, _, _ = await create_session(db, user_id=admin_id)
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_a = await _create_user(db, role="student", prefix="tsk428-studA")
+    student_b = await _create_user(db, role="student", prefix="tsk428-studB")
 
     payload = {
-        "student_id": student_id,
         "teacher_id": teacher_id,
         "weekday": 3,
         "start_time": "12:00:00",
         "duration_minutes": 60,
+        "student_ids": [student_a],
     }
     resp1 = await client.post(
         "/api/v1/lesson-slots", json=payload,
@@ -312,14 +352,12 @@ async def test_create_lesson_slot_409_overlap(db, client):
     )
     assert resp1.status_code == 201, resp1.text
 
-    # Тот же преподаватель, тот же день недели, пересекающееся время (12:30-13:30 vs 12:00-13:00)
-    other_student_id = await _create_user(db, role="student", prefix="tsk428-stud2")
     payload2 = {
-        "student_id": other_student_id,
         "teacher_id": teacher_id,
         "weekday": 3,
         "start_time": "12:30:00",
         "duration_minutes": 60,
+        "student_ids": [student_b],
     }
     resp2 = await client.post(
         "/api/v1/lesson-slots", json=payload2,
@@ -332,13 +370,11 @@ async def test_create_lesson_slot_409_overlap(db, client):
 async def test_deactivate_lesson_slot_soft_delete(db, client):
     admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
     admin_token, _, _ = await create_session(db, user_id=admin_id)
-    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
 
     resp = await client.post(
         "/api/v1/lesson-slots",
         json={
-            "student_id": student_id,
             "teacher_id": teacher_id,
             "weekday": 4,
             "start_time": "09:00:00",
@@ -354,7 +390,6 @@ async def test_deactivate_lesson_slot_soft_delete(db, client):
     )
     assert del_resp.status_code == 204, del_resp.text
 
-    # Строка не удалена физически — is_active=false (сервисный API key: bypass роль-гейта)
     row = (
         await db.execute(
             text("SELECT is_active FROM lesson_slot WHERE id = :sid"), {"sid": slot_id}
@@ -388,3 +423,114 @@ async def test_put_operating_hours_replaces_existing(db, client):
     ).fetchall()
     assert len(rows) == 1, "PUT должен заменять запись на этот weekday, не плодить дубли"
     assert str(rows[0][0]) == "10:00:00"
+
+
+# ============================== Slot participants ==============================
+
+
+@pytest.mark.asyncio
+async def test_add_slot_participant_and_list(db, client):
+    admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
+    admin_token, _, _ = await create_session(db, user_id=admin_id)
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+
+    resp = await client.post(
+        "/api/v1/lesson-slots",
+        json={"teacher_id": teacher_id, "weekday": 5, "start_time": "10:00:00", "duration_minutes": 60},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    slot_id = resp.json()["id"]
+
+    add_resp = await client.post(
+        f"/api/v1/lesson-slots/{slot_id}/participants",
+        json={"student_id": student_id},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert add_resp.status_code == 201, add_resp.text
+    assert add_resp.json()["student_id"] == student_id
+
+    list_resp = await client.get(
+        f"/api/v1/lesson-slots/{slot_id}/participants",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert list_resp.status_code == 200
+    assert [p["student_id"] for p in list_resp.json()] == [student_id]
+
+
+@pytest.mark.asyncio
+async def test_add_slot_participant_backfills_future_occurrence(db, client, db_session_factory):
+    """Добавление участника в слот бэкфиллит уже сгенерированные будущие occurrence
+    (не ждёт следующего тика генератора)."""
+    admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
+    admin_token, _, _ = await create_session(db, user_id=admin_id)
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+
+    slot_id = await _create_slot_with_students(
+        db, teacher_id=teacher_id, student_ids=[],
+        weekday=date.today().weekday(), start_time=time(23, 59),
+    )
+    await lesson_occurrence_generator_tick(db_session_factory)
+
+    occ_row = (
+        await db.execute(
+            text("SELECT id FROM lesson_occurrence WHERE slot_id = :sid"), {"sid": slot_id},
+        )
+    ).fetchone()
+    assert occ_row is not None, "Occurrence должен быть сгенерирован до добавления участника"
+    occurrence_id = occ_row[0]
+
+    add_resp = await client.post(
+        f"/api/v1/lesson-slots/{slot_id}/participants",
+        json={"student_id": student_id},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert add_resp.status_code == 201, add_resp.text
+
+    part_row = (
+        await db.execute(
+            text(
+                "SELECT status FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :oid AND student_id = :sid"
+            ),
+            {"oid": occurrence_id, "sid": student_id},
+        )
+    ).fetchone()
+    assert part_row is not None, "Уже сгенерированный occurrence должен получить нового участника"
+    assert part_row[0] == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_remove_slot_participant_soft(db, client):
+    admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
+    admin_token, _, _ = await create_session(db, user_id=admin_id)
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk428-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk428-stud")
+
+    resp = await client.post(
+        "/api/v1/lesson-slots",
+        json={
+            "teacher_id": teacher_id, "weekday": 6, "start_time": "11:00:00",
+            "duration_minutes": 30, "student_ids": [student_id],
+        },
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    slot_id = resp.json()["id"]
+
+    del_resp = await client.delete(
+        f"/api/v1/lesson-slots/{slot_id}/participants/{student_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert del_resp.status_code == 204, del_resp.text
+
+    row = (
+        await db.execute(
+            text(
+                "SELECT is_active FROM lesson_slot_student "
+                "WHERE slot_id = :sid AND student_id = :stid"
+            ),
+            {"sid": slot_id, "stid": student_id},
+        )
+    ).fetchone()
+    assert row is not None and row[0] is False

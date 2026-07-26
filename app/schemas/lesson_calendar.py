@@ -1,8 +1,9 @@
 """
-Схемы Календаря LMS Фаза 1-2 (tsk-428/tsk-429): часы работы школы, слоты
-расписания, occurrence + явка ученика.
+Схемы Календаря LMS (tsk-428/429/430/435): часы работы школы, групповые
+слоты и их участники, occurrence + явка по участнику.
 
-Модель данных и границы MVP — docs/specs/2026-07-26-plan-kalendar-lms.md.
+Модель данных и границы MVP — docs/specs/2026-07-26-plan-kalendar-lms.md +
+tsk-435 (rework на группы после встречи с реальными данными импорта).
 Конвенция weekday: 0=понедельник .. 6=воскресенье (Python `date.weekday()`).
 """
 from __future__ import annotations
@@ -49,11 +50,10 @@ class OperatingHoursRead(BaseModel):
     created_at: datetime
 
 
-# ─── Lesson Slot ────────────────────────────────────────────────────────────
+# ─── Lesson Slot (групповой, tsk-435) ───────────────────────────────────────
 
 
 class LessonSlotCreate(BaseModel):
-    student_id: int = Field(..., description="ID ученика")
     teacher_id: int = Field(..., description="ID преподавателя")
     weekday: int = Field(..., ge=0, le=6, description="0=понедельник .. 6=воскресенье")
     start_time: time = Field(..., description="Время начала занятия")
@@ -62,17 +62,15 @@ class LessonSlotCreate(BaseModel):
         default="Europe/Moscow",
         description="IANA timezone; MVP — одна зона на всю школу",
     )
-
-    @model_validator(mode="after")
-    def _distinct_pair(self) -> "LessonSlotCreate":
-        if self.student_id == self.teacher_id:
-            raise ValueError("student_id и teacher_id должны быть разными пользователями")
-        return self
+    student_ids: list[int] = Field(
+        default_factory=list,
+        description="Начальные участники слота (опционально, удобно для импорта)",
+    )
 
 
 class LessonSlotUpdate(BaseModel):
-    """Частичная правка слота. Смена ученика/преподавателя не поддерживается —
-    для этого создаётся новый слот (история старого сохраняется через is_active)."""
+    """Частичная правка слота (без участников — см. отдельные эндпоинты
+    `/lesson-slots/{id}/participants`)."""
 
     weekday: Optional[int] = Field(default=None, ge=0, le=6)
     start_time: Optional[time] = None
@@ -85,7 +83,6 @@ class LessonSlotRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    student_id: int
     teacher_id: int
     weekday: int
     start_time: time
@@ -95,9 +92,27 @@ class LessonSlotRead(BaseModel):
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+    student_ids: list[int] = Field(
+        default_factory=list, description="Активные участники слота (заполняется на уровне API)"
+    )
 
 
-# ─── Lesson Occurrence + явка (tsk-429, Фаза 2) ─────────────────────────────
+class AddSlotParticipantRequest(BaseModel):
+    student_id: int = Field(..., description="Ученик, добавляемый в групповой слот")
+
+
+class SlotParticipantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slot_id: int
+    student_id: int
+    is_active: bool
+    added_by: Optional[int] = None
+    created_at: datetime
+
+
+# ─── Lesson Occurrence + участники (tsk-429/430/435) ───────────────────────
 
 
 class LessonOccurrenceRead(BaseModel):
@@ -105,30 +120,38 @@ class LessonOccurrenceRead(BaseModel):
 
     id: int
     slot_id: Optional[int] = None
-    student_id: int
     teacher_id: int
     scheduled_at: datetime
     duration_minutes: int
-    status: str = Field(
-        description="scheduled | confirmed | declined | rescheduled | no_show | completed"
-    )
-    rescheduled_to_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
 
-class AttendanceActionRequest(BaseModel):
-    action: Literal["joined", "declined"] = Field(
-        ..., description="Ученик подтверждает явку или отказывается"
+class ParticipantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    occurrence_id: int
+    student_id: int
+    status: str = Field(
+        description="scheduled | confirmed | declined | rescheduled | no_show | completed"
+    )
+    rescheduled_to_occurrence_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MyLessonOccurrenceRead(LessonOccurrenceRead):
+    """Occurrence с точки зрения ОДНОГО ученика — его личный статус участия,
+    без списка остальных участников группы (приватность)."""
+
+    participant_id: int
+    my_status: str = Field(
+        description="scheduled | confirmed | declined | rescheduled | no_show | completed"
     )
 
 
-# ─── Фаза 3 (tsk-430): панель преподавателя, перенос, ad-hoc ────────────────
-
-
-class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
-    """Занятие в панели преподавателя + живой флаг опоздания."""
-
+class TeacherParticipantRead(ParticipantRead):
     is_overdue: bool = Field(
         description=(
             "status='scheduled' и порог 'не пришёл' уже истёк — считается "
@@ -137,7 +160,23 @@ class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
     )
 
 
+class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
+    """Occurrence в панели преподавателя — с полным списком участников."""
+
+    participants: list[TeacherParticipantRead] = Field(default_factory=list)
+
+
+class AttendanceActionRequest(BaseModel):
+    action: Literal["joined", "declined"] = Field(
+        ..., description="Ученик подтверждает явку или отказывается"
+    )
+
+
+# ─── Фаза 3 (tsk-430/435): панель преподавателя, перенос, ad-hoc ───────────
+
+
 class TeacherAttendanceActionRequest(BaseModel):
+    student_id: int = Field(..., description="Участник occurrence, чью явку правит преподаватель")
     action: Literal["manual_present", "manual_absent"] = Field(
         ..., description="Преподаватель вручную отмечает присутствие/отсутствие ученика"
     )
@@ -150,6 +189,13 @@ class AddStudentRequest(BaseModel):
     student_id: int = Field(..., description="ID ученика")
     scheduled_at: datetime = Field(..., description="Дата и время занятия (UTC)")
     duration_minutes: int = Field(..., gt=0, le=480)
+
+
+class AddParticipantRequest(BaseModel):
+    """Добавить ученика к УЖЕ существующему occurrence (например, подключить
+    опоздавшего/новенького к уже идущей группе)."""
+
+    student_id: int = Field(..., description="ID ученика")
 
 
 class AdHocRequest(BaseModel):

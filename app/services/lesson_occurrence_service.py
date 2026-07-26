@@ -1,11 +1,11 @@
 """
-Сервис Календаря LMS Фаза 3 (tsk-430): панель преподавателя, ручное
-добавление ученика, перенос и отработка вне расписания.
+Сервис Календаря LMS (tsk-430/435): панель преподавателя, ручное добавление
+участника, перенос и отработка вне расписания — всё per-участнику (групповое
+occurrence, tsk-435).
 
-Модель и границы MVP — docs/specs/2026-07-26-plan-kalendar-lms.md § «Фаза 3».
-Переиспользует `ensure_user_has_role` и `is_within_operating_hours` из
-`lesson_calendar_service` (Фаза 1) и коллизии из `LessonOccurrenceRepository`
-(добавлены здесь же Фазой 3 — реальный диапазон времени, не weekday+time).
+Модель и границы — docs/specs/2026-07-26-plan-kalendar-lms.md § «Фаза 3» +
+tsk-435 (rework на группы). Переиспользует `ensure_user_has_role` и
+`is_within_operating_hours` из `lesson_calendar_service`.
 """
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_occurrence import LessonOccurrence
+from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.repos.lesson_calendar_repository import (
+    LessonOccurrenceParticipantRepository,
     LessonOccurrenceRepository,
     OperatingHoursRepository,
 )
@@ -28,9 +30,10 @@ from app.utils.exceptions import DomainError
 logger = logging.getLogger(__name__)
 
 _occurrence_repo = LessonOccurrenceRepository()
+_participant_repo = LessonOccurrenceParticipantRepository()
 _operating_hours_repo = OperatingHoursRepository()
 
-# Статусы, при которых occurrence уже структурно закрыт для reschedule/ownership-операций.
+# Статусы, при которых участие уже структурно закрыто для reschedule/ownership-операций.
 _LOCKED_STATUSES = frozenset({"no_show", "completed", "rescheduled"})
 
 # Шаг перебора кандидатов для available-slots — компромисс между точностью
@@ -49,19 +52,36 @@ async def list_for_teacher(
     to_dt: Optional[datetime] = None,
     limit: int = 100,
     no_show_threshold_minutes: int = 10,
-) -> list[tuple[LessonOccurrence, bool]]:
-    """Занятия преподавателя + флаг `is_overdue` (живой расчёт, не ждёт
-    следующего cron-тика `lesson_attendance_cron_tick`): `status='scheduled'`
-    и порог опоздания уже истёк."""
-    rows = await _occurrence_repo.list_for_teacher(
+) -> list[tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool]]]]:
+    """Занятия преподавателя, каждое — с полным списком участников + флаг
+    `is_overdue` НА КАЖДОГО (живой расчёт, не ждёт cron-тик): участник в
+    `status='scheduled'` и порог опоздания уже истёк."""
+    occurrences = await _occurrence_repo.list_for_teacher(
         db, teacher_id=teacher_id, from_dt=from_dt, to_dt=to_dt, limit=limit
     )
+    if not occurrences:
+        return []
+
+    occurrence_ids = [o.id for o in occurrences]
+    all_participants = await _participant_repo.list_for_occurrences(db, occurrence_ids)
+    participants_by_occurrence: dict[int, list[LessonOccurrenceParticipant]] = {}
+    for p in all_participants:
+        participants_by_occurrence.setdefault(p.occurrence_id, []).append(p)
+
     now_utc = datetime.now(timezone.utc)
     threshold = timedelta(minutes=no_show_threshold_minutes)
-    result: list[tuple[LessonOccurrence, bool]] = []
-    for row in rows:
-        is_overdue = row.status == "scheduled" and (row.scheduled_at + threshold) < now_utc
-        result.append((row, is_overdue))
+
+    result: list[tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool]]]] = []
+    for occurrence in occurrences:
+        participants = participants_by_occurrence.get(occurrence.id, [])
+        pairs = [
+            (
+                p,
+                p.status == "scheduled" and (occurrence.scheduled_at + threshold) < now_utc,
+            )
+            for p in participants
+        ]
+        result.append((occurrence, pairs))
     return result
 
 
@@ -87,21 +107,29 @@ async def record_teacher_attendance(
     *,
     occurrence_id: int,
     teacher_id: int,
+    student_id: int,
     action: str,
     ip: Optional[str] = None,
-) -> LessonOccurrence:
-    """Ручная отметка преподавателем. В отличие от студенческого
-    `lesson_attendance_service.record_attendance`, здесь заблокирован только
-    `rescheduled` (occurrence уже заменён другим) — `no_show`/`completed`
-    преподаватель обязан уметь исправить вручную (например, система
-    ошибочно пометила no_show, а ученик на самом деле пришёл)."""
+) -> LessonOccurrenceParticipant:
+    """Ручная отметка преподавателем ОДНОГО участника occurrence. В отличие
+    от студенческого `lesson_attendance_service.record_attendance`, здесь
+    заблокирован только `rescheduled` (участие уже заменено другим) —
+    `no_show`/`completed` преподаватель обязан уметь исправить вручную."""
     occurrence = await get_occurrence_for_teacher(
         db, occurrence_id=occurrence_id, teacher_id=teacher_id
     )
-    if occurrence.status == "rescheduled":
+    participant = await _participant_repo.get(
+        db, occurrence_id=occurrence_id, student_id=student_id
+    )
+    if participant is None:
         raise DomainError(
-            "Занятие перенесено на другое — правьте актуальный occurrence "
-            f"(rescheduled_to_id={occurrence.rescheduled_to_id})",
+            f"Ученик id={student_id} не входит в число участников этого занятия",
+            status_code=404,
+        )
+    if participant.status == "rescheduled":
+        raise DomainError(
+            "Участие перенесено на другое занятие — правьте актуальный occurrence "
+            f"(rescheduled_to_occurrence_id={participant.rescheduled_to_occurrence_id})",
             status_code=409,
         )
 
@@ -114,8 +142,8 @@ async def record_teacher_attendance(
         ),
         {"oid": occurrence.id, "uid": teacher_id, "action": action},
     )
-    occurrence.status = new_status
-    occurrence.updated_at = datetime.now(timezone.utc)
+    participant.status = new_status
+    participant.updated_at = datetime.now(timezone.utc)
 
     await audit_service.log_event(
         db,
@@ -124,6 +152,7 @@ async def record_teacher_attendance(
         ip=ip,
         details={
             "occurrence_id": occurrence.id,
+            "student_id": student_id,
             "action": action,
             "new_status": new_status,
             "actor_role": "teacher",
@@ -131,11 +160,11 @@ async def record_teacher_attendance(
     )
 
     await db.commit()
-    await db.refresh(occurrence)
-    return occurrence
+    await db.refresh(participant)
+    return participant
 
 
-# ─── Ad-hoc creation (используется и teacher add-student, и student ad-hoc) ─
+# ─── Ad-hoc creation + add-participant (teacher/student) ───────────────────
 
 
 async def create_ad_hoc_occurrence(
@@ -145,17 +174,19 @@ async def create_ad_hoc_occurrence(
     teacher_id: int,
     scheduled_at: datetime,
     duration_minutes: int,
-) -> LessonOccurrence:
-    """Создать occurrence вне регулярного расписания (`slot_id=NULL`).
+) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
+    """Создать occurrence вне регулярного расписания (`slot_id=NULL`) с одним
+    начальным участником. Используется двумя путями: ученик сам записывается
+    на отработку (`POST /lesson-occurrences/ad-hoc`) и преподаватель добавляет
+    ученика вручную (`POST /teacher/lesson-occurrences/add-student`).
 
-    Используется двумя путями: ученик сам записывается на отработку
-    (`POST /lesson-occurrences/ad-hoc`) и преподаватель добавляет ученика на
-    занятие вручную (`POST /teacher/lesson-occurrences/add-student`).
+    Коллизия проверяется только по УЧЕНИКУ (не по преподавателю — групповое
+    occurrence по design допускает несколько параллельных occurrence у одного
+    преподавателя).
 
     :raises DomainError: 404/422 — участник не найден/без нужной роли;
         422 — вне часов работы школы (если `operating_hours` настроены);
-        409 — пересечение по времени с другим активным occurrence
-        преподавателя или ученика.
+        409 — пересечение по времени с другим активным участием ученика.
     """
     await lesson_calendar_service.ensure_user_has_role(db, student_id, "student")
     await lesson_calendar_service.ensure_user_has_role(db, teacher_id, "teacher")
@@ -168,54 +199,103 @@ async def create_ad_hoc_occurrence(
             "Время вне часов работы школы (operating_hours)", status_code=422
         )
 
-    overlap = await _occurrence_repo.has_overlap(
+    overlap = await _participant_repo.has_student_overlap(
         db,
-        teacher_id=teacher_id,
         student_id=student_id,
         scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
     )
     if overlap:
         raise DomainError(
-            "Время пересекается с другим активным занятием ученика или "
-            "преподавателя", status_code=409,
+            "Время пересекается с другим активным занятием этого ученика",
+            status_code=409,
         )
 
     occurrence = await _occurrence_repo.create(
         db,
         slot_id=None,
-        student_id=student_id,
         teacher_id=teacher_id,
         scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
-        status="scheduled",
+    )
+    await db.flush()
+    participant = await _participant_repo.create(
+        db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
     )
     await db.commit()
     await db.refresh(occurrence)
+    await db.refresh(participant)
     logger.info(
         "lesson_occurrence ad-hoc создан: id=%s student=%s teacher=%s at=%s",
         occurrence.id, student_id, teacher_id, scheduled_at,
     )
-    return occurrence
+    return occurrence, participant
 
 
-# ─── Reschedule + available slots (студент) ────────────────────────────────
+async def add_participant_to_occurrence(
+    db: AsyncSession,
+    *,
+    occurrence_id: int,
+    student_id: int,
+    teacher_id: int,
+) -> LessonOccurrenceParticipant:
+    """Добавить ученика к УЖЕ существующему occurrence (например, подключить
+    опоздавшего/новенького к уже идущей группе). Идемпотентно: уже
+    участвующий ученик возвращает текущую строку."""
+    occurrence = await get_occurrence_for_teacher(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id
+    )
+    await lesson_calendar_service.ensure_user_has_role(db, student_id, "student")
+
+    existing = await _participant_repo.get(
+        db, occurrence_id=occurrence_id, student_id=student_id
+    )
+    if existing is not None:
+        return existing
+
+    overlap = await _participant_repo.has_student_overlap(
+        db,
+        student_id=student_id,
+        scheduled_at=occurrence.scheduled_at,
+        duration_minutes=occurrence.duration_minutes,
+        exclude_occurrence_id=occurrence.id,
+    )
+    if overlap:
+        raise DomainError(
+            "Время пересекается с другим активным занятием этого ученика",
+            status_code=409,
+        )
+
+    participant = await _participant_repo.create(
+        db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
+    )
+    await db.commit()
+    await db.refresh(participant)
+    return participant
 
 
-async def _get_occurrence_for_student_reschedule(
+# ─── Reschedule + available slots (студент, по своему участию) ─────────────
+
+
+async def _get_own_participant_for_reschedule(
     db: AsyncSession, *, occurrence_id: int, student_id: int
-) -> LessonOccurrence:
+) -> tuple[LessonOccurrenceParticipant, LessonOccurrence]:
     occurrence = await _occurrence_repo.get_by_id(db, occurrence_id)
     if occurrence is None:
         raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
-    if occurrence.student_id != student_id:
-        raise DomainError("Занятие принадлежит другому ученику", status_code=403)
-    if occurrence.status in _LOCKED_STATUSES:
+    participant = await _participant_repo.get(
+        db, occurrence_id=occurrence_id, student_id=student_id
+    )
+    if participant is None:
         raise DomainError(
-            f"Занятие уже в статусе '{occurrence.status}' — перенос недоступен",
+            "Ученик не входит в число участников этого занятия", status_code=403
+        )
+    if participant.status in _LOCKED_STATUSES:
+        raise DomainError(
+            f"Участие уже в статусе '{participant.status}' — перенос недоступен",
             status_code=409,
         )
-    return occurrence
+    return participant, occurrence
 
 
 async def list_available_slots(
@@ -227,10 +307,10 @@ async def list_available_slots(
     horizon_days: int = 14,
 ) -> list[datetime]:
     """Кандидаты для переноса: в рамках `operating_hours`, без коллизий у
-    преподавателя ИЛИ ученика. Пустой список — `operating_hours` не
-    настроены (см. `is_within_operating_hours`) либо кандидатов не нашлось
-    в пределах горизонта."""
-    occurrence = await _get_occurrence_for_student_reschedule(
+    ЭТОГО ученика (преподаватель по design может вести несколько occurrence
+    одновременно — групповое расписание). Пустой список — `operating_hours`
+    не настроены либо кандидатов не нашлось в пределах горизонта."""
+    participant, occurrence = await _get_own_participant_for_reschedule(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
 
@@ -256,10 +336,9 @@ async def list_available_slots(
             while cursor_local + timedelta(minutes=duration) <= end_local:
                 candidate_utc = cursor_local.astimezone(timezone.utc)
                 if candidate_utc > now_utc:
-                    overlap = await _occurrence_repo.has_overlap(
+                    overlap = await _participant_repo.has_student_overlap(
                         db,
-                        teacher_id=occurrence.teacher_id,
-                        student_id=occurrence.student_id,
+                        student_id=student_id,
                         scheduled_at=candidate_utc,
                         duration_minutes=duration,
                         exclude_occurrence_id=occurrence.id,
@@ -279,17 +358,20 @@ async def reschedule_occurrence(
     occurrence_id: int,
     student_id: int,
     new_scheduled_at: datetime,
-) -> LessonOccurrence:
-    """Перенести занятие: старый occurrence → `status=rescheduled` +
-    `rescheduled_to_id`, создаётся новый (`slot_id=NULL`, тот же student/
-    teacher/duration, новое время, `status=scheduled`).
+) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
+    """Перенести УЧАСТИЕ этого ученика: старая строка участника →
+    `status=rescheduled` + `rescheduled_to_occurrence_id`, создаётся НОВЫЙ
+    occurrence (`slot_id=NULL`, тот же teacher/duration, новое время) с
+    новой строкой участника (`status=scheduled`). Остальные участники
+    старого (группового) occurrence не затрагиваются — их перенос
+    независим (см. модель tsk-435).
 
     Без `attendance_event` для самого переноса — CHECK-constraint
     `attendance_event.action` не включает `rescheduled` (это состояние
-    occurrence, не действие явки); полная провенанс — `rescheduled_to_id` +
-    смена `status` на старой записи.
+    участника, не действие явки); полная провенанс —
+    `rescheduled_to_occurrence_id` + смена `status` на старой записи.
     """
-    occurrence = await _get_occurrence_for_student_reschedule(
+    old_participant, occurrence = await _get_own_participant_for_reschedule(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
 
@@ -301,38 +383,41 @@ async def reschedule_occurrence(
             "Новое время вне часов работы школы (operating_hours)", status_code=422
         )
 
-    overlap = await _occurrence_repo.has_overlap(
+    overlap = await _participant_repo.has_student_overlap(
         db,
-        teacher_id=occurrence.teacher_id,
-        student_id=occurrence.student_id,
+        student_id=student_id,
         scheduled_at=new_scheduled_at,
         duration_minutes=occurrence.duration_minutes,
         exclude_occurrence_id=occurrence.id,
     )
     if overlap:
         raise DomainError(
-            "Новое время пересекается с другим активным занятием", status_code=409
+            "Новое время пересекается с другим активным занятием этого ученика",
+            status_code=409,
         )
 
     new_occurrence = await _occurrence_repo.create(
         db,
         slot_id=None,
-        student_id=occurrence.student_id,
         teacher_id=occurrence.teacher_id,
         scheduled_at=new_scheduled_at,
         duration_minutes=occurrence.duration_minutes,
-        status="scheduled",
+    )
+    await db.flush()
+    new_participant = await _participant_repo.create(
+        db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
     )
     await db.flush()
 
-    occurrence.status = "rescheduled"
-    occurrence.rescheduled_to_id = new_occurrence.id
-    occurrence.updated_at = datetime.now(timezone.utc)
+    old_participant.status = "rescheduled"
+    old_participant.rescheduled_to_occurrence_id = new_occurrence.id
+    old_participant.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(new_occurrence)
+    await db.refresh(new_participant)
     logger.info(
-        "lesson_occurrence перенесён: old=%s new=%s student=%s at=%s",
+        "lesson_occurrence участие перенесено: old_occ=%s new_occ=%s student=%s at=%s",
         occurrence.id, new_occurrence.id, student_id, new_scheduled_at,
     )
-    return new_occurrence
+    return new_occurrence, new_participant

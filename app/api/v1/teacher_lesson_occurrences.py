@@ -1,12 +1,14 @@
 """
-Панель преподавателя (tsk-430, Календарь LMS Фаза 3).
+Панель преподавателя (tsk-430/435, Календарь LMS).
 
-- `GET /teacher/lesson-occurrences?teacher_id=&from=&to=` — список занятий
-  с живым флагом `is_overdue`.
+- `GET /teacher/lesson-occurrences?teacher_id=&from=&to=` — список занятий,
+  каждое с полным списком участников + живой флаг `is_overdue` на каждого.
 - `POST /teacher/lesson-occurrences/{id}/attendance` — ручная отметка
-  присутствия/отсутствия.
+  присутствия/отсутствия ОДНОГО участника (occurrence может быть групповым).
 - `POST /teacher/lesson-occurrences/add-student` — добавить ученика на
   занятие вручную (ad-hoc occurrence).
+- `POST /teacher/lesson-occurrences/{id}/participants` — добавить ученика к
+  УЖЕ существующему occurrence (например, подключить опоздавшего к группе).
 
 Гейт — тот же паттерн, что `teacher_workload.py`: явный `teacher_id` +
 `get_current_user` + ручная ownership-проверка (`current_user.id ==
@@ -24,10 +26,13 @@ from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.schemas.lesson_calendar import (
+    AddParticipantRequest,
     AddStudentRequest,
     LessonOccurrenceRead,
+    ParticipantRead,
     TeacherAttendanceActionRequest,
     TeacherLessonOccurrenceRead,
+    TeacherParticipantRead,
 )
 from app.services import lesson_occurrence_service
 
@@ -61,18 +66,22 @@ async def list_teacher_occurrences(
         limit=limit,
         no_show_threshold_minutes=threshold_minutes,
     )
-    return [
-        TeacherLessonOccurrenceRead(
-            **LessonOccurrenceRead.model_validate(row).model_dump(),
-            is_overdue=is_overdue,
-        )
-        for row, is_overdue in pairs
-    ]
+    result: list[TeacherLessonOccurrenceRead] = []
+    for occurrence, participant_pairs in pairs:
+        data = LessonOccurrenceRead.model_validate(occurrence).model_dump()
+        data["participants"] = [
+            TeacherParticipantRead(
+                **ParticipantRead.model_validate(p).model_dump(), is_overdue=is_overdue,
+            )
+            for p, is_overdue in participant_pairs
+        ]
+        result.append(TeacherLessonOccurrenceRead(**data))
+    return result
 
 
 @router.post(
     "/lesson-occurrences/{occurrence_id}/attendance",
-    response_model=LessonOccurrenceRead,
+    response_model=ParticipantRead,
 )
 async def post_teacher_attendance(
     occurrence_id: int,
@@ -81,17 +90,18 @@ async def post_teacher_attendance(
     body: TeacherAttendanceActionRequest = Body(...),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> LessonOccurrenceRead:
+) -> ParticipantRead:
     _ensure_self_or_service(current_user, teacher_id)
     ip = request.client.host if request.client else None
-    occurrence = await lesson_occurrence_service.record_teacher_attendance(
+    participant = await lesson_occurrence_service.record_teacher_attendance(
         db,
         occurrence_id=occurrence_id,
         teacher_id=teacher_id,
+        student_id=body.student_id,
         action=body.action,
         ip=ip,
     )
-    return LessonOccurrenceRead.model_validate(occurrence)
+    return ParticipantRead.model_validate(participant)
 
 
 @router.post(
@@ -105,7 +115,7 @@ async def add_student_to_schedule(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> LessonOccurrenceRead:
     _ensure_self_or_service(current_user, body.teacher_id)
-    occurrence = await lesson_occurrence_service.create_ad_hoc_occurrence(
+    occurrence, _participant = await lesson_occurrence_service.create_ad_hoc_occurrence(
         db,
         student_id=body.student_id,
         teacher_id=body.teacher_id,
@@ -113,3 +123,22 @@ async def add_student_to_schedule(
         duration_minutes=body.duration_minutes,
     )
     return LessonOccurrenceRead.model_validate(occurrence)
+
+
+@router.post(
+    "/lesson-occurrences/{occurrence_id}/participants",
+    response_model=ParticipantRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_participant_to_occurrence(
+    occurrence_id: int,
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    body: AddParticipantRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> ParticipantRead:
+    _ensure_self_or_service(current_user, teacher_id)
+    participant = await lesson_occurrence_service.add_participant_to_occurrence(
+        db, occurrence_id=occurrence_id, student_id=body.student_id, teacher_id=teacher_id,
+    )
+    return ParticipantRead.model_validate(participant)

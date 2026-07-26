@@ -116,41 +116,49 @@
 
 Детали миграций (DDL, indexes, downgrade): [docs/specs/2026-04-27-tech-spec-Y1-auth-extension.md §4](../specs/2026-04-27-tech-spec-Y1-auth-extension.md)
 
-## Календарь LMS Фаза 1 (tsk-428, применено)
+## Календарь LMS (tsk-428/429/430/435, применено)
 
 Декомпозиция tsk-021 (блокер tsk-410 «Итоги занятия»), план —
 [docs/specs/2026-07-26-plan-kalendar-lms.md](../specs/2026-07-26-plan-kalendar-lms.md).
-4 новые таблицы, ноль изменений в существующих моделях:
+**tsk-435 (rework, применено 2026-07-26):** реальные данные (импорт Яндекс.Календаря
+оператора) показали, что живая практика ГРУППОВАЯ (2-11 учеников на одно время с
+одним преподавателем) — вразрез с исходным правилом «индивидуальное» из Фазы 1.
+`lesson_slot`/`lesson_occurrence` больше НЕ хранят `student_id`/`status` напрямую —
+участники и их явка вынесены в отдельные таблицы (M2M ниже). Breaking-миграция была
+безопасна: на момент rework все 4 таблицы Фазы 1 были пусты и на dev, и на prod.
 
 | Таблица | Назначение |
 |---|---|
 | `operating_hours` | Часы работы школы (общие на всю школу, не per-teacher): `weekday`(0-6)/`start_time`/`end_time`/`timezone` (DEFAULT `Europe/Moscow`) |
-| `lesson_slot` | Закреплённый повторяющийся слот пары ученик-преподаватель (индивидуальный, не групповой). `is_active` — деактивация вместо удаления |
-| `lesson_occurrence` | Конкретное занятие: из слота (генератор) или ad-hoc (`slot_id IS NULL`). `status`: scheduled/confirmed/declined/rescheduled/no_show/completed |
-| `attendance_event` | Append-only журнал действий по посещаемости (как `audit_event`); текущий статус — денормализованная проекция на `lesson_occurrence.status` |
+| `lesson_slot` | Закреплённый повторяющийся ГРУППОВОЙ слот преподавателя (`teacher_id`, `weekday`, `start_time`, `duration_minutes`, `timezone`, `is_active`) — без `student_id` |
+| `lesson_slot_student` | M2M участники слота: `slot_id`+`student_id`, `is_active` (мягкое удаление участника — сохраняет историю occurrence) |
+| `lesson_occurrence` | Конкретное занятие: из слота (генератор) или ad-hoc (`slot_id IS NULL`) — `teacher_id`/`scheduled_at`/`duration_minutes`, БЕЗ `student_id`/`status` |
+| `lesson_occurrence_participant` | Явка ОДНОГО участника ОДНОГО occurrence: `status` (scheduled/confirmed/declined/rescheduled/no_show/completed), `rescheduled_to_occurrence_id` — независимо от остальных участников той же группы |
+| `attendance_event` | Append-only журнал действий по посещаемости (как `audit_event`) — НЕ менялся при rework: уже ключуется по (`occurrence_id`, `actor_user_id`), подходит для группового участника без правок |
 
 **Конвенция weekday:** `0=понедельник .. 6=воскресенье` (Python `date.weekday()`/ISO — НЕ cron/JS, где 0=воскресенье).
 
-**Генератор occurrence:** `app/services/lesson_occurrence_generator_service.py::lesson_occurrence_generator_tick` — APScheduler-тик (интервал `LESSON_OCCURRENCE_CRON_INTERVAL_MIN`, default 60 мин), горизонт `LESSON_OCCURRENCE_HORIZON_DAYS` (default 14 дней), идемпотентен через `ON CONFLICT (slot_id, scheduled_at) WHERE slot_id IS NOT NULL DO NOTHING`, multi-worker-safe через `pg_try_advisory_xact_lock` (паттерн `escalation_service.py`, отдельный lock-ключ `0x4C534E43`).
+**Генератор occurrence:** `app/services/lesson_occurrence_generator_service.py::lesson_occurrence_generator_tick` — APScheduler-тик (интервал `LESSON_OCCURRENCE_CRON_INTERVAL_MIN`, default 60 мин), горизонт `LESSON_OCCURRENCE_HORIZON_DAYS` (default 14 дней). Создаёт occurrence (`ON CONFLICT (slot_id, scheduled_at) DO UPDATE` no-op — нужен `RETURNING id` даже на конфликте, чтобы синхронизировать участников) и СИНХРОНИЗИРУЕТ участников из активных `lesson_slot_student` в `lesson_occurrence_participant` (`ON CONFLICT (occurrence_id, student_id) DO NOTHING`) на каждый тик — новый ученик, добавленный в слот, получает участие во всех уже сгенерированных будущих occurrence сразу (без ожидания тика — `lesson_calendar_service.add_slot_participant` бэкфиллит явно), тик лишь подхватывает то, что бэкфилл мог пропустить. Multi-worker-safe через `pg_try_advisory_xact_lock` (паттерн `escalation_service.py`, отдельный lock-ключ `0x4C534E43`).
 
 **Таймзона:** MVP — захардкожен `Europe/Moscow` (без DST с 2014, UTC+3 круглый год). `users.timezone` не существует.
 
-**Фаза 2 (tsk-429, применено):** явка ученика + напоминания + авто-no_show.
-- `POST /lesson-occurrences/{id}/attendance` (`joined`→`confirmed`, `declined`→`declined`) — `require_authenticated`, ownership по `occurrence.student_id == current_user.id` (403 чужому, 404 несуществующему, 409 если статус уже закрыт: `no_show`/`completed`/`rescheduled`).
-- `GET /me/lesson-occurrences?from=&to=&limit=` — занятия текущего ученика.
-- Cron `lesson_attendance_cron_tick` (`app/services/lesson_attendance_cron_service.py`, интервал `LESSON_ATTENDANCE_CRON_INTERVAL_MIN` default 5 мин): reminder-ветка (`LESSON_REMINDER_LEAD_MINUTES` default 30, once-only через проверку существующей `notifications` строки) + no-show-ветка (`LESSON_NO_SHOW_THRESHOLD_MINUTES` default 10). **Важно:** no-show трогает только `status='scheduled'` — `confirmed` уже означает, что ученик подтвердил присутствие («Я на занятии»), и прошедшее время не должно задним числом это переписывать.
+**Фаза 2 (tsk-429, применено, per-участнику после tsk-435):** явка ученика + напоминания + авто-no_show.
+- `POST /lesson-occurrences/{id}/attendance` (`joined`→`confirmed`, `declined`→`declined`) — `require_authenticated`, ownership по наличию СВОЕЙ строки в `lesson_occurrence_participant` (403 если ученик не участник, 404 несуществующему occurrence, 409 если участие уже закрыто: `no_show`/`completed`/`rescheduled`).
+- `GET /me/lesson-occurrences?from=&to=&limit=` — занятия текущего ученика (свой статус участия, без списка остальных участников группы — приватность).
+- Cron `lesson_attendance_cron_tick` (`app/services/lesson_attendance_cron_service.py`, интервал `LESSON_ATTENDANCE_CRON_INTERVAL_MIN` default 5 мин): reminder-ветка (`LESSON_REMINDER_LEAD_MINUTES` default 30, once-only через проверку `notifications` строки по `occurrence_id` И `user_id` — важно оба, иначе в групповом occurrence напоминание первому участнику погасило бы напоминания остальным) + no-show-ветка (`LESSON_NO_SHOW_THRESHOLD_MINUTES` default 10, по каждому участнику независимо). **Важно:** no-show трогает только участника в `status='scheduled'` — `confirmed` уже означает, что ученик подтвердил присутствие («Я на занятии»), и прошедшее время не должно задним числом это переписывать.
 - Уведомления — существующий `Notifications` inbox (`kind='lesson_reminder'` ученику, `kind='lesson_missed'` ученику И преподавателю, `payload.role` различает адресата).
 
-**Фаза 3 (tsk-430, применено, разблокирует tsk-410):** панель преподавателя, перенос, ad-hoc отработка.
-- `GET /teacher/lesson-occurrences?teacher_id=&from=&to=` — занятия преподавателя с живым флагом `is_overdue` (не ждёт cron-тик; считается только для `status='scheduled'`).
-- `POST /teacher/lesson-occurrences/{id}/attendance` (`manual_present`→`confirmed`, `manual_absent`→`no_show`) — в отличие от студенческого эндпоинта, заблокирован только `rescheduled` (преподаватель обязан уметь исправить ошибочный `no_show`/`completed`).
-- `POST /teacher/lesson-occurrences/add-student` — создать ad-hoc occurrence вручную (`slot_id=NULL`).
-- `GET /lesson-occurrences/available-slots?occurrence_id=` — кандидаты для переноса в рамках `operating_hours` без коллизий (шаг перебора 30 минут).
-- `POST /lesson-occurrences/{id}/reschedule` — старый occurrence → `status=rescheduled` + `rescheduled_to_id`; создаётся новый (`slot_id=NULL`, тот же student/teacher/duration, `status=scheduled`). Без `attendance_event` — не действие явки, а смена состояния occurrence.
-- `POST /lesson-occurrences/ad-hoc` — ученик сам записывается на отработку.
-- Коллизии — `LessonOccurrenceRepository.has_overlap` (реальный диапазон времени `[scheduled_at, scheduled_at+duration)`, не weekday+time-of-day как у `lesson_slot`). `operating_hours` не настроены → проверка не блокирует (graceful default, см. `lesson_calendar_service.is_within_operating_hours`).
+**Фаза 3 (tsk-430, применено, разблокирует tsk-410; per-участнику после tsk-435):** панель преподавателя, перенос, ad-hoc отработка.
+- `GET /teacher/lesson-occurrences?teacher_id=&from=&to=` — занятия преподавателя, каждое с полным списком участников (`participants[]`) + живой флаг `is_overdue` НА КАЖДОГО (не ждёт cron-тик; истинен только для участника в `status='scheduled'`).
+- `POST /teacher/lesson-occurrences/{id}/attendance` (`{student_id, action}`, `manual_present`→`confirmed`, `manual_absent`→`no_show`) — правит ОДНОГО участника occurrence; заблокирован только `rescheduled` (преподаватель обязан уметь исправить ошибочный `no_show`/`completed`).
+- `POST /teacher/lesson-occurrences/add-student` — создать ad-hoc occurrence с одним начальным участником (`slot_id=NULL`).
+- `POST /teacher/lesson-occurrences/{id}/participants` — добавить ученика к УЖЕ существующему occurrence (подключить опоздавшего/новенького к идущей группе).
+- `GET /lesson-occurrences/available-slots?occurrence_id=` — кандидаты для переноса СВОЕГО участия в рамках `operating_hours`, без коллизий у ЭТОГО ученика (шаг перебора 30 минут).
+- `POST /lesson-occurrences/{id}/reschedule` — переносит только УЧАСТИЕ вызывающего ученика: старая строка `lesson_occurrence_participant` → `status=rescheduled` + `rescheduled_to_occurrence_id`; создаётся новый occurrence (`slot_id=NULL`, тот же teacher/duration) с новой строкой участника. Остальные участники старого группового occurrence НЕ затрагиваются. Без `attendance_event` для самого переноса — это состояние участника, не действие явки.
+- `POST /lesson-occurrences/ad-hoc` — ученик сам записывается на отработку (создаёт occurrence + одного участника — себя).
+- Коллизии — `LessonOccurrenceParticipantRepository.has_student_overlap` (реальный диапазон времени, ТОЛЬКО по ученику — преподаватель по design может вести несколько occurrence одновременно, это и есть группа). `LessonSlotRepository.has_overlap` (для создания слотов) остался teacher-only. `operating_hours` не настроены → проверка не блокирует (graceful default, см. `lesson_calendar_service.is_within_operating_hours`).
 
-Все занятия теперь: генератор (Фаза 1) → явка/no-show (Фаза 2) → панель преподавателя/перенос/ad-hoc (Фаза 3). Фаза 4 (TG-дублирование) — опциональна, не реализована.
+Все занятия теперь: генератор (Фаза 1, групповой) → явка/no-show по участнику (Фаза 2) → панель преподавателя/перенос/ad-hoc по участнику (Фаза 3). Фаза 4 (TG-дублирование) — опциональна, не реализована.
 
 ## Read-контракты
 

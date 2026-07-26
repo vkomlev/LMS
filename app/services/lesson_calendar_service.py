@@ -1,23 +1,29 @@
 """
-Сервис admin-CRUD Календаря LMS Фаза 1 (tsk-428): часы работы школы + слоты.
+Сервис admin-CRUD Календаря LMS (tsk-428/435): часы работы школы + групповые
+слоты + их участники.
 
 Бизнес-валидация (существование пользователей, ролей, пересечения слотов) —
 здесь; прямой доступ к БД — в `app.repos.lesson_calendar_repository`.
-Модель и границы MVP — docs/specs/2026-07-26-plan-kalendar-lms.md.
+Модель и границы — docs/specs/2026-07-26-plan-kalendar-lms.md (Фаза 1) +
+tsk-435 (rework на группы после встречи с реальными данными импорта).
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_slot import LessonSlot
+from app.models.lesson_slot_student import LessonSlotStudent
 from app.models.operating_hours import OperatingHours
 from app.repos.lesson_calendar_repository import (
+    LessonOccurrenceParticipantRepository,
+    LessonOccurrenceRepository,
     LessonSlotRepository,
+    LessonSlotStudentRepository,
     OperatingHoursRepository,
 )
 from app.services import roles_service
@@ -27,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 _operating_hours_repo = OperatingHoursRepository()
 _lesson_slot_repo = LessonSlotRepository()
+_slot_student_repo = LessonSlotStudentRepository()
+_occurrence_repo = LessonOccurrenceRepository()
+_participant_repo = LessonOccurrenceParticipantRepository()
 
 
 async def ensure_user_has_role(db: AsyncSession, user_id: int, expected_role: str) -> None:
@@ -80,41 +89,43 @@ async def upsert_operating_hours(
     return row
 
 
-# ─── Lesson Slot ────────────────────────────────────────────────────────────
+# ─── Lesson Slot (групповой, tsk-435) ───────────────────────────────────────
 
 
 async def create_lesson_slot(
     db: AsyncSession,
     *,
-    student_id: int,
     teacher_id: int,
     weekday: int,
     start_time: time,
     duration_minutes: int,
     timezone: str,
     created_by: Optional[int],
+    student_ids: Optional[list[int]] = None,
 ) -> LessonSlot:
-    await ensure_user_has_role(db, student_id, "student")
+    """Создать групповой слот преподавателя, опционально сразу с участниками
+    (удобно для разового импорта расписания)."""
     await ensure_user_has_role(db, teacher_id, "teacher")
 
     overlap = await _lesson_slot_repo.has_overlap(
         db,
         teacher_id=teacher_id,
-        student_id=student_id,
         weekday=weekday,
         start_time=start_time,
         duration_minutes=duration_minutes,
     )
     if overlap:
         raise DomainError(
-            "Слот пересекается по времени с существующим активным слотом "
-            "ученика или преподавателя в этот день недели",
+            "Слот пересекается по времени с другим активным слотом "
+            "этого преподавателя в этот день недели",
             status_code=409,
         )
 
+    for student_id in student_ids or []:
+        await ensure_user_has_role(db, student_id, "student")
+
     row = await _lesson_slot_repo.create(
         db,
-        student_id=student_id,
         teacher_id=teacher_id,
         weekday=weekday,
         start_time=start_time,
@@ -122,11 +133,18 @@ async def create_lesson_slot(
         timezone=timezone,
         created_by=created_by,
     )
+    await db.flush()
+
+    for student_id in student_ids or []:
+        await _slot_student_repo.create(
+            db, slot_id=row.id, student_id=student_id, added_by=created_by,
+        )
+
     await db.commit()
     await db.refresh(row)
     logger.info(
-        "lesson_slot создан: id=%s student=%s teacher=%s weekday=%s start=%s",
-        row.id, student_id, teacher_id, weekday, start_time,
+        "lesson_slot создан: id=%s teacher=%s weekday=%s start=%s participants=%s",
+        row.id, teacher_id, weekday, start_time, len(student_ids or []),
     )
     return row
 
@@ -135,9 +153,8 @@ async def list_lesson_slots(
     db: AsyncSession,
     *,
     teacher_id: Optional[int] = None,
-    student_id: Optional[int] = None,
 ) -> list[LessonSlot]:
-    return await _lesson_slot_repo.list_active(db, teacher_id=teacher_id, student_id=student_id)
+    return await _lesson_slot_repo.list_active(db, teacher_id=teacher_id)
 
 
 async def get_lesson_slot(db: AsyncSession, slot_id: int) -> LessonSlot:
@@ -145,6 +162,11 @@ async def get_lesson_slot(db: AsyncSession, slot_id: int) -> LessonSlot:
     if row is None:
         raise DomainError(f"Слот id={slot_id} не найден", status_code=404)
     return row
+
+
+async def list_slot_participants(db: AsyncSession, slot_id: int) -> list[LessonSlotStudent]:
+    await get_lesson_slot(db, slot_id)
+    return await _slot_student_repo.list_for_slot(db, slot_id)
 
 
 async def update_lesson_slot(
@@ -170,7 +192,6 @@ async def update_lesson_slot(
         overlap = await _lesson_slot_repo.has_overlap(
             db,
             teacher_id=row.teacher_id,
-            student_id=row.student_id,
             weekday=new_weekday,
             start_time=new_start_time,
             duration_minutes=new_duration,
@@ -178,7 +199,7 @@ async def update_lesson_slot(
         )
         if overlap:
             raise DomainError(
-                "Новое время слота пересекается с существующим активным слотом",
+                "Новое время слота пересекается с другим активным слотом",
                 status_code=409,
             )
 
@@ -201,6 +222,62 @@ async def update_lesson_slot(
 async def deactivate_lesson_slot(db: AsyncSession, slot_id: int) -> None:
     """Деактивация вместо удаления — сохраняет историю occurrence (см. спек)."""
     row = await get_lesson_slot(db, slot_id)
+    row.is_active = False
+    await db.commit()
+
+
+async def add_slot_participant(
+    db: AsyncSession, slot_id: int, student_id: int, *, added_by: Optional[int]
+) -> LessonSlotStudent:
+    """Добавить ученика в групповой слот. Бэкфиллит его участником во ВСЕ уже
+    сгенерированные БУДУЩИЕ occurrence этого слота — иначе он не увидит уже
+    существующие занятия до следующего тика генератора."""
+    slot = await get_lesson_slot(db, slot_id)
+    await ensure_user_has_role(db, student_id, "student")
+
+    existing = await _slot_student_repo.get(db, slot_id=slot_id, student_id=student_id)
+    if existing is not None and existing.is_active:
+        return existing
+
+    if existing is not None:
+        existing.is_active = True
+        row = existing
+    else:
+        row = await _slot_student_repo.create(
+            db, slot_id=slot_id, student_id=student_id, added_by=added_by,
+        )
+    await db.flush()
+
+    future_occurrences = await _occurrence_repo.list_for_teacher(
+        db, teacher_id=slot.teacher_id, from_dt=datetime.now(timezone.utc), limit=500,
+    )
+    for occurrence in future_occurrences:
+        if occurrence.slot_id != slot_id:
+            continue
+        already = await _participant_repo.get(
+            db, occurrence_id=occurrence.id, student_id=student_id
+        )
+        if already is None:
+            await _participant_repo.create(
+                db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
+            )
+
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: int) -> None:
+    """Убрать ученика из слота (мягко). Будущие occurrence, где у него ещё нет
+    собственного действия явки (status='scheduled'), удаляются как участник —
+    его личное решение (joined/declined и т.п.) не трогаем."""
+    await get_lesson_slot(db, slot_id)
+    row = await _slot_student_repo.get(db, slot_id=slot_id, student_id=student_id)
+    if row is None or not row.is_active:
+        raise DomainError(
+            f"Ученик id={student_id} не числится активным участником слота id={slot_id}",
+            status_code=404,
+        )
     row.is_active = False
     await db.commit()
 

@@ -1,17 +1,22 @@
-"""tsk-429 (Календарь LMS, Фаза 2): напоминания + авто-no_show.
+"""tsk-429/435 (Календарь LMS): напоминания + авто-no_show, по КАЖДОМУ
+участнику независимо (групповое occurrence может иметь несколько участников
+в разных статусах одновременно).
 
 Один APScheduler-тик с двумя SQL-ветками (не два отдельных lock-ключа —
 решение по простоте, зафиксировано в декомпозиции tsk-429):
 
-1. **Reminder** — occurrence в статусе `scheduled`, до начала осталось не
-   больше `LESSON_REMINDER_LEAD_MINUTES`, напоминание ещё не отправлено
-   (idempotency — по существующей `notifications` строке с этим
-   `occurrence_id` в payload, не по отдельному маркеру в БД).
-2. **No-show** — occurrence в статусе `scheduled` (ученик ещё НЕ ответил;
-   `confirmed`/`declined` уже разрешены явкой и не трогаются),
-   `scheduled_at + LESSON_NO_SHOW_THRESHOLD_MINUTES` уже в прошлом →
-   помечаем `no_show`, пишем `attendance_event(action='auto_no_show')`,
-   уведомляем ученика И преподавателя.
+1. **Reminder** — участник в статусе `scheduled`, до начала occurrence
+   осталось не больше `LESSON_REMINDER_LEAD_MINUTES`, напоминание ещё не
+   отправлено ЭТОМУ участнику (idempotency — по существующей
+   `notifications` строке с этим `occurrence_id` в payload И этим
+   `user_id` — важно оба условия, иначе в групповом occurrence напоминание
+   первому участнику погасило бы напоминания остальным).
+2. **No-show** — участник в статусе `scheduled` (не `confirmed` — уже
+   подтверждённая явка прошедшим временем не переписывается),
+   `occurrence.scheduled_at + LESSON_NO_SHOW_THRESHOLD_MINUTES` уже в
+   прошлом → помечаем этого участника `no_show`, пишем
+   `attendance_event(action='auto_no_show')`, уведомляем ученика И
+   преподавателя (по одному уведомлению на каждого пропустившего участника).
 
 Паттерн периодического тика и advisory-lock — тот же, что
 `lesson_occurrence_generator_service.py` (который сам скопирован с Y-6
@@ -49,13 +54,16 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
     res = await db.execute(
         text(
             """
-            SELECT lo.id, lo.student_id, lo.teacher_id, lo.scheduled_at
-            FROM lesson_occurrence lo
-            WHERE lo.status = 'scheduled'
+            SELECT lop.id AS participant_id, lop.student_id, lo.id AS occurrence_id,
+                   lo.teacher_id, lo.scheduled_at
+            FROM lesson_occurrence_participant lop
+            JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+            WHERE lop.status = 'scheduled'
               AND lo.scheduled_at BETWEEN :now AND :cutoff
               AND NOT EXISTS (
                   SELECT 1 FROM notifications n
                   WHERE n.kind = 'lesson_reminder'
+                    AND n.user_id = lop.student_id
                     AND (n.payload->>'occurrence_id')::int = lo.id
               )
             """
@@ -64,7 +72,7 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
     )
     rows = res.fetchall()
     sent = 0
-    for occurrence_id, student_id, teacher_id, scheduled_at in rows:
+    for _participant_id, student_id, occurrence_id, teacher_id, scheduled_at in rows:
         await inbox_service.create_for_user(
             db,
             user_id=int(student_id),
@@ -91,17 +99,19 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
     res = await db.execute(
         text(
             """
-            SELECT id, student_id, teacher_id, scheduled_at
-            FROM lesson_occurrence
-            WHERE status = 'scheduled'
-              AND scheduled_at + (:threshold || ' minutes')::interval < :now
+            SELECT lop.id AS participant_id, lop.student_id, lo.id AS occurrence_id,
+                   lo.teacher_id, lo.scheduled_at
+            FROM lesson_occurrence_participant lop
+            JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+            WHERE lop.status = 'scheduled'
+              AND lo.scheduled_at + (:threshold || ' minutes')::interval < :now
             """
         ),
         {"threshold": str(threshold_minutes), "now": now_utc},
     )
     rows = res.fetchall()
     marked = 0
-    for occurrence_id, student_id, teacher_id, scheduled_at in rows:
+    for participant_id, student_id, occurrence_id, teacher_id, scheduled_at in rows:
         await db.execute(
             text(
                 "INSERT INTO attendance_event (occurrence_id, actor_user_id, action) "
@@ -111,10 +121,10 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
         )
         await db.execute(
             text(
-                "UPDATE lesson_occurrence SET status = 'no_show', updated_at = now() "
-                "WHERE id = :oid"
+                "UPDATE lesson_occurrence_participant SET status = 'no_show', "
+                "updated_at = now() WHERE id = :pid"
             ),
-            {"oid": int(occurrence_id)},
+            {"pid": int(participant_id)},
         )
         payload = {
             "occurrence_id": int(occurrence_id),

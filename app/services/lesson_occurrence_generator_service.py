@@ -1,13 +1,14 @@
-"""tsk-428 (Календарь LMS, Фаза 1): генератор lesson_occurrence из активных
-lesson_slot на скользящий горизонт вперёд.
+"""tsk-428/435 (Календарь LMS): генератор lesson_occurrence из активных
+lesson_slot на скользящий горизонт вперёд + синк участников (tsk-435,
+групповые слоты).
 
 Паттерн периодического тика — по образцу `app/services/escalation_service.py`
 (Y-6 Stage 4): APScheduler + `pg_try_advisory_xact_lock`, multi-worker safe
 (gunicorn), non-blocking, освобождается автоматически при commit/rollback.
 
 ⚠️ Lock-ключ `_LESSON_CALENDAR_LOCK_KEY` не должен пересекаться с другими
-advisory-lock ключами проекта (на 2026-07-26 существует только один — Y-6
-`_ESCALATION_LOCK_KEY = 0x59365453`, "Y6TS").
+advisory-lock ключами проекта (Y-6 `0x59365453`, Фаза 2
+`_LESSON_ATTENDANCE_LOCK_KEY = 0x4C534E41`).
 
 Таймзона: Europe/Moscow не наблюдает переход на летнее время (Россия
 зафиксировала постоянное время в 2014); DST-fold/gap для этой зоны не
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.models.lesson_slot import LessonSlot
+from app.models.lesson_slot_student import LessonSlotStudent
 
 logger = logging.getLogger("app.lesson_calendar")
 
@@ -83,7 +85,7 @@ async def lesson_occurrence_generator_tick(
     settings = Settings()
     horizon_days = int(settings.lesson_occurrence_horizon_days)
 
-    summary = {"locked": False, "active_slots": 0, "generated": 0}
+    summary = {"locked": False, "active_slots": 0, "generated": 0, "participants_synced": 0}
 
     async with factory() as db:
         got_row = await db.execute(
@@ -102,42 +104,71 @@ async def lesson_occurrence_generator_tick(
         summary["active_slots"] = len(active_slots)
 
         for slot in active_slots:
+            participants_res = await db.execute(
+                select(LessonSlotStudent.student_id).where(
+                    LessonSlotStudent.slot_id == slot.id,
+                    LessonSlotStudent.is_active.is_(True),
+                )
+            )
+            participant_student_ids = [row[0] for row in participants_res.fetchall()]
+
             occurrence_datetimes = _iter_occurrence_datetimes(
                 slot, horizon_days=horizon_days, now_utc=now_utc
             )
             for scheduled_at in occurrence_datetimes:
+                # ON CONFLICT ... DO UPDATE (no-op) вместо DO NOTHING — нужен
+                # RETURNING id даже когда occurrence уже существует, чтобы
+                # синхронизировать участников независимо от того, был ли этот
+                # occurrence создан только что или раньше.
                 result = await db.execute(
                     text(
                         """
                         INSERT INTO lesson_occurrence
-                            (slot_id, student_id, teacher_id, scheduled_at,
-                             duration_minutes, status)
+                            (slot_id, teacher_id, scheduled_at, duration_minutes)
                         VALUES
-                            (:slot_id, :student_id, :teacher_id, :scheduled_at,
-                             :duration_minutes, 'scheduled')
+                            (:slot_id, :teacher_id, :scheduled_at, :duration_minutes)
                         ON CONFLICT (slot_id, scheduled_at)
                             WHERE slot_id IS NOT NULL
-                            DO NOTHING
-                        RETURNING id
+                            DO UPDATE SET duration_minutes = EXCLUDED.duration_minutes
+                        RETURNING id, (xmax = 0) AS was_inserted
                         """
                     ),
                     {
                         "slot_id": slot.id,
-                        "student_id": slot.student_id,
                         "teacher_id": slot.teacher_id,
                         "scheduled_at": scheduled_at,
                         "duration_minutes": slot.duration_minutes,
                     },
                 )
-                if result.fetchone() is not None:
+                row = result.fetchone()
+                occurrence_id, was_inserted = row[0], bool(row[1])
+                if was_inserted:
                     summary["generated"] += 1
+
+                for student_id in participant_student_ids:
+                    p_result = await db.execute(
+                        text(
+                            """
+                            INSERT INTO lesson_occurrence_participant
+                                (occurrence_id, student_id, status)
+                            VALUES (:oid, :sid, 'scheduled')
+                            ON CONFLICT (occurrence_id, student_id) DO NOTHING
+                            RETURNING id
+                            """
+                        ),
+                        {"oid": occurrence_id, "sid": student_id},
+                    )
+                    if p_result.fetchone() is not None:
+                        summary["participants_synced"] += 1
 
         await db.commit()
         logger.info(
-            "lesson_occurrence_generator_tick done at=%s active_slots=%s generated=%s",
+            "lesson_occurrence_generator_tick done at=%s active_slots=%s generated=%s "
+            "participants_synced=%s",
             now_utc.isoformat(),
             summary["active_slots"],
             summary["generated"],
+            summary["participants_synced"],
         )
 
     return summary

@@ -1,12 +1,15 @@
-"""tsk-429 (Календарь LMS, Фаза 2): явка ученика + reminder/no-show cron.
+"""tsk-429/435 (Календарь LMS): явка ученика + reminder/no-show cron, по участнику.
 
 Покрывает:
 - `POST /lesson-occurrences/{id}/attendance`: 200 joined/declined, 403 IDOR
-  (чужой ученик), 404 (не существует), 409 (уже закрытый статус).
-- `GET /me/lesson-occurrences`: скоуп по текущему ученику, `from`/`to` фильтры.
-- `lesson_attendance_cron_tick`: reminder once-only (не дублирует при повторном
-  тике), no_show только для `status='scheduled'` (не трогает `confirmed`),
-  создаёт уведомления студенту И учителю.
+  (ученик не входит в участники), 404 (occurrence не существует), 409 (уже
+  закрытый статус участия).
+- `GET /me/lesson-occurrences`: скоуп по текущему ученику (через участие),
+  `from`/`to` фильтры.
+- `lesson_attendance_cron_tick`: reminder once-only на КАЖДОГО участника
+  отдельно (не дублирует и не гасит соседей в групповом occurrence),
+  no_show только для участника в `status='scheduled'` (не трогает
+  `confirmed`), создаёт уведомления студенту И учителю.
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from app.models.lesson_occurrence import LessonOccurrence
+from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.models.users import Users
 from app.services.auth.session_service import create_session
 from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
@@ -52,23 +56,25 @@ async def _create_user(db, *, role: str | None = None, prefix: str = "tsk429") -
     return u.id
 
 
-async def _create_occurrence(
+async def _create_occurrence_with_participant(
     db, *, student_id: int, teacher_id: int, scheduled_at: datetime,
     status: str = "scheduled", duration_minutes: int = 60,
-) -> int:
+) -> tuple[int, int]:
+    """Возвращает (occurrence_id, participant_id)."""
     occ = LessonOccurrence(
-        slot_id=None,
-        student_id=student_id,
-        teacher_id=teacher_id,
-        scheduled_at=scheduled_at,
+        slot_id=None, teacher_id=teacher_id, scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
-        status=status,
     )
     db.add(occ)
     await db.flush()
-    occ_id = occ.id
+    participant = LessonOccurrenceParticipant(
+        occurrence_id=occ.id, student_id=student_id, status=status,
+    )
+    db.add(participant)
+    await db.flush()
+    occ_id, participant_id = occ.id, participant.id
     await db.commit()
-    return occ_id
+    return occ_id, participant_id
 
 
 # ============================== Attendance API ==============================
@@ -80,7 +86,7 @@ async def test_attendance_joined_confirms_and_logs_event(db, client):
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
     student_token, _, _ = await create_session(db, user_id=student_id)
 
-    occ_id = await _create_occurrence(
+    occ_id, _pid = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),
     )
@@ -91,7 +97,7 @@ async def test_attendance_joined_confirms_and_logs_event(db, client):
         headers={"Authorization": f"Bearer {student_token}"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "confirmed"
+    assert resp.json()["my_status"] == "confirmed"
 
     row = (
         await db.execute(
@@ -113,7 +119,7 @@ async def test_attendance_declined_sets_status(db, client):
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
     student_token, _, _ = await create_session(db, user_id=student_id)
 
-    occ_id = await _create_occurrence(
+    occ_id, _pid = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) + timedelta(hours=2),
     )
@@ -124,18 +130,18 @@ async def test_attendance_declined_sets_status(db, client):
         headers={"Authorization": f"Bearer {student_token}"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "declined"
+    assert resp.json()["my_status"] == "declined"
 
 
 @pytest.mark.asyncio
-async def test_attendance_403_for_other_students_occurrence(db, client):
-    """IDOR: student B не может подтвердить/отклонить занятие student A."""
+async def test_attendance_403_for_non_participant(db, client):
+    """IDOR: student B не входит в участники occurrence student A."""
     student_a = await _create_user(db, role="student", prefix="tsk429-stuA")
     student_b = await _create_user(db, role="student", prefix="tsk429-stuB")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
     token_b, _, _ = await create_session(db, user_id=student_b)
 
-    occ_id = await _create_occurrence(
+    occ_id, _pid = await _create_occurrence_with_participant(
         db, student_id=student_a, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),
     )
@@ -167,7 +173,7 @@ async def test_attendance_409_when_already_closed(db, client):
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
     token, _, _ = await create_session(db, user_id=student_id)
 
-    occ_id = await _create_occurrence(
+    occ_id, _pid = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) - timedelta(hours=1),
         status="no_show",
@@ -182,6 +188,44 @@ async def test_attendance_409_when_already_closed(db, client):
 
 
 @pytest.mark.asyncio
+async def test_group_occurrence_attendance_independent_per_participant(db, client):
+    """Групповое occurrence: один участник confirmed не влияет на статус другого."""
+    student_a = await _create_user(db, role="student", prefix="tsk429-stuA")
+    student_b = await _create_user(db, role="student", prefix="tsk429-stuB")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
+    token_a, _, _ = await create_session(db, user_id=student_a)
+
+    occ_id, _pid_a = await _create_occurrence_with_participant(
+        db, student_id=student_a, teacher_id=teacher_id,
+        scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),
+    )
+    participant_b = LessonOccurrenceParticipant(
+        occurrence_id=occ_id, student_id=student_b, status="scheduled",
+    )
+    db.add(participant_b)
+    await db.commit()
+
+    resp = await client.post(
+        f"/api/v1/lesson-occurrences/{occ_id}/attendance",
+        json={"action": "joined"},
+        headers={"Authorization": f"Bearer {token_a}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["my_status"] == "confirmed"
+
+    b_status = (
+        await db.execute(
+            text(
+                "SELECT status FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :oid AND student_id = :sid"
+            ),
+            {"oid": occ_id, "sid": student_b},
+        )
+    ).scalar()
+    assert b_status == "scheduled", "Участник B не должен измениться от действия участника A"
+
+
+@pytest.mark.asyncio
 async def test_list_my_occurrences_scoped_and_filtered(db, client):
     student_id = await _create_user(db, role="student", prefix="tsk429-stud")
     other_student_id = await _create_user(db, role="student", prefix="tsk429-other")
@@ -189,13 +233,13 @@ async def test_list_my_occurrences_scoped_and_filtered(db, client):
     token, _, _ = await create_session(db, user_id=student_id)
 
     now = datetime.now(timezone.utc)
-    mine_soon = await _create_occurrence(
+    mine_soon, _ = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id, scheduled_at=now + timedelta(days=1)
     )
-    mine_far = await _create_occurrence(
+    mine_far, _ = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id, scheduled_at=now + timedelta(days=10)
     )
-    _not_mine = await _create_occurrence(
+    _not_mine, _ = await _create_occurrence_with_participant(
         db, student_id=other_student_id, teacher_id=teacher_id, scheduled_at=now + timedelta(days=1)
     )
 
@@ -225,7 +269,7 @@ async def test_reminder_sent_once_not_twice(db, db_session_factory):
     student_id = await _create_user(db, role="student", prefix="tsk429-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
 
-    occ_id = await _create_occurrence(
+    occ_id, _pid = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) + timedelta(minutes=10),
         status="scheduled",
@@ -262,11 +306,40 @@ async def test_reminder_sent_once_not_twice(db, db_session_factory):
 
 
 @pytest.mark.asyncio
+async def test_reminder_sent_to_each_group_participant_independently(db, db_session_factory):
+    student_a = await _create_user(db, role="student", prefix="tsk429-stuA")
+    student_b = await _create_user(db, role="student", prefix="tsk429-stuB")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
+
+    occ_id, _pid_a = await _create_occurrence_with_participant(
+        db, student_id=student_a, teacher_id=teacher_id,
+        scheduled_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=student_b, status="scheduled"))
+    await db.commit()
+
+    await lesson_attendance_cron_tick(db_session_factory)
+
+    for sid in (student_a, student_b):
+        count = (
+            await db.execute(
+                text(
+                    "SELECT COUNT(*) FROM notifications "
+                    "WHERE kind = 'lesson_reminder' AND user_id = :uid "
+                    "AND (payload->>'occurrence_id')::int = :oid"
+                ),
+                {"uid": sid, "oid": occ_id},
+            )
+        ).scalar()
+        assert count == 1, f"Участник {sid} должен получить своё напоминание"
+
+
+@pytest.mark.asyncio
 async def test_no_show_marks_scheduled_past_threshold(db, db_session_factory):
     student_id = await _create_user(db, role="student", prefix="tsk429-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
 
-    occ_id = await _create_occurrence(
+    occ_id, participant_id = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) - timedelta(minutes=20),
         status="scheduled",
@@ -278,7 +351,8 @@ async def test_no_show_marks_scheduled_past_threshold(db, db_session_factory):
 
     row = (
         await db.execute(
-            text("SELECT status FROM lesson_occurrence WHERE id = :oid"), {"oid": occ_id}
+            text("SELECT status FROM lesson_occurrence_participant WHERE id = :pid"),
+            {"pid": participant_id},
         )
     ).fetchone()
     assert row[0] == "no_show"
@@ -307,13 +381,13 @@ async def test_no_show_marks_scheduled_past_threshold(db, db_session_factory):
 
 
 @pytest.mark.asyncio
-async def test_no_show_does_not_touch_confirmed_occurrence(db, db_session_factory):
+async def test_no_show_does_not_touch_confirmed_participant(db, db_session_factory):
     """confirmed = ученик уже нажал «Я на занятии» — прошедшее время не должно
     задним числом переписать это в no_show."""
     student_id = await _create_user(db, role="student", prefix="tsk429-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk429-teach")
 
-    occ_id = await _create_occurrence(
+    _occ_id, participant_id = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(timezone.utc) - timedelta(minutes=20),
         status="confirmed",
@@ -323,7 +397,8 @@ async def test_no_show_does_not_touch_confirmed_occurrence(db, db_session_factor
 
     row = (
         await db.execute(
-            text("SELECT status FROM lesson_occurrence WHERE id = :oid"), {"oid": occ_id}
+            text("SELECT status FROM lesson_occurrence_participant WHERE id = :pid"),
+            {"pid": participant_id},
         )
     ).fetchone()
     assert row[0] == "confirmed"
