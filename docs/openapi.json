@@ -20061,6 +20061,699 @@
         }
       }
     },
+    "/api/v1/lesson-occurrences/available-slots": {
+      "get": {
+        "tags": [
+          "lesson_occurrences"
+        ],
+        "summary": "Get Available Slots",
+        "operationId": "get_available_slots_api_v1_lesson_occurrences_available_slots_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Занятие, которое переносится",
+              "title": "Occurrence Id"
+            },
+            "description": "Занятие, которое переносится"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AvailableSlotOption"
+                  },
+                  "title": "Response Get Available Slots Api V1 Lesson Occurrences Available Slots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lesson-occurrences/{occurrence_id}/reschedule": {
+      "post": {
+        "tags": [
+          "lesson_occurrences"
+        ],
+        "summary": "Post Reschedule",
+        "operationId": "post_reschedule_api_v1_lesson_occurrences__occurrence_id__reschedule_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RescheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonOccurrenceRead"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Занятие принадлежит другому ученику"
+          },
+          "404": {
+            "description": "Занятие не найдено"
+          },
+          "409": {
+            "description": "Занятие уже закрыто или новое время занято"
+          },
+          "422": {
+            "description": "Новое время вне часов работы школы"
+          }
+        }
+      }
+    },
+    "/api/v1/lesson-occurrences/ad-hoc": {
+      "post": {
+        "tags": [
+          "lesson_occurrences"
+        ],
+        "summary": "Post Ad Hoc",
+        "operationId": "post_ad_hoc_api_v1_lesson_occurrences_ad_hoc_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdHocRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonOccurrenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/lesson-occurrences": {
+      "get": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "List Teacher Occurrences",
+        "operationId": "list_teacher_occurrences_api_v1_teacher_lesson_occurrences_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 300,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TeacherLessonOccurrenceRead"
+                  },
+                  "title": "Response List Teacher Occurrences Api V1 Teacher Lesson Occurrences Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/lesson-occurrences/{occurrence_id}/attendance": {
+      "post": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "Post Teacher Attendance",
+        "operationId": "post_teacher_attendance_api_v1_teacher_lesson_occurrences__occurrence_id__attendance_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherAttendanceActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonOccurrenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/lesson-occurrences/add-student": {
+      "post": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "Add Student To Schedule",
+        "operationId": "add_student_to_schedule_api_v1_teacher_lesson_occurrences_add_student_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddStudentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonOccurrenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -20562,6 +21255,70 @@
         ],
         "title": "ActivityFeedResponse",
         "description": "Лента активности, топ-N по убыванию времени."
+      },
+      "AdHocRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At",
+            "description": "Дата и время занятия (UTC)"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "maximum": 480.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "scheduled_at",
+          "duration_minutes"
+        ],
+        "title": "AdHocRequest",
+        "description": "Ученик сам записывается на отработку вне регулярного расписания."
+      },
+      "AddStudentRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя (должен совпадать с вызывающим)"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id",
+            "description": "ID ученика"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At",
+            "description": "Дата и время занятия (UTC)"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "maximum": 480.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Duration Minutes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "student_id",
+          "scheduled_at",
+          "duration_minutes"
+        ],
+        "title": "AddStudentRequest",
+        "description": "Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."
       },
       "AssignmentRuleUpsertItem": {
         "properties": {
@@ -21544,6 +22301,20 @@
           "refresh_token"
         ],
         "title": "AuthTokenResponse"
+      },
+      "AvailableSlotOption": {
+        "properties": {
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "scheduled_at"
+        ],
+        "title": "AvailableSlotOption"
       },
       "BatchCheckItemResult": {
         "properties": {
@@ -28241,6 +29012,21 @@
         ],
         "title": "RequestHelpResponse"
       },
+      "RescheduleRequest": {
+        "properties": {
+          "new_scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "New Scheduled At",
+            "description": "Новое время занятия (UTC)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "new_scheduled_at"
+        ],
+        "title": "RescheduleRequest"
+      },
       "ReviewClaimItem": {
         "properties": {
           "id": {
@@ -32610,6 +33396,24 @@
         "title": "TasksMetaResponse",
         "description": "Справочная информация для импорта/редактирования задач.\n\nВозвращает:\n  - список уровней сложности;\n  - список курсов;\n  - список тегов (пока пустой, под расширение);\n  - список типов задач;\n  - версию формата метаданных."
       },
+      "TeacherAttendanceActionRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "manual_present",
+              "manual_absent"
+            ],
+            "title": "Action",
+            "description": "Преподаватель вручную отмечает присутствие/отсутствие ученика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "TeacherAttendanceActionRequest"
+      },
       "TeacherCourseCreate": {
         "properties": {
           "teacher_id": {
@@ -32696,6 +33500,87 @@
             "teacher_id": 16
           }
         ]
+      },
+      "TeacherLessonOccurrenceRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "slot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "scheduled | confirmed | declined | rescheduled | no_show | completed"
+          },
+          "rescheduled_to_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rescheduled To Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "description": "status='scheduled' и порог 'не пришёл' уже истёк — считается живым запросом, не ждёт следующего cron-тика"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "teacher_id",
+          "scheduled_at",
+          "duration_minutes",
+          "status",
+          "created_at",
+          "updated_at",
+          "is_overdue"
+        ],
+        "title": "TeacherLessonOccurrenceRead",
+        "description": "Занятие в панели преподавателя + живой флаг опоздания."
       },
       "TeacherWorkloadResponse": {
         "properties": {

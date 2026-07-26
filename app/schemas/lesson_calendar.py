@@ -121,3 +121,48 @@ class AttendanceActionRequest(BaseModel):
     action: Literal["joined", "declined"] = Field(
         ..., description="Ученик подтверждает явку или отказывается"
     )
+
+
+# ─── Фаза 3 (tsk-430): панель преподавателя, перенос, ad-hoc ────────────────
+
+
+class TeacherLessonOccurrenceRead(LessonOccurrenceRead):
+    """Занятие в панели преподавателя + живой флаг опоздания."""
+
+    is_overdue: bool = Field(
+        description=(
+            "status='scheduled' и порог 'не пришёл' уже истёк — считается "
+            "живым запросом, не ждёт следующего cron-тика"
+        )
+    )
+
+
+class TeacherAttendanceActionRequest(BaseModel):
+    action: Literal["manual_present", "manual_absent"] = Field(
+        ..., description="Преподаватель вручную отмечает присутствие/отсутствие ученика"
+    )
+
+
+class AddStudentRequest(BaseModel):
+    """Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."""
+
+    teacher_id: int = Field(..., description="ID преподавателя (должен совпадать с вызывающим)")
+    student_id: int = Field(..., description="ID ученика")
+    scheduled_at: datetime = Field(..., description="Дата и время занятия (UTC)")
+    duration_minutes: int = Field(..., gt=0, le=480)
+
+
+class AdHocRequest(BaseModel):
+    """Ученик сам записывается на отработку вне регулярного расписания."""
+
+    teacher_id: int = Field(..., description="ID преподавателя")
+    scheduled_at: datetime = Field(..., description="Дата и время занятия (UTC)")
+    duration_minutes: int = Field(..., gt=0, le=480)
+
+
+class RescheduleRequest(BaseModel):
+    new_scheduled_at: datetime = Field(..., description="Новое время занятия (UTC)")
+
+
+class AvailableSlotOption(BaseModel):
+    scheduled_at: datetime

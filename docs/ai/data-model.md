@@ -141,7 +141,16 @@
 - Cron `lesson_attendance_cron_tick` (`app/services/lesson_attendance_cron_service.py`, интервал `LESSON_ATTENDANCE_CRON_INTERVAL_MIN` default 5 мин): reminder-ветка (`LESSON_REMINDER_LEAD_MINUTES` default 30, once-only через проверку существующей `notifications` строки) + no-show-ветка (`LESSON_NO_SHOW_THRESHOLD_MINUTES` default 10). **Важно:** no-show трогает только `status='scheduled'` — `confirmed` уже означает, что ученик подтвердил присутствие («Я на занятии»), и прошедшее время не должно задним числом это переписывать.
 - Уведомления — существующий `Notifications` inbox (`kind='lesson_reminder'` ученику, `kind='lesson_missed'` ученику И преподавателю, `payload.role` различает адресата).
 
-**Границы:** панель преподавателя, ручное добавление ученика, перенос/отработка — Фаза 3 (`tsk-430`), ещё не реализована.
+**Фаза 3 (tsk-430, применено, разблокирует tsk-410):** панель преподавателя, перенос, ad-hoc отработка.
+- `GET /teacher/lesson-occurrences?teacher_id=&from=&to=` — занятия преподавателя с живым флагом `is_overdue` (не ждёт cron-тик; считается только для `status='scheduled'`).
+- `POST /teacher/lesson-occurrences/{id}/attendance` (`manual_present`→`confirmed`, `manual_absent`→`no_show`) — в отличие от студенческого эндпоинта, заблокирован только `rescheduled` (преподаватель обязан уметь исправить ошибочный `no_show`/`completed`).
+- `POST /teacher/lesson-occurrences/add-student` — создать ad-hoc occurrence вручную (`slot_id=NULL`).
+- `GET /lesson-occurrences/available-slots?occurrence_id=` — кандидаты для переноса в рамках `operating_hours` без коллизий (шаг перебора 30 минут).
+- `POST /lesson-occurrences/{id}/reschedule` — старый occurrence → `status=rescheduled` + `rescheduled_to_id`; создаётся новый (`slot_id=NULL`, тот же student/teacher/duration, `status=scheduled`). Без `attendance_event` — не действие явки, а смена состояния occurrence.
+- `POST /lesson-occurrences/ad-hoc` — ученик сам записывается на отработку.
+- Коллизии — `LessonOccurrenceRepository.has_overlap` (реальный диапазон времени `[scheduled_at, scheduled_at+duration)`, не weekday+time-of-day как у `lesson_slot`). `operating_hours` не настроены → проверка не блокирует (graceful default, см. `lesson_calendar_service.is_within_operating_hours`).
+
+Все занятия теперь: генератор (Фаза 1) → явка/no-show (Фаза 2) → панель преподавателя/перенос/ad-hoc (Фаза 3). Фаза 4 (TG-дублирование) — опциональна, не реализована.
 
 ## Read-контракты
 

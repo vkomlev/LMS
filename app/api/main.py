@@ -397,6 +397,10 @@ app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)
 from app.api.v1.lesson_occurrences import router as lesson_occurrences_router
 app.include_router(lesson_occurrences_router, prefix=API_PREFIX)
 
+# tsk-430 (Календарь LMS Фаза 3): панель преподавателя (attendance, add-student)
+from app.api.v1.teacher_lesson_occurrences import router as teacher_lesson_occurrences_router
+app.include_router(teacher_lesson_occurrences_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 

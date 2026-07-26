@@ -7,7 +7,7 @@ lesson_slot, lesson_occurrence.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import select
@@ -128,3 +128,66 @@ class LessonOccurrenceRepository:
         stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
         res = await db.execute(stmt)
         return list(res.scalars().all())
+
+    async def list_for_teacher(
+        self,
+        db: AsyncSession,
+        *,
+        teacher_id: int,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> list[LessonOccurrence]:
+        stmt = select(LessonOccurrence).where(LessonOccurrence.teacher_id == teacher_id)
+        if from_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
+        if to_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at <= to_dt)
+        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        res = await db.execute(stmt)
+        return list(res.scalars().all())
+
+    async def create(self, db: AsyncSession, **fields) -> LessonOccurrence:
+        row = LessonOccurrence(**fields)
+        db.add(row)
+        await db.flush()
+        return row
+
+    async def has_overlap(
+        self,
+        db: AsyncSession,
+        *,
+        teacher_id: int,
+        student_id: int,
+        scheduled_at: datetime,
+        duration_minutes: int,
+        exclude_occurrence_id: Optional[int] = None,
+    ) -> bool:
+        """Пересечение по РЕАЛЬНОМУ диапазону времени (не weekday+time-of-day,
+        как у `LessonSlotRepository.has_overlap`) — для ad-hoc/reschedule.
+        Занятые статусы: всё, кроме `declined`/`rescheduled` (уже не актуальны)."""
+        new_start = scheduled_at
+        new_end = scheduled_at + timedelta(minutes=duration_minutes)
+        # Грубая граница по дате — не полный скан таблицы (перф), сама
+        # проверка пересечения — точная, ниже.
+        window_start = new_start - timedelta(days=1)
+        window_end = new_end + timedelta(days=1)
+
+        stmt = select(LessonOccurrence).where(
+            LessonOccurrence.status.notin_(["declined", "rescheduled"]),
+            LessonOccurrence.scheduled_at >= window_start,
+            LessonOccurrence.scheduled_at <= window_end,
+            (LessonOccurrence.teacher_id == teacher_id)
+            | (LessonOccurrence.student_id == student_id),
+        )
+        if exclude_occurrence_id is not None:
+            stmt = stmt.where(LessonOccurrence.id != exclude_occurrence_id)
+        res = await db.execute(stmt)
+        existing = res.scalars().all()
+
+        for row in existing:
+            row_start = row.scheduled_at
+            row_end = row_start + timedelta(minutes=row.duration_minutes)
+            if new_start < row_end and row_start < new_end:
+                return True
+        return False

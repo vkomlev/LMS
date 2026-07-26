@@ -8,8 +8,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import time
+from datetime import datetime, time, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +29,7 @@ _operating_hours_repo = OperatingHoursRepository()
 _lesson_slot_repo = LessonSlotRepository()
 
 
-async def _ensure_user_has_role(db: AsyncSession, user_id: int, expected_role: str) -> None:
+async def ensure_user_has_role(db: AsyncSession, user_id: int, expected_role: str) -> None:
     """404, если пользователя нет; 422, если у него нет ожидаемой роли."""
     from app.models.users import Users  # noqa: PLC0415 — избегаем circular import
 
@@ -93,8 +94,8 @@ async def create_lesson_slot(
     timezone: str,
     created_by: Optional[int],
 ) -> LessonSlot:
-    await _ensure_user_has_role(db, student_id, "student")
-    await _ensure_user_has_role(db, teacher_id, "teacher")
+    await ensure_user_has_role(db, student_id, "student")
+    await ensure_user_has_role(db, teacher_id, "teacher")
 
     overlap = await _lesson_slot_repo.has_overlap(
         db,
@@ -202,3 +203,39 @@ async def deactivate_lesson_slot(db: AsyncSession, slot_id: int) -> None:
     row = await get_lesson_slot(db, slot_id)
     row.is_active = False
     await db.commit()
+
+
+# ─── Operating Hours check (используется Фазой 3: ad-hoc/reschedule) ────────
+
+
+async def is_within_operating_hours(
+    db: AsyncSession, *, scheduled_at: datetime, duration_minutes: int
+) -> Optional[bool]:
+    """Попадает ли занятие [scheduled_at, scheduled_at+duration) в часы
+    работы школы этого дня недели.
+
+    :returns: True/False — если для этого дня недели есть настроенная запись
+        `operating_hours`; ``None`` — если `operating_hours` вообще не
+        настроены (ни одной строки в таблице) — в этом случае вызывающий
+        код НЕ должен блокировать операцию (осознанный graceful default:
+        MVP/dev без сконфигурированных часов работы не должен запирать
+        ad-hoc/reschedule).
+    """
+    rows = await _operating_hours_repo.list_all(db)
+    if not rows:
+        return None
+
+    for row in rows:
+        tz = ZoneInfo(row.timezone)
+        local_dt = scheduled_at.astimezone(tz)
+        if local_dt.weekday() != row.weekday:
+            continue
+        local_time = local_dt.time()
+        local_end_dt = local_dt + timedelta(minutes=duration_minutes)
+        if local_end_dt.date() != local_dt.date():
+            # Занятие переходит через полночь операционного дня — вне часов
+            # работы (MVP не поддерживает ночные занятия).
+            continue
+        if row.start_time <= local_time and local_end_dt.time() <= row.end_time:
+            return True
+    return False
