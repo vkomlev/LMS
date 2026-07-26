@@ -1,15 +1,19 @@
 """
-Репозитории Календаря LMS Фаза 1 (tsk-428): operating_hours + lesson_slot.
+Репозитории Календаря LMS Фаза 1-2 (tsk-428/tsk-429): operating_hours,
+lesson_slot, lesson_occurrence.
 
-Прямой доступ к БД, без бизнес-валидации — она в `lesson_calendar_service`.
+Прямой доступ к БД, без бизнес-валидации — она в `lesson_calendar_service` /
+`lesson_attendance_service`.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_slot import LessonSlot
 from app.models.operating_hours import OperatingHours
 
@@ -99,3 +103,28 @@ class LessonSlotRepository:
             if new_start < row_end and row_start < new_end:
                 return True
         return False
+
+
+class LessonOccurrenceRepository:
+    """Чтение конкретных занятий (create — только генератор/ad-hoc сервис)."""
+
+    async def get_by_id(self, db: AsyncSession, occurrence_id: int) -> Optional[LessonOccurrence]:
+        return await db.get(LessonOccurrence, occurrence_id)
+
+    async def list_for_student(
+        self,
+        db: AsyncSession,
+        *,
+        student_id: int,
+        from_dt: Optional[datetime] = None,
+        to_dt: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> list[LessonOccurrence]:
+        stmt = select(LessonOccurrence).where(LessonOccurrence.student_id == student_id)
+        if from_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
+        if to_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at <= to_dt)
+        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        res = await db.execute(stmt)
+        return list(res.scalars().all())

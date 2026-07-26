@@ -1,5 +1,6 @@
 """
-Схемы Календаря LMS Фаза 1 (tsk-428): часы работы школы + слоты расписания.
+Схемы Календаря LMS Фаза 1-2 (tsk-428/tsk-429): часы работы школы, слоты
+расписания, occurrence + явка ученика.
 
 Модель данных и границы MVP — docs/specs/2026-07-26-plan-kalendar-lms.md.
 Конвенция weekday: 0=понедельник .. 6=воскресенье (Python `date.weekday()`).
@@ -7,7 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -94,3 +95,29 @@ class LessonSlotRead(BaseModel):
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
+
+
+# ─── Lesson Occurrence + явка (tsk-429, Фаза 2) ─────────────────────────────
+
+
+class LessonOccurrenceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    slot_id: Optional[int] = None
+    student_id: int
+    teacher_id: int
+    scheduled_at: datetime
+    duration_minutes: int
+    status: str = Field(
+        description="scheduled | confirmed | declined | rescheduled | no_show | completed"
+    )
+    rescheduled_to_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AttendanceActionRequest(BaseModel):
+    action: Literal["joined", "declined"] = Field(
+        ..., description="Ученик подтверждает явку или отказывается"
+    )

@@ -135,7 +135,13 @@
 
 **Таймзона:** MVP — захардкожен `Europe/Moscow` (без DST с 2014, UTC+3 круглый год). `users.timezone` не существует.
 
-**Границы Фазы 1:** только модель данных + admin CRUD расписания + генератор. Явка ученика, напоминания, no-show, панель преподавателя — Фазы 2-3 (`tsk-429`, `tsk-430`), ещё не реализованы.
+**Фаза 2 (tsk-429, применено):** явка ученика + напоминания + авто-no_show.
+- `POST /lesson-occurrences/{id}/attendance` (`joined`→`confirmed`, `declined`→`declined`) — `require_authenticated`, ownership по `occurrence.student_id == current_user.id` (403 чужому, 404 несуществующему, 409 если статус уже закрыт: `no_show`/`completed`/`rescheduled`).
+- `GET /me/lesson-occurrences?from=&to=&limit=` — занятия текущего ученика.
+- Cron `lesson_attendance_cron_tick` (`app/services/lesson_attendance_cron_service.py`, интервал `LESSON_ATTENDANCE_CRON_INTERVAL_MIN` default 5 мин): reminder-ветка (`LESSON_REMINDER_LEAD_MINUTES` default 30, once-only через проверку существующей `notifications` строки) + no-show-ветка (`LESSON_NO_SHOW_THRESHOLD_MINUTES` default 10). **Важно:** no-show трогает только `status='scheduled'` — `confirmed` уже означает, что ученик подтвердил присутствие («Я на занятии»), и прошедшее время не должно задним числом это переписывать.
+- Уведомления — существующий `Notifications` inbox (`kind='lesson_reminder'` ученику, `kind='lesson_missed'` ученику И преподавателю, `payload.role` различает адресата).
+
+**Границы:** панель преподавателя, ручное добавление ученика, перенос/отработка — Фаза 3 (`tsk-430`), ещё не реализована.
 
 ## Read-контракты
 

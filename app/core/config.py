@@ -179,3 +179,18 @@ class Settings:
         self.lesson_occurrence_cron_interval_min: int = int(
             os.getenv("LESSON_OCCURRENCE_CRON_INTERVAL_MIN", "60")
         )
+
+        # tsk-429 (Календарь LMS, Фаза 2): за сколько минут до occurrence
+        # слать напоминание ученику (once per occurrence).
+        self.lesson_reminder_lead_minutes: int = int(
+            os.getenv("LESSON_REMINDER_LEAD_MINUTES", "30")
+        )
+        # Порог «не пришёл»: минут после scheduled_at без joined/manual_present.
+        self.lesson_no_show_threshold_minutes: int = int(
+            os.getenv("LESSON_NO_SHOW_THRESHOLD_MINUTES", "10")
+        )
+        # Интервал APScheduler-тика reminder+no_show (чаще генератора —
+        # десятиминутный порог no_show требует более мелкой гранулярности).
+        self.lesson_attendance_cron_interval_min: int = int(
+            os.getenv("LESSON_ATTENDANCE_CRON_INTERVAL_MIN", "5")
+        )

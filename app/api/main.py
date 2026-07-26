@@ -393,6 +393,10 @@ app.include_router(methodist_escalations_router, prefix=API_PREFIX)
 from app.api.v1.lesson_calendar_admin import router as lesson_calendar_admin_router
 app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)
 
+# tsk-429 (Календарь LMS Фаза 2): явка ученика (attendance, /me/lesson-occurrences)
+from app.api.v1.lesson_occurrences import router as lesson_occurrences_router
+app.include_router(lesson_occurrences_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 
@@ -437,3 +441,23 @@ async def _stop_lesson_occurrence_generator_scheduler() -> None:
         _lesson_calendar_service.stop_scheduler()
     except Exception:
         logger.exception("tsk-428: failed to stop lesson_occurrence_generator scheduler")
+
+
+# tsk-429 (Календарь LMS Фаза 2): APScheduler для reminder + auto-no_show.
+from app.services import lesson_attendance_cron_service as _lesson_attendance_cron_service
+
+
+@app.on_event("startup")
+async def _start_lesson_attendance_scheduler() -> None:
+    try:
+        _lesson_attendance_cron_service.start_scheduler()
+    except Exception:
+        logger.exception("tsk-429: failed to start lesson_attendance scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_lesson_attendance_scheduler() -> None:
+    try:
+        _lesson_attendance_cron_service.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-429: failed to stop lesson_attendance scheduler")

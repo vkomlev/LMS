@@ -31,6 +31,9 @@ TEACHER_PROGRESS_REVOKED = "teacher.progress.revoked"
 # tsk-335 event types (выдача попыток без ручного ввода числа + explicit-путь)
 TEACHER_LIMIT_OVERRIDE = "teacher.limit.overridden"
 
+# tsk-429 event types (Календарь LMS Фаза 2: явка ученика на занятие)
+STUDENT_LESSON_ATTENDANCE_RECORDED = "student.lesson_attendance.recorded"
+
 
 async def log_event(
     db: AsyncSession,
