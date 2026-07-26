@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
 from sqlalchemy import (
-    Integer, String, Text, Boolean, DateTime,
+    Integer, String, Text, Boolean, DateTime, Numeric,
     Enum, ForeignKeyConstraint, Index, PrimaryKeyConstraint, text
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -59,6 +59,14 @@ class Courses(Base):
         server_default=text("false"),
         nullable=False,
         comment="Доступен ли курс гостям без регистрации (Phase Y-5)",
+    )
+    # tsk-182: только ветка poligon — реальный LMS курсы напрямую не продаёт,
+    # колонка добавлена миграцией 20260726_010000_tsk182_poligon_tables
+    # только для БД poligon_dev/test/stage (checkout/промокод).
+    price: Mapped[Optional[float]] = mapped_column(
+        Numeric(10, 2),
+        nullable=True,
+        comment="Полигон tsk-182: цена курса для checkout (только poligon_* БД)",
     )
 
     # Родители курса (многие-ко-многим через course_parents)
