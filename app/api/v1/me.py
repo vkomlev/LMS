@@ -48,6 +48,8 @@ from app.schemas.me import (
     SyllabusStatesResponse,
 )
 from app.schemas.task_history import TaskHistoryResponse
+from app.schemas.users import UserRead
+from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services import me_service, roles_service, task_history_service
 from app.services.tasks_acl_service import assert_task_access
 from app.services.audit_service import log_event
@@ -70,6 +72,7 @@ from app.services.rate_limit_service import get_redis, is_rate_limited
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/me", tags=["me"])
 _settings = Settings()
+_student_teacher_links_service = StudentTeacherLinksService()
 
 
 # ── GET /me ─────────────────────────────────────────────────────────────────
@@ -179,6 +182,25 @@ async def list_courses(
         )
         for it in items
     ]
+
+
+# ── GET /me/teachers ─────────────────────────────────────────────────────────
+
+@router.get("/teachers", response_model=list[UserRead])
+async def list_my_teachers(
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> list[UserRead]:
+    """Преподаватели, привязанные к текущему пользователю (`student_teacher_links`).
+
+    tsk-436: cookie-авторизованная обёртка над `GET /users/{id}/teachers`
+    (тот эндпоинт защищён сервисным API-ключом для ТГ-ботов — браузеру
+    его не вызвать). Нужна ученику без закреплённого слота («плавающий»,
+    напр. tsk-021), чтобы выбрать преподавателя для ad-hoc записи
+    (`POST /lesson-occurrences/ad-hoc`) без предшествующего occurrence.
+    """
+    teachers = await _student_teacher_links_service.list_teachers(db, current_user.id)
+    return [UserRead.model_validate(t) for t in teachers]
 
 
 # ── GET /me/courses/{course_id}/syllabus-states (Phase Y-6.2) ───────────────

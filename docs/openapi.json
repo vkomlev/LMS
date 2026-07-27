@@ -17344,6 +17344,100 @@
         }
       }
     },
+    "/api/v1/me/teachers": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "List My Teachers",
+        "description": "Преподаватели, привязанные к текущему пользователю (`student_teacher_links`).\n\ntsk-436: cookie-авторизованная обёртка над `GET /users/{id}/teachers`\n(тот эндпоинт защищён сервисным API-ключом для ТГ-ботов — браузеру\nего не вызвать). Нужна ученику без закреплённого слота («плавающий»,\nнапр. tsk-021), чтобы выбрать преподавателя для ad-hoc записи\n(`POST /lesson-occurrences/ad-hoc`) без предшествующего occurrence.",
+        "operationId": "list_my_teachers_api_v1_me_teachers_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/UserRead"
+                  },
+                  "title": "Response List My Teachers Api V1 Me Teachers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/courses/{course_id}/syllabus-states": {
       "get": {
         "tags": [
