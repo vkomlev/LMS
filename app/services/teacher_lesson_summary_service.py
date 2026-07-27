@@ -151,10 +151,12 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
 async def _load_homework_window(
     db: AsyncSession, *, student_id: int, window_from: Optional[datetime], window_to: datetime,
 ) -> dict[str, int]:
-    """Метрики ДЗ за окно: сколько заданий сдано верно, сколько из них с
-    первого раза (нет более раннего результата по этому заданию у ученика —
-    ``count_retry`` не годится, см. docstring модуля), сколько заявок помощи
-    создано."""
+    """Метрики ДЗ за окно: сколько заданий сдано верно + сколько материалов
+    изучено (``completed`` — сумма обоих, оператор явно попросил не сводить
+    ДЗ только к заданиям), сколько заданий сдано с первого раза (нет более
+    раннего результата по этому заданию у ученика — ``count_retry`` не
+    годится, см. docstring модуля; у материалов понятия "с первого раза" нет,
+    метрика их не считает), сколько заявок помощи создано."""
     completed_row = (
         await db.execute(
             text(
@@ -199,8 +201,32 @@ async def _load_homework_window(
         )
     ).scalar()
 
+    # Материалы (видео/чтение — без понятия "верно"/"с первого раза") тоже
+    # часть ДЗ между занятиями, не только задания — учтены в `completed`
+    # отдельным запросом, т.к. `first_success` CTE выше специфичен для
+    # task_results (JOIN attempts, is_correct).
+    materials_completed = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) AS cnt FROM student_material_progress "
+                "WHERE student_id = :student_id AND status = 'completed' "
+                "  AND completed_at IS NOT NULL "
+                "  AND source IS DISTINCT FROM :manual_source "
+                "  AND completed_at >= COALESCE(:window_from, '-infinity'::timestamptz) "
+                "  AND completed_at <= :window_to"
+            ),
+            {
+                "student_id": student_id,
+                "manual_source": _MANUAL_SOURCE,
+                "window_from": window_from,
+                "window_to": window_to,
+            },
+        )
+    ).scalar()
+
+    tasks_completed = int(completed_row["completed"] or 0) if completed_row else 0
     return {
-        "completed": int(completed_row["completed"] or 0) if completed_row else 0,
+        "completed": tasks_completed + int(materials_completed or 0),
         "first_try": int(completed_row["first_try"] or 0) if completed_row else 0,
         "help_requested": int(help_count or 0),
     }

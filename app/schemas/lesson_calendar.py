@@ -269,8 +269,12 @@ class TeacherSummaryHomework(BaseModel):
     """Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence
     этого ученика до момента запроса)."""
 
-    completed: int = Field(..., description="Заданий сдано верно в окне")
-    first_try: int = Field(..., description="Из них верно с первой попытки")
+    completed: int = Field(
+        ..., description="Заданий сдано верно + материалов изучено в окне (сумма обоих)"
+    )
+    first_try: int = Field(
+        ..., description="Из заданий (не материалов) — сколько верно с первой попытки"
+    )
     help_requested: int = Field(..., description="Заявок на помощь создано в окне")
 
 

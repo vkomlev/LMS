@@ -35100,12 +35100,12 @@
           "completed": {
             "type": "integer",
             "title": "Completed",
-            "description": "Заданий сдано верно в окне"
+            "description": "Заданий сдано верно + материалов изучено в окне (сумма обоих)"
           },
           "first_try": {
             "type": "integer",
             "title": "First Try",
-            "description": "Из них верно с первой попытки"
+            "description": "Из заданий (не материалов) — сколько верно с первой попытки"
           },
           "help_requested": {
             "type": "integer",

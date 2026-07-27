@@ -10,6 +10,9 @@ test_activity_feed_tsk408.py.
 - Метрики ДЗ за окно "между занятиями": выполнено/с первого раза (по факту
   отсутствия более раннего результата, НЕ по count_retry — он всегда 0 в
   реальном потоке сдачи ответа), запросил помощь.
+- "Выполнено" учитывает и задания, и изученные материалы (оператор явно
+  попросил не сводить ДЗ только к заданиям) — материалы в "с первого раза"
+  не входят (у них нет понятия правильности).
 - Заблокированные лимитом попыток задания + % прогресса курса (снепшот,
   переиспользует get_student_progress).
 - Открытая заявка помощи — с текстом, не только счётчик.
@@ -154,6 +157,32 @@ async def _insert_task_result(
             "u": student_id, "t": task_id, "a": attempt_id,
             "sc": 10 if is_correct else 0, "ok": is_correct, "ts": submitted_at,
         },
+    )
+    await db.commit()
+
+
+async def _new_material(db, *, course_id: int, title: str) -> int:
+    return (
+        await db.execute(
+            text(
+                "INSERT INTO materials (course_id, title, type, content, order_position) "
+                "VALUES (:c, :t, 'text', CAST(:content AS jsonb), 1) RETURNING id"
+            ),
+            {"c": course_id, "t": title, "content": json.dumps({"body": "x"})},
+        )
+    ).scalar()
+
+
+async def _insert_material_progress(
+    db, *, student_id: int, material_id: int, completed_at: datetime,
+) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO student_material_progress "
+            "  (student_id, material_id, status, completed_at, source) "
+            "VALUES (:s, :m, 'completed', :ts, 'system')"
+        ),
+        {"s": student_id, "m": material_id, "ts": completed_at},
     )
     await db.commit()
 
@@ -305,6 +334,43 @@ async def test_summary_completed_and_first_try_from_prior_occurrence_window(db, 
     assert p["homework"]["first_try"] == 1
     assert p["last_activity"]["kind"] == "task"
     assert p["days_since_last_activity"] == 0
+
+
+@pytest.mark.asyncio
+async def test_summary_completed_counts_materials_alongside_tasks(db, client):
+    """Изученный материал в окне тоже "выполнено" — не только задания.
+    В "с первого раза" материалы не входят (нет понятия правильности)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    task_id = await _new_task(db, course_id=course_id, uid="a")
+    material_id = await _new_material(db, course_id=course_id, title=f"{_TAG}-material")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(hours=1),
+    )
+
+    await _insert_task_result(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(hours=2),
+    )
+    await _insert_material_progress(
+        db, student_id=student_id, material_id=material_id, completed_at=now - timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    assert p["homework"]["completed"] == 2
+    assert p["homework"]["first_try"] == 1
+    assert p["last_activity"]["kind"] == "material"
 
 
 @pytest.mark.asyncio
