@@ -152,7 +152,11 @@ class UsersRepository(BaseRepository[Users]):
         if not q:
             return []
 
-        stmt = select(Users).where(Users.full_name.ilike(f"%{q}%", escape="\\")).order_by(Users.full_name.asc())
+        stmt = (
+            select(Users)
+            .where(Users.full_name.ilike(f"%{q}%", escape="\\"), Users.is_active.is_(True))
+            .order_by(Users.full_name.asc())
+        )
 
         if role_name:
             role_names = _role_aliases(role_name)

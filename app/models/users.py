@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
 from sqlalchemy import (
-    BigInteger, Integer, String, Text, DateTime,
+    BigInteger, Boolean, ForeignKey, Integer, String, Text, DateTime,
     UniqueConstraint, PrimaryKeyConstraint, text
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -48,6 +48,14 @@ class Users(Base):
         comment="Дата регистрации"
     )
     tg_id: Mapped[Optional[int]] = mapped_column(BigInteger, comment="Telegram ID")
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"),
+        comment="False — учётка деактивирована (обычно после слияния с другой)",
+    )
+    merged_into_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True,
+        comment="Если учётка слита в другую — id учётки-получателя",
+    )
 
     role: Mapped[List["Roles"]] = relationship(
         "Roles", secondary=t_user_roles, back_populates="user"
