@@ -20676,6 +20676,216 @@
         }
       }
     },
+    "/api/v1/me/lesson-occurrences/bookable": {
+      "get": {
+        "tags": [
+          "lesson_occurrences"
+        ],
+        "summary": "List Bookable Occurrences",
+        "description": "Ближайшие уже существующие занятия преподавателей ученика, куда можно\nприсоединиться (tsk-021/443) — вместо свободного ввода даты/времени и\nсоздания отдельного ad-hoc occurrence на то же время.",
+        "operationId": "list_bookable_occurrences_api_v1_me_lesson_occurrences_bookable_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 30,
+              "minimum": 1,
+              "default": 10,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookableOccurrenceRead"
+                  },
+                  "title": "Response List Bookable Occurrences Api V1 Me Lesson Occurrences Bookable Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lesson-occurrences/{occurrence_id}/join": {
+      "post": {
+        "tags": [
+          "lesson_occurrences"
+        ],
+        "summary": "Post Join",
+        "operationId": "post_join_api_v1_lesson_occurrences__occurrence_id__join_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyLessonOccurrenceRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Занятие не найдено"
+          },
+          "409": {
+            "description": "Занятие уже прошло или пересекается с другим активным занятием"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lesson-occurrences/available-slots": {
       "get": {
         "tags": [
@@ -23192,6 +23402,38 @@
           "file"
         ],
         "title": "Body_upload_material_file_api_v1_materials_upload_post"
+      },
+      "BookableOccurrenceRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Scheduled At"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "teacher_names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Teacher Names"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "scheduled_at",
+          "duration_minutes"
+        ],
+        "title": "BookableOccurrenceRead",
+        "description": "Уже существующее будущее занятие, к которому ученик может\nприсоединиться (tsk-021/443) — вместо создания отдельного ad-hoc\noccurrence на то же время. Без списка остальных участников (приватность,\nтот же принцип, что `MyLessonOccurrenceRead`)."
       },
       "CheckFeedback": {
         "properties": {

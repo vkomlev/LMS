@@ -29,11 +29,15 @@ from app.schemas.lesson_calendar import (
     AdHocRequest,
     AttendanceActionRequest,
     AvailableSlotOption,
+    BookableOccurrenceRead,
     LessonOccurrenceRead,
     MyLessonOccurrenceRead,
     RescheduleRequest,
 )
 from app.services import lesson_attendance_service, lesson_occurrence_service
+from app.services.student_teacher_links_service import StudentTeacherLinksService
+
+_student_teacher_links_service = StudentTeacherLinksService()
 
 router = APIRouter(tags=["lesson_occurrences"])
 
@@ -88,6 +92,48 @@ async def list_my_occurrences(
         limit=limit,
     )
     return [_to_my_occurrence_read(p, o) for p, o in pairs]
+
+
+@router.get("/me/lesson-occurrences/bookable", response_model=list[BookableOccurrenceRead])
+async def list_bookable_occurrences(
+    limit: int = Query(default=10, ge=1, le=30),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_authenticated),
+) -> list[BookableOccurrenceRead]:
+    """Ближайшие уже существующие занятия преподавателей ученика, куда можно
+    присоединиться (tsk-021/443) — вместо свободного ввода даты/времени и
+    создания отдельного ad-hoc occurrence на то же время."""
+    teachers = await _student_teacher_links_service.list_teachers(db, current_user.id)
+    pairs = await lesson_occurrence_service.list_bookable_occurrences_for_student(
+        db, student_id=current_user.id, teacher_ids=[t.id for t in teachers], limit=limit,
+    )
+    return [
+        BookableOccurrenceRead(
+            id=o.id, scheduled_at=o.scheduled_at, duration_minutes=o.duration_minutes,
+            teacher_names=names,
+        )
+        for o, names in pairs
+    ]
+
+
+@router.post(
+    "/lesson-occurrences/{occurrence_id}/join",
+    response_model=MyLessonOccurrenceRead,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "Занятие не найдено"},
+        409: {"description": "Занятие уже прошло или пересекается с другим активным занятием"},
+    },
+)
+async def post_join(
+    occurrence_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_authenticated),
+) -> MyLessonOccurrenceRead:
+    occurrence, participant = await lesson_occurrence_service.join_occurrence_as_student(
+        db, occurrence_id=occurrence_id, student_id=current_user.id,
+    )
+    return _to_my_occurrence_read(participant, occurrence)
 
 
 @router.get("/lesson-occurrences/available-slots", response_model=list[AvailableSlotOption])

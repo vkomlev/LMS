@@ -212,3 +212,94 @@ class RescheduleRequest(BaseModel):
 
 class AvailableSlotOption(BaseModel):
     scheduled_at: datetime
+
+
+class BookableOccurrenceRead(BaseModel):
+    """Уже существующее будущее занятие, к которому ученик может
+    присоединиться (tsk-021/443) — вместо создания отдельного ad-hoc
+    occurrence на то же время. Без списка остальных участников (приватность,
+    тот же принцип, что `MyLessonOccurrenceRead`)."""
+
+    id: int
+    scheduled_at: datetime
+    duration_minutes: int
+    teacher_names: list[str] = Field(default_factory=list)
+
+
+# ─── Сводки преподавателя (tsk-022 «до занятия» / tsk-410 «после занятия») ──
+#
+# Один общий ответ для двух точек входа фронта (решение оператора 2026-07-27):
+# разворачиваемый блок в карточке occurrence ДО занятия и кнопка «Подвести
+# итоги» ПОСЛЕ — одна и та же сводка, чтобы формат/источники не разошлись.
+
+
+class TeacherSummaryActivity(BaseModel):
+    """Последнее выполненное задание/материал ученика (не ручной зачёт)."""
+
+    kind: Literal["task", "material"]
+    title: str
+    course_title: Optional[str] = None
+    timestamp: datetime
+
+
+class TeacherSummaryHelpRequest(BaseModel):
+    """Открытая заявка на помощь — с текстом, не только счётчик."""
+
+    request_id: int
+    task_title: Optional[str] = None
+    message: Optional[str] = None
+    created_at: datetime
+
+
+class TeacherSummaryBlockedTask(BaseModel):
+    """Задание, заблокированное лимитом попыток (текущий снепшот)."""
+
+    task_id: int
+    title: str
+    course_title: Optional[str] = None
+
+
+class TeacherSummaryCourseProgress(BaseModel):
+    course_id: int
+    title: str
+    percent_complete: int = Field(..., ge=0, le=100)
+
+
+class TeacherSummaryHomework(BaseModel):
+    """Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence
+    этого ученика до момента запроса)."""
+
+    completed: int = Field(..., description="Заданий сдано верно в окне")
+    first_try: int = Field(..., description="Из них верно с первой попытки")
+    help_requested: int = Field(..., description="Заявок на помощь создано в окне")
+
+
+class TeacherSummaryParticipant(BaseModel):
+    student_id: int
+    full_name: Optional[str] = None
+    tg_id: Optional[int] = None
+    status: str = Field(
+        description="scheduled | confirmed | declined | rescheduled | no_show | completed"
+    )
+    is_overdue: bool
+    last_activity: Optional[TeacherSummaryActivity] = None
+    days_since_last_activity: Optional[int] = None
+    window_from: Optional[datetime] = Field(
+        default=None,
+        description="Начало окна ДЗ для ЭТОГО ученика — конец его предыдущего occurrence "
+        "(у каждого участника группы своя история занятий); None — предыдущего не было",
+    )
+    homework: TeacherSummaryHomework
+    blocked_tasks: list[TeacherSummaryBlockedTask] = Field(default_factory=list)
+    open_help_requests: list[TeacherSummaryHelpRequest] = Field(default_factory=list)
+    missed_streak: int = Field(
+        description="Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
+    )
+    course_progress: list[TeacherSummaryCourseProgress] = Field(default_factory=list)
+
+
+class TeacherLessonOccurrenceSummaryRead(BaseModel):
+    occurrence_id: int
+    is_ad_hoc: bool = Field(description="Occurrence вне регулярного расписания (slot_id IS NULL)")
+    window_to: datetime = Field(description="Конец окна ДЗ — момент запроса сводки, общий для всех")
+    participants: list[TeacherSummaryParticipant] = Field(default_factory=list)

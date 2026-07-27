@@ -291,6 +291,92 @@ async def add_participant_to_occurrence(
     return participant
 
 
+# ─── Bookable occurrences + join (студент сам, tsk-021/443) ────────────────
+
+
+async def list_bookable_occurrences_for_student(
+    db: AsyncSession, *, student_id: int, teacher_ids: list[int], limit: int = 10,
+) -> list[tuple[LessonOccurrence, list[str]]]:
+    """Ближайшие БУДУЩИЕ occurrence преподавателей ученика, где он ЕЩЁ НЕ
+    участник — кандидаты для присоединения, а не свободный ввод даты
+    (реальный инцидент: `POST /lesson-occurrences/ad-hoc` создавал ВТОРОЕ
+    отдельное occurrence на то же время, что уже существующий слот —
+    оператор: "под него не делается отдельный слот, он присоединяется к
+    существующему"). Возвращает пары (occurrence, имена преподавателей).
+    """
+    if not teacher_ids:
+        return []
+
+    now_utc = datetime.now(timezone.utc)
+    candidates = await _occurrence_repo.list_for_teachers(
+        db, teacher_ids=teacher_ids, from_dt=now_utc, limit=limit * 3,
+    )
+    if not candidates:
+        return []
+
+    already_pairs = await _participant_repo.list_for_student(
+        db, student_id=student_id, from_dt=now_utc, limit=500,
+    )
+    already_occurrence_ids = {o.id for _p, o in already_pairs}
+
+    filtered = [o for o in candidates if o.id not in already_occurrence_ids][:limit]
+    if not filtered:
+        return []
+
+    names_by_occurrence = await _occurrence_repo.list_teacher_names_for_occurrences(
+        db, [o.id for o in filtered],
+    )
+    return [(o, names_by_occurrence.get(o.id, [])) for o in filtered]
+
+
+async def join_occurrence_as_student(
+    db: AsyncSession, *, occurrence_id: int, student_id: int,
+) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
+    """Ученик сам присоединяется к УЖЕ существующему occurrence (обычно —
+    выбранному из `list_bookable_occurrences_for_student`), а не создаёт
+    отдельный ad-hoc. Идемпотентно: уже участвующий ученик получает свою
+    текущую строку без ошибки.
+
+    :raises DomainError: 404 — occurrence не найден; 409 — уже прошёл, или
+        пересекается с другим активным занятием этого ученика.
+    """
+    occurrence = await _occurrence_repo.get_by_id(db, occurrence_id)
+    if occurrence is None:
+        raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
+
+    existing = await _participant_repo.get(
+        db, occurrence_id=occurrence_id, student_id=student_id
+    )
+    if existing is not None:
+        return occurrence, existing
+
+    if occurrence.scheduled_at <= datetime.now(timezone.utc):
+        raise DomainError("Занятие уже началось или прошло", status_code=409)
+
+    overlap = await _participant_repo.has_student_overlap(
+        db,
+        student_id=student_id,
+        scheduled_at=occurrence.scheduled_at,
+        duration_minutes=occurrence.duration_minutes,
+        exclude_occurrence_id=occurrence.id,
+    )
+    if overlap:
+        raise DomainError(
+            "Время пересекается с другим активным занятием этого ученика",
+            status_code=409,
+        )
+
+    participant = await _participant_repo.create(
+        db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
+    )
+    await db.commit()
+    await db.refresh(participant)
+    logger.info(
+        "lesson_occurrence join: occurrence=%s student=%s", occurrence.id, student_id,
+    )
+    return occurrence, participant
+
+
 # ─── Reschedule + available slots (студент, по своему участию) ─────────────
 
 

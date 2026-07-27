@@ -303,6 +303,57 @@ class LessonOccurrenceRepository:
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
+    async def list_for_teachers(
+        self,
+        db: AsyncSession,
+        *,
+        teacher_ids: list[int],
+        from_dt: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> list[LessonOccurrence]:
+        """Как `list_for_teacher`, но для НЕСКОЛЬКИХ преподавателей сразу
+        (объединение, не пересечение) — используется для подбора ближайших
+        занятий, к которым ученик может присоединиться (tsk-021/443:
+        `list_bookable_occurrences_for_student`)."""
+        if not teacher_ids:
+            return []
+        stmt = select(LessonOccurrence).where(
+            or_(
+                LessonOccurrence.teacher_id.in_(teacher_ids),
+                LessonOccurrence.id.in_(
+                    select(LessonOccurrenceTeacher.occurrence_id).where(
+                        LessonOccurrenceTeacher.teacher_id.in_(teacher_ids)
+                    )
+                ),
+            )
+        )
+        if from_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
+        stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        res = await db.execute(stmt)
+        return list(res.scalars().all())
+
+    async def list_teacher_names_for_occurrences(
+        self, db: AsyncSession, occurrence_ids: list[int],
+    ) -> dict[int, list[str]]:
+        """Имена преподавателей по каждому occurrence (через M2M) — для
+        подписи в списке "ближайшие занятия" на стороне ученика."""
+        if not occurrence_ids:
+            return {}
+        from app.models.users import Users  # noqa: PLC0415 — избегаем circular import
+
+        rows = (
+            await db.execute(
+                select(LessonOccurrenceTeacher.occurrence_id, Users.full_name)
+                .join(Users, Users.id == LessonOccurrenceTeacher.teacher_id)
+                .where(LessonOccurrenceTeacher.occurrence_id.in_(occurrence_ids))
+            )
+        ).all()
+        names_by_occurrence: dict[int, list[str]] = {}
+        for occurrence_id, full_name in rows:
+            names_by_occurrence.setdefault(occurrence_id, []).append(full_name or "")
+        return names_by_occurrence
+
     async def list_for_slot(
         self, db: AsyncSession, slot_id: int, *, from_dt: Optional[datetime] = None,
     ) -> list[LessonOccurrence]:
