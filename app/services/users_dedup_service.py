@@ -10,11 +10,23 @@ magic_link_service.py, vk_oauth_service.py). Люди вводят ФИО по-�
 вводят фамилию не полностью. Отчество в сравнении не участвует вовсе —
 по решению оператора.
 
-Оператор явно выбрал (AskUserQuestion): это НЕ auto-link и НЕ "это вы?"-диалог
-в UI — только список кандидатов на дубль для ручного разбора оператором/
-методистом (см. `scripts/find_duplicate_candidates.py`, read-only). Слияние
-самих учёток — отдельный write-скрипт `scripts/merge_users.py` по протоколу
-/db-check, не автоматика.
+Оператор явно выбрал (AskUserQuestion): это НЕ auto-link на самой
+регистрации и НЕ "это вы?"-диалог в UI. Дальше — по итогам первого реального
+запуска (2026-07-27) оператор попросил автослияние для пар с высокой
+уверенностью (порог 0.85-0.9), остальное — на ручной разбор.
+
+`select_auto_merge_pairs` — обязательная защита, не опция: автослияние
+разрешено ТОЛЬКО когда ровно у одной стороны пары есть identity_link
+(email/tg/vk), и эта пара — единственная в обе стороны (у "плавающего" нет
+других кандидатов и у "зарегистрированного" нет других кандидатов). Без
+этой защиты первый же реальный прогон на проде авто-слил бы Комлев Виктор
+id=142 (уже входил) + Виктор Комлев id=2 (уже входил) — score=1.00, но это
+два РЕАЛЬНЫХ разных аккаунта оператора, не дубль-ошибка регистрации: обе
+стороны уже имеют identity — сигнал "кто из двух — 'настоящий'" отсутствует,
+такие пары остаются на ручной разбор независимо от score. Слияние
+выполняет `scripts/merge_users.py` (write, протокол /db-check) — вручную
+по кандидату из списка или автоматически из
+`scripts/tsk442_auto_merge_duplicates.py`.
 
 Fuzzy-сравнение — stdlib `difflib.SequenceMatcher` (без сторонних
 зависимостей, в проекте таких нет): сортировка токенов делает сравнение
@@ -24,6 +36,7 @@ Fuzzy-сравнение — stdlib `difflib.SequenceMatcher` (без сторо
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
@@ -38,6 +51,7 @@ from app.models.users import Users
 _PATRONYMIC_SUFFIXES = ("ович", "евич", "ич", "овна", "евна", "ична", "инична")
 
 DEFAULT_MATCH_THRESHOLD = 0.72
+DEFAULT_AUTO_MERGE_THRESHOLD = 0.9
 
 
 def normalize_name_tokens(full_name: str | None) -> list[str]:
@@ -114,3 +128,62 @@ async def find_duplicate_candidates(
                 )
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates
+
+
+@dataclass
+class AutoMergePair:
+    source_id: int  # "плавающий" (без identity) — деактивируется
+    source_name: str
+    target_id: int  # уже входил(а) под своей identity — получатель данных
+    target_name: str
+    score: float
+
+
+def select_auto_merge_pairs(
+    candidates: list[DuplicateCandidate], *, auto_threshold: float = DEFAULT_AUTO_MERGE_THRESHOLD,
+) -> tuple[list[AutoMergePair], list[DuplicateCandidate]]:
+    """Разделить кандидатов на (автослияние, ручной разбор).
+
+    В автослияние попадает пара, только если ОДНОВРЕМЕННО:
+    1. `score >= auto_threshold`;
+    2. ровно у ОДНОЙ стороны есть identity_link (иначе непонятно, кто из
+       двух "настоящий" — см. предупреждение в докстринге модуля про
+       Комлев/Виктор Комлев id=142/id=2);
+    3. пара единственная в обе стороны — у "плавающего" нет других
+       кандидатов-совпадений и у "зарегистрированного" нет других
+       кандидатов-совпадений (иначе неоднозначно, с кем именно сливать).
+
+    Всё остальное (включая сами нарушения условий 2-3) уходит в manual —
+    той же структурой `DuplicateCandidate`, что и раньше.
+    """
+    eligible: list[tuple[int, int, DuplicateCandidate]] = []  # (floating_id, registered_id, c)
+    manual: list[DuplicateCandidate] = []
+
+    for c in candidates:
+        if c.score < auto_threshold or c.user_a_has_identity == c.user_b_has_identity:
+            manual.append(c)
+            continue
+        if not c.user_a_has_identity:
+            floating_id, registered_id = c.user_a_id, c.user_b_id
+        else:
+            floating_id, registered_id = c.user_b_id, c.user_a_id
+        eligible.append((floating_id, registered_id, c))
+
+    floating_counts = Counter(f for f, _r, _c in eligible)
+    registered_counts = Counter(r for _f, r, _c in eligible)
+
+    auto_pairs: list[AutoMergePair] = []
+    for floating_id, registered_id, c in eligible:
+        if floating_counts[floating_id] > 1 or registered_counts[registered_id] > 1:
+            manual.append(c)
+            continue
+        source_name = c.user_a_name if c.user_a_id == floating_id else c.user_b_name
+        target_name = c.user_a_name if c.user_a_id == registered_id else c.user_b_name
+        auto_pairs.append(
+            AutoMergePair(
+                source_id=floating_id, source_name=source_name,
+                target_id=registered_id, target_name=target_name,
+                score=c.score,
+            )
+        )
+    return auto_pairs, manual

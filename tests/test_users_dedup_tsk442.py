@@ -1,9 +1,10 @@
 """tsk-442: расширенный маппинг ФИО (нечёткое сравнение для поиска дублей).
 
 Покрывает `normalize_name_tokens`/`fuzzy_name_match_score` (порядок слов,
-опечатки, неполная фамилия, отброс отчества) и
-`find_duplicate_candidates` (кандидаты среди пользователей БД, is_active
-фильтр, has_identity флаг).
+опечатки, неполная фамилия, отброс отчества), `find_duplicate_candidates`
+(кандидаты среди пользователей БД, is_active фильтр, has_identity флаг) и
+`select_auto_merge_pairs` (безопасный отбор для автослияния — синтетические
+`DuplicateCandidate`, БД не нужна).
 """
 from __future__ import annotations
 
@@ -15,9 +16,11 @@ from app.models.identity_link import IdentityLink
 from app.models.users import Users
 from app.repos.users_repo import UsersRepository
 from app.services.users_dedup_service import (
+    DuplicateCandidate,
     fuzzy_name_match_score,
     find_duplicate_candidates,
     normalize_name_tokens,
+    select_auto_merge_pairs,
 )
 
 
@@ -125,3 +128,62 @@ async def test_search_by_full_name_excludes_merged_away_accounts(db):
     result_ids = {u.id for u in results}
     assert active.id in result_ids
     assert merged_away.id not in result_ids
+
+
+def _cand(a_id, a_name, a_has_id, b_id, b_name, b_has_id, score) -> DuplicateCandidate:
+    return DuplicateCandidate(
+        user_a_id=a_id, user_a_name=a_name, user_a_has_identity=a_has_id,
+        user_b_id=b_id, user_b_name=b_name, user_b_has_identity=b_has_id,
+        score=score,
+    )
+
+
+def test_auto_merge_selects_floating_plus_registered_high_score():
+    c = _cand(101, "Ястребцов Елисей", False, 102, "Елисей Ястребцов", True, 1.0)
+    auto, manual = select_auto_merge_pairs([c], auto_threshold=0.9)
+    assert manual == []
+    assert len(auto) == 1
+    assert auto[0].source_id == 101  # без identity — деактивируется
+    assert auto[0].target_id == 102  # с identity — получатель
+
+
+def test_auto_merge_skips_when_both_have_identity():
+    """Регрессия на реальный инцидент: Комлев Виктор id=142 + Виктор Комлев
+    id=2 — оба уже входили под своей identity, score=1.0. Без этой защиты
+    первый прод-прогон авто-слил бы два РЕАЛЬНЫХ разных аккаунта."""
+    c = _cand(142, "Комлев Виктор", True, 2, "Виктор Комлев", True, 1.0)
+    auto, manual = select_auto_merge_pairs([c], auto_threshold=0.9)
+    assert auto == []
+    assert manual == [c]
+
+
+def test_auto_merge_skips_when_neither_has_identity():
+    c = _cand(1, "Иванов Иван", False, 2, "Иван Иванов", False, 1.0)
+    auto, manual = select_auto_merge_pairs([c], auto_threshold=0.9)
+    assert auto == []
+    assert manual == [c]
+
+
+def test_auto_merge_skips_below_threshold():
+    c = _cand(1, "Петров Пётр", False, 2, "Пётр Петров", True, 0.8)
+    auto, manual = select_auto_merge_pairs([c], auto_threshold=0.9)
+    assert auto == []
+    assert manual == [c]
+
+
+def test_auto_merge_skips_ambiguous_multiple_matches_for_same_floating():
+    # Один "плавающий" похож сразу на ДВУХ зарегистрированных — неясно, с кем сливать.
+    c1 = _cand(1, "Сидоров Иван", False, 2, "Иван Сидоров", True, 0.95)
+    c2 = _cand(1, "Сидоров Иван", False, 3, "Иван Сидорин", True, 0.91)
+    auto, manual = select_auto_merge_pairs([c1, c2], auto_threshold=0.9)
+    assert auto == []
+    assert len(manual) == 2 and c1 in manual and c2 in manual
+
+
+def test_auto_merge_skips_ambiguous_multiple_matches_for_same_registered():
+    # ДВА разных "плавающих" похожи на одного зарегистрированного — тоже неоднозначно.
+    c1 = _cand(1, "Кузнецова Анна", False, 3, "Анна Кузнецова", True, 0.95)
+    c2 = _cand(2, "Кузнецова Анна-2", False, 3, "Анна Кузнецова", True, 0.91)
+    auto, manual = select_auto_merge_pairs([c1, c2], auto_threshold=0.9)
+    assert auto == []
+    assert len(manual) == 2 and c1 in manual and c2 in manual
