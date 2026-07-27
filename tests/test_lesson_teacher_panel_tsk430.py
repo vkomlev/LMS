@@ -166,6 +166,50 @@ async def test_teacher_list_group_occurrence_has_all_participants(db, client):
     assert {p["student_id"] for p in item["participants"]} == {student_a, student_b}
 
 
+@pytest.mark.asyncio
+async def test_teacher_list_participant_order_stable_after_attendance_update(db, client):
+    """tsk-441: список участников не должен "прыгать" после отметки явки —
+    без ORDER BY Postgres не гарантирует порядок строк после UPDATE, и
+    учитель кликает по позиции, а не по конкретному человеку."""
+    student_a = await _create_user(db, role="student", prefix="tsk441-stuA")
+    student_b = await _create_user(db, role="student", prefix="tsk441-stuB")
+    student_c = await _create_user(db, role="student", prefix="tsk441-stuC")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk441-teach")
+    token, _, _ = await create_session(db, user_id=teacher_id)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_a, teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+    )
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=student_b, status="scheduled"))
+    db.add(LessonOccurrenceParticipant(occurrence_id=occ_id, student_id=student_c, status="scheduled"))
+    await db.commit()
+
+    async def _order() -> list[int]:
+        resp = await client.get(
+            "/api/v1/teacher/lesson-occurrences",
+            params={"teacher_id": teacher_id},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        item = next(i for i in resp.json() if i["id"] == occ_id)
+        return [p["student_id"] for p in item["participants"]]
+
+    before = await _order()
+    assert before == [student_a, student_b, student_c]
+
+    resp = await client.post(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/attendance",
+        params={"teacher_id": teacher_id},
+        json={"student_id": student_b, "action": "manual_present"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = await _order()
+    assert after == before
+
+
 # ============================== Teacher manual attendance ==============================
 
 

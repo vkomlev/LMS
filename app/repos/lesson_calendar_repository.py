@@ -237,9 +237,9 @@ class LessonOccurrenceParticipantRepository:
         if not occurrence_ids:
             return []
         res = await db.execute(
-            select(LessonOccurrenceParticipant).where(
-                LessonOccurrenceParticipant.occurrence_id.in_(occurrence_ids)
-            )
+            select(LessonOccurrenceParticipant)
+            .where(LessonOccurrenceParticipant.occurrence_id.in_(occurrence_ids))
+            .order_by(LessonOccurrenceParticipant.id)
         )
         return list(res.scalars().all())
 
