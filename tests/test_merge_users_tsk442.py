@@ -7,8 +7,12 @@
   быть удалена, а не перенесена (иначе PK violation);
 - сессия (user_session) — не переносится, а удаляется у source.
 
-Плюс: деактивация source (is_active=false, merged_into_user_id=target) и
-защита от повторного/обратного слияния уже неактивной учётки.
+Плюс: деактивация source (is_active=false, merged_into_user_id=target),
+защита от повторного/обратного слияния уже неактивной учётки, и НЕ-перенос
+append-only аудит-логов (audit_event/attendance_event) — регрессия на
+реальный прод-инцидент: `audit_event` физически защищена DB-триггером
+(`RAISE EXCEPTION 'audit_event is append-only'`), первый боевой прогон
+автослияния упал именно на попытке UPDATE этой таблицы.
 """
 from __future__ import annotations
 
@@ -19,7 +23,10 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import text
 
+from app.models.attendance_event import AttendanceEvent
+from app.models.audit_event import AuditEvent
 from app.models.courses import Courses
+from app.models.lesson_occurrence import LessonOccurrence
 from app.models.social_posts import SocialPosts
 from app.models.user_courses import UserCourses
 from app.models.user_session import UserSession
@@ -110,6 +117,53 @@ async def test_merge_moves_simple_fk_and_skips_conflicting_and_drops_sessions(db
     assert session_count == 0
 
     # Деактивация.
+    row = await merge_users._fetch_user(db, source_id)
+    assert row.is_active is False
+    assert row.merged_into_user_id == target_id
+
+
+@pytest.mark.asyncio
+async def test_merge_does_not_touch_append_only_audit_logs(db):
+    """Регрессия на прод-инцидент: audit_event/attendance_event НЕ
+    переносятся при слиянии — остаются на source (учётка деактивируется,
+    но не удаляется, FK остаётся валиден). audit_event вдобавок физически
+    заблокирована DB-триггером на UPDATE — если бы merge_users попытался
+    её тронуть, вся транзакция слияния упала бы."""
+    source_id = await _create_student(db, "tsk442-audit-src")
+    target_id = await _create_student(db, "tsk442-audit-tgt")
+
+    db.add(AuditEvent(user_id=source_id, event_type="user.login"))
+
+    occurrence = LessonOccurrence(
+        slot_id=None, teacher_id=target_id,
+        scheduled_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        duration_minutes=60,
+    )
+    db.add(occurrence)
+    await db.flush()
+    db.add(AttendanceEvent(occurrence_id=occurrence.id, actor_user_id=source_id, action="joined"))
+    await db.commit()
+
+    await merge_users._apply(db, source_id, target_id)
+    await db.commit()
+
+    audit_user_id = (
+        await db.execute(
+            text("SELECT user_id FROM audit_event WHERE event_type = 'user.login' AND user_id = :s"),
+            {"s": source_id},
+        )
+    ).scalar_one_or_none()
+    assert audit_user_id == source_id  # осталась на source, не переехала
+
+    attendance_actor = (
+        await db.execute(
+            text("SELECT actor_user_id FROM attendance_event WHERE occurrence_id = :o"),
+            {"o": occurrence.id},
+        )
+    ).scalar_one_or_none()
+    assert attendance_actor == source_id  # осталась на source, не переехала
+
+    # Учётка при этом всё равно корректно деактивирована.
     row = await merge_users._fetch_user(db, source_id)
     assert row.is_active is False
     assert row.merged_into_user_id == target_id

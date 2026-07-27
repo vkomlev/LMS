@@ -27,6 +27,14 @@
 - `user_session` — НЕ переносится, а удаляется: сессия, выданная
   деактивированной учётке, не должна тихо начать действовать от лица
   другой учётки (форсированный логаут вместо "подмены личности").
+- `audit_event.user_id` / `attendance_event.actor_user_id` — НЕ
+  переносятся вовсе, остаются на source. Это исторические аудит-логи ("кто
+  совершил ЭТО действие тогда"), а не текущее состояние: `audit_event`
+  вдобавок физически защищена DB-триггером `audit_event_no_modify`
+  (`RAISE EXCEPTION 'audit_event is append-only'` — первый реальный прогон
+  на проде упал именно на этом, транзакция откатилась целиком, данные не
+  пострадали). Поскольку `users` строка при слиянии не удаляется, а только
+  деактивируется — FK остаётся валиден, историю не нужно переписывать.
 
 Запуск (см. `.env` DATABASE_URL — сначала на dev, потом на проде):
     venv/bin/python scripts/merge_users.py --source-id 123 --target-id 456
@@ -72,12 +80,10 @@ SIMPLE_MOVES = [
     ("lesson_slot", "teacher_id"),
     ("lesson_slot", "created_by"),
     ("lesson_occurrence", "teacher_id"),
-    ("attendance_event", "actor_user_id"),
     ("assignment_event", "student_id"),
     ("assignment_event", "assigned_by"),
     ("guest_session", "attributed_user_id"),
     ("guest_attempt", "attributed_user_id"),
-    ("audit_event", "user_id"),
     ("lesson_slot_student", "added_by"),
 ]
 
