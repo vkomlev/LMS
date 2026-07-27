@@ -129,7 +129,7 @@
 
 | Таблица | Назначение |
 |---|---|
-| `operating_hours` | Часы работы школы (общие на всю школу, не per-teacher): `weekday`(0-6)/`start_time`/`end_time`/`timezone` (DEFAULT `Europe/Moscow`) |
+| `operating_hours` | Часы работы школы (общие на всю школу, не per-teacher): `weekday`(0-6)/`start_time`/`end_time`/`timezone` (DEFAULT `Europe/Moscow`). **Несколько окон на один weekday — норма** (tsk-436/437, напр. утро+вечер с перерывом посередине под личное время оператора) — БД без уникального ограничения на `weekday`, только запрет пересечения окон внутри одного дня (сервисная проверка, не DB constraint) |
 | `lesson_slot` | Закреплённый повторяющийся ГРУППОВОЙ слот преподавателя (`teacher_id`, `weekday`, `start_time`, `duration_minutes`, `timezone`, `is_active`) — без `student_id` |
 | `lesson_slot_student` | M2M участники слота: `slot_id`+`student_id`, `is_active` (мягкое удаление участника — сохраняет историю occurrence) |
 | `lesson_occurrence` | Конкретное занятие: из слота (генератор) или ad-hoc (`slot_id IS NULL`) — `teacher_id`/`scheduled_at`/`duration_minutes`, БЕЗ `student_id`/`status` |

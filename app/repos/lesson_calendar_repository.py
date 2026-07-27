@@ -37,6 +37,15 @@ class OperatingHoursRepository:
     async def get_by_id(self, db: AsyncSession, row_id: int) -> Optional[OperatingHours]:
         return await db.get(OperatingHours, row_id)
 
+    async def list_for_weekday(
+        self, db: AsyncSession, weekday: int, *, exclude_id: Optional[int] = None
+    ) -> list[OperatingHours]:
+        stmt = select(OperatingHours).where(OperatingHours.weekday == weekday)
+        if exclude_id is not None:
+            stmt = stmt.where(OperatingHours.id != exclude_id)
+        res = await db.execute(stmt)
+        return list(res.scalars().all())
+
     async def create(self, db: AsyncSession, **fields) -> OperatingHours:
         row = OperatingHours(**fields)
         db.add(row)
@@ -45,6 +54,11 @@ class OperatingHoursRepository:
 
     async def delete(self, db: AsyncSession, row: OperatingHours) -> None:
         await db.delete(row)
+
+    @staticmethod
+    def windows_overlap(a_start, a_end, b_start, b_end) -> bool:
+        """Пересекаются ли два окна [start, end) в рамках одного дня недели."""
+        return a_start < b_end and b_start < a_end
 
 
 class LessonSlotRepository:

@@ -400,29 +400,87 @@ async def test_deactivate_lesson_slot_soft_delete(db, client):
 
 
 @pytest.mark.asyncio
-async def test_put_operating_hours_replaces_existing(db, client):
+async def test_post_operating_hours_allows_multiple_windows_same_weekday(db, client):
+    """tsk-436/437: несколько окон на один weekday — норма (нужно вырезать
+    перерыв внутри дня), не upsert-по-weekday, как было раньше."""
     admin_id = await _create_user(db, role="admin", prefix="tsk428-admin")
     admin_token, _, _ = await create_session(db, user_id=admin_id)
 
-    resp1 = await client.put(
+    resp1 = await client.post(
         "/api/v1/operating-hours",
-        json={"weekday": 1, "start_time": "09:00:00", "end_time": "18:00:00"},
+        json={"weekday": 1, "start_time": "09:00:00", "end_time": "12:00:00"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    assert resp1.status_code == 200, resp1.text
+    assert resp1.status_code == 201, resp1.text
 
-    resp2 = await client.put(
+    resp2 = await client.post(
         "/api/v1/operating-hours",
-        json={"weekday": 1, "start_time": "10:00:00", "end_time": "20:00:00"},
+        json={"weekday": 1, "start_time": "13:00:00", "end_time": "19:00:00"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    assert resp2.status_code == 200, resp2.text
+    assert resp2.status_code == 201, resp2.text
 
     rows = (
-        await db.execute(text("SELECT start_time, end_time FROM operating_hours WHERE weekday = 1"))
+        await db.execute(
+            text("SELECT start_time, end_time FROM operating_hours WHERE weekday = 1 ORDER BY start_time")
+        )
     ).fetchall()
-    assert len(rows) == 1, "PUT должен заменять запись на этот weekday, не плодить дубли"
-    assert str(rows[0][0]) == "10:00:00"
+    assert len(rows) == 2, "Два непересекающихся окна на один день должны сосуществовать"
+    assert str(rows[0][0]) == "09:00:00" and str(rows[0][1]) == "12:00:00"
+    assert str(rows[1][0]) == "13:00:00" and str(rows[1][1]) == "19:00:00"
+
+
+@pytest.mark.asyncio
+async def test_post_operating_hours_rejects_overlap_same_weekday(db, client):
+    admin_id = await _create_user(db, role="admin", prefix="tsk428-admin2")
+    admin_token, _, _ = await create_session(db, user_id=admin_id)
+
+    resp1 = await client.post(
+        "/api/v1/operating-hours",
+        json={"weekday": 2, "start_time": "09:00:00", "end_time": "18:00:00"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp1.status_code == 201, resp1.text
+
+    resp2 = await client.post(
+        "/api/v1/operating-hours",
+        json={"weekday": 2, "start_time": "12:00:00", "end_time": "13:00:00"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp2.status_code == 409, resp2.text
+
+
+@pytest.mark.asyncio
+async def test_patch_delete_operating_hours(db, client):
+    admin_id = await _create_user(db, role="admin", prefix="tsk428-admin3")
+    admin_token, _, _ = await create_session(db, user_id=admin_id)
+
+    created = await client.post(
+        "/api/v1/operating-hours",
+        json={"weekday": 3, "start_time": "09:00:00", "end_time": "18:00:00"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert created.status_code == 201, created.text
+    row_id = created.json()["id"]
+
+    patched = await client.patch(
+        f"/api/v1/operating-hours/{row_id}",
+        json={"end_time": "19:00:00"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["end_time"] == "19:00:00"
+
+    deleted = await client.delete(
+        f"/api/v1/operating-hours/{row_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert deleted.status_code == 204, deleted.text
+
+    remaining = (
+        await db.execute(text("SELECT count(*) FROM operating_hours WHERE id = :id"), {"id": row_id})
+    ).scalar()
+    assert remaining == 0, "DELETE должен физически удалять запись (нет is_active у operating_hours)"
 
 
 # ============================== Slot participants ==============================

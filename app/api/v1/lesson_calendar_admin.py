@@ -23,6 +23,7 @@ from app.schemas.lesson_calendar import (
     LessonSlotUpdate,
     OperatingHoursCreate,
     OperatingHoursRead,
+    OperatingHoursUpdate,
     SlotParticipantRead,
 )
 from app.services import lesson_calendar_service
@@ -52,18 +53,18 @@ async def get_operating_hours(
     return [OperatingHoursRead.model_validate(r) for r in rows]
 
 
-@router.put(
+@router.post(
     "/operating-hours",
     response_model=OperatingHoursRead,
-    status_code=status.HTTP_200_OK,
-    summary="Задать часы работы школы на день недели (заменяет существующую запись)",
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить окно часов работы школы на день недели",
 )
-async def put_operating_hours(
+async def create_operating_hours(
     body: OperatingHoursCreate = Body(...),
     db: AsyncSession = Depends(get_async_db),
     _current_user: CurrentUser = Depends(_ADMIN_GATE),
 ) -> OperatingHoursRead:
-    row = await lesson_calendar_service.upsert_operating_hours(
+    row = await lesson_calendar_service.create_operating_hours(
         db,
         weekday=body.weekday,
         start_time=body.start_time,
@@ -71,6 +72,33 @@ async def put_operating_hours(
         timezone=body.timezone,
     )
     return OperatingHoursRead.model_validate(row)
+
+
+@router.patch("/operating-hours/{row_id}", response_model=OperatingHoursRead)
+async def update_operating_hours(
+    row_id: int,
+    body: OperatingHoursUpdate = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_ADMIN_GATE),
+) -> OperatingHoursRead:
+    row = await lesson_calendar_service.update_operating_hours(
+        db,
+        row_id,
+        start_time=body.start_time,
+        end_time=body.end_time,
+        timezone=body.timezone,
+    )
+    return OperatingHoursRead.model_validate(row)
+
+
+@router.delete("/operating-hours/{row_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_operating_hours(
+    row_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_ADMIN_GATE),
+) -> Response:
+    await lesson_calendar_service.delete_operating_hours(db, row_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ─── Lesson Slot (групповой) ────────────────────────────────────────────────

@@ -62,7 +62,29 @@ async def list_operating_hours(db: AsyncSession) -> list[OperatingHours]:
     return await _operating_hours_repo.list_all(db)
 
 
-async def upsert_operating_hours(
+async def get_operating_hours_row(db: AsyncSession, row_id: int) -> OperatingHours:
+    row = await _operating_hours_repo.get_by_id(db, row_id)
+    if row is None:
+        raise DomainError(f"Запись часов работы id={row_id} не найдена", status_code=404)
+    return row
+
+
+async def _check_operating_hours_overlap(
+    db: AsyncSession, *, weekday: int, start_time: time, end_time: time, exclude_id: Optional[int] = None
+) -> None:
+    """Несколько окон на день недели — норма (нужно, чтобы вырезать перерыв
+    внутри дня, см. tsk-436/437), но окна не должны пересекаться друг с другом."""
+    existing = await _operating_hours_repo.list_for_weekday(db, weekday, exclude_id=exclude_id)
+    for row in existing:
+        if _operating_hours_repo.windows_overlap(start_time, end_time, row.start_time, row.end_time):
+            raise DomainError(
+                f"Окно {start_time}-{end_time} пересекается с уже существующим "
+                f"{row.start_time}-{row.end_time} (id={row.id}) в этот день недели",
+                status_code=409,
+            )
+
+
+async def create_operating_hours(
     db: AsyncSession,
     *,
     weekday: int,
@@ -70,23 +92,52 @@ async def upsert_operating_hours(
     end_time: time,
     timezone: str,
 ) -> OperatingHours:
-    """Одна запись на weekday — повторный вызов для того же дня заменяет её
-    (простое upsert-поведение, без отдельного PATCH по id для этой сущности,
-    т.к. дней недели всего 7 и конфликтов идентификаторов быть не может)."""
-    existing = await _operating_hours_repo.get_by_weekday(db, weekday)
-    if existing is not None:
-        await _operating_hours_repo.delete(db, existing)
-        await db.flush()
+    """Добавить окно часов работы на день недели. Несколько окон на один
+    weekday допустимы (напр. утро + вечер с перерывом посередине) — единственное
+    ограничение — окна одного дня не должны пересекаться (см. tsk-436/437,
+    операторский перерыв на личную работу разрывает окно среды пополам)."""
+    await _check_operating_hours_overlap(db, weekday=weekday, start_time=start_time, end_time=end_time)
     row = await _operating_hours_repo.create(
-        db,
-        weekday=weekday,
-        start_time=start_time,
-        end_time=end_time,
-        timezone=timezone,
+        db, weekday=weekday, start_time=start_time, end_time=end_time, timezone=timezone,
     )
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def update_operating_hours(
+    db: AsyncSession,
+    row_id: int,
+    *,
+    start_time: Optional[time] = None,
+    end_time: Optional[time] = None,
+    timezone: Optional[str] = None,
+) -> OperatingHours:
+    row = await get_operating_hours_row(db, row_id)
+
+    new_start = start_time if start_time is not None else row.start_time
+    new_end = end_time if end_time is not None else row.end_time
+    if new_end <= new_start:
+        raise DomainError("end_time должен быть позже start_time", status_code=422)
+
+    if start_time is not None or end_time is not None:
+        await _check_operating_hours_overlap(
+            db, weekday=row.weekday, start_time=new_start, end_time=new_end, exclude_id=row.id,
+        )
+
+    row.start_time = new_start
+    row.end_time = new_end
+    if timezone is not None:
+        row.timezone = timezone
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def delete_operating_hours(db: AsyncSession, row_id: int) -> None:
+    row = await get_operating_hours_row(db, row_id)
+    await _operating_hours_repo.delete(db, row)
+    await db.commit()
 
 
 # ─── Lesson Slot (групповой, tsk-435) ───────────────────────────────────────
