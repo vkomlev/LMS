@@ -254,8 +254,8 @@ async def get_help_requests_pending_count(
     db: AsyncSession,
     teacher_id: int,
 ) -> Tuple[int, Optional[datetime]]:
-    """Количество открытых заявок помощи (manual_help + blocked_limit),
-    назначенных на преподавателя, + oldest created_at.
+    """Количество заявок помощи, ждущих ОТВЕТА УЧИТЕЛЯ (manual_help + blocked_limit),
+    назначенных на преподавателя, + oldest created_at среди них.
 
     tsk-348: используется TG_LMS bot-поллером и веб-бейджем учителя в SPW.
     До этой заявки поллер отслеживал только очередь ручной проверки заданий
@@ -263,12 +263,31 @@ async def get_help_requests_pending_count(
     вообще не опрашивались, из-за чего живой запрос помощи от ученика оставался
     незамеченным. Прямой фильтр по assigned_teacher_id — та же «своя» очередь,
     что видит преподаватель в разделе «Вопросы студентов».
+
+    tsk-415: `status='open'` сам по себе не значит «требует внимания учителя» —
+    заявка остаётся open, пока ученик её не закроет, даже после того как учитель
+    уже ответил. Считаем только заявки, где последнее слово осталось за учеником:
+    либо треда ещё нет (учитель вообще не отвечал), либо последнее сообщение в
+    треде — от student_id (ученик написал после ответа учителя, напр. через
+    /messages/{id}/reply). Если последним писал учитель — заявка ждёт ученика,
+    в счётчик не попадает (но остаётся open в списке заявок).
     """
     r = await db.execute(
         text("""
-            SELECT COUNT(*) AS cnt, MIN(created_at) AS oldest
-            FROM help_requests
-            WHERE status = 'open' AND assigned_teacher_id = :teacher_id
+            SELECT COUNT(*) AS cnt, MIN(hr.created_at) AS oldest
+            FROM help_requests hr
+            WHERE hr.status = 'open'
+              AND hr.assigned_teacher_id = :teacher_id
+              AND (
+                  hr.thread_id IS NULL
+                  OR (
+                      SELECT m.sender_id
+                      FROM messages m
+                      WHERE m.thread_id = hr.thread_id
+                      ORDER BY m.sent_at DESC, m.id DESC
+                      LIMIT 1
+                  ) = hr.student_id
+              )
         """),
         {"teacher_id": teacher_id},
     )

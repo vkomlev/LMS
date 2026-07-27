@@ -223,6 +223,68 @@ async def test_explicit_close_notifies_student_but_system_close_does_not(db, cli
 
 
 @pytest.mark.asyncio
+async def test_pending_count_excludes_after_teacher_reply_includes_again_after_student_reply(db, client):
+    """tsk-415: колокольчик светит только заявки, ждущие ОТВЕТА УЧИТЕЛЯ. После
+    того как учитель ответил, заявка остаётся open (ученик её не закрыл), но
+    бейдж должен погаснуть — а если ученик написал в ответ (follow-up в том же
+    треде), бейдж должен снова зажечься."""
+    teacher_id, token = await _setup_teacher(db)
+    student_id, student_token = await _create_student_with_session(db)
+    task_id = await _pick_task(db)
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    rid = await _seed_help_request(db, teacher_id=teacher_id, student_id=student_id, task_id=task_id)
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.json()["count"] == 1
+
+        reply_resp = await client.post(
+            f"/api/v1/teacher/help-requests/{rid}/reply",
+            json={"teacher_id": teacher_id, "message": "Посмотрите на строку 5."},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert reply_resp.status_code == 200
+        message_id = reply_resp.json()["message_id"]
+
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.json()["count"] == 0, "после ответа учителя заявка не должна светить бейдж"
+
+        detail_resp = await client.get(
+            f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert detail_resp.json()["status"] == "open", "бейдж гаснет, но заявка остаётся открытой в списке"
+
+        # follow-up ученика — реальный SPW-путь для живого пользователя
+        # (POST /messages/{id}/reply — legacy сервисный эндпоинт под X-API-Key
+        # для TG_LMS-бота, обычной сессии ученика недостаточно).
+        follow_up_resp = await client.post(
+            "/api/v1/messages/send",
+            json={
+                "recipient_id": teacher_id,
+                "message_type": "student_reply",
+                "content": {"text": "Всё равно не вижу опечатку"},
+                "reply_to_id": message_id,
+            },
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+        assert follow_up_resp.status_code == 201, follow_up_resp.text
+
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.json()["count"] == 1, "ответ ученика после реплики учителя должен снова зажечь бейдж"
+    finally:
+        await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid])
+
+
+@pytest.mark.asyncio
 async def test_new_help_request_notifies_assigned_teacher(db, client):
     """tsk-348 follow-up: бейдж без возможности прочитать не решает проблему —
     у учителя должна появиться настоящая inbox-запись (лента, как у ученика),
