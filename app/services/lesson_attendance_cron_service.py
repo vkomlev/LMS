@@ -141,15 +141,28 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
             payload={**payload, "role": "student"},
             created_by=None,
         )
-        await inbox_service.create_for_user(
-            db,
-            user_id=int(teacher_id),
-            kind="lesson_missed",
-            title="Ученик не пришёл",
-            content=f"Ученик не подтвердил явку на занятие {scheduled_at.isoformat()}.",
-            payload={**payload, "role": "teacher"},
-            created_by=None,
+
+        # tsk-443: занятие может вести несколько преподавателей совместно —
+        # уведомляем ВСЕХ (не только lo.teacher_id, который остался "основным"
+        # для обратной совместимости), иначе со-преподаватель не узнает о
+        # пропуске ученика на СВОЁМ занятии.
+        teacher_ids_res = await db.execute(
+            text(
+                "SELECT teacher_id FROM lesson_occurrence_teacher WHERE occurrence_id = :oid"
+            ),
+            {"oid": int(occurrence_id)},
         )
+        occurrence_teacher_ids = {row[0] for row in teacher_ids_res.fetchall()} or {int(teacher_id)}
+        for occ_teacher_id in occurrence_teacher_ids:
+            await inbox_service.create_for_user(
+                db,
+                user_id=int(occ_teacher_id),
+                kind="lesson_missed",
+                title="Ученик не пришёл",
+                content=f"Ученик не подтвердил явку на занятие {scheduled_at.isoformat()}.",
+                payload={**payload, "role": "teacher"},
+                created_by=None,
+            )
         marked += 1
     return marked
 

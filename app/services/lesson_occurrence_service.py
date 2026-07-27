@@ -22,6 +22,7 @@ from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.repos.lesson_calendar_repository import (
     LessonOccurrenceParticipantRepository,
     LessonOccurrenceRepository,
+    LessonOccurrenceTeacherRepository,
     OperatingHoursRepository,
 )
 from app.services import audit_service, lesson_calendar_service
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 _occurrence_repo = LessonOccurrenceRepository()
 _participant_repo = LessonOccurrenceParticipantRepository()
 _operating_hours_repo = OperatingHoursRepository()
+_occurrence_teacher_repo = LessonOccurrenceTeacherRepository()
 
 # Статусы, при которых участие уже структурно закрыто для reschedule/ownership-операций.
 _LOCKED_STATUSES = frozenset({"no_show", "completed", "rescheduled"})
@@ -88,10 +90,20 @@ async def list_for_teacher(
 async def get_occurrence_for_teacher(
     db: AsyncSession, *, occurrence_id: int, teacher_id: int
 ) -> LessonOccurrence:
+    """Ownership-гейт занятия: основной `occurrence.teacher_id` ИЛИ
+    со-преподаватель через `lesson_occurrence_teacher` (tsk-443: совместное
+    ведение). Проверка по колонке остаётся (не эксклюзивно M2M) — occurrence
+    может быть создан в обход строки M2M (напр. прямой ORM в старых тестах)."""
     occurrence = await _occurrence_repo.get_by_id(db, occurrence_id)
     if occurrence is None:
         raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
-    if occurrence.teacher_id != teacher_id:
+    is_owner = occurrence.teacher_id == teacher_id
+    if not is_owner:
+        link = await _occurrence_teacher_repo.get(
+            db, occurrence_id=occurrence_id, teacher_id=teacher_id
+        )
+        is_owner = link is not None
+    if not is_owner:
         raise DomainError("Занятие принадлежит другому преподавателю", status_code=403)
     return occurrence
 
@@ -221,6 +233,11 @@ async def create_ad_hoc_occurrence(
     await db.flush()
     participant = await _participant_repo.create(
         db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
+    )
+    # tsk-443: get_occurrence_for_teacher/list_for_teacher идут через M2M —
+    # без этой строки ad-hoc occurrence был бы невидим самому создателю.
+    await _occurrence_teacher_repo.create(
+        db, occurrence_id=occurrence.id, teacher_id=teacher_id,
     )
     await db.commit()
     await db.refresh(occurrence)
@@ -407,6 +424,14 @@ async def reschedule_occurrence(
     new_participant = await _participant_repo.create(
         db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
     )
+    # tsk-443: переносим ВСЕХ преподавателей старого occurrence (не только
+    # основного) — все, кто видел этого ученика на старом времени, видят его
+    # и на новом; заодно без этого new_occurrence был бы невидим создателю.
+    old_teachers = await _occurrence_teacher_repo.list_for_occurrence(db, occurrence.id)
+    for link in old_teachers:
+        await _occurrence_teacher_repo.create(
+            db, occurrence_id=new_occurrence.id, teacher_id=link.teacher_id,
+        )
     await db.flush()
 
     old_participant.status = "rescheduled"

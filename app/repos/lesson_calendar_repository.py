@@ -11,13 +11,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
+from app.models.lesson_occurrence_teacher import LessonOccurrenceTeacher
 from app.models.lesson_slot import LessonSlot
 from app.models.lesson_slot_student import LessonSlotStudent
+from app.models.lesson_slot_teacher import LessonSlotTeacher
 from app.models.operating_hours import OperatingHours
 
 
@@ -63,7 +65,18 @@ class OperatingHoursRepository:
 
 class LessonSlotRepository:
     """CRUD закреплённых групповых слотов преподавателя (участники — отдельно,
-    см. `LessonSlotStudentRepository`)."""
+    см. `LessonSlotStudentRepository`; со-преподаватели — `LessonSlotTeacherRepository`).
+
+    `list_active(teacher_id=...)` и `has_overlap` фильтруют через M2M
+    `lesson_slot_teacher` (не через `LessonSlot.teacher_id` напрямую) —
+    источник истины "кто ведёт слот" после tsk-443 (совместное ведение).
+    `LessonSlot.teacher_id` остаётся "создателем" для аудита. Фильтр по
+    преподавателю матчит `teacher_id == X` ИЛИ активную строку в M2M
+    `lesson_slot_teacher` (не эксклюзивно M2M) — так слоты, заведённые в
+    обход `create_lesson_slot` (напр. напрямую через ORM в старых тестах,
+    до tsk-443 и backfill-миграции), продолжают находиться без изменений;
+    со-преподаватели матчат через M2M.
+    """
 
     async def get_by_id(self, db: AsyncSession, slot_id: int) -> Optional[LessonSlot]:
         return await db.get(LessonSlot, slot_id)
@@ -76,7 +89,17 @@ class LessonSlotRepository:
     ) -> list[LessonSlot]:
         stmt = select(LessonSlot).where(LessonSlot.is_active.is_(True))
         if teacher_id is not None:
-            stmt = stmt.where(LessonSlot.teacher_id == teacher_id)
+            stmt = stmt.where(
+                or_(
+                    LessonSlot.teacher_id == teacher_id,
+                    LessonSlot.id.in_(
+                        select(LessonSlotTeacher.slot_id).where(
+                            LessonSlotTeacher.teacher_id == teacher_id,
+                            LessonSlotTeacher.is_active.is_(True),
+                        )
+                    ),
+                )
+            )
         res = await db.execute(stmt.order_by(LessonSlot.weekday, LessonSlot.start_time))
         return list(res.scalars().all())
 
@@ -96,14 +119,23 @@ class LessonSlotRepository:
         duration_minutes: int,
         exclude_slot_id: Optional[int] = None,
     ) -> bool:
-        """Есть ли у преподавателя другой активный слот (другое групповое
-        занятие), пересекающийся по времени в этот день недели — teacher-only,
-        участники слота больше не участвуют в этой проверке (группа —
-        by design несколько учеников на одно время одного преподавателя)."""
+        """Есть ли у преподавателя (как у основного ИЛИ со-преподавателя)
+        другой активный слот, пересекающийся по времени в этот день недели —
+        teacher-only, участники слота в этой проверке не участвуют (группа —
+        by design несколько учеников на одно время одного/нескольких
+        преподавателей)."""
         stmt = select(LessonSlot).where(
             LessonSlot.is_active.is_(True),
             LessonSlot.weekday == weekday,
-            LessonSlot.teacher_id == teacher_id,
+            or_(
+                LessonSlot.teacher_id == teacher_id,
+                LessonSlot.id.in_(
+                    select(LessonSlotTeacher.slot_id).where(
+                        LessonSlotTeacher.teacher_id == teacher_id,
+                        LessonSlotTeacher.is_active.is_(True),
+                    )
+                ),
+            ),
         )
         if exclude_slot_id is not None:
             stmt = stmt.where(LessonSlot.id != exclude_slot_id)
@@ -118,6 +150,69 @@ class LessonSlotRepository:
             if new_start < row_end and row_start < new_end:
                 return True
         return False
+
+
+class LessonSlotTeacherRepository:
+    """Со-преподаватели закреплённого слота (M2M, tsk-443)."""
+
+    async def get(
+        self, db: AsyncSession, *, slot_id: int, teacher_id: int
+    ) -> Optional[LessonSlotTeacher]:
+        res = await db.execute(
+            select(LessonSlotTeacher).where(
+                LessonSlotTeacher.slot_id == slot_id,
+                LessonSlotTeacher.teacher_id == teacher_id,
+            )
+        )
+        return res.scalar_one_or_none()
+
+    async def list_for_slot(
+        self, db: AsyncSession, slot_id: int, *, active_only: bool = True
+    ) -> list[LessonSlotTeacher]:
+        stmt = select(LessonSlotTeacher).where(LessonSlotTeacher.slot_id == slot_id)
+        if active_only:
+            stmt = stmt.where(LessonSlotTeacher.is_active.is_(True))
+        res = await db.execute(stmt)
+        return list(res.scalars().all())
+
+    async def create(self, db: AsyncSession, **fields) -> LessonSlotTeacher:
+        row = LessonSlotTeacher(**fields)
+        db.add(row)
+        await db.flush()
+        return row
+
+
+class LessonOccurrenceTeacherRepository:
+    """Преподаватели конкретного занятия (M2M, tsk-443) — заполняется
+    генератором из `lesson_slot_teacher`, источник истины для видимости
+    occurrence в кабинете преподавателя."""
+
+    async def get(
+        self, db: AsyncSession, *, occurrence_id: int, teacher_id: int
+    ) -> Optional[LessonOccurrenceTeacher]:
+        res = await db.execute(
+            select(LessonOccurrenceTeacher).where(
+                LessonOccurrenceTeacher.occurrence_id == occurrence_id,
+                LessonOccurrenceTeacher.teacher_id == teacher_id,
+            )
+        )
+        return res.scalar_one_or_none()
+
+    async def list_for_occurrence(
+        self, db: AsyncSession, occurrence_id: int
+    ) -> list[LessonOccurrenceTeacher]:
+        res = await db.execute(
+            select(LessonOccurrenceTeacher).where(
+                LessonOccurrenceTeacher.occurrence_id == occurrence_id
+            )
+        )
+        return list(res.scalars().all())
+
+    async def create(self, db: AsyncSession, **fields) -> LessonOccurrenceTeacher:
+        row = LessonOccurrenceTeacher(**fields)
+        db.add(row)
+        await db.flush()
+        return row
 
 
 class LessonSlotStudentRepository:
@@ -172,7 +267,8 @@ class LessonSlotStudentRepository:
 
 class LessonOccurrenceRepository:
     """Занятия (create — генератор/ad-hoc сервис). Участники — отдельно,
-    см. `LessonOccurrenceParticipantRepository`."""
+    см. `LessonOccurrenceParticipantRepository`; со-преподаватели —
+    `LessonOccurrenceTeacherRepository`."""
 
     async def get_by_id(self, db: AsyncSession, occurrence_id: int) -> Optional[LessonOccurrence]:
         return await db.get(LessonOccurrence, occurrence_id)
@@ -186,12 +282,36 @@ class LessonOccurrenceRepository:
         to_dt: Optional[datetime] = None,
         limit: int = 100,
     ) -> list[LessonOccurrence]:
-        stmt = select(LessonOccurrence).where(LessonOccurrence.teacher_id == teacher_id)
+        """Занятия, где этот преподаватель — основной (`teacher_id`) ИЛИ
+        со-преподаватель (через `lesson_occurrence_teacher`, tsk-443:
+        совместное ведение; OR, не эксклюзивно M2M — см. docstring класса)."""
+        stmt = select(LessonOccurrence).where(
+            or_(
+                LessonOccurrence.teacher_id == teacher_id,
+                LessonOccurrence.id.in_(
+                    select(LessonOccurrenceTeacher.occurrence_id).where(
+                        LessonOccurrenceTeacher.teacher_id == teacher_id
+                    )
+                ),
+            )
+        )
         if from_dt is not None:
             stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
         if to_dt is not None:
             stmt = stmt.where(LessonOccurrence.scheduled_at <= to_dt)
         stmt = stmt.order_by(LessonOccurrence.scheduled_at.asc()).limit(limit)
+        res = await db.execute(stmt)
+        return list(res.scalars().all())
+
+    async def list_for_slot(
+        self, db: AsyncSession, slot_id: int, *, from_dt: Optional[datetime] = None,
+    ) -> list[LessonOccurrence]:
+        """Все occurrence конкретного слота (независимо от того, кто из
+        преподавателей уже к ним привязан) — для бэкфилла со-преподавателя
+        (`add_slot_teacher`), где `list_for_teacher` ещё пуст по построению."""
+        stmt = select(LessonOccurrence).where(LessonOccurrence.slot_id == slot_id)
+        if from_dt is not None:
+            stmt = stmt.where(LessonOccurrence.scheduled_at >= from_dt)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 

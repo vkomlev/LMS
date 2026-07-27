@@ -36,7 +36,9 @@ import app.models.assignment_event
 import app.models.operating_hours
 import app.models.lesson_slot
 import app.models.lesson_slot_student
+import app.models.lesson_slot_teacher
 import app.models.lesson_occurrence
 import app.models.lesson_occurrence_participant
+import app.models.lesson_occurrence_teacher
 import app.models.attendance_event
 

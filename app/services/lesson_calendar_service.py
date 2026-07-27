@@ -18,12 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_slot import LessonSlot
 from app.models.lesson_slot_student import LessonSlotStudent
+from app.models.lesson_slot_teacher import LessonSlotTeacher
 from app.models.operating_hours import OperatingHours
 from app.repos.lesson_calendar_repository import (
     LessonOccurrenceParticipantRepository,
     LessonOccurrenceRepository,
+    LessonOccurrenceTeacherRepository,
     LessonSlotRepository,
     LessonSlotStudentRepository,
+    LessonSlotTeacherRepository,
     OperatingHoursRepository,
 )
 from app.services import roles_service
@@ -34,8 +37,10 @@ logger = logging.getLogger(__name__)
 _operating_hours_repo = OperatingHoursRepository()
 _lesson_slot_repo = LessonSlotRepository()
 _slot_student_repo = LessonSlotStudentRepository()
+_slot_teacher_repo = LessonSlotTeacherRepository()
 _occurrence_repo = LessonOccurrenceRepository()
 _participant_repo = LessonOccurrenceParticipantRepository()
+_occurrence_teacher_repo = LessonOccurrenceTeacherRepository()
 
 
 async def ensure_user_has_role(db: AsyncSession, user_id: int, expected_role: str) -> None:
@@ -186,6 +191,14 @@ async def create_lesson_slot(
     )
     await db.flush()
 
+    # tsk-443: teacher_id остаётся "создателем" на самой строке lesson_slot,
+    # но реальный источник истины "кто ведёт" — lesson_slot_teacher; строка
+    # для основного преподавателя добавляется сразу, чтобы has_overlap/
+    # list_active/list_for_teacher видели его без специального случая.
+    await _slot_teacher_repo.create(
+        db, slot_id=row.id, teacher_id=teacher_id, added_by=created_by,
+    )
+
     for student_id in student_ids or []:
         await _slot_student_repo.create(
             db, slot_id=row.id, student_id=student_id, added_by=created_by,
@@ -218,6 +231,11 @@ async def get_lesson_slot(db: AsyncSession, slot_id: int) -> LessonSlot:
 async def list_slot_participants(db: AsyncSession, slot_id: int) -> list[LessonSlotStudent]:
     await get_lesson_slot(db, slot_id)
     return await _slot_student_repo.list_for_slot(db, slot_id)
+
+
+async def list_slot_teachers(db: AsyncSession, slot_id: int) -> list[LessonSlotTeacher]:
+    await get_lesson_slot(db, slot_id)
+    return await _slot_teacher_repo.list_for_slot(db, slot_id)
 
 
 async def update_lesson_slot(
@@ -327,6 +345,65 @@ async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: in
     if row is None or not row.is_active:
         raise DomainError(
             f"Ученик id={student_id} не числится активным участником слота id={slot_id}",
+            status_code=404,
+        )
+    row.is_active = False
+    await db.commit()
+
+
+async def add_slot_teacher(
+    db: AsyncSession, slot_id: int, teacher_id: int, *, added_by: Optional[int]
+) -> LessonSlotTeacher:
+    """Добавить со-преподавателя в групповой слот (совместное ведение,
+    tsk-443) — ученики этого слота становятся видны и ему тоже, явка общая
+    (один occurrence, один список участников). Бэкфиллит его во ВСЕ уже
+    сгенерированные БУДУЩИЕ occurrence этого слота — иначе он не увидит уже
+    существующие занятия до следующего тика генератора (тот же паттерн, что
+    `add_slot_participant`)."""
+    await get_lesson_slot(db, slot_id)
+    await ensure_user_has_role(db, teacher_id, "teacher")
+
+    existing = await _slot_teacher_repo.get(db, slot_id=slot_id, teacher_id=teacher_id)
+    if existing is not None and existing.is_active:
+        return existing
+
+    if existing is not None:
+        existing.is_active = True
+        row = existing
+    else:
+        row = await _slot_teacher_repo.create(
+            db, slot_id=slot_id, teacher_id=teacher_id, added_by=added_by,
+        )
+    await db.flush()
+
+    future_occurrences = await _occurrence_repo.list_for_slot(
+        db, slot_id, from_dt=datetime.now(timezone.utc),
+    )
+    for occurrence in future_occurrences:
+        already = await _occurrence_teacher_repo.get(
+            db, occurrence_id=occurrence.id, teacher_id=teacher_id
+        )
+        if already is None:
+            await _occurrence_teacher_repo.create(
+                db, occurrence_id=occurrence.id, teacher_id=teacher_id,
+            )
+
+    await db.commit()
+    await db.refresh(row)
+    logger.info(
+        "lesson_slot_teacher добавлен: slot=%s teacher=%s backfilled_occurrences=%s",
+        slot_id, teacher_id, len(future_occurrences),
+    )
+    return row
+
+
+async def remove_slot_teacher(db: AsyncSession, slot_id: int, teacher_id: int) -> None:
+    """Убрать со-преподавателя из слота (мягко)."""
+    await get_lesson_slot(db, slot_id)
+    row = await _slot_teacher_repo.get(db, slot_id=slot_id, teacher_id=teacher_id)
+    if row is None or not row.is_active:
+        raise DomainError(
+            f"Преподаватель id={teacher_id} не числится активным на слоте id={slot_id}",
             status_code=404,
         )
     row.is_active = False

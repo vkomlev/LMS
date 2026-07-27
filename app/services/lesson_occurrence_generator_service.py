@@ -32,6 +32,7 @@ from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.models.lesson_slot import LessonSlot
 from app.models.lesson_slot_student import LessonSlotStudent
+from app.models.lesson_slot_teacher import LessonSlotTeacher
 
 logger = logging.getLogger("app.lesson_calendar")
 
@@ -85,7 +86,10 @@ async def lesson_occurrence_generator_tick(
     settings = Settings()
     horizon_days = int(settings.lesson_occurrence_horizon_days)
 
-    summary = {"locked": False, "active_slots": 0, "generated": 0, "participants_synced": 0}
+    summary = {
+        "locked": False, "active_slots": 0, "generated": 0,
+        "participants_synced": 0, "teachers_synced": 0,
+    }
 
     async with factory() as db:
         got_row = await db.execute(
@@ -111,6 +115,14 @@ async def lesson_occurrence_generator_tick(
                 )
             )
             participant_student_ids = [row[0] for row in participants_res.fetchall()]
+
+            teachers_res = await db.execute(
+                select(LessonSlotTeacher.teacher_id).where(
+                    LessonSlotTeacher.slot_id == slot.id,
+                    LessonSlotTeacher.is_active.is_(True),
+                )
+            )
+            slot_teacher_ids = [row[0] for row in teachers_res.fetchall()] or [slot.teacher_id]
 
             occurrence_datetimes = _iter_occurrence_datetimes(
                 slot, horizon_days=horizon_days, now_utc=now_utc
@@ -161,14 +173,35 @@ async def lesson_occurrence_generator_tick(
                     if p_result.fetchone() is not None:
                         summary["participants_synced"] += 1
 
+                # tsk-443: совместное ведение — синхронизируем ВСЕХ активных
+                # преподавателей слота (не только основного), тем же
+                # паттерном, что и участников. Без этого co-преподаватель не
+                # увидит occurrence ни в первом тике, ни в последующих.
+                for teacher_id in slot_teacher_ids:
+                    t_result = await db.execute(
+                        text(
+                            """
+                            INSERT INTO lesson_occurrence_teacher
+                                (occurrence_id, teacher_id)
+                            VALUES (:oid, :tid)
+                            ON CONFLICT (occurrence_id, teacher_id) DO NOTHING
+                            RETURNING id
+                            """
+                        ),
+                        {"oid": occurrence_id, "tid": teacher_id},
+                    )
+                    if t_result.fetchone() is not None:
+                        summary["teachers_synced"] += 1
+
         await db.commit()
         logger.info(
             "lesson_occurrence_generator_tick done at=%s active_slots=%s generated=%s "
-            "participants_synced=%s",
+            "participants_synced=%s teachers_synced=%s",
             now_utc.isoformat(),
             summary["active_slots"],
             summary["generated"],
             summary["participants_synced"],
+            summary["teachers_synced"],
         )
 
     return summary
