@@ -40,7 +40,7 @@ class AttendanceEvent(Base):
         PrimaryKeyConstraint("id", name="attendance_event_pkey"),
         CheckConstraint(
             "action IN ('joined', 'declined', 'manual_present', 'manual_absent', "
-            "'auto_no_show')",
+            "'auto_no_show', 'auto_joined')",
             name="attendance_event_action_check",
         ),
         {"comment": "Append-only журнал действий по посещаемости occurrence (tsk-428)"},

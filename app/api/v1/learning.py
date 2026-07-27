@@ -39,6 +39,7 @@ from app.services.help_requests_service import (
     get_or_create_help_request,
     get_or_create_blocked_limit_help_request,
 )
+from app.services import lesson_attendance_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -157,6 +158,20 @@ async def material_complete(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     completed_at = await set_material_completed(db, body.student_id, material_id)
     await db.commit()
+    # tsk-439: реальное учебное действие во время окна занятия подтверждает
+    # явку автоматически. Soft-fail — явка не должна ломать учебный поток.
+    try:
+        await lesson_attendance_service.auto_confirm_if_in_progress(
+            db, student_id=body.student_id,
+        )
+    except Exception:
+        logger.warning(
+            "tsk-439: auto-confirm attendance failed: student_id=%s", body.student_id, exc_info=True,
+        )
+        try:
+            await db.rollback()
+        except Exception:
+            pass
     logger.info("material complete: student_id=%s material_id=%s", body.student_id, material_id)
     return MaterialCompleteResponse(
         ok=True,
@@ -200,6 +215,20 @@ async def material_skip(
             detail="already_completed",
         )
     await db.commit()
+    # tsk-439: реальное учебное действие во время окна занятия подтверждает
+    # явку автоматически. Soft-fail — явка не должна ломать учебный поток.
+    try:
+        await lesson_attendance_service.auto_confirm_if_in_progress(
+            db, student_id=body.student_id,
+        )
+    except Exception:
+        logger.warning(
+            "tsk-439: auto-confirm attendance failed: student_id=%s", body.student_id, exc_info=True,
+        )
+        try:
+            await db.rollback()
+        except Exception:
+            pass
     logger.info("material skip: student_id=%s material_id=%s", body.student_id, material_id)
     return LearningSkipResponse(
         ok=True,

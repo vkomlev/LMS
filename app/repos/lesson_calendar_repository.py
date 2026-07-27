@@ -313,3 +313,28 @@ class LessonOccurrenceParticipantRepository:
             if new_start < row_end and row_start < new_end:
                 return True
         return False
+
+    async def get_current_scheduled_for_student(
+        self, db: AsyncSession, *, student_id: int, now: datetime
+    ) -> Optional[LessonOccurrenceParticipant]:
+        """Активное ПРЯМО СЕЙЧАС занятие ученика — участие ещё в статусе
+        `scheduled` (явку не подтверждал и не отказывался), `now` попадает в
+        [scheduled_at, scheduled_at+duration). Для авто-подтверждения явки по
+        реальному учебному действию (tsk-439). `status='scheduled'` в самом
+        SQL — declined/rescheduled/no_show/completed/confirmed отсекаются
+        сразу, без Python-фильтра."""
+        stmt = (
+            select(LessonOccurrenceParticipant, LessonOccurrence)
+            .join(LessonOccurrence, LessonOccurrence.id == LessonOccurrenceParticipant.occurrence_id)
+            .where(
+                LessonOccurrenceParticipant.student_id == student_id,
+                LessonOccurrenceParticipant.status == "scheduled",
+                LessonOccurrence.scheduled_at <= now,
+            )
+        )
+        res = await db.execute(stmt)
+        for participant, occurrence in res.all():
+            window_end = occurrence.scheduled_at + timedelta(minutes=occurrence.duration_minutes)
+            if now < window_end:
+                return participant
+        return None

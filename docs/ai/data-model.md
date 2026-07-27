@@ -160,6 +160,24 @@
 
 Все занятия теперь: генератор (Фаза 1, групповой) → явка/no-show по участнику (Фаза 2) → панель преподавателя/перенос/ad-hoc по участнику (Фаза 3). Фаза 4 (TG-дублирование) — опциональна, не реализована.
 
+**tsk-439 (применено): авто-подтверждение явки по реальному учебному действию.**
+Если у ученика прямо сейчас идёт занятие (участие ещё `scheduled`, `now` в
+[`scheduled_at`, `scheduled_at+duration_minutes`)) и он совершает реальное
+учебное действие — сдаёт ответ (`POST /attempts/{id}/answers`) или
+завершает/пропускает материал (`POST /learning/materials/{id}/complete|skip`)
+— явка подтверждается автоматически (`status → confirmed`,
+`attendance_event(action='auto_joined', actor_user_id=student_id)`), без
+явного клика "Я на занятии". Новый метод
+`LessonOccurrenceParticipantRepository.get_current_scheduled_for_student` +
+`lesson_attendance_service.auto_confirm_if_in_progress` — вызывается
+soft-fail (try/except, не ломает основной поток) из обоих hook-точек.
+Решение оператора (`AskUserQuestion`): «активность» = реальное учебное
+действие (task_results/student_material_progress), НЕ любой page view —
+иначе потребовалась бы дорогая middleware на каждый запрос. Тихий no-op вне
+окна занятия (подавляющее большинство вызовов) — статус `declined`/
+`rescheduled`/`no_show`/`completed`/`confirmed` не переписывается (репо-метод
+фильтрует строго `status='scheduled'`).
+
 ## Read-контракты
 
 OpenAPI-спека: [docs/openapi.json](../openapi.json) (снимок). Live-спека — на `/docs` и `/redoc` при запущенном сервере.

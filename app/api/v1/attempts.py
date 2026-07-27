@@ -43,7 +43,12 @@ from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
-from app.services import assignment_rules_service, help_requests_service, teacher_queue_service
+from app.services import (
+    assignment_rules_service,
+    help_requests_service,
+    lesson_attendance_service,
+    teacher_queue_service,
+)
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
@@ -843,6 +848,24 @@ async def submit_attempt_answers(
             logger.warning(
                 "tsk-339: auto-close blocked_limit failed: attempt=%s task=%s",
                 attempt.id, task.id, exc_info=True,
+            )
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+        # 2.4d tsk-439: реальное учебное действие (сдача ответа) во время
+        # окна занятия автоматически подтверждает явку — не дожидаясь клика
+        # "Я на занятии". Soft-fail по тому же паттерну, что 2.4b/2.4c: явка
+        # никогда не должна ломать основной поток сдачи задания.
+        try:
+            await lesson_attendance_service.auto_confirm_if_in_progress(
+                db, student_id=attempt.user_id,
+            )
+        except Exception:
+            logger.warning(
+                "tsk-439: auto-confirm attendance failed: attempt=%s user=%s",
+                attempt.id, attempt.user_id, exc_info=True,
             )
             try:
                 await db.rollback()

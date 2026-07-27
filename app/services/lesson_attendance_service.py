@@ -127,3 +127,37 @@ async def get_occurrence_for_student(
             "Ученик не входит в число участников этого занятия", status_code=403
         )
     return participant, occurrence
+
+
+async def auto_confirm_if_in_progress(db: AsyncSession, *, student_id: int) -> bool:
+    """tsk-439: если у ученика ПРЯМО СЕЙЧАС идёт занятие (участие ещё
+    `scheduled`, время в пределах [scheduled_at, scheduled_at+duration)) —
+    реальное учебное действие (сдача ответа/завершение материала)
+    автоматически подтверждает явку, не дожидаясь явного клика "Я на
+    занятии" (решение оператора: реальное учебное действие = явка).
+
+    Тихий no-op (return False) в подавляющем большинстве вызовов — учебная
+    активность почти всегда происходит вне времени занятий. Коммитит сам:
+    у `attempts.py`/`learning.py` нет гарантированного финального commit
+    после основной записи (там своя commit-логика внутри try/except веток),
+    а явка — независимая по смыслу запись, ей не нужна строгая атомарность
+    с task_results/student_material_progress. Вызывающий код оборачивает
+    вызов в свой soft-fail try/except (см. 2.4b/2.4c в `attempts.py`).
+    """
+    participant = await _participant_repo.get_current_scheduled_for_student(
+        db, student_id=student_id, now=datetime.now(timezone.utc)
+    )
+    if participant is None:
+        return False
+
+    await db.execute(
+        text(
+            "INSERT INTO attendance_event (occurrence_id, actor_user_id, action) "
+            "VALUES (:oid, :uid, 'auto_joined')"
+        ),
+        {"oid": participant.occurrence_id, "uid": student_id},
+    )
+    participant.status = "confirmed"
+    participant.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return True
