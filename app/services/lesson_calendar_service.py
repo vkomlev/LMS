@@ -410,6 +410,60 @@ async def remove_slot_teacher(db: AsyncSession, slot_id: int, teacher_id: int) -
     await db.commit()
 
 
+def _time_in_window(local_time: time, start_time: time, duration_minutes: int) -> bool:
+    """`local_time` попадает в [start_time, start_time+duration)? Полночь
+    не пересекается (занятия внутри одних суток, тот же допуск, что и
+    `is_within_operating_hours`)."""
+    dummy_date = datetime(2000, 1, 1)
+    start_dt = datetime.combine(dummy_date, start_time)
+    end_dt = start_dt + timedelta(minutes=duration_minutes)
+    if end_dt.date() != start_dt.date():
+        return False
+    candidate_dt = datetime.combine(dummy_date, local_time)
+    return start_dt <= candidate_dt < end_dt
+
+
+async def list_teachers_for_time(
+    db: AsyncSession, *, scheduled_at: datetime, duration_minutes: int = 60,
+) -> list["Users"]:
+    """Преподаватели, у которых уже есть закреплённый слот на это конкретное
+    время (tsk-443, реальный кейс: Денис Ильин записывался на Пн 17:00,
+    система предложила выбрать из 4 привязанных преподавателей, хотя слот
+    там ровно один — оператор).
+
+    Возвращает ОДНОГО представителя НА КАЖДЫЙ отдельный слот, покрывающий
+    время (`slot.teacher_id`, основной), а не по преподавателю — выбор между
+    со-преподавателями ОДНОГО И ТОГО ЖЕ слота бессмыслен (это одно занятие,
+    tsk-443), даже если их несколько. Выбор нужен только если время
+    покрывают ДВА РАЗНЫХ независимых слота (разных, не пересекающихся по
+    преподавателям — `has_overlap` это гарантирует).
+
+    Пустой список — ни один активный слот школы не покрывает это время
+    (истинный ad-hoc вне расписания) — вызывающий код должен упасть на
+    дефолт (полный список привязанных преподавателей ученика).
+    """
+    tz = ZoneInfo("Europe/Moscow")
+    local_dt = scheduled_at.astimezone(tz)
+    weekday = local_dt.weekday()
+    local_time = local_dt.time()
+
+    all_active_slots = await _lesson_slot_repo.list_active(db)
+    matching_slots = [
+        s for s in all_active_slots
+        if s.weekday == weekday and _time_in_window(local_time, s.start_time, s.duration_minutes)
+    ]
+    if not matching_slots:
+        return []
+
+    representative_teacher_ids = {s.teacher_id for s in matching_slots}
+
+    from app.models.users import Users  # noqa: PLC0415 — избегаем circular import
+    from sqlalchemy import select as _select  # noqa: PLC0415
+
+    res = await db.execute(_select(Users).where(Users.id.in_(representative_teacher_ids)))
+    return list(res.scalars().all())
+
+
 # ─── Operating Hours check (используется Фазой 3: ad-hoc/reschedule) ────────
 
 

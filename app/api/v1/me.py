@@ -50,7 +50,7 @@ from app.schemas.me import (
 from app.schemas.task_history import TaskHistoryResponse
 from app.schemas.users import UserRead
 from app.services.student_teacher_links_service import StudentTeacherLinksService
-from app.services import me_service, roles_service, task_history_service
+from app.services import lesson_calendar_service, me_service, roles_service, task_history_service
 from app.services.tasks_acl_service import assert_task_access
 from app.services.audit_service import log_event
 from app.services.full_name_validator import validate_full_name
@@ -188,6 +188,12 @@ async def list_courses(
 
 @router.get("/teachers", response_model=list[UserRead])
 async def list_my_teachers(
+    at: datetime | None = Query(
+        default=None,
+        description="Если задано — сузить список до преподавателей, чей слот "
+                    "покрывает это время (tsk-443); пусто — вернуть всех привязанных",
+    ),
+    duration_minutes: int = Query(default=60, ge=1, description="Длительность занятия, минут"),
     current_user: CurrentUser = Depends(require_authenticated),
     db: AsyncSession = Depends(get_async_db),
 ) -> list[UserRead]:
@@ -198,8 +204,27 @@ async def list_my_teachers(
     его не вызвать). Нужна ученику без закреплённого слота («плавающий»,
     напр. tsk-021), чтобы выбрать преподавателя для ad-hoc записи
     (`POST /lesson-occurrences/ad-hoc`) без предшествующего occurrence.
+
+    tsk-443: с `at` — сужает список до преподавателей, чей активный слот
+    покрывает это время (реальный кейс: ученик привязан сразу к 4
+    преподавателям через `student_teacher_links`, но на конкретный час
+    слот есть только у одного — спрашивать выбор преподавателя не нужно).
+    Пересечение со списком привязанных (не произвольные преподаватели школы,
+    даже если их слот покрывает время) — ученику нельзя предлагать записаться
+    к тому, с кем у него формально нет связи. Ничего не пересеклось (совпало
+    время вне слотов, или слот есть, но его преподаватель не в списке
+    привязанных) — откат на полный список привязанных (обычный ad-hoc).
     """
     teachers = await _student_teacher_links_service.list_teachers(db, current_user.id)
+    if at is not None:
+        covering = await lesson_calendar_service.list_teachers_for_time(
+            db, scheduled_at=at, duration_minutes=duration_minutes,
+        )
+        covering_ids = {t.id for t in covering}
+        if covering_ids:
+            restricted = [t for t in teachers if t.id in covering_ids]
+            if restricted:
+                return [UserRead.model_validate(t) for t in restricted]
     return [UserRead.model_validate(t) for t in teachers]
 
 

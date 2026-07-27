@@ -19,11 +19,17 @@
   и основной — явка НЕ дублируется и НЕ требует синхронизации, потому что
   occurrence физически один.
 - Cron no-show уведомляет ВСЕХ преподавателей occurrence, не только основного.
+- `list_teachers_for_time`/`GET /me/teachers?at=`: реальный кейс — Денис
+  Ильин привязан к 4 преподавателям (`student_teacher_links`), но на Пн
+  17:00 слот есть только у одного, система не должна спрашивать выбор.
+  Один слот с несколькими со-преподавателями — тоже без выбора (это одно
+  занятие); выбор нужен, только если время покрывают ДВА РАЗНЫХ слота.
 """
 from __future__ import annotations
 
 import random
 from datetime import date, datetime, time, timedelta, timezone as dt_timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
@@ -304,3 +310,157 @@ async def test_no_show_cron_notifies_all_co_teachers(db, db_session_factory):
         )
     ).scalars().all()
     assert set(notified_teachers) == {teacher_a, teacher_b}
+
+
+def _local_time_today_as_utc(local_time: time) -> datetime:
+    """Сегодняшняя дата + указанное локальное время (Europe/Moscow) → UTC.
+    weekday слота тоже берём как `date.today().weekday()` — согласовано."""
+    tz = ZoneInfo("Europe/Moscow")
+    local_dt = datetime.combine(date.today(), local_time, tzinfo=tz)
+    return local_dt.astimezone(dt_timezone.utc)
+
+
+async def _link_student_teacher(db, *, student_id: int, teacher_id: int) -> None:
+    await db.execute(
+        text("INSERT INTO student_teacher_links (student_id, teacher_id) VALUES (:s, :t)"),
+        {"s": student_id, "t": teacher_id},
+    )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_list_teachers_for_time_single_slot_single_teacher(db):
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk443-lt1")
+    await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_id, weekday=date.today().weekday(), start_time=time(17, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_id,
+    )
+
+    result = await lesson_calendar_service.list_teachers_for_time(
+        db, scheduled_at=_local_time_today_as_utc(time(17, 0)),
+    )
+    assert [t.id for t in result] == [teacher_id]
+
+
+@pytest.mark.asyncio
+async def test_list_teachers_for_time_co_taught_slot_returns_single_representative(db):
+    """Один слот с 3 со-преподавателями — выбор всё равно не нужен (одно занятие)."""
+    teacher_a = await _create_user(db, role="teacher", prefix="tsk443-ltca")
+    teacher_b = await _create_user(db, role="teacher", prefix="tsk443-ltcb")
+    teacher_c = await _create_user(db, role="teacher", prefix="tsk443-ltcc")
+    slot = await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_a, weekday=date.today().weekday(), start_time=time(11, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_a,
+    )
+    await lesson_calendar_service.add_slot_teacher(db, slot.id, teacher_b, added_by=teacher_a)
+    await lesson_calendar_service.add_slot_teacher(db, slot.id, teacher_c, added_by=teacher_a)
+
+    result = await lesson_calendar_service.list_teachers_for_time(
+        db, scheduled_at=_local_time_today_as_utc(time(11, 0)),
+    )
+    assert len(result) == 1  # НЕ 3 — один представитель на слот
+    assert result[0].id == teacher_a  # основной (slot.teacher_id)
+
+
+@pytest.mark.asyncio
+async def test_list_teachers_for_time_two_independent_slots_returns_both(db):
+    """Два РАЗНЫХ (не пересекающихся по преподавателям) слота на один час —
+    здесь выбор действительно нужен."""
+    teacher_a = await _create_user(db, role="teacher", prefix="tsk443-lt2a")
+    teacher_b = await _create_user(db, role="teacher", prefix="tsk443-lt2b")
+    weekday = date.today().weekday()
+    await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_a, weekday=weekday, start_time=time(13, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_a,
+    )
+    await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_b, weekday=weekday, start_time=time(13, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_b,
+    )
+
+    result = await lesson_calendar_service.list_teachers_for_time(
+        db, scheduled_at=_local_time_today_as_utc(time(13, 0)),
+    )
+    assert {t.id for t in result} == {teacher_a, teacher_b}
+
+
+@pytest.mark.asyncio
+async def test_list_teachers_for_time_no_match_returns_empty(db):
+    result = await lesson_calendar_service.list_teachers_for_time(
+        db, scheduled_at=_local_time_today_as_utc(time(3, 30)),
+    )
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_me_teachers_at_restricts_to_single_slot_teacher(db, client):
+    """Реальный кейс (Денис Ильин): ученик привязан к 4 преподавателям, но
+    на этот конкретный час слот есть только у одного — API должен вернуть
+    только его, не все 4."""
+    teacher_with_slot = await _create_user(db, role="teacher", prefix="tsk443-denis-a")
+    other_teacher_1 = await _create_user(db, role="teacher", prefix="tsk443-denis-b")
+    other_teacher_2 = await _create_user(db, role="teacher", prefix="tsk443-denis-c")
+    student_id = await _create_user(db, role="student", prefix="tsk443-denis")
+
+    await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_with_slot, weekday=date.today().weekday(), start_time=time(17, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_with_slot,
+    )
+    for t in (teacher_with_slot, other_teacher_1, other_teacher_2):
+        await _link_student_teacher(db, student_id=student_id, teacher_id=t)
+
+    token, _, _ = await create_session(db, user_id=student_id)
+    at_iso = _local_time_today_as_utc(time(17, 0)).isoformat()
+
+    resp = await client.get(
+        "/api/v1/me/teachers", params={"at": at_iso},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert [t["id"] for t in resp.json()] == [teacher_with_slot]
+
+
+@pytest.mark.asyncio
+async def test_me_teachers_at_co_taught_slot_returns_one_not_all(db, client):
+    teacher_a = await _create_user(db, role="teacher", prefix="tsk443-coa")
+    teacher_b = await _create_user(db, role="teacher", prefix="tsk443-cob")
+    student_id = await _create_user(db, role="student", prefix="tsk443-costud")
+
+    slot = await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_a, weekday=date.today().weekday(), start_time=time(9, 0),
+        duration_minutes=60, timezone="Europe/Moscow", created_by=teacher_a,
+    )
+    await lesson_calendar_service.add_slot_teacher(db, slot.id, teacher_b, added_by=teacher_a)
+    for t in (teacher_a, teacher_b):
+        await _link_student_teacher(db, student_id=student_id, teacher_id=t)
+
+    token, _, _ = await create_session(db, user_id=student_id)
+    at_iso = _local_time_today_as_utc(time(9, 0)).isoformat()
+
+    resp = await client.get(
+        "/api/v1/me/teachers", params={"at": at_iso},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    ids = [t["id"] for t in resp.json()]
+    assert len(ids) == 1
+    assert ids[0] in (teacher_a, teacher_b)
+
+
+@pytest.mark.asyncio
+async def test_me_teachers_at_no_match_falls_back_to_full_list(db, client):
+    teacher_a = await _create_user(db, role="teacher", prefix="tsk443-fba")
+    teacher_b = await _create_user(db, role="teacher", prefix="tsk443-fbb")
+    student_id = await _create_user(db, role="student", prefix="tsk443-fbstud")
+    for t in (teacher_a, teacher_b):
+        await _link_student_teacher(db, student_id=student_id, teacher_id=t)
+
+    token, _, _ = await create_session(db, user_id=student_id)
+    at_iso = _local_time_today_as_utc(time(3, 30)).isoformat()  # заведомо без слота
+
+    resp = await client.get(
+        "/api/v1/me/teachers", params={"at": at_iso},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert {t["id"] for t in resp.json()} == {teacher_a, teacher_b}
