@@ -21361,6 +21361,116 @@
         }
       }
     },
+    "/api/v1/teacher/lesson-occurrences/{occurrence_id}/summary": {
+      "get": {
+        "tags": [
+          "teacher_lesson_occurrences"
+        ],
+        "summary": "Get Teacher Lesson Summary",
+        "description": "Сводка по каждому участнику occurrence (tsk-022 «до занятия» /\ntsk-410 «после занятия» — общий источник, см.\n``teacher_lesson_summary_service``): последнее выполненное задание/\nматериал, метрики ДЗ между занятиями, заблокированные лимитом задания,\nоткрытые заявки помощи, серия пропусков подряд, % прогресса курса.",
+        "operationId": "get_teacher_lesson_summary_api_v1_teacher_lesson_occurrences__occurrence_id__summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID преподавателя",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherLessonOccurrenceSummaryRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/lesson-occurrences/{occurrence_id}/attendance": {
       "post": {
         "tags": [
@@ -34757,6 +34867,39 @@
         "title": "TeacherLessonOccurrenceRead",
         "description": "Occurrence в панели преподавателя — с полным списком участников."
       },
+      "TeacherLessonOccurrenceSummaryRead": {
+        "properties": {
+          "occurrence_id": {
+            "type": "integer",
+            "title": "Occurrence Id"
+          },
+          "is_ad_hoc": {
+            "type": "boolean",
+            "title": "Is Ad Hoc",
+            "description": "Occurrence вне регулярного расписания (slot_id IS NULL)"
+          },
+          "window_to": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Window To",
+            "description": "Конец окна ДЗ — момент запроса сводки, общий для всех"
+          },
+          "participants": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherSummaryParticipant"
+            },
+            "type": "array",
+            "title": "Participants"
+          }
+        },
+        "type": "object",
+        "required": [
+          "occurrence_id",
+          "is_ad_hoc",
+          "window_to"
+        ],
+        "title": "TeacherLessonOccurrenceSummaryRead"
+      },
       "TeacherParticipantRead": {
         "properties": {
           "id": {
@@ -34814,6 +34957,281 @@
           "is_overdue"
         ],
         "title": "TeacherParticipantRead"
+      },
+      "TeacherSummaryActivity": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material"
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "timestamp"
+        ],
+        "title": "TeacherSummaryActivity",
+        "description": "Последнее выполненное задание/материал ученика (не ручной зачёт)."
+      },
+      "TeacherSummaryBlockedTask": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "title"
+        ],
+        "title": "TeacherSummaryBlockedTask",
+        "description": "Задание, заблокированное лимитом попыток (текущий снепшот)."
+      },
+      "TeacherSummaryCourseProgress": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "percent_complete": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Percent Complete"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "title",
+          "percent_complete"
+        ],
+        "title": "TeacherSummaryCourseProgress"
+      },
+      "TeacherSummaryHelpRequest": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "task_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Title"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "created_at"
+        ],
+        "title": "TeacherSummaryHelpRequest",
+        "description": "Открытая заявка на помощь — с текстом, не только счётчик."
+      },
+      "TeacherSummaryHomework": {
+        "properties": {
+          "completed": {
+            "type": "integer",
+            "title": "Completed",
+            "description": "Заданий сдано верно в окне"
+          },
+          "first_try": {
+            "type": "integer",
+            "title": "First Try",
+            "description": "Из них верно с первой попытки"
+          },
+          "help_requested": {
+            "type": "integer",
+            "title": "Help Requested",
+            "description": "Заявок на помощь создано в окне"
+          }
+        },
+        "type": "object",
+        "required": [
+          "completed",
+          "first_try",
+          "help_requested"
+        ],
+        "title": "TeacherSummaryHomework",
+        "description": "Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence\nэтого ученика до момента запроса)."
+      },
+      "TeacherSummaryParticipant": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "tg_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tg Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "scheduled | confirmed | declined | rescheduled | no_show | completed"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue"
+          },
+          "last_activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSummaryActivity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days_since_last_activity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days Since Last Activity"
+          },
+          "window_from": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window From",
+            "description": "Начало окна ДЗ для ЭТОГО ученика — конец его предыдущего occurrence (у каждого участника группы своя история занятий); None — предыдущего не было"
+          },
+          "homework": {
+            "$ref": "#/components/schemas/TeacherSummaryHomework"
+          },
+          "blocked_tasks": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherSummaryBlockedTask"
+            },
+            "type": "array",
+            "title": "Blocked Tasks"
+          },
+          "open_help_requests": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherSummaryHelpRequest"
+            },
+            "type": "array",
+            "title": "Open Help Requests"
+          },
+          "missed_streak": {
+            "type": "integer",
+            "title": "Missed Streak",
+            "description": "Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
+          },
+          "course_progress": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherSummaryCourseProgress"
+            },
+            "type": "array",
+            "title": "Course Progress"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "status",
+          "is_overdue",
+          "homework",
+          "missed_streak"
+        ],
+        "title": "TeacherSummaryParticipant"
       },
       "TeacherWorkloadResponse": {
         "properties": {

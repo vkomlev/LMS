@@ -9,6 +9,9 @@
   занятие вручную (ad-hoc occurrence).
 - `POST /teacher/lesson-occurrences/{id}/participants` — добавить ученика к
   УЖЕ существующему occurrence (например, подключить опоздавшего к группе).
+- `GET /teacher/lesson-occurrences/{id}/summary` — сводка по каждому
+  участнику (tsk-022 «до занятия» / tsk-410 «после занятия», кнопка
+  «Подвести итоги» — общий эндпоинт для обеих точек входа фронта).
 
 Гейт — тот же паттерн, что `teacher_workload.py`: явный `teacher_id` +
 `get_current_user` + ручная ownership-проверка (`current_user.id ==
@@ -32,9 +35,10 @@ from app.schemas.lesson_calendar import (
     ParticipantRead,
     TeacherAttendanceActionRequest,
     TeacherLessonOccurrenceRead,
+    TeacherLessonOccurrenceSummaryRead,
     TeacherParticipantRead,
 )
-from app.services import lesson_occurrence_service
+from app.services import lesson_occurrence_service, teacher_lesson_summary_service
 
 router = APIRouter(prefix="/teacher", tags=["teacher_lesson_occurrences"])
 
@@ -77,6 +81,33 @@ async def list_teacher_occurrences(
         ]
         result.append(TeacherLessonOccurrenceRead(**data))
     return result
+
+
+@router.get(
+    "/lesson-occurrences/{occurrence_id}/summary",
+    response_model=TeacherLessonOccurrenceSummaryRead,
+)
+async def get_teacher_lesson_summary(
+    occurrence_id: int,
+    teacher_id: int = Query(..., description="ID преподавателя"),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> TeacherLessonOccurrenceSummaryRead:
+    """Сводка по каждому участнику occurrence (tsk-022 «до занятия» /
+    tsk-410 «после занятия» — общий источник, см.
+    ``teacher_lesson_summary_service``): последнее выполненное задание/
+    материал, метрики ДЗ между занятиями, заблокированные лимитом задания,
+    открытые заявки помощи, серия пропусков подряд, % прогресса курса."""
+    _ensure_self_or_service(current_user, teacher_id)
+    threshold_minutes = Settings().lesson_no_show_threshold_minutes
+    data = await teacher_lesson_summary_service.get_occurrence_summary(
+        db,
+        occurrence_id=occurrence_id,
+        teacher_id=teacher_id,
+        current_user=current_user,
+        no_show_threshold_minutes=threshold_minutes,
+    )
+    return TeacherLessonOccurrenceSummaryRead(**data)
 
 
 @router.post(
