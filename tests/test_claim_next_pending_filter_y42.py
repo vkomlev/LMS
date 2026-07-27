@@ -176,6 +176,14 @@ async def test_claim_next_skips_auto_checked(db, client, task_type):
         # SA_COM с manual_review_required=true — авто-чек намеренно не выносит
         # вердикт (is_correct=NULL, tsk-230 `_check_short_answer`).
         ("SA_COM", True, None),
+        # Регрессия прод-инцидента (диагностика 2026-07-26, задание 5832):
+        # обычный SA с manual_review_required=true (пустой accepted_answers) —
+        # checking_service ставит is_correct=NULL идентично SA_COM (общая ветка
+        # `task_type in ("SA", "SA_COM")`, checking_service.py:107). До фикса
+        # MANDATORY_REVIEW_TEMPLATE такой SA не входил в обязательную очередь ни
+        # при каком is_correct — ученик видел «На проверке» бессрочно, очередь
+        # преподавателя оставалась пустой.
+        ("SA", True, None),
     ],
 )
 async def test_claim_next_includes_pending_manual(

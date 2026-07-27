@@ -115,12 +115,18 @@ REVIEW_ACL_SQL = f"""
 # claim-next — `is_correct IS TRUE` (Y-6/tsk-210). Множества не пересекались:
 # работу из обязательного списка невозможно было взять в работу, и наоборот.
 #
-# Ось «обязательная / опциональная» — это `manual_review_required` (SA_COM) и
+# Ось «обязательная / опциональная» — это `manual_review_required` (SA/SA_COM) и
 # тип TA, а НЕ `is_correct`:
 #   - TA — всегда ручная (рубрики), submit ставит optimistic-PASSED is_correct=TRUE;
-#   - SA_COM с manual_review_required=true — авто-чек намеренно не выносит вердикт
-#     (is_correct=NULL, см. tsk-230 `_check_short_answer`);
-#   - SA_COM с manual_review_required=false — авто-проверена, очередь опциональная
+#   - SA/SA_COM с manual_review_required=true — авто-чек намеренно не выносит вердикт
+#     (is_correct=NULL, см. tsk-230 `_check_short_answer` — обрабатывает SA и SA_COM
+#     ОДИНАКОВО по этому флагу, `checking_service.py:107`). До прод-инцидента
+#     (диагностика 2026-07-26, задание 5832) здесь стоял только 'SA_COM','TBL_COM' —
+#     обычный SA с manual_review_required=true (пустой accepted_answers, чисто ручная
+#     проверка короткого ответа) навсегда зависал «На проверке» у ученика, но НИКОГДА
+#     не попадал в очередь ни одного преподавателя — checking_service ставил
+#     is_correct=NULL identично SA_COM, а этот предикат SA не пускал.
+#   - SA/SA_COM с manual_review_required=false — авто-проверена, очередь опциональная
 #     (review_kind=optional). Сюда же попадают честно-заваленные (is_correct=false),
 #     которые tsk-210 не хотел показывать как обязательные — теперь их отсекает
 #     сама ось mrr, без хрупкой опоры на is_correct.
@@ -128,7 +134,7 @@ REVIEW_ACL_SQL = f"""
 #     обязательности, та же вторичная проверка.
 MANDATORY_REVIEW_TEMPLATE = """
     ({tasks}.task_content->>'type' = 'TA'
-     OR ({tasks}.task_content->>'type' IN ('SA_COM','TBL_COM')
+     OR ({tasks}.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
          AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
 """
 
