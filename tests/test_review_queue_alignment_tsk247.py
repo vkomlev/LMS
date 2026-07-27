@@ -155,6 +155,60 @@ async def test_mandatory_list_work_is_claimable(db, client):
 
 
 @pytest.mark.asyncio
+async def test_claim_by_id_sa_manual_review(db, client):
+    """tsk-438 (прод-инцидент 2026-07-27): SA с manual_review_required=true
+    виден в обязательном списке (после фикса MANDATORY_REVIEW_TEMPLATE), но
+    клик по конкретной работе шёл через claim_review_by_id и падал «Работа не
+    найдена или уже проверена» — MANUAL_REVIEW_TASK_TYPES не включал SA.
+
+    Живое подтверждение: очередь показывала 4 работы, но открыть по клику
+    ни одну было нельзя.
+    """
+    methodist_id, token = await _setup_methodist(db)
+    student_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA", manual=True)
+    rid = await _create_tr(db, user_id=student_id, task_id=task_id, is_correct=None)
+    try:
+        assert rid in await _mandatory_ids(client, student_id=student_id), (
+            f"rid={rid} (SA, manual_review_required=true) должен быть в обязательном списке"
+        )
+        resp = await client.post(
+            f"/api/v1/teacher/reviews/{rid}/claim",
+            json={"teacher_id": methodist_id, "ttl_sec": 120},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, (
+            f"claim по id должен открыть SA-задание из обязательной очереди, "
+            f"но получил {resp.status_code}: {resp.text}"
+        )
+        body = resp.json()
+        assert body["item"]["id"] == rid
+        lock_token = body["lock_token"]
+
+        grade = await client.post(
+            f"/api/v1/teacher/reviews/{rid}/grade",
+            json={
+                "teacher_id": methodist_id,
+                "lock_token": lock_token,
+                "score": 10,
+                "comment": "проверено вручную",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert grade.status_code == 200, grade.text
+        row = (
+            await db.execute(
+                text("SELECT score, checked_at FROM task_results WHERE id=:r"),
+                {"r": rid},
+            )
+        ).fetchone()
+        assert row[0] == 10 and row[1] is not None
+    finally:
+        await _cleanup(db, user_ids=[methodist_id, student_id],
+                       task_ids=[task_id], rids=[rid])
+
+
+@pytest.mark.asyncio
 async def test_claim_next_never_returns_work_absent_from_mandatory_list(db, client):
     """Обратная сторона: claim-next не выдаёт то, чего нет в обязательном списке.
 

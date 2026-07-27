@@ -368,7 +368,9 @@ async def _tree_task_rows(db: AsyncSession, course_ids: list[int]) -> list[dict[
             text(
                 "SELECT id, course_id, external_uid, "
                 "       task_content->>'type' AS task_type, "
-                "       task_content->>'title' AS tc_title, task_content->>'stem' AS tc_stem "
+                "       task_content->>'title' AS tc_title, task_content->>'stem' AS tc_stem, "
+                "       COALESCE((solution_rules->>'manual_review_required')::boolean, false) "
+                "         AS manual_review_required "
                 "FROM tasks "
                 "WHERE course_id = ANY(:course_ids) AND is_active = true "
                 "  AND requirement_level = ANY(:levels) "
@@ -1185,9 +1187,19 @@ async def get_student_progress(
             is_manual = bool(last is not None and last.get("source_system") == MANUAL_SOURCE)
 
             # tsk-336: признаки, требующие внимания преподавателя.
+            # tsk-438 (2026-07-27, паритет с me_service.py:807-828/tsk-420): ось
+            # обязательности — НЕ тип задания, а manual_review_required. TA всегда
+            # ручная; SA/SA_COM/TBL_COM — только если явно помечены флагом, иначе
+            # checked_at у авто-проверенных не проставляется НИКОГДА (это самый
+            # массовый тип заданий) — блинд-фильтр по одному type-whitelist дал бы
+            # ложный pending_review=True почти на всех обычных SA в системе.
             hr = help_by_task.get(tid)
+            t_type = t.get("task_type")
+            is_mandatory_review_type = t_type == "TA" or (
+                t_type in MANUAL_REVIEW_TASK_TYPES and bool(t.get("manual_review_required"))
+            )
             pending_review = bool(
-                t.get("task_type") in MANUAL_REVIEW_TASK_TYPES
+                is_mandatory_review_type
                 and last is not None
                 and last.get("checked_at") is None
             )

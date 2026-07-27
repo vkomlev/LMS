@@ -22,7 +22,15 @@ COMMENT_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM")
 
 # Типы, чьи ответы проходят через очередь ручной проверки преподавателя
 # (обязательную при manual_review_required, опциональную — вторичным просмотром).
-MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA_COM", "TBL_COM", "TA")
+# 'SA' добавлен 2026-07-27 (прод-инцидент): checking_service обрабатывает SA и
+# SA_COM идентично при manual_review_required=true (is_correct=NULL для обоих),
+# но эта константа гейтит claim_review_by_id (прямой claim по id) и pending_review
+# в manual_progress_service.py — без SA учитель не мог открыть работу по клику из
+# уже исправленной очереди (см. teacher_queue_service.MANDATORY_REVIEW_TEMPLATE,
+# коммит 3f225bc). manual_progress_service.py требует ОТДЕЛЬНОЙ проверки
+# manual_review_required для SA/SA_COM/TBL_COM (см. комментарий там) — эта
+# константа сама по себе НЕ гарантирует обязательность, только тип.
+MANUAL_REVIEW_TASK_TYPES: tuple[str, ...] = ("SA", "SA_COM", "TBL_COM", "TA")
 
 # Типы с табличным ответом (tsk-366): значения разделены пробельными символами —
 # ячейки в ряду пробелом, ряды переводом строки.
