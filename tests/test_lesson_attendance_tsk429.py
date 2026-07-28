@@ -23,7 +23,10 @@ from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.models.users import Users
 from app.services.auth.session_service import create_session
-from app.services.lesson_attendance_cron_service import lesson_attendance_cron_tick
+from app.services.lesson_attendance_cron_service import (
+    _format_lesson_time,
+    lesson_attendance_cron_tick,
+)
 
 
 # ============================== Helpers ==============================
@@ -378,6 +381,48 @@ async def test_no_show_marks_scheduled_past_threshold(db, db_session_factory):
         )
     ).scalar()
     assert notif_count == 2, "Уведомление и ученику, и преподавателю"
+
+
+@pytest.mark.asyncio
+async def test_no_show_notification_content_has_no_raw_iso_timestamp_tsk449(
+    db, db_session_factory,
+):
+    """tsk-449: content уведомлений раньше содержал `scheduled_at.isoformat()`
+    как есть (сырой ISO в UTC) — учитель/ученик видел «...2026-07-27T08:00:00+00:00.»
+    вместо локального времени. Регресс на обе стороны (student/teacher)."""
+    student_id = await _create_user(db, role="student", prefix="tsk449-stud")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk449-teach")
+
+    scheduled_at = datetime.now(timezone.utc) - timedelta(minutes=20)
+    occ_id, _participant_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=scheduled_at, status="scheduled",
+    )
+
+    await lesson_attendance_cron_tick(db_session_factory)
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT content FROM notifications "
+                "WHERE kind = 'lesson_missed' AND (payload->>'occurrence_id')::int = :oid"
+            ),
+            {"oid": occ_id},
+        )
+    ).fetchall()
+    assert len(rows) == 2, "Уведомление и ученику, и преподавателю"
+
+    expected_local = _format_lesson_time(scheduled_at)
+    for (content,) in rows:
+        assert scheduled_at.isoformat() not in content, (
+            f"Сырой ISO-таймстамп просочился в текст уведомления: {content!r}"
+        )
+        assert "+00:00" not in content, (
+            f"Похоже на необработанный UTC-offset в тексте уведомления: {content!r}"
+        )
+        assert expected_local in content, (
+            f"Ожидали человекочитаемое локальное время {expected_local!r} в: {content!r}"
+        )
 
 
 @pytest.mark.asyncio

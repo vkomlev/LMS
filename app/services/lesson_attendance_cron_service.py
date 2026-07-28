@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -40,6 +41,17 @@ from app.db.session import async_session_factory
 from app.services import inbox_service
 
 logger = logging.getLogger("app.lesson_calendar")
+
+_MOSCOW_TZ = ZoneInfo("Europe/Moscow")
+
+
+def _format_lesson_time(scheduled_at: datetime) -> str:
+    """Человекочитаемое время занятия для текста уведомления (не для payload).
+
+    tsk-449: `scheduled_at.isoformat()` раньше подставлялся в `content` как есть —
+    учитель/ученик видел сырой ISO-таймстамп в UTC вместо локального времени.
+    """
+    return scheduled_at.astimezone(_MOSCOW_TZ).strftime("%d.%m, %H:%M")
 
 # ascii "LSNA" (LeSsoN Attendance) — уникален относительно Y-6 (0x59365453)
 # и генератора occurrence (0x4C534E43, "LSNC").
@@ -79,7 +91,7 @@ async def _send_reminders(db: AsyncSession, *, lead_minutes: int) -> int:
             kind="lesson_reminder",
             title="Скоро занятие",
             content=(
-                f"Занятие начинается {scheduled_at.isoformat()}. "
+                f"Занятие начинается {_format_lesson_time(scheduled_at)}. "
                 "Не забудьте подтвердить явку в LMS."
             ),
             payload={
@@ -137,7 +149,7 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
             user_id=int(student_id),
             kind="lesson_missed",
             title="Занятие пропущено",
-            content=f"Вы не подтвердили явку на занятие {scheduled_at.isoformat()}.",
+            content=f"Вы не подтвердили явку на занятие {_format_lesson_time(scheduled_at)}.",
             payload={**payload, "role": "student"},
             created_by=None,
         )
@@ -159,7 +171,7 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
                 user_id=int(occ_teacher_id),
                 kind="lesson_missed",
                 title="Ученик не пришёл",
-                content=f"Ученик не подтвердил явку на занятие {scheduled_at.isoformat()}.",
+                content=f"Ученик не подтвердил явку на занятие {_format_lesson_time(scheduled_at)}.",
                 payload={**payload, "role": "teacher"},
                 created_by=None,
             )
