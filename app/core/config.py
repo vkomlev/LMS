@@ -194,3 +194,10 @@ class Settings:
         self.lesson_attendance_cron_interval_min: int = int(
             os.getenv("LESSON_ATTENDANCE_CRON_INTERVAL_MIN", "5")
         )
+        # tsk-455: запас до начала occurrence, в пределах которого реальное
+        # учебное действие (сдача ответа/завершение материала) всё ещё
+        # авто-подтверждает явку — без него ученик, пришедший на несколько
+        # секунд/минут раньше scheduled_at, не попадает в auto_joined.
+        self.lesson_auto_confirm_early_grace_minutes: int = int(
+            os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "15")
+        )

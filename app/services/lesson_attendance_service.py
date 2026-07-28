@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.repos.lesson_calendar_repository import (
@@ -143,9 +144,18 @@ async def auto_confirm_if_in_progress(db: AsyncSession, *, student_id: int) -> b
     а явка — независимая по смыслу запись, ей не нужна строгая атомарность
     с task_results/student_material_progress. Вызывающий код оборачивает
     вызов в свой soft-fail try/except (см. 2.4b/2.4c в `attempts.py`).
+
+    tsk-455: `early_grace_minutes` (настройка
+    `lesson_auto_confirm_early_grace_minutes`) даёт запас ДО начала занятия —
+    живой инцидент показал, что строгое "занятие уже началось" отсекало
+    ученика, сдавшего ответ за 13 секунд до scheduled_at.
     """
+    settings = Settings()
     participant = await _participant_repo.get_current_scheduled_for_student(
-        db, student_id=student_id, now=datetime.now(timezone.utc)
+        db,
+        student_id=student_id,
+        now=datetime.now(timezone.utc),
+        early_grace_minutes=settings.lesson_auto_confirm_early_grace_minutes,
     )
     if participant is None:
         return False

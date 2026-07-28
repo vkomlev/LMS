@@ -19,6 +19,7 @@ from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.role_assign_service import ensure_student_access_request
 from app.services.audit_service import log_event
 from app.services.rate_limit_service import get_redis, is_rate_limited
+from app.services.user_merge_service import check_and_merge_duplicate_on_registration
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/tg", tags=["auth"])
@@ -73,6 +74,18 @@ async def tg_init(
         logger.exception(
             "tsk-172 ensure_student_access_request failed user_id=%s", user.id
         )
+    if created:
+        # tsk-455: проверка на дубль с "плавающим" аккаунтом сразу при
+        # регистрации, не дожидаясь ручного запуска
+        # tsk442_auto_merge_duplicates.py. Soft-fail — не должно ломать
+        # авторизацию.
+        try:
+            await check_and_merge_duplicate_on_registration(db, new_user_id=user.id)
+        except Exception:
+            logger.exception(
+                "tsk-455 check_and_merge_duplicate_on_registration failed user_id=%s",
+                user.id,
+            )
     await db.commit()
 
     set_session_cookie(response, access_token)

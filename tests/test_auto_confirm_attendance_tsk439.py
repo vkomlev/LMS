@@ -137,6 +137,38 @@ async def test_repo_none_before_window_starts(db):
 
 
 @pytest.mark.asyncio
+async def test_repo_early_grace_finds_participant_before_start(db):
+    """tsk-455: occurrence начинается через 10 минут, запас 15 минут —
+    должен найтись (живой инцидент: ученик сдал ответ за 13 секунд до
+    начала, без запаса это была бы гарантированная осечка)."""
+    student_id = await _create_user(db, role="student", prefix="tsk455-repo1")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk455-repo1t")
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=NOW + timedelta(minutes=10),
+    )
+    found = await _participant_repo.get_current_scheduled_for_student(
+        db, student_id=student_id, now=NOW, early_grace_minutes=15,
+    )
+    assert found is not None
+    assert found.status == "scheduled"
+
+
+@pytest.mark.asyncio
+async def test_repo_early_grace_none_beyond_grace_window(db):
+    """tsk-455: occurrence начинается через 20 минут, запас 15 минут —
+    слишком рано, не должен найтись."""
+    student_id = await _create_user(db, role="student", prefix="tsk455-repo2")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk455-repo2t")
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id, scheduled_at=NOW + timedelta(minutes=20),
+    )
+    found = await _participant_repo.get_current_scheduled_for_student(
+        db, student_id=student_id, now=NOW, early_grace_minutes=15,
+    )
+    assert found is None
+
+
+@pytest.mark.asyncio
 async def test_repo_none_after_window_ends(db):
     student_id = await _create_user(db, role="student", prefix="tsk439-repo3")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk439-repo3t")
@@ -195,6 +227,30 @@ async def test_service_confirms_and_logs_auto_joined_event(db):
     assert event is not None
     assert event[0] == "auto_joined"
     assert event[1] == student_id
+
+
+@pytest.mark.asyncio
+async def test_service_confirms_when_action_slightly_before_start(db):
+    """tsk-455: реальное действие за 13 секунд до scheduled_at (живой
+    инцидент, tsk-455) — сервис читает запас из настройки
+    `lesson_auto_confirm_early_grace_minutes` (дефолт 15 мин) и всё равно
+    подтверждает явку."""
+    student_id = await _create_user(db, role="student", prefix="tsk455-svc1")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk455-svc1t")
+    occ_id, participant_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(timezone.utc) + timedelta(seconds=13),
+    )
+    result = await lesson_attendance_service.auto_confirm_if_in_progress(db, student_id=student_id)
+    assert result is True
+
+    row = (
+        await db.execute(
+            text("SELECT status FROM lesson_occurrence_participant WHERE id = :pid"),
+            {"pid": participant_id},
+        )
+    ).fetchone()
+    assert row[0] == "confirmed"
 
 
 @pytest.mark.asyncio

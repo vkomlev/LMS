@@ -486,21 +486,29 @@ class LessonOccurrenceParticipantRepository:
         return False
 
     async def get_current_scheduled_for_student(
-        self, db: AsyncSession, *, student_id: int, now: datetime
+        self, db: AsyncSession, *, student_id: int, now: datetime, early_grace_minutes: int = 0,
     ) -> Optional[LessonOccurrenceParticipant]:
         """Активное ПРЯМО СЕЙЧАС занятие ученика — участие ещё в статусе
         `scheduled` (явку не подтверждал и не отказывался), `now` попадает в
-        [scheduled_at, scheduled_at+duration). Для авто-подтверждения явки по
-        реальному учебному действию (tsk-439). `status='scheduled'` в самом
-        SQL — declined/rescheduled/no_show/completed/confirmed отсекаются
-        сразу, без Python-фильтра."""
+        [scheduled_at - early_grace_minutes, scheduled_at+duration). Для
+        авто-подтверждения явки по реальному учебному действию (tsk-439).
+        `status='scheduled'` в самом SQL — declined/rescheduled/no_show/
+        completed/confirmed отсекаются сразу, без Python-фильтра.
+
+        tsk-455: `early_grace_minutes` — запас ДО начала занятия. Без него
+        ученик, сдавший ответ на несколько секунд раньше scheduled_at,
+        гарантированно проваливает строгое `scheduled_at <= now` и явка не
+        подтверждается автоматически (живой инцидент — сдача за 13 секунд до
+        начала). Запас ПОСЛЕ конца окна (window_end) не расширяется — это
+        отдельное решение, не входит в эту правку."""
+        cutoff = now + timedelta(minutes=early_grace_minutes)
         stmt = (
             select(LessonOccurrenceParticipant, LessonOccurrence)
             .join(LessonOccurrence, LessonOccurrence.id == LessonOccurrenceParticipant.occurrence_id)
             .where(
                 LessonOccurrenceParticipant.student_id == student_id,
                 LessonOccurrenceParticipant.status == "scheduled",
-                LessonOccurrence.scheduled_at <= now,
+                LessonOccurrence.scheduled_at <= cutoff,
             )
         )
         res = await db.execute(stmt)
