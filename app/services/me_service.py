@@ -16,6 +16,7 @@ from app.models.users import Users
 from app.schemas.task_content import QUIZ_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
+from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
 
@@ -606,7 +607,8 @@ SELECT
     t.course_id,
     c.course_uid,
     c.title AS course_title,
-    COALESCE(t.task_content->>'title', t.external_uid) AS task_title,
+    t.task_content->>'title' AS task_title_raw,
+    t.task_content->>'stem' AS task_stem,
     t.task_content->>'type' AS type,
     CASE
         WHEN tr.is_correct IS NULL THEN 'pending_review'
@@ -1059,4 +1061,16 @@ async def get_history(
             "offset": offset,
         },
     )
-    return [dict(row) for row in result.mappings().all()]
+    rows = [dict(row) for row in result.mappings().all()]
+    for row in rows:
+        # tsk-453: раньше COALESCE(title, external_uid) отдавал ученику сырой
+        # технический слаг задания («wp:task:komlev:...»), когда title пуст
+        # (почти всегда, tsk-107) — тот же класс бага, что humanize_task_title
+        # уже закрыл на стороне преподавателя (tsk-298), сюда просто не дошли.
+        row["task_title"] = humanize_task_title(
+            row["task_id"],
+            row.pop("task_title_raw"),
+            row.pop("task_stem"),
+            row["task_external_uid"],
+        )
+    return rows

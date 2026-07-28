@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.models.users import Users
 from app.services.auth import identity_link_service
 from app.services.auth.session_service import create_session
+from app.utils.task_title import humanize_task_title
 
 
 async def _setup_user(db):
@@ -193,3 +194,44 @@ async def test_history_returns_only_own_records(db, client):
         if rids:
             await db.execute(text("DELETE FROM task_results WHERE id = ANY(:r)"), {"r": rids})
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_history_task_title_is_humanized_not_raw_external_uid_tsk453(db, client):
+    """tsk-453: раньше `task_title` был `COALESCE(title, external_uid)` — почти
+    всегда title пуст (tsk-107), ученик видел сырой технический слаг вроде
+    `wp:task:komlev:...`. Теперь используется humanize_task_title (title →
+    очищенный stem → external_uid → «Задание #id»), тот же хелпер, что давно
+    закрыл этот класс бага у преподавателя (tsk-298)."""
+    uid, token = await _setup_user(db)
+    task_id = await _pick_task(db)
+    task_row = (
+        await db.execute(
+            text(
+                "SELECT external_uid, task_content->>'title' AS title, "
+                "task_content->>'stem' AS stem FROM tasks WHERE id = :t"
+            ),
+            {"t": task_id},
+        )
+    ).fetchone()
+    expected_title = humanize_task_title(task_id, task_row[1], task_row[2], task_row[0])
+
+    rids = []
+    try:
+        rids.append(await _create_task_result(
+            db, user_id=uid, task_id=task_id, is_correct=True, score=10
+        ))
+        resp = await client.get(
+            "/api/v1/me/history",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) == 1
+        assert items[0]["task_title"] == expected_title
+        # Если title пуст (типичный случай, tsk-107) — сырой external_uid не
+        # должен просочиться, ЕСЛИ у задания есть непустой stem для fallback.
+        if not (task_row[1] and task_row[1].strip()) and task_row[2] and task_row[2].strip():
+            assert items[0]["task_title"] != task_row[0]
+    finally:
+        await _cleanup(db, uid, rids)
