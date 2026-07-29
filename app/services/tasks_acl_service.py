@@ -87,7 +87,7 @@ async def assert_task_access(
     *,
     current_user: CurrentUser,
     task_course_id: int | None,
-) -> None:
+) -> bool:
     """Проверить доступ к task (Y-4 post-S5 fix).
 
     Raises HTTPException 403 если current_user не имеет права видеть task.
@@ -99,15 +99,22 @@ async def assert_task_access(
         current_user: resolved через `Depends(get_current_user)`
         task_course_id: `tasks.course_id` (может быть NULL для legacy задач —
                         в этом случае только service / extended-role видят)
+
+    Returns:
+        True — вызывающий привилегирован (сервисный ключ либо роль
+        admin / methodist / teacher); False — доступ дан ученику по дереву
+        его курсов. Признак нужен вызывающему, чтобы решить, какие поля
+        задания отдавать: правило проверки с верными ответами ученику не
+        показываем (tsk-460).
     """
     # Service-key (X-API-Key) — bypass для backward compat (TG_LMS, CB CLI).
     if current_user.is_service:
-        return
+        return True
 
     # Аутентифицированный user, проверяем роль.
     has_extended = await _user_has_extended_role(db, current_user.id)
     if has_extended:
-        return
+        return True
 
     # Student-level: task должна иметь course_id и попадать в дерево user_courses.
     if task_course_id is None:
@@ -131,3 +138,5 @@ async def assert_task_access(
             status.HTTP_403_FORBIDDEN,
             "Доступ к задаче запрещён: вы не зачислены в этот курс",
         )
+
+    return False

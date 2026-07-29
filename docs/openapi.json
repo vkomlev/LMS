@@ -6302,7 +6302,7 @@
           "tasks"
         ],
         "summary": "Получить задачу по внешнему идентификатору",
-        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nY-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)\n+ ACL по дереву `user_courses` + `course_parents`. Service-key и\nteacher / methodist / admin — bypass; student — только если задача в его\nкурсе или потомке.\n\nСтатусы:\n- 200 — если задача найдена и доступ разрешён;\n- 401 — auth required;\n- 403 — student не зачислен в курс задачи (или ancestor);\n- 404 — задача не найдена.",
+        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nY-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)\n+ ACL по дереву `user_courses` + `course_parents`. Service-key и\nteacher / methodist / admin — bypass; student — только если задача в его\nкурсе или потомке.\n\ntsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный\nответ виден во вкладке «Сеть» до отправки своего.\n\nСтатусы:\n- 200 — если задача найдена и доступ разрешён;\n- 401 — auth required;\n- 403 — student не зачислен в курс задачи (или ancestor);\n- 404 — задача не найдена.",
         "operationId": "get_task_by_external_uid_api_v1_tasks_by_external__external_uid__get",
         "security": [
           {
@@ -6449,7 +6449,7 @@
           "tasks"
         ],
         "summary": "Получить задачу по id (Y-4 post-S5: cookie auth + ACL)",
-        "description": "Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nЭтот endpoint регистрируется в `tasks_extra_router`, который подключен\nв `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.\nFastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.",
+        "description": "Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nЭтот endpoint регистрируется в `tasks_extra_router`, который подключен\nв `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.\nFastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.\n\ntsk-460: ученику `solution_rules` отдаётся как `null`.",
         "operationId": "get_task_by_id_api_v1_tasks__task_id__get",
         "security": [
           {
@@ -6857,7 +6857,7 @@
           "tasks"
         ],
         "summary": "Получить задачи курса",
-        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
+        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\ntsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —\nиначе один запрос списка выдавал верные ответы по всему курсу сразу.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
         "operationId": "get_tasks_by_course_api_v1_tasks_by_course__course_id__get",
         "security": [
           {
@@ -33607,7 +33607,8 @@
                 "type": "null"
               }
             ],
-            "title": "Solution Rules"
+            "title": "Solution Rules",
+            "description": "Правило проверки с верными ответами. Отдаётся только привилегированному вызывающему (сервисный ключ, admin / methodist / teacher); ученику всегда `null` — иначе верный ответ виден во вкладке «Сеть» до отправки своего (tsk-460)."
           },
           "external_uid": {
             "anyOf": [
@@ -33686,8 +33687,7 @@
           "id",
           "task_content",
           "course_id",
-          "difficulty_id",
-          "solution_rules"
+          "difficulty_id"
         ],
         "title": "TaskRead",
         "description": "Схема чтения задания.\nLearning Engine V1, этап 5: hints_text, hints_video, has_hints из task_content."

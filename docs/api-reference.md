@@ -76,6 +76,15 @@ GET /api/v1/tasks/1?api_key=bot-key-1
 
 ## Эндпойнты задач
 
+> **Кому приходит `solution_rules` (tsk-460).** Правило проверки с верными
+> ответами (`correct_options` у SC/MC, `accepted_answers` у SA) отдаётся только
+> привилегированному вызывающему: сервисный ключ `X-API-Key` либо роль
+> `admin` / `methodist` / `teacher`. Ученику поле приходит как `null` — иначе
+> верный ответ виден во вкладке «Сеть» до отправки своего. Касается
+> `GET /tasks/{task_id}`, `GET /tasks/by-external/{external_uid}` и
+> `GET /tasks/by-course/{course_id}`; примеры ответов ниже показывают
+> привилегированный вид.
+
 ### GET /tasks/by-course/{course_id}
 
 Получить список задач курса с фильтрацией и пагинацией.

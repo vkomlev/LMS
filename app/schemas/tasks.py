@@ -90,7 +90,15 @@ class TaskRead(BaseModel):
     task_content: Any
     course_id: int
     difficulty_id: int
-    solution_rules: Optional[Any]
+    solution_rules: Optional[Any] = Field(
+        default=None,
+        description=(
+            "Правило проверки с верными ответами. Отдаётся только "
+            "привилегированному вызывающему (сервисный ключ, admin / "
+            "methodist / teacher); ученику всегда `null` — иначе верный "
+            "ответ виден во вкладке «Сеть» до отправки своего (tsk-460)."
+        ),
+    )
 
     external_uid: Optional[str] = None
     max_score: Optional[int] = None

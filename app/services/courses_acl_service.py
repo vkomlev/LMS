@@ -62,20 +62,26 @@ async def assert_course_access(
     *,
     current_user: CurrentUser,
     course_id: int,
-) -> None:
+) -> bool:
     """Проверить доступ к course (Y-5.2 fix).
 
     Raises HTTPException 403 если current_user не имеет права видеть
     список задач/материалов курса.
     is_service / extended-role bypass'ит проверку.
     student имеет доступ если course_id лежит в дереве user_courses.
+
+    Returns:
+        True — вызывающий привилегирован (сервисный ключ либо роль
+        admin / methodist / teacher); False — доступ дан ученику по дереву
+        его курсов. Признак нужен вызывающему для решения, какие поля
+        отдавать (tsk-460: правило проверки ученику не показываем).
     """
     if current_user.is_service:
-        return
+        return True
 
     has_extended = await _user_has_extended_role(db, current_user.id)
     if has_extended:
-        return
+        return True
 
     in_tree = await _user_has_course_in_tree(db, current_user.id, course_id)
     if not in_tree:

@@ -43,6 +43,27 @@ router = APIRouter(tags=["tasks"])
 tasks_service = TasksService()
 
 
+def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
+    """Собрать `TaskRead`, скрыв от ученика правило проверки (tsk-460).
+
+    `solution_rules` содержит верные ответы (`correct_options` у SC/MC,
+    `accepted_answers` у SA), а ACL решает только «дать/не дать задачу
+    целиком». Пока схема была одна на всех, ученик видел верный ответ во
+    вкладке «Сеть» ещё до того, как отправил свой.
+
+    Привилегированный вызывающий (сервисный ключ, admin / methodist /
+    teacher) получает задание как раньше — на нём держатся ТГ-боты,
+    ContentBackbone и кабинет методиста.
+
+    Обнуляем на копии Pydantic-модели, а не на ORM-строке: мутация
+    атрибута ORM попала бы в autoflush и записала NULL в БД.
+    """
+    data = TaskRead.model_validate(task)
+    if privileged:
+        return data
+    return data.model_copy(update={"solution_rules": None})
+
+
 @router.get(
     "/tasks/by-external/{external_uid}",
     response_model=TaskRead,
@@ -102,6 +123,9 @@ async def get_task_by_external_uid(
     teacher / methodist / admin — bypass; student — только если задача в его
     курсе или потомке.
 
+    tsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный
+    ответ виден во вкладке «Сеть» до отправки своего.
+
     Статусы:
     - 200 — если задача найдена и доступ разрешён;
     - 401 — auth required;
@@ -109,10 +133,10 @@ async def get_task_by_external_uid(
     - 404 — задача не найдена.
     """
     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
-    await assert_task_access(
+    privileged = await assert_task_access(
         db, current_user=current_user, task_course_id=task.course_id,
     )
-    return task
+    return _task_read_for(task, privileged=privileged)
 
 
 @router.get(
@@ -136,16 +160,18 @@ async def get_task_by_id(
     Этот endpoint регистрируется в `tasks_extra_router`, который подключен
     в `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.
     FastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.
+
+    tsk-460: ученику `solution_rules` отдаётся как `null`.
     """
     from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
     result = await db.execute(select(Tasks).where(Tasks.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
-    await assert_task_access(
+    privileged = await assert_task_access(
         db, current_user=current_user, task_course_id=task.course_id,
     )
-    return task
+    return _task_read_for(task, privileged=privileged)
 
 @router.post(
     "/tasks/validate",
@@ -468,6 +494,9 @@ async def get_tasks_by_course(
     через `assert_course_access`. Service-key bypass сохранён через
     `current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.
 
+    tsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —
+    иначе один запрос списка выдавал верные ответы по всему курсу сразу.
+
     Args:
         course_id: ID курса.
         difficulty_id: Опциональный фильтр по уровню сложности.
@@ -477,7 +506,9 @@ async def get_tasks_by_course(
     Returns:
         Список задач курса.
     """
-    await assert_course_access(db, current_user=current_user, course_id=course_id)
+    privileged = await assert_course_access(
+        db, current_user=current_user, course_id=course_id,
+    )
     tasks, total = await tasks_service.get_by_course(
         db,
         course_id=course_id,
@@ -485,7 +516,7 @@ async def get_tasks_by_course(
         limit=limit,
         offset=offset,
     )
-    return [TaskRead.model_validate(task) for task in tasks]
+    return [_task_read_for(task, privileged=privileged) for task in tasks]
 
 
 @router.get(

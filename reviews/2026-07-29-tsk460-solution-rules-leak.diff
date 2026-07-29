@@ -1,0 +1,205 @@
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index 0fd6742..20503fc 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -43,6 +43,27 @@ router = APIRouter(tags=["tasks"])
+ tasks_service = TasksService()
+ 
+ 
++def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
++    """Собрать `TaskRead`, скрыв от ученика правило проверки (tsk-460).
++
++    `solution_rules` содержит верные ответы (`correct_options` у SC/MC,
++    `accepted_answers` у SA), а ACL решает только «дать/не дать задачу
++    целиком». Пока схема была одна на всех, ученик видел верный ответ во
++    вкладке «Сеть» ещё до того, как отправил свой.
++
++    Привилегированный вызывающий (сервисный ключ, admin / methodist /
++    teacher) получает задание как раньше — на нём держатся ТГ-боты,
++    ContentBackbone и кабинет методиста.
++
++    Обнуляем на копии Pydantic-модели, а не на ORM-строке: мутация
++    атрибута ORM попала бы в autoflush и записала NULL в БД.
++    """
++    data = TaskRead.model_validate(task)
++    if privileged:
++        return data
++    return data.model_copy(update={"solution_rules": None})
++
++
+ @router.get(
+     "/tasks/by-external/{external_uid}",
+     response_model=TaskRead,
+@@ -102,6 +123,9 @@ async def get_task_by_external_uid(
+     teacher / methodist / admin — bypass; student — только если задача в его
+     курсе или потомке.
+ 
++    tsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный
++    ответ виден во вкладке «Сеть» до отправки своего.
++
+     Статусы:
+     - 200 — если задача найдена и доступ разрешён;
+     - 401 — auth required;
+@@ -109,10 +133,10 @@ async def get_task_by_external_uid(
+     - 404 — задача не найдена.
+     """
+     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
+-    await assert_task_access(
++    privileged = await assert_task_access(
+         db, current_user=current_user, task_course_id=task.course_id,
+     )
+-    return task
++    return _task_read_for(task, privileged=privileged)
+ 
+ 
+ @router.get(
+@@ -136,16 +160,18 @@ async def get_task_by_id(
+     Этот endpoint регистрируется в `tasks_extra_router`, который подключен
+     в `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.
+     FastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.
++
++    tsk-460: ученику `solution_rules` отдаётся как `null`.
+     """
+     from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+     result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+     task = result.scalar_one_or_none()
+     if task is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
+-    await assert_task_access(
++    privileged = await assert_task_access(
+         db, current_user=current_user, task_course_id=task.course_id,
+     )
+-    return task
++    return _task_read_for(task, privileged=privileged)
+ 
+ @router.post(
+     "/tasks/validate",
+@@ -468,6 +494,9 @@ async def get_tasks_by_course(
+     через `assert_course_access`. Service-key bypass сохранён через
+     `current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.
+ 
++    tsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —
++    иначе один запрос списка выдавал верные ответы по всему курсу сразу.
++
+     Args:
+         course_id: ID курса.
+         difficulty_id: Опциональный фильтр по уровню сложности.
+@@ -477,7 +506,9 @@ async def get_tasks_by_course(
+     Returns:
+         Список задач курса.
+     """
+-    await assert_course_access(db, current_user=current_user, course_id=course_id)
++    privileged = await assert_course_access(
++        db, current_user=current_user, course_id=course_id,
++    )
+     tasks, total = await tasks_service.get_by_course(
+         db,
+         course_id=course_id,
+@@ -485,7 +516,7 @@ async def get_tasks_by_course(
+         limit=limit,
+         offset=offset,
+     )
+-    return [TaskRead.model_validate(task) for task in tasks]
++    return [_task_read_for(task, privileged=privileged) for task in tasks]
+ 
+ 
+ @router.get(
+diff --git a/app/schemas/tasks.py b/app/schemas/tasks.py
+index 60764c0..9af1112 100644
+--- a/app/schemas/tasks.py
++++ b/app/schemas/tasks.py
+@@ -90,7 +90,15 @@ class TaskRead(BaseModel):
+     task_content: Any
+     course_id: int
+     difficulty_id: int
+-    solution_rules: Optional[Any]
++    solution_rules: Optional[Any] = Field(
++        default=None,
++        description=(
++            "Правило проверки с верными ответами. Отдаётся только "
++            "привилегированному вызывающему (сервисный ключ, admin / "
++            "methodist / teacher); ученику всегда `null` — иначе верный "
++            "ответ виден во вкладке «Сеть» до отправки своего (tsk-460)."
++        ),
++    )
+ 
+     external_uid: Optional[str] = None
+     max_score: Optional[int] = None
+diff --git a/app/services/courses_acl_service.py b/app/services/courses_acl_service.py
+index e9ea2e2..74589c2 100644
+--- a/app/services/courses_acl_service.py
++++ b/app/services/courses_acl_service.py
+@@ -62,20 +62,26 @@ async def assert_course_access(
+     *,
+     current_user: CurrentUser,
+     course_id: int,
+-) -> None:
++) -> bool:
+     """Проверить доступ к course (Y-5.2 fix).
+ 
+     Raises HTTPException 403 если current_user не имеет права видеть
+     список задач/материалов курса.
+     is_service / extended-role bypass'ит проверку.
+     student имеет доступ если course_id лежит в дереве user_courses.
++
++    Returns:
++        True — вызывающий привилегирован (сервисный ключ либо роль
++        admin / methodist / teacher); False — доступ дан ученику по дереву
++        его курсов. Признак нужен вызывающему для решения, какие поля
++        отдавать (tsk-460: правило проверки ученику не показываем).
+     """
+     if current_user.is_service:
+-        return
++        return True
+ 
+     has_extended = await _user_has_extended_role(db, current_user.id)
+     if has_extended:
+-        return
++        return True
+ 
+     in_tree = await _user_has_course_in_tree(db, current_user.id, course_id)
+     if not in_tree:
+diff --git a/app/services/tasks_acl_service.py b/app/services/tasks_acl_service.py
+index e80bfaa..c0d0c02 100644
+--- a/app/services/tasks_acl_service.py
++++ b/app/services/tasks_acl_service.py
+@@ -87,7 +87,7 @@ async def assert_task_access(
+     *,
+     current_user: CurrentUser,
+     task_course_id: int | None,
+-) -> None:
++) -> bool:
+     """Проверить доступ к task (Y-4 post-S5 fix).
+ 
+     Raises HTTPException 403 если current_user не имеет права видеть task.
+@@ -99,15 +99,22 @@ async def assert_task_access(
+         current_user: resolved через `Depends(get_current_user)`
+         task_course_id: `tasks.course_id` (может быть NULL для legacy задач —
+                         в этом случае только service / extended-role видят)
++
++    Returns:
++        True — вызывающий привилегирован (сервисный ключ либо роль
++        admin / methodist / teacher); False — доступ дан ученику по дереву
++        его курсов. Признак нужен вызывающему, чтобы решить, какие поля
++        задания отдавать: правило проверки с верными ответами ученику не
++        показываем (tsk-460).
+     """
+     # Service-key (X-API-Key) — bypass для backward compat (TG_LMS, CB CLI).
+     if current_user.is_service:
+-        return
++        return True
+ 
+     # Аутентифицированный user, проверяем роль.
+     has_extended = await _user_has_extended_role(db, current_user.id)
+     if has_extended:
+-        return
++        return True
+ 
+     # Student-level: task должна иметь course_id и попадать в дерево user_courses.
+     if task_course_id is None:
+@@ -131,3 +138,5 @@ async def assert_task_access(
+             status.HTTP_403_FORBIDDEN,
+             "Доступ к задаче запрещён: вы не зачислены в этот курс",
+         )
++
++    return False
