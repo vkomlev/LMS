@@ -18,6 +18,43 @@ from app.schemas.materials import (
     MaterialsBulkUpsertResultItem,
 )
 from app.services.base import BaseService
+
+logger_provenance = logging.getLogger(__name__)
+
+#: Поля материала, которые методист может править через кабинет и которые
+#: импорт обязан уважать (tsk-433). Остальные поля (`type`, `external_uid`,
+#: `course_id`) правке из веба не подлежат — их меняет только источник.
+MANUALLY_EDITABLE_FIELDS: frozenset[str] = frozenset(
+    {"title", "content", "description", "caption"}
+)
+
+
+def _manually_edited_fields(existing: Materials) -> frozenset[str]:
+    """Поля материала, поправленные вручную и защищённые от перезаписи импортом.
+
+    Читает `materials.content_provenance` (tsk-433). Защита действует только
+    при `source = "manual_web"` и только для полей из `fields`, пересечённых с
+    белым списком: чужой или битый провенанс не должен уметь заблокировать
+    произвольную колонку.
+
+    :param existing: строка материала из БД.
+    :return: множество имён полей; пустое — защищать нечего.
+    """
+    prov = getattr(existing, "content_provenance", None)
+    if not isinstance(prov, dict) or prov.get("source") != "manual_web":
+        return frozenset()
+    raw_fields = prov.get("fields")
+    if not isinstance(raw_fields, list):
+        # Провенанс есть, но без внятного списка полей — считаем, что защищать
+        # нечего, и говорим об этом в лог: молчаливое «защитим всё» скрыло бы
+        # порчу данных, а молчаливое «не защитим ничего» — потерю правки.
+        logger_provenance.warning(
+            "materials.content_provenance без списка полей (material_id=%s): %r",
+            getattr(existing, "id", None),
+            prov,
+        )
+        return frozenset()
+    return frozenset(f for f in raw_fields if isinstance(f, str)) & MANUALLY_EDITABLE_FIELDS
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -221,11 +258,17 @@ class MaterialsService(BaseService[Materials]):
         бы изменённым на каждом переиздании — при том что UPDATE это поле
         уже не трогает, и статус `updated` был бы неправдой.
         """
-        if existing.title != item.title:
+        # tsk-433: поле, защищённое ручной правкой, в сравнении не участвует —
+        # UPDATE его всё равно не тронет, и расхождение с источником не повод
+        # отдавать статус `updated` (та же логика, что у непереданных полей).
+        protected = _manually_edited_fields(existing)
+        if "title" not in protected and existing.title != item.title:
             return False
-        if (existing.description or "") != (item.description or ""):
+        if "description" not in protected and (existing.description or "") != (
+            item.description or ""
+        ):
             return False
-        if (existing.caption or "") != (item.caption or ""):
+        if "caption" not in protected and (existing.caption or "") != (item.caption or ""):
             return False
         if existing.type != item.type:
             return False
@@ -244,6 +287,8 @@ class MaterialsService(BaseService[Materials]):
             and existing.order_position != item.order_position
         ):
             return False
+        if "content" in protected:
+            return True
         try:
             left = json.dumps(existing.content, sort_keys=True, default=str)
             right = json.dumps(item.content, sort_keys=True, default=str)
@@ -409,6 +454,15 @@ class MaterialsService(BaseService[Materials]):
                             payload_data["order_position"] = item.order_position
                         if level_given:
                             payload_data["requirement_level"] = item.requirement_level
+                        # tsk-433: поля, поправленные методистом вручную через
+                        # кабинет, импорт не трогает. Иначе правка молча исчезала
+                        # бы при ближайшем переиздании из источника, и объяснить
+                        # её пропажу было бы нечем. Тот же принцип, что у
+                        # is_active/order_position выше (tsk-377/378), только
+                        # источник решения — не «передано ли поле», а пометка
+                        # ручной правки на самой строке.
+                        for protected in _manually_edited_fields(existing):
+                            payload_data.pop(protected, None)
                         if self._material_unchanged(existing, item):
                             db_by_key[key] = MaterialsBulkUpsertResultItem(
                                 course_id=cid,

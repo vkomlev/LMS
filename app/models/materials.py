@@ -83,6 +83,15 @@ class Materials(Base):
     external_uid: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, comment="Внешний идентификатор для импорта (уникален в паре с course_id)"
     )
+    content_provenance: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Происхождение содержимого (tsk-433): "
+            "{source, edited_at, edited_by, fields}. source=manual_web → "
+            "перечисленные поля не перезаписываются импортом. NULL — правок руками не было."
+        ),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=text("now()"),

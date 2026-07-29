@@ -9,21 +9,26 @@ import mimetypes
 import os
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, Body, Query, File, UploadFile, HTTPException, status
+from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_async_db, get_current_user
+from app.api.deps import get_db, get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
 from app.services.materials_acl_service import assert_material_access
+from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
+from app.schemas.material_content import validate_material_content
 from app.services.courses_acl_service import assert_course_access
 from app.schemas.materials import (
     MaterialRead,
@@ -553,5 +558,149 @@ async def get_material_by_id(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
     await assert_material_access(
         db, current_user=current_user, material_course_id=material.course_id,
+    )
+    return material
+
+
+# ---------------------------------------------------------------------------
+# tsk-433: правка материала методистом из кабинета (cookie + роль)
+# ---------------------------------------------------------------------------
+
+
+class MaterialManualPatch(BaseModel):
+    """Поля материала, которые методист правит через кабинет.
+
+    Умышленно уже, чем `MaterialUpdate`: `type`, `course_id` и `external_uid`
+    из веба не меняются — это ключи, по которым материал сопоставляется с
+    источником, и их правка руками рассинхронизировала бы импорт.
+    """
+
+    title: Optional[str] = Field(default=None, max_length=500)
+    content: Optional[Any] = None
+    description: Optional[str] = None
+    caption: Optional[str] = None
+    is_active: Optional[bool] = None
+    order_position: Optional[int] = None
+    requirement_level: Optional[str] = None
+
+
+@router.patch(
+    "/materials/{material_id}",
+    response_model=MaterialRead,
+    summary="Правка материала методистом (tsk-433: cookie auth + роль)",
+    responses={
+        200: {"description": "Материал обновлён"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет править материалы"},
+        404: {"description": "Материал не существует"},
+        422: {"description": "Некорректная структура content для типа материала"},
+    },
+)
+async def patch_material_manual(
+    material_id: int,
+    payload: MaterialManualPatch = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Обновить материал и пометить правленые поля как ручные.
+
+    Зачем отдельный обработчик, а не generic CRUD `PUT /materials/{id}`: тот
+    сидит на `Depends(get_db)` и принимает только `?api_key=` в query —
+    браузеру по cookie он недоступен. Регистрируется здесь, потому что
+    `materials_extra` подключён в `main.py` раньше CRUD-роутера и перекрывает
+    маршрут (тем же приёмом Y-5.1 сделал `GET /materials/{id}`).
+
+    Правленые поля записываются в `content_provenance`, и `bulk_upsert` их
+    больше не перезаписывает (tsk-433) — иначе ближайшее переиздание из
+    источника молча вернуло бы прежний текст.
+    """
+    from app.models.materials import Materials  # noqa: PLC0415 — circular avoid
+
+    result = await db.execute(select(Materials).where(Materials.id == material_id))
+    material = result.scalar_one_or_none()
+    if material is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+
+    changed = payload.model_dump(exclude_unset=True)
+    if not changed:
+        return material
+
+    if "content" in changed and changed["content"] is not None:
+        try:
+            changed["content"] = validate_material_content(material.type, changed["content"])
+        except Exception as e:  # noqa: BLE001 — сообщение уходит в 422 клиенту
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"Некорректная структура content для типа '{material.type}': {e}",
+            ) from e
+
+    # Пометку ставим только на контентные поля: служебные (активность, порядок,
+    # уровень) импорт и так не трогает без явной передачи (tsk-377/378/407),
+    # защищать их провенансом незачем.
+    content_fields = sorted(set(changed) & MANUALLY_EDITABLE_FIELDS)
+    for field, value in changed.items():
+        setattr(material, field, value)
+
+    if content_fields:
+        previous = material.content_provenance if isinstance(material.content_provenance, dict) else {}
+        previously_marked = previous.get("fields") if previous.get("source") == "manual_web" else []
+        merged = sorted(
+            set(content_fields) | {f for f in (previously_marked or []) if isinstance(f, str)}
+        )
+        material.content_provenance = {
+            "source": "manual_web",
+            "edited_at": datetime.now(timezone.utc).isoformat(),
+            "edited_by": current_user.id,
+            "fields": merged,
+        }
+
+    await db.commit()
+    await db.refresh(material)
+    logger.info(
+        "tsk-433: материал %s правлен вручную пользователем %s, поля=%s",
+        material_id,
+        current_user.id,
+        content_fields or "(только служебные)",
+    )
+    return material
+
+
+@router.delete(
+    "/materials/{material_id}/manual-edit",
+    response_model=MaterialRead,
+    summary="Вернуть материал под управление источника (tsk-433)",
+    responses={
+        200: {"description": "Пометка снята, импорт снова обновляет материал"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет"},
+        404: {"description": "Материал не существует"},
+    },
+)
+async def clear_material_manual_edit(
+    material_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Снять пометку ручной правки.
+
+    Содержимое при этом не откатывается — вернуть прежний текст должен
+    источник при ближайшем переиздании. Молча подменять содержимое здесь
+    было бы хуже: методист не ожидает, что «вернуть к источнику» сотрёт
+    его текст мгновенно и без предупреждения.
+    """
+    from app.models.materials import Materials  # noqa: PLC0415 — circular avoid
+
+    result = await db.execute(select(Materials).where(Materials.id == material_id))
+    material = result.scalar_one_or_none()
+    if material is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+
+    material.content_provenance = None
+    await db.commit()
+    await db.refresh(material)
+    logger.info(
+        "tsk-433: с материала %s снята пометка ручной правки (пользователь %s)",
+        material_id,
+        current_user.id,
     )
     return material

@@ -3754,6 +3754,223 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Правка материала методистом (tsk-433: cookie auth + роль)",
+        "description": "Обновить материал и пометить правленые поля как ручные.\n\nЗачем отдельный обработчик, а не generic CRUD `PUT /materials/{id}`: тот\nсидит на `Depends(get_db)` и принимает только `?api_key=` в query —\nбраузеру по cookie он недоступен. Регистрируется здесь, потому что\n`materials_extra` подключён в `main.py` раньше CRUD-роутера и перекрывает\nмаршрут (тем же приёмом Y-5.1 сделал `GET /materials/{id}`).\n\nПравленые поля записываются в `content_provenance`, и `bulk_upsert` их\nбольше не перезаписывает (tsk-433) — иначе ближайшее переиздание из\nисточника молча вернуло бы прежний текст.",
+        "operationId": "patch_material_manual_api_v1_materials__material_id__patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialManualPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Материал обновлён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет править материалы"
+          },
+          "404": {
+            "description": "Материал не существует"
+          },
+          "422": {
+            "description": "Некорректная структура content для типа материала"
+          }
+        }
+      }
+    },
+    "/api/v1/materials/{material_id}/manual-edit": {
+      "delete": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Вернуть материал под управление источника (tsk-433)",
+        "description": "Снять пометку ручной правки.\n\nСодержимое при этом не откатывается — вернуть прежний текст должен\nисточник при ближайшем переиздании. Молча подменять содержимое здесь\nбыло бы хуже: методист не ожидает, что «вернуть к источнику» сотрёт\nего текст мгновенно и без предупреждения.",
+        "operationId": "clear_material_manual_edit_api_v1_materials__material_id__manual_edit_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Пометка снята, импорт снова обновляет материал",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет"
+          },
+          "404": {
+            "description": "Материал не существует"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/materials/": {
@@ -27880,6 +28097,89 @@
         ],
         "title": "MaterialCreate",
         "description": "Создание материала. Контент валидируется по полю type."
+      },
+      "MaterialManualPatch": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "content": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "caption": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level"
+          }
+        },
+        "type": "object",
+        "title": "MaterialManualPatch",
+        "description": "Поля материала, которые методист правит через кабинет.\n\nУмышленно уже, чем `MaterialUpdate`: `type`, `course_id` и `external_uid`\nиз веба не меняются — это ключи, по которым материал сопоставляется с\nисточником, и их правка руками рассинхронизировала бы импорт."
       },
       "MaterialMoveRequest": {
         "properties": {
