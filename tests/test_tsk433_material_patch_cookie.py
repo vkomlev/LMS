@@ -97,6 +97,34 @@ async def test_methodist_patches_material_and_gets_provenance(db, client):
 
 
 @pytest.mark.asyncio
+async def test_provenance_returned_to_client(db, client):
+    """Пометка приходит в ответе API, а не только лежит в БД.
+
+    Механизм, которого не видно, для методиста не существует: правка выглядела
+    бы обычной, а материал тихо выпал бы из-под управления источника. Первый
+    живой прогон поймал ровно это — колонка заполнялась, но в `MaterialRead`
+    поля не было, и признак на экране не появлялся.
+    """
+    _, mid = await _material(db)
+    _, token = await _user_with_session(db, "methodist")
+
+    patched = await client.patch(
+        f"/api/v1/materials/{mid}", json={"title": "правка"}, headers=_auth(token)
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json().get("content_provenance", {}).get("source") == "manual_web", (
+        "PATCH обязан вернуть пометку клиенту"
+    )
+
+    fetched = await client.get(f"/api/v1/materials/{mid}", headers=_auth(token))
+    assert fetched.status_code == 200, fetched.text
+    prov = fetched.json().get("content_provenance")
+    assert prov is not None and prov["fields"] == ["title"], (
+        "GET обязан отдавать пометку — по ней рисуется признак в кабинете"
+    )
+
+
+@pytest.mark.asyncio
 async def test_student_cannot_patch(db, client):
     _, mid = await _material(db)
     _, token = await _user_with_session(db, "student")

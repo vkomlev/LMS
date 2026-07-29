@@ -85,6 +85,11 @@ class MaterialRead(BaseModel):
     external_uid: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # tsk-433: пометка ручной правки. Нужна клиенту, чтобы показать методисту,
+    # что эти поля источник больше не обновляет, и дать «вернуть к источнику».
+    # Без неё механизм работает, но остаётся невидимым — правка выглядит
+    # обычной, а материал тихо выпадает из-под управления источника.
+    content_provenance: Optional[dict[str, Any]] = None
 
     model_config = ConfigDict(from_attributes=True)
 

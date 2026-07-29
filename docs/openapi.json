@@ -28341,6 +28341,18 @@
             "type": "string",
             "format": "date-time",
             "title": "Updated At"
+          },
+          "content_provenance": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Provenance"
           }
         },
         "type": "object",
