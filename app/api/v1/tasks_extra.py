@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from app.api.deps import get_db, get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.services.tasks_acl_service import assert_task_access
+
+# tsk-433 Волна 2.3: порядок заданий переведён с legacy `get_db` на cookie +
+# роль — иначе кабинет методиста его не дёрнет. `is_service` в require_role
+# проходит без проверки роли, ТГ-боты работают как раньше.
+_STRUCTURE_GATE = require_role("methodist", "admin")
 from app.services.courses_acl_service import assert_course_access
 from app.schemas.tasks import (
     TaskRead,
@@ -370,7 +375,8 @@ async def bulk_upsert_tasks_endpoint(
 async def reorder_course_tasks(
     course_id: int,
     body: TaskReorderRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> TaskReorderResponse:
     """
     Массовое изменение порядка заданий курса.

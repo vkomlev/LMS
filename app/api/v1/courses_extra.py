@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 from typing import List, Optional, Dict, Any
+
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +41,11 @@ user_courses_service = UserCoursesService()
 # cookie-сессии. Тот же переход, что в tsk-298 Фазе 3 для teacher-эндпоинтов:
 # `is_service` в require_role проходит без проверки роли, поэтому боты не ломаются.
 _COURSE_TREE_GATE = require_role("teacher", "methodist", "admin")
+
+# tsk-433 Волна 2.3: изменение СТРУКТУРЫ курса (порядок подкурсов, привязка
+# родителей) — только методист и админ: преподавателю дерево курсов доступно
+# на чтение, но не на перестройку.
+_STRUCTURE_GATE = require_role("methodist", "admin")
 
 
 @router.get(
@@ -450,7 +458,8 @@ async def update_course_parent_order_endpoint(
             },
         ],
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> CourseRead:
     """
     Изменить порядковый номер подкурса у конкретного родительского курса.
@@ -1042,3 +1051,109 @@ async def import_courses_from_google_sheets(
         errors=errors,
         total_rows=len(rows) - 1,  # Без заголовка
     )
+
+
+# ---------------------------------------------------------------------------
+# tsk-433 Волна 2.3: структура курса (иерархия) из кабинета методиста
+# ---------------------------------------------------------------------------
+
+
+class CourseStructurePatch(BaseModel):
+    """Изменение места курса в графе.
+
+    Умышленно уже, чем `CourseUpdate`: здесь меняется только структура, не
+    содержание карточки. Правка названия и описания курса — отдельная история.
+
+    Семантика та же, что у общего CRUD (её использует ТГ-бот):
+      - `replace_parents=True` — заменить все связи перечисленными;
+      - `replace_parents=False` (по умолчанию) — добавить к существующим;
+      - `parent_course_ids=[]` при `replace_parents=True` — курс становится
+        корневым.
+    """
+
+    parent_course_ids: List[int] = Field(
+        default_factory=list,
+        description="Родительские курсы. Пустой список + replace_parents=true → курс корневой.",
+    )
+    replace_parents: bool = Field(
+        default=False,
+        description="true — заменить все связи, false — добавить к существующим.",
+    )
+
+
+@router.patch(
+    "/courses/{course_id}/structure",
+    response_model=CourseRead,
+    summary="Изменить место курса в графе (tsk-433: cookie auth + роль)",
+    responses={
+        200: {"description": "Структура обновлена"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять структуру курсов"},
+        404: {"description": "Курс не найден"},
+        409: {"description": "Такая связь создала бы цикл в иерархии"},
+    },
+)
+async def patch_course_structure(
+    course_id: int,
+    payload: CourseStructurePatch = Body(...),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Привязать курс к родителю, добавить ещё одного или сделать корневым.
+
+    Зачем отдельный путь, а не generic `PATCH /courses/{id}`: тот сидит на
+    legacy `get_db` (`?api_key=` в query) и браузеру недоступен. Отдельный
+    адрес выбран вместо перекрытия общего CRUD намеренно — у общего PATCH
+    более широкий контракт (название, описание, доступ), и подменять его
+    узкой схемой значило бы молча урезать возможности существующих клиентов.
+
+    Циклы в графе ловит триггер БД `trg_check_course_hierarchy_cycle` —
+    проверка здесь не дублируется (см. `courses_service.py`), ошибка триггера
+    поднимается как 409.
+
+    **Прогресс учеников при переносе не пересчитывается** (решение оператора
+    2026-07-30): он привязан к конкретным материалам и заданиям, а те
+    переезжают вместе с узлом. Меняются только агрегаты «пройдено X из Y»,
+    которые и так считаются обходом графа на лету.
+    """
+    logger = logging.getLogger("api.courses_extra")
+    service = CoursesService()
+    course = await service.get_by_id(db, course_id)
+    if course is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    try:
+        # Тот же путь, которым идёт generic CRUD и ТГ-бот: сервис сам разбирает
+        # parent_course_ids/replace_parents и зовёт repo.set_parent_courses.
+        updated = await service.update(
+            db,
+            course,
+            {
+                "parent_course_ids": payload.parent_course_ids,
+                "replace_parents": payload.replace_parents,
+            },
+        )
+    except DomainError as e:
+        msg = str(e)
+        if "цикл" in msg.lower() or "circular" in msg.lower():
+            raise HTTPException(status.HTTP_409_CONFLICT, msg) from e
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, msg) from e
+    except SQLAlchemyError as e:
+        # Цикл в графе ловит триггер БД `trg_check_course_hierarchy_cycle`, и
+        # до сюда он доезжает как DBAPIError, а не DomainError — без этой ветки
+        # осмысленный отказ превращался бы в 500 «внутренняя ошибка».
+        msg = str(getattr(e, "orig", e))
+        if "circular" in msg.lower() or "цикл" in msg.lower():
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Такая связь создала бы цикл в иерархии курсов",
+            ) from e
+        raise
+
+    logger.info(
+        "tsk-433: структура курса %s изменена пользователем %s (родители=%s, replace=%s)",
+        course_id,
+        current_user.id,
+        payload.parent_course_ids,
+        payload.replace_parents,
+    )
+    return updated

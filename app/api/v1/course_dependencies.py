@@ -4,7 +4,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_async_db, require_role
+from app.auth.current_user import CurrentUser
 from app.schemas.courses import CourseRead, CourseDependenciesBulkCreate
 from app.services.course_dependencies_service import CourseDependenciesService
 
@@ -13,13 +14,23 @@ router = APIRouter(
     tags=["course_dependencies"],
 )
 
+# tsk-433 Волна 2.3: зависимости курсов («ЕГЭ проходится после Python для ЕГЭ»)
+# висели на legacy `get_db` (APIKeyQuery — только `?api_key=` в query), то есть
+# были доступны ТГ-ботам и недоступны кабинету методиста по cookie. Чтение
+# оставляем и преподавателю (ему полезно понимать порядок прохождения),
+# изменение — только методисту и админу. `is_service` в require_role проходит
+# без проверки роли, поэтому боты продолжают работать.
+_READ_GATE = require_role("teacher", "methodist", "admin")
+_WRITE_GATE = require_role("methodist", "admin")
+
 service = CourseDependenciesService()
 
 
 @router.get("/", response_model=List[CourseRead])
 async def list_course_dependencies(
     course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_READ_GATE),
 ) -> List[CourseRead]:
     """
     Получить все курсы, от которых зависит данный курс.
@@ -72,7 +83,8 @@ async def bulk_add_course_dependencies(
             }
         ],
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_WRITE_GATE),
 ) -> List[CourseRead]:
     """
     Массовое добавление зависимостей для курса.
@@ -112,7 +124,8 @@ async def bulk_add_course_dependencies(
 async def add_course_dependency(
     course_id: int,
     required_course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_WRITE_GATE),
 ) -> None:
     """
     Добавить зависимость: course_id зависит от required_course_id.
@@ -135,7 +148,8 @@ async def add_course_dependency(
 async def remove_course_dependency(
     course_id: int,
     required_course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_WRITE_GATE),
 ) -> None:
     """
     Удалить зависимость: course_id → required_course_id.

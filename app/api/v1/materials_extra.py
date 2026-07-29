@@ -54,6 +54,12 @@ from app.utils.exceptions import DomainError
 
 logger = logging.getLogger("api.materials_extra")
 
+# tsk-433 Волна 2.3: структурные операции (порядок элементов) переведены с
+# legacy `get_db` (APIKeyQuery — только `?api_key=` в query) на cookie + роль,
+# иначе кабинет методиста их дёрнуть не может. `is_service` в require_role
+# проходит без проверки роли — ТГ-боты продолжают работать как раньше.
+_STRUCTURE_GATE = require_role("methodist", "admin")
+
 router = APIRouter(tags=["materials"])
 materials_service = MaterialsService()
 materials_repo = MaterialsRepository()
@@ -167,7 +173,8 @@ async def list_course_materials(
 async def reorder_course_materials(
     course_id: int,
     body: MaterialReorderRequest = Body(...),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> MaterialReorderResponse:
     """Массовое изменение порядка материалов. Триггер БД пересчитает позиции."""
     material_orders = [{"material_id": x.material_id, "order_position": x.order_position} for x in body.material_orders]

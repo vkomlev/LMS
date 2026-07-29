@@ -1748,6 +1748,9 @@
         "operationId": "update_course_parent_order_endpoint_api_v1_courses__course_id__parents__parent_course_id__order_patch",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -1768,6 +1771,54 @@
             "schema": {
               "type": "integer",
               "title": "Parent Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -2038,6 +2089,127 @@
             "APIKeyQuery": []
           }
         ]
+      }
+    },
+    "/api/v1/courses/{course_id}/structure": {
+      "patch": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Изменить место курса в графе (tsk-433: cookie auth + роль)",
+        "description": "Привязать курс к родителю, добавить ещё одного или сделать корневым.\n\nЗачем отдельный путь, а не generic `PATCH /courses/{id}`: тот сидит на\nlegacy `get_db` (`?api_key=` в query) и браузеру недоступен. Отдельный\nадрес выбран вместо перекрытия общего CRUD намеренно — у общего PATCH\nболее широкий контракт (название, описание, доступ), и подменять его\nузкой схемой значило бы молча урезать возможности существующих клиентов.\n\nЦиклы в графе ловит триггер БД `trg_check_course_hierarchy_cycle` —\nпроверка здесь не дублируется (см. `courses_service.py`), ошибка триггера\nподнимается как 409.\n\n**Прогресс учеников при переносе не пересчитывается** (решение оператора\n2026-07-30): он привязан к конкретным материалам и заданиям, а те\nпереезжают вместе с узлом. Меняются только агрегаты «пройдено X из Y»,\nкоторые и так считаются обходом графа на лету.",
+        "operationId": "patch_course_structure_api_v1_courses__course_id__structure_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseStructurePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Структура обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять структуру курсов"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "409": {
+            "description": "Такая связь создала бы цикл в иерархии"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/courses/": {
@@ -3242,6 +3414,9 @@
         "operationId": "reorder_course_materials_api_v1_courses__course_id__materials_reorder_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -3253,6 +3428,54 @@
             "schema": {
               "type": "integer",
               "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -7082,6 +7305,9 @@
         "operationId": "reorder_course_tasks_api_v1_courses__course_id__tasks_reorder_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -7093,6 +7319,54 @@
             "schema": {
               "type": "integer",
               "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -11327,6 +11601,9 @@
         "operationId": "list_course_dependencies_api_v1_courses__course_id__dependencies__get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -11338,6 +11615,54 @@
             "schema": {
               "type": "integer",
               "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -11379,6 +11704,9 @@
         "operationId": "bulk_add_course_dependencies_api_v1_courses__course_id__dependencies_bulk_post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -11390,6 +11718,54 @@
             "schema": {
               "type": "integer",
               "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -11475,6 +11851,9 @@
         "operationId": "add_course_dependency_api_v1_courses__course_id__dependencies__required_course_id__post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -11495,6 +11874,54 @@
             "schema": {
               "type": "integer",
               "title": "Required Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -11532,6 +11959,9 @@
         "operationId": "remove_course_dependency_api_v1_courses__course_id__dependencies__required_course_id__delete",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -11552,6 +11982,54 @@
             "schema": {
               "type": "integer",
               "title": "Required Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -25034,6 +25512,27 @@
           "is_required"
         ],
         "title": "CourseRead"
+      },
+      "CourseStructurePatch": {
+        "properties": {
+          "parent_course_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Parent Course Ids",
+            "description": "Родительские курсы. Пустой список + replace_parents=true → курс корневой."
+          },
+          "replace_parents": {
+            "type": "boolean",
+            "title": "Replace Parents",
+            "description": "true — заменить все связи, false — добавить к существующим.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CourseStructurePatch",
+        "description": "Изменение места курса в графе.\n\nУмышленно уже, чем `CourseUpdate`: здесь меняется только структура, не\nсодержание карточки. Правка названия и описания курса — отдельная история.\n\nСемантика та же, что у общего CRUD (её использует ТГ-бот):\n  - `replace_parents=True` — заменить все связи перечисленными;\n  - `replace_parents=False` (по умолчанию) — добавить к существующим;\n  - `parent_course_ids=[]` при `replace_parents=True` — курс становится\n    корневым."
       },
       "CourseTreeRead": {
         "properties": {
