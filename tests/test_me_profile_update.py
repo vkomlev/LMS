@@ -70,6 +70,38 @@ async def test_patch_me_updates_full_name(db, client):
 
 
 @pytest.mark.asyncio
+async def test_patch_me_triggers_duplicate_merge_when_name_now_matches_floating(db, client):
+    """tsk-464: full_name часто становится "настоящим" не при регистрации
+    (magic-link создаёт юзера с дефолтным именем), а позже через PATCH /me —
+    дедуп-хук tsk-455 срабатывает только на регистрации и пропускал такой
+    случай (живой инцидент). Проверяем, что PATCH тоже запускает слияние."""
+    floating = Users(email=None, password_hash=None, full_name="Илья Четверенко", tg_id=None)
+    db.add(floating)
+    await db.commit()
+    floating_id = floating.id
+
+    user_id, token = await _setup_user_with_session(db)
+    try:
+        resp = await client.patch(
+            "/api/v1/me",
+            json={"full_name": "Четверенко Илья Никитич"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+
+        row = (
+            await db.execute(
+                text("SELECT is_active, merged_into_user_id FROM users WHERE id = :id"),
+                {"id": floating_id},
+            )
+        ).fetchone()
+        assert row[0] is False
+        assert row[1] == user_id
+    finally:
+        await _cleanup(db, user_id)
+
+
+@pytest.mark.asyncio
 async def test_patch_me_normalizes_whitespace(db, client):
     user_id, token = await _setup_user_with_session(db)
     try:

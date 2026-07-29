@@ -68,6 +68,7 @@ from app.services.auth.guest_attribution_service import (
 )
 from app.services.fernet_service import encrypt_token
 from app.services.rate_limit_service import get_redis, is_rate_limited
+from app.services.user_merge_service import check_and_merge_duplicate_on_registration
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/me", tags=["me"])
@@ -126,6 +127,7 @@ async def update_me(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
+    previous_full_name = await me_service.get_full_name(db, current_user.id)
     await me_service.update_full_name(db, current_user.id, normalized)
 
     ip = request.client.host if request.client else "unknown"
@@ -136,6 +138,21 @@ async def update_me(
         ip=ip,
         details={"full_name": normalized},
     )
+    if previous_full_name != normalized:
+        # tsk-464: full_name часто становится "настоящим" не в момент
+        # регистрации (magic-link создаёт юзера с дефолтным именем, реальное
+        # ФИО приходит позже через этот эндпоинт) — дедуп-хук из tsk-455
+        # срабатывает только на регистрации и пропускает такие случаи.
+        # Только при РЕАЛЬНОМ изменении имени — эндпоинт без rate-limit,
+        # полный скан кандидатов на каждый no-op PATCH был бы лишней
+        # нагрузкой. Soft-fail — не должно ломать обновление профиля.
+        try:
+            await check_and_merge_duplicate_on_registration(db, new_user_id=current_user.id)
+        except Exception:
+            logger.exception(
+                "tsk-464 check_and_merge_duplicate_on_registration failed user_id=%s",
+                current_user.id,
+            )
     await db.commit()
 
     roles = await roles_service.get_user_role_names(db, current_user.id)

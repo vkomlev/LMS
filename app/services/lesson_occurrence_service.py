@@ -499,26 +499,60 @@ async def reschedule_occurrence(
             status_code=409,
         )
 
-    new_occurrence = await _occurrence_repo.create(
-        db,
-        slot_id=None,
-        teacher_id=occurrence.teacher_id,
-        scheduled_at=new_scheduled_at,
-        duration_minutes=occurrence.duration_minutes,
+    # tsk-464: если на новое время уже есть occurrence у этого преподавателя
+    # (тот же teacher_id + точное совпадение scheduled_at/duration) —
+    # присоединиться к нему, а не плодить отдельный ad-hoc occurrence.
+    # Живой инцидент: ученик перенёс занятие на 10:00, а в это время уже
+    # шёл групповой урок того же преподавателя — вместо присоединения
+    # создался ВТОРОЙ параллельный occurrence на то же время. Тот же класс
+    # бага, что чинили в tsk-443 для `create_ad_hoc_occurrence`/
+    # `BookLessonSection` (первичная запись); путь "перенос" тогда не
+    # трогали, и он рецидивировал отдельно.
+    same_time_candidates = await _occurrence_repo.list_for_teacher(
+        db, teacher_id=occurrence.teacher_id,
+        from_dt=new_scheduled_at, to_dt=new_scheduled_at, limit=5,
     )
-    await db.flush()
-    new_participant = await _participant_repo.create(
-        db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
+    existing_occurrence = next(
+        (
+            o for o in same_time_candidates
+            if o.id != occurrence.id and o.duration_minutes == occurrence.duration_minutes
+        ),
+        None,
     )
-    # tsk-443: переносим ВСЕХ преподавателей старого occurrence (не только
-    # основного) — все, кто видел этого ученика на старом времени, видят его
-    # и на новом; заодно без этого new_occurrence был бы невидим создателю.
-    old_teachers = await _occurrence_teacher_repo.list_for_occurrence(db, occurrence.id)
-    for link in old_teachers:
-        await _occurrence_teacher_repo.create(
-            db, occurrence_id=new_occurrence.id, teacher_id=link.teacher_id,
+
+    if existing_occurrence is not None:
+        new_occurrence = existing_occurrence
+        new_participant = await _participant_repo.get(
+            db, occurrence_id=new_occurrence.id, student_id=student_id,
         )
-    await db.flush()
+        if new_participant is None:
+            new_participant = await _participant_repo.create(
+                db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
+            )
+        await db.flush()
+    else:
+        new_occurrence = await _occurrence_repo.create(
+            db,
+            slot_id=None,
+            teacher_id=occurrence.teacher_id,
+            scheduled_at=new_scheduled_at,
+            duration_minutes=occurrence.duration_minutes,
+        )
+        await db.flush()
+        new_participant = await _participant_repo.create(
+            db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
+        )
+        # tsk-443: переносим ВСЕХ преподавателей старого occurrence (не
+        # только основного) — все, кто видел этого ученика на старом
+        # времени, видят его и на новом; заодно без этого new_occurrence
+        # был бы невидим создателю. Только для НОВОГО occurrence —
+        # присоединённый существующий уже имеет свой список преподавателей.
+        old_teachers = await _occurrence_teacher_repo.list_for_occurrence(db, occurrence.id)
+        for link in old_teachers:
+            await _occurrence_teacher_repo.create(
+                db, occurrence_id=new_occurrence.id, teacher_id=link.teacher_id,
+            )
+        await db.flush()
 
     old_participant.status = "rescheduled"
     old_participant.rescheduled_to_occurrence_id = new_occurrence.id

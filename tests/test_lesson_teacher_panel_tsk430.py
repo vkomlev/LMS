@@ -558,6 +558,81 @@ async def test_reschedule_creates_new_marks_old_participant_rescheduled(db, clie
 
 
 @pytest.mark.asyncio
+async def test_reschedule_joins_existing_occurrence_at_same_time(db, client):
+    """tsk-464: если на выбранное время у того же преподавателя УЖЕ есть
+    occurrence — перенос присоединяет ученика к нему, а не создаёт второй
+    параллельный occurrence (живой инцидент: ученик перенёс занятие точно
+    на время уже идущего группового урока — получил отдельный ad-hoc вместо
+    места в существующей группе)."""
+    student_a = await _create_user(db, role="student", prefix="tsk464-stuA")
+    student_b = await _create_user(db, role="student", prefix="tsk464-stuB")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk464-teach")
+    token_a, _, _ = await create_session(db, user_id=student_a)
+
+    target_day = _next_day_with_operating_hours_seeded()
+    await _set_operating_hours_for_weekday_of(db, target_day)
+
+    old_id = await _create_occurrence_with_participant(
+        db, student_id=student_a, teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+        duration_minutes=60,
+    )
+
+    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
+    new_utc = new_local.astimezone(dt_timezone.utc)
+
+    # Уже существующий групповой occurrence того же преподавателя ровно на
+    # это же время — student_b уже в нём.
+    existing_id = await _create_occurrence_with_participant(
+        db, student_id=student_b, teacher_id=teacher_id,
+        scheduled_at=new_utc, duration_minutes=60,
+    )
+
+    resp = await client.post(
+        f"/api/v1/lesson-occurrences/{old_id}/reschedule",
+        json={"new_scheduled_at": new_utc.isoformat()},
+        headers={"Authorization": f"Bearer {token_a}"},
+    )
+    assert resp.status_code == 201, resp.text
+    new_occ = resp.json()
+    assert new_occ["id"] == existing_id, "должен присоединиться к существующему occurrence, не создать новый"
+
+    total_occurrences = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM lesson_occurrence WHERE teacher_id = :tid "
+                "AND scheduled_at = :at"
+            ),
+            {"tid": teacher_id, "at": new_utc},
+        )
+    ).scalar()
+    assert total_occurrences == 1, "не должно появиться второго occurrence на то же время"
+
+    b_status = (
+        await db.execute(
+            text(
+                "SELECT status FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :oid AND student_id = :sid"
+            ),
+            {"oid": existing_id, "sid": student_b},
+        )
+    ).scalar()
+    assert b_status == "scheduled", "участник существующего occurrence не должен быть затронут"
+
+    old_row = (
+        await db.execute(
+            text(
+                "SELECT status, rescheduled_to_occurrence_id FROM lesson_occurrence_participant "
+                "WHERE occurrence_id = :oid AND student_id = :sid"
+            ),
+            {"oid": old_id, "sid": student_a},
+        )
+    ).fetchone()
+    assert old_row[0] == "rescheduled"
+    assert old_row[1] == existing_id
+
+
+@pytest.mark.asyncio
 async def test_reschedule_does_not_affect_other_group_participants(db, client):
     student_a = await _create_user(db, role="student", prefix="tsk430-stuA")
     student_b = await _create_user(db, role="student", prefix="tsk430-stuB")
