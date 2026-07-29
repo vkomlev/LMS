@@ -6766,6 +6766,115 @@
             }
           }
         }
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Правка задания методистом (tsk-433: cookie auth + роль)",
+        "description": "Обновить задание и пометить содержимое как правленое вручную.\n\nПравило проверки и содержимое сверяются между собой сервисом\n(`TasksService.update` → `_validate_task_data` →\n`SolutionRules.validate_with_task_content`): верный вариант обязан\nсуществовать среди вариантов ответа, у SC он ровно один, частичные правила\nне ссылаются на несуществующие ID. Несоответствие — 422, а не молча\nсломанная проверка ответов у учеников.\n\nПометка (`content_provenance`) ставится сразу на пару\n`task_content` + `solution_rules`, даже если правилось одно из них:\nпорознь они разъедутся при первом же переиздании из источника (см.\n`_manually_edited_task_fields`).",
+        "operationId": "patch_task_manual_api_v1_tasks__task_id__patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskManualPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Задание обновлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет править задания"
+          },
+          "404": {
+            "description": "Задание не существует"
+          },
+          "422": {
+            "description": "Правило проверки не соответствует содержимому"
+          }
+        }
       }
     },
     "/api/v1/tasks/validate": {
@@ -7501,6 +7610,114 @@
             "APIKeyQuery": []
           }
         ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/manual-edit": {
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Вернуть задание под управление источника (tsk-433)",
+        "description": "Снять пометку ручной правки с задания.\n\nСодержимое не откатывается: прежнюю версию вернёт источник при ближайшем\nпереиздании. Мгновенная подмена текста здесь была бы неожиданной.",
+        "operationId": "clear_task_manual_edit_api_v1_tasks__task_id__manual_edit_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Пометка снята",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет"
+          },
+          "404": {
+            "description": "Задание не существует"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/tasks/": {
@@ -33726,6 +33943,64 @@
         ],
         "title": "TaskLimitOverrideResponse"
       },
+      "TaskManualPatch": {
+        "properties": {
+          "task_content": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Content"
+          },
+          "solution_rules": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solution Rules"
+          },
+          "is_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Active"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          },
+          "requirement_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Level"
+          }
+        },
+        "type": "object",
+        "title": "TaskManualPatch",
+        "description": "Поля задания, которые методист правит через кабинет.\n\nУмышленно уже, чем `TaskUpdate`: `course_id`, `external_uid` и\n`difficulty_id` из веба не меняются. Первые два — ключи сопоставления с\nисточником, третий живёт своей жизнью с собственным обоснованием\n(`difficulty_provenance`, tsk-381) и правится не здесь."
+      },
       "TaskMedia": {
         "properties": {
           "image_url": {
@@ -33970,6 +34245,19 @@
             ],
             "title": "Order Position",
             "description": "Позиция в курсе (управляется триггерами БД; в норме всегда заполнен после INSERT триггером)."
+          },
+          "content_provenance": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Provenance",
+            "description": "Пометка ручной правки (tsk-433): {source, edited_at, edited_by, fields}. Клиенту нужна, чтобы показать методисту, что эти поля источник больше не обновляет, и дать «вернуть к источнику». Не путать с difficulty_provenance — та про обоснование сложности."
           },
           "hints_text": {
             "items": {

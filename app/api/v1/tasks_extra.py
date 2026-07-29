@@ -7,7 +7,9 @@ from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel
 import logging
 
-from app.api.deps import get_db, get_async_db, get_current_user
+from datetime import datetime, timezone
+
+from app.api.deps import get_db, get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.services.tasks_acl_service import assert_task_access
 from app.services.courses_acl_service import assert_course_access
@@ -1174,3 +1176,138 @@ async def import_from_google_sheets(
         errors=errors,
         total_rows=len(rows) - 1,  # Без заголовка
     )
+
+
+# ---------------------------------------------------------------------------
+# tsk-433: правка задания методистом из кабинета (cookie + роль)
+# ---------------------------------------------------------------------------
+
+
+class TaskManualPatch(BaseModel):
+    """Поля задания, которые методист правит через кабинет.
+
+    Умышленно уже, чем `TaskUpdate`: `course_id`, `external_uid` и
+    `difficulty_id` из веба не меняются. Первые два — ключи сопоставления с
+    источником, третий живёт своей жизнью с собственным обоснованием
+    (`difficulty_provenance`, tsk-381) и правится не здесь.
+    """
+
+    task_content: Optional[Any] = None
+    solution_rules: Optional[Any] = None
+    is_active: Optional[bool] = None
+    order_position: Optional[int] = None
+    requirement_level: Optional[str] = None
+
+
+@router.patch(
+    "/tasks/{task_id}",
+    response_model=TaskRead,
+    summary="Правка задания методистом (tsk-433: cookie auth + роль)",
+    responses={
+        200: {"description": "Задание обновлено"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет править задания"},
+        404: {"description": "Задание не существует"},
+        422: {"description": "Правило проверки не соответствует содержимому"},
+    },
+)
+async def patch_task_manual(
+    task_id: int,
+    payload: TaskManualPatch = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Обновить задание и пометить содержимое как правленое вручную.
+
+    Правило проверки и содержимое сверяются между собой сервисом
+    (`TasksService.update` → `_validate_task_data` →
+    `SolutionRules.validate_with_task_content`): верный вариант обязан
+    существовать среди вариантов ответа, у SC он ровно один, частичные правила
+    не ссылаются на несуществующие ID. Несоответствие — 422, а не молча
+    сломанная проверка ответов у учеников.
+
+    Пометка (`content_provenance`) ставится сразу на пару
+    `task_content` + `solution_rules`, даже если правилось одно из них:
+    порознь они разъедутся при первом же переиздании из источника (см.
+    `_manually_edited_task_fields`).
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+
+    logger = logging.getLogger("api.tasks_extra")
+    result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+
+    changed = payload.model_dump(exclude_unset=True)
+    if not changed:
+        return task
+
+    service = TasksService()
+    try:
+        updated = await service.update(db, task, dict(changed))
+    except DomainError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+    touched_content = {"task_content", "solution_rules"} & set(changed)
+    if touched_content:
+        updated.content_provenance = {
+            "source": "manual_web",
+            "edited_at": datetime.now(timezone.utc).isoformat(),
+            "edited_by": current_user.id,
+            # пара целиком: см. docstring и _manually_edited_task_fields
+            "fields": ["solution_rules", "task_content"],
+        }
+        await db.commit()
+        await db.refresh(updated)
+        logger.info(
+            "tsk-433: задание %s правлено вручную пользователем %s (%s)",
+            task_id,
+            current_user.id,
+            ", ".join(sorted(touched_content)),
+        )
+    return updated
+
+
+@router.delete(
+    "/tasks/{task_id}/manual-edit",
+    response_model=TaskRead,
+    summary="Вернуть задание под управление источника (tsk-433)",
+    responses={
+        200: {"description": "Пометка снята"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет"},
+        404: {"description": "Задание не существует"},
+    },
+)
+async def clear_task_manual_edit(
+    task_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+) -> Any:
+    """Снять пометку ручной правки с задания.
+
+    Содержимое не откатывается: прежнюю версию вернёт источник при ближайшем
+    переиздании. Мгновенная подмена текста здесь была бы неожиданной.
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+
+    logger = logging.getLogger("api.tasks_extra")
+    result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Задание не найдено")
+
+    task.content_provenance = None
+    await db.commit()
+    await db.refresh(task)
+    logger.info(
+        "tsk-433: с задания %s снята пометка ручной правки (пользователь %s)",
+        task_id,
+        current_user.id,
+    )
+    return task

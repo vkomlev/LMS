@@ -111,6 +111,15 @@ class TaskRead(BaseModel):
             "в норме всегда заполнен после INSERT триггером)."
         ),
     )
+    content_provenance: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Пометка ручной правки (tsk-433): {source, edited_at, edited_by, "
+            "fields}. Клиенту нужна, чтобы показать методисту, что эти поля "
+            "источник больше не обновляет, и дать «вернуть к источнику». "
+            "Не путать с difficulty_provenance — та про обоснование сложности."
+        ),
+    )
 
     hints_text: List[str] = Field(
         default_factory=list,

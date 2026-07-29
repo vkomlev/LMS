@@ -126,6 +126,16 @@ class Tasks(Base):
             "NULL = значение ничем не подтверждено"
         ),
     )
+    content_provenance: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Происхождение содержимого задания (tsk-433): "
+            "{source, edited_at, edited_by, fields}. source=manual_web → "
+            "перечисленные поля не перезаписываются импортом. "
+            "NULL — правок руками не было. Не путать с difficulty_provenance."
+        ),
+    )
 
     course: Mapped["Courses"] = relationship(
         "Courses",

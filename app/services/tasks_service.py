@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any, Dict, List, Sequence, Set, Tuple
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,49 @@ from app.services.base import BaseService
 from app.utils.exceptions import DomainError
 from app.services.difficulty_levels_service import DifficultyLevelsService
 from app.services.courses_service import CoursesService
+
+logger_provenance = logging.getLogger(__name__)
+
+#: Поля задания, которые методист правит через кабинет и которые импорт обязан
+#: уважать (tsk-433). `difficulty_id`, `course_id`, `external_uid` сюда НЕ
+#: входят: это ключи сопоставления и оценка сложности со своим провенансом.
+MANUALLY_EDITABLE_TASK_FIELDS: frozenset[str] = frozenset(
+    {"task_content", "solution_rules"}
+)
+
+
+def _manually_edited_task_fields(existing: Tasks) -> frozenset[str]:
+    """Поля задания, поправленные вручную и защищённые от перезаписи импортом.
+
+    Читает `tasks.content_provenance` (tsk-433). Защита действует только при
+    `source = "manual_web"` и только для полей из `fields`, пересечённых с
+    белым списком: битый или чужой провенанс не должен уметь заморозить
+    произвольную колонку.
+
+    :param existing: строка задания из БД.
+    :return: множество имён полей; пустое — защищать нечего.
+    """
+    prov = getattr(existing, "content_provenance", None)
+    if not isinstance(prov, dict) or prov.get("source") != "manual_web":
+        return frozenset()
+    raw_fields = prov.get("fields")
+    if not isinstance(raw_fields, list):
+        logger_provenance.warning(
+            "tasks.content_provenance без списка полей (task_id=%s): %r",
+            getattr(existing, "id", None),
+            prov,
+        )
+        return frozenset()
+    marked = frozenset(
+        f for f in raw_fields if isinstance(f, str)
+    ) & MANUALLY_EDITABLE_TASK_FIELDS
+    # Содержимое и правило проверки защищаются ТОЛЬКО ПАРОЙ. Если оставить
+    # одно под управлением источника, они разъедутся: правило из источника
+    # ссылается на свои варианты (`correct_options` ↔ `task_content.options`),
+    # перекрёстная валидация это поймает и вернёт ошибку — а ошибка одного
+    # задания роняет весь пакет импорта, то есть одна ручная правка сломала бы
+    # публикацию целого курса. Поэтому пометка на любом из полей защищает оба.
+    return MANUALLY_EDITABLE_TASK_FIELDS if marked else frozenset()
 from app.schemas.task_content import TaskContent
 from app.schemas.solution_rules import SolutionRules
 
@@ -322,6 +366,25 @@ class TasksService(BaseService[Tasks]):
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
                 }
+                # tsk-433: содержимое и правило проверки, поправленные методистом
+                # через кабинет, импорт не трогает. Иначе правка молча исчезала бы
+                # при ближайшем переиздании — тот же класс, что закрыт для
+                # материалов, и та же логика, что у is_active/requirement_level
+                # ниже, только источник решения не «передано ли поле», а пометка
+                # на самой строке.
+                protected_task_fields = _manually_edited_task_fields(existing)
+                for protected in protected_task_fields:
+                    obj_in.pop(protected, None)
+                if protected_task_fields:
+                    # max_score выводится из solution_rules; если правило защищено,
+                    # балл из источника применять нельзя — разъедется с правилом.
+                    if "solution_rules" in protected_task_fields:
+                        obj_in.pop("max_score", None)
+                    logger_provenance.info(
+                        "tsk-433: задание %s правлено вручную, импорт не трогает %s",
+                        existing.id,
+                        ", ".join(sorted(protected_task_fields)),
+                    )
                 # UPDATE: is_active перезаписываем ТОЛЬКО при явной передаче
                 # (tsk-378, тот же класс, что requirement_level в tsk-377).
                 # Ни один конвейер поля не шлёт (TaskPayload в ContentBackbone
