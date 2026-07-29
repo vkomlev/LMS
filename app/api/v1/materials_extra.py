@@ -234,6 +234,9 @@ async def copy_material(
 )
 async def get_course_materials_stats(
     course_id: int,
+    # tsk-433: остаётся на legacy-гейте — карточка курса в веб-кабинете считает
+    # материалы по основному списку (`/courses/{id}/materials`, уже под cookie),
+    # отдельный агрегат ей не нужен. Не расширяем доступ без потребителя.
     db: AsyncSession = Depends(get_db),
 ) -> Dict[str, Any]:
     """Возвращает total, by_type, active, inactive."""

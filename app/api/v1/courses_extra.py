@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_bare_db, get_current_user
+from app.api.deps import get_db, get_bare_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.courses import (
     CourseRead,
@@ -31,6 +31,13 @@ router = APIRouter(tags=["courses"])
 
 courses_service = CoursesService()
 user_courses_service = UserCoursesService()
+
+# tsk-433: гейт чтения графа курсов из веб-кабинета методиста.
+# До этого навигация по дереву висела на legacy `get_db` (APIKeyQuery — только
+# `?api_key=` в query), то есть была доступна ТГ-ботам и недоступна браузеру по
+# cookie-сессии. Тот же переход, что в tsk-298 Фазе 3 для teacher-эндпоинтов:
+# `is_service` в require_role проходит без проверки роли, поэтому боты не ломаются.
+_COURSE_TREE_GATE = require_role("teacher", "methodist", "admin")
 
 
 @router.get(
@@ -198,12 +205,13 @@ async def get_course_by_code_endpoint(
         404: {
             "description": "Курс не найден",
         },
-        403: {"description": "Invalid or missing API Key"},
+        403: {"description": "Недостаточно прав: нужна роль teacher/methodist/admin"},
     },
 )
 async def get_course_children_endpoint(
     course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
 ) -> List[CourseWithOrderNumber]:
     """
     Получить прямых детей курса (потомки первого уровня).
@@ -236,6 +244,11 @@ async def get_course_children_endpoint(
 )
 async def get_course_tree_endpoint(
     course_id: int,
+    # tsk-433: НЕ переведён на cookie вместе с roots/children/{id} намеренно —
+    # эндпоинт отдаёт 500 при любом гейте (см. tsk-463): репозиторий заполняет
+    # `child_courses`, а схема ждёт `children`, плюс lazy-load `parent_courses`
+    # в async-контексте. Веб-кабинет навигируется через roots + children.
+    # При починке tsk-463 перевести сюда `_COURSE_TREE_GATE`.
     db: AsyncSession = Depends(get_db),
 ) -> CourseTreeRead:
     """
@@ -261,17 +274,53 @@ async def get_course_tree_endpoint(
         200: {
             "description": "Список корневых курсов (без родителя)",
         },
-        403: {"description": "Invalid or missing API Key"},
+        403: {"description": "Недостаточно прав: нужна роль teacher/methodist/admin"},
     },
 )
 async def get_root_courses_endpoint(
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
 ) -> List[CourseRead]:
     """
     Получить корневые курсы (курсы без родителей).
     """
     root_courses = await courses_service.get_root_courses(db)
     return [CourseRead.model_validate(course) for course in root_courses]
+
+
+# ВНИМАНИЕ: объявлен ПОСЛЕ `/courses/roots` намеренно — FastAPI матчит маршруты
+# по порядку объявления, и `{course_id}` выше по файлу перехватил бы «roots».
+@router.get(
+    "/courses/{course_id}",
+    response_model=CourseRead,
+    summary="Карточка курса по id (tsk-433: cookie auth + роль)",
+    responses={
+        200: {"description": "Курс найден"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Недостаточно прав: нужна роль teacher/methodist/admin"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def get_course_by_id_endpoint(
+    course_id: int,
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
+) -> CourseRead:
+    """Вернуть карточку курса по id для веб-кабинета.
+
+    Перекрывает генерик-CRUD `GET /courses/{item_id}` (тот висит на legacy
+    `APIKeyQuery` и из браузера недоступен): `courses_extra` подключается в
+    `main.py` ДО CRUD-роутера, FastAPI берёт первое совпадение. Тот же приём,
+    что у `materials_extra.get_material_by_id` (Y-5.1).
+    """
+    course = await courses_service.get_by_id(db, course_id)
+    if course is None:
+        raise DomainError(
+            detail="Курс не найден",
+            status_code=404,
+            payload={"course_id": course_id},
+        )
+    return CourseRead.model_validate(course)
 
 
 @router.patch(
@@ -598,6 +647,12 @@ async def get_course_users_endpoint(
     course_id: int,
     limit: int = Query(100, ge=1, le=1000, description="Максимум результатов на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
+    # tsk-433: НАМЕРЕННО оставлен на legacy-гейте. Отдаёт персональные данные
+    # (email/ФИО/tg_id каждого зачисленного), а роль-гейт без `teacher_course_acl`
+    # открыл бы списки учеников любого курса любому преподавателю. В Волне 1
+    # потребителя нет — карточка курса считает людей по другим источникам.
+    # Когда блок «зачисленные» понадобится: роль methodist/admin + course-ACL
+    # для teacher, по образцу `manual_progress_service.ensure_can_edit_progress`.
     db: AsyncSession = Depends(get_db),
 ) -> CourseUsersResponse:
     """

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, Body, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 
-from app.api.deps import get_db, get_async_db, get_current_user
+from app.api.deps import get_db, get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from fastapi import HTTPException, status as http_status
 from app.schemas.task_results import TaskResultRead, TaskResultUpdate, TaskResultManualCheckRequest
@@ -15,6 +15,12 @@ from app.services.task_results_service import TaskResultsService
 
 
 router = APIRouter(tags=["task_results"])
+
+# tsk-433: агрегаты по курсу и заданию нужны в веб-кабинете методиста, а висели
+# на legacy `get_db` (только `?api_key=`) — из браузера были недоступны.
+# Персональная статистика (`/stats/by-user`) уже переведена на cookie в Y-5.2 и
+# имеет свою инлайн-проверку (студент видит только себя), поэтому не трогается.
+_STATS_GATE = require_role("teacher", "methodist", "admin")
 
 task_results_service = TaskResultsService()
 
@@ -365,7 +371,8 @@ async def manual_check_task_result(
 )
 async def get_task_stats(
     task_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STATS_GATE),
 ) -> dict:
     """
     РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ Р·Р°РґР°С‡Рµ.
@@ -402,7 +409,8 @@ async def get_task_stats(
 )
 async def get_course_stats(
     course_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STATS_GATE),
 ) -> dict:
     """
     РџРѕР»СѓС‡РёС‚СЊ СЃС‚Р°С‚РёСЃС‚РёРєСѓ РїРѕ РєСѓСЂСЃСѓ.
