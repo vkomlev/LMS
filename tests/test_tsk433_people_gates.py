@@ -113,6 +113,52 @@ async def test_service_key_still_reads_people(client, path):
 
 
 @pytest.mark.asyncio
+async def test_methodist_opens_person_card(db, client):
+    """Карточка одного человека — по cookie, а не только по ключу в адресе.
+
+    Живой прогон на проде (2026-07-30) показал ровно этот разрыв: списки людей
+    открывались, а `GET /users/{id}` отдавал 403 — путь обслуживал генерик-CRUD
+    под legacy `?api_key=`, и перевод волны его не задел. Тот же класс, что был
+    с `GET /courses/{id}` в Волне 1. Тесты волны его не ловили, потому что
+    карточки в наборе путей не было.
+    """
+    target_id, _ = await _user(db, "student")
+    _, token = await _user(db, "methodist")
+
+    r = await client.get(f"/api/v1/users/{target_id}", headers=_auth(token))
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == target_id
+
+
+@pytest.mark.asyncio
+async def test_person_card_closed_for_student(db, client):
+    """Чужую карточку ученик не открывает — это персональные данные."""
+    target_id, _ = await _user(db, "student")
+    _, token = await _user(db, "student")
+
+    r = await client.get(f"/api/v1/users/{target_id}", headers=_auth(token))
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_person_card_still_works_by_service_key(db, client):
+    """ТГ-боты открывают карточку ключом в адресе — перекрытие их не ломает."""
+    target_id, _ = await _user(db, "student")
+
+    r = await client.get(f"/api/v1/users/{target_id}?api_key={_api_key()}")
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_missing_person_is_404_not_403(db, client):
+    """Несуществующий человек — 404, иначе методист не отличит опечатку от запрета."""
+    _, token = await _user(db, "methodist")
+
+    r = await client.get("/api/v1/users/999999999", headers=_auth(token))
+    assert r.status_code == 404, r.text
+
+
+@pytest.mark.asyncio
 async def test_methodist_reads_student_links_and_courses(db, client):
     """Связи ученик↔преподаватель и курсы человека доступны методисту."""
     student_id, _ = await _user(db, "student")

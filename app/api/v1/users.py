@@ -436,6 +436,43 @@ async def patch_user(
     updated = await service.update(db, db_obj, payload)
     return updated
 
+@router.get(
+    "/{user_id}",
+    response_model=UserRead,
+    summary="Карточка пользователя",
+    description=(
+        "Получить одного пользователя по ID.\n\n"
+        "Тот же ответ, что у общего CRUD-обработчика, но по cookie-сессии "
+        "методиста, а не только по `?api_key=` в адресе."
+    ),
+    responses={
+        200: {"description": "Пользователь найден"},
+        403: {"description": "Нет прав на чтение людей"},
+        404: {"description": "Пользователь не найден"},
+    },
+)
+async def get_user_card(
+    user_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
+) -> UserRead:
+    """Карточка одного человека для веб-кабинета (tsk-433 Волна 3.1).
+
+    Обработчик объявлен ДО ``include_router(crud_router)`` и потому перекрывает
+    генерик-CRUD ``GET /users/{item_id}``, который остаётся на legacy-гейте
+    ``?api_key=``. Без этого списки людей открывались, а карточка отдавала 403 —
+    ровно тот же разрыв, что был с ``GET /courses/{id}`` в Волне 1.
+
+    :param user_id: идентификатор пользователя.
+    :returns: карточка пользователя.
+    :raises HTTPException: 404, если пользователя нет.
+    """
+    user = await service.get_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return user
+
+
 crud_router = create_crud_router(
     prefix="",              # <--- ВАЖНО: пусто, т.к. сам router уже с prefix="/users"
     tags=["users"],
