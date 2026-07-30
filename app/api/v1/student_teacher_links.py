@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_bare_db, get_current_user, get_db
+from app.api.deps import get_async_db, get_bare_db, get_current_user, get_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.users import UserRead
 from app.services.student_teacher_links_service import (
@@ -17,6 +17,11 @@ service = StudentTeacherLinksService()
 
 
 # ---------- Студент → его преподаватели ----------
+
+# tsk-433 Волна 3: чтение связей людей открыто кабинету методиста.
+# Персональные данные, поэтому только методист и админ; `is_service` в
+# require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
 
 @router.get(
     "/users/{student_id}/teachers",
@@ -50,7 +55,8 @@ service = StudentTeacherLinksService()
 )
 async def list_student_teachers(
     student_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> List[UserRead]:
     """
     Вернуть всех преподавателей, привязанных к студенту.

@@ -7,7 +7,8 @@ from sqlalchemy import asc, desc
 import logging
 
 from app.core.logger import setup_logging
-from app.api.deps import get_db
+from app.api.deps import get_async_db, get_db, require_role
+from app.auth.current_user import CurrentUser
 from app.api.v1.crud import create_crud_router
 from app.services.users_service import UsersService
 from app.schemas.users import UserID, UserRead, UserCreate, UserUpdate
@@ -32,6 +33,17 @@ class SortOrder(str, Enum):
     """Направление сортировки"""
     asc = "asc"
     desc = "desc"
+
+# tsk-433 Волна 3: списки и поиск людей открыты кабинету методиста.
+#
+# Здесь ПЕРСОНАЛЬНЫЕ ДАННЫЕ (почта, имя, идентификатор в Telegram), поэтому
+# гейт уже, чем у контента: методист и админ — роли, которые и так работают со
+# всеми учениками школы. Преподавателю общий список не нужен: у него есть
+# `GET /users/{teacher_id}/students` со своим ростером.
+#
+# `is_service` в require_role проходит без проверки роли — ТГ-боты, которые
+# ходят с ключом в адресе, продолжают работать (это их основной экран людей).
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
 
 @router.get(
     "/search",
@@ -102,7 +114,8 @@ async def search_users_by_name(
         description="Смещение для пагинации",
         examples=[0, 10, 20]
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> List[UserRead]:
     """
     Ищет пользователей по фрагменту имени в поле `full_name`.
@@ -213,7 +226,8 @@ async def list_users(
         ),
         examples=["teacher", "student", "methodist"]
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> Page[UserRead]:
     """
     Получить список пользователей с пагинацией, сортировкой и фильтрацией по роли.
@@ -299,7 +313,8 @@ async def list_users(
 )
 async def get_user_id_by_tg(
     tg_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> UserID:
     """
     Ищет пользователя по его Telegram ID и возвращает только поле `id`.
@@ -384,7 +399,8 @@ async def get_user_id_by_tg(
 async def patch_user(
     id: int,
     obj_in: UserUpdate = Body(..., description="Данные для обновления пользователя (все поля опциональны)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> UserRead:
     """
     Частично обновить данные пользователя.

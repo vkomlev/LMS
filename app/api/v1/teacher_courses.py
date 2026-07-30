@@ -4,7 +4,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.auth.current_user import CurrentUser
+from app.api.deps import require_role, get_async_db, get_db
 from app.schemas.users import UserRead
 from app.schemas.courses import CourseRead
 from app.schemas.teacher_courses import TeacherCourseCreate, TeacherCourseRead
@@ -15,6 +16,11 @@ from app.utils.exceptions import DomainError
 router = APIRouter(tags=["teacher_courses"])
 service = TeacherCoursesService()
 
+
+# tsk-433 Волна 3: чтение связей людей открыто кабинету методиста.
+# Персональные данные, поэтому только методист и админ; `is_service` в
+# require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
 
 @router.get(
     "/courses/{course_id}/teachers",
@@ -65,7 +71,8 @@ async def list_course_teachers(
     limit: int = Query(50, ge=1, le=200, description="Максимальное количество записей на странице", examples=[50, 100]),
     sort_by: str = Query("linked_at", description="Поле для сортировки", examples=["linked_at", "email", "full_name"]),
     order: str = Query("desc", description="Направление сортировки (asc или desc)", examples=["asc", "desc"]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> Page[UserRead]:
     """
     Вернуть всех преподавателей, привязанных к курсу, с пагинацией и сортировкой.
@@ -152,7 +159,8 @@ async def list_teacher_courses(
     limit: int = Query(50, ge=1, le=200, description="Максимальное количество записей на странице", examples=[50, 100]),
     sort_by: str = Query("linked_at", description="Поле для сортировки", examples=["linked_at", "title", "created_at"]),
     order: str = Query("desc", description="Направление сортировки (asc или desc)", examples=["asc", "desc"]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> Page[CourseRead]:
     """
     Вернуть все курсы, привязанные к преподавателю, с пагинацией и сортировкой.

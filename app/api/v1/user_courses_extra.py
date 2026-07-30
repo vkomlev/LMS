@@ -5,7 +5,8 @@ from fastapi import APIRouter, Depends, Body, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_db
+from app.auth.current_user import CurrentUser
+from app.api.deps import require_role, get_async_db, get_db
 from app.schemas.user_courses import (
     UserCourseBulkCreate,
     UserCourseListResponse,
@@ -133,6 +134,11 @@ async def _get_student_courses(
     return courses_list
 
 
+# tsk-433 Волна 3: чтение связей людей открыто кабинету методиста.
+# Персональные данные, поэтому только методист и админ; `is_service` в
+# require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
+
 @router.get(
     "/users/{user_id}/courses",
     response_model=UserCourseListResponse,
@@ -177,7 +183,8 @@ async def get_user_courses_endpoint(
         examples=["teacher", "student"]
     ),
     order_by_order: bool = Query(True, description="Сортировать по order_number (True) или по added_at (False)"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> UserCourseListResponse:
     """
     Получить список курсов пользователя с информацией о курсах.

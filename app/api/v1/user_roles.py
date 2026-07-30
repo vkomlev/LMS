@@ -3,7 +3,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.auth.current_user import CurrentUser
+from app.api.deps import require_role, get_async_db, get_db
 from app.schemas.roles import RoleRead
 from app.services.user_roles_service import UserRolesService
 
@@ -11,10 +12,16 @@ router = APIRouter(prefix="/users/{user_id}/roles", tags=["user_roles"])
 service = UserRolesService()
 
 
+# tsk-433 Волна 3: чтение связей людей открыто кабинету методиста.
+# Персональные данные, поэтому только методист и админ; `is_service` в
+# require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
+
 @router.get("/", response_model=List[RoleRead])
 async def list_user_roles(
     user_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> List[RoleRead]:
     """
     Список ролей, назначенных пользователю.
