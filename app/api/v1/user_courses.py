@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Body, Response, status, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_async_db, get_db, require_role
+from app.auth.current_user import CurrentUser
 from app.schemas.user_courses import (
     UserCourseCreate,
     UserCourseRead,
@@ -13,6 +14,12 @@ from app.services.user_courses_service import UserCoursesService
 
 router = APIRouter(prefix="/user-courses", tags=["user_courses"])
 service = UserCoursesService()
+
+# tsk-433 Волна 3.2: отчисление ученика с курса доступно кабинету методиста.
+# Живёт под префиксом `/user-courses`, а не рядом с зачислением
+# (`POST /users/{id}/courses/bulk`) — из-за этого при разведке волны его легко
+# принять за отсутствующий. Роли те же, что на остальных записях по людям.
+_PEOPLE_WRITE_GATE = require_role("methodist", "admin")
 
 
 @router.post(
@@ -164,7 +171,8 @@ async def update_user_course(
 async def delete_user_course(
     user_id: int = Path(..., description="ID пользователя (студента)", examples=[13, 14, 15]),
     course_id: int = Path(..., description="ID курса", examples=[1, 2, 3]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ):
     """
     Удалить связь пользователя и курса.

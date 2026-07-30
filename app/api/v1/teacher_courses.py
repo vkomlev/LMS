@@ -2,6 +2,7 @@
 
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Path, Body
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.current_user import CurrentUser
@@ -21,6 +22,11 @@ service = TeacherCoursesService()
 # Персональные данные, поэтому только методист и админ; `is_service` в
 # require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
 _PEOPLE_READ_GATE = require_role("methodist", "admin")
+
+# tsk-433 Волна 3.2: закрепление преподавателя за курсом из кабинета.
+# Триггер БД `check_course_has_no_parents` разрешает привязку только к курсу
+# верхнего уровня — обработчик переводит его отказ в 409 (см. ниже).
+_PEOPLE_WRITE_GATE = require_role("methodist", "admin")
 
 @router.get(
     "/courses/{course_id}/teachers",
@@ -226,7 +232,8 @@ async def list_teacher_courses(
 async def add_teacher_course_link(
     course_id: int = Path(..., description="ID курса", examples=[1, 2, 3]),
     teacher_id: int = Path(..., description="ID преподавателя", examples=[16, 17]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> None:
     """
     Привязать преподавателя к курсу.
@@ -245,13 +252,34 @@ async def add_teacher_course_link(
     
     **Примечания:**
     - Операция идемпотентна: повторный вызов с теми же параметрами не вызовет ошибку
-    - ⚠️ ВАЖНО: Триггер БД автоматически привяжет всех детей курса к преподавателю
+    - Привязать можно только к курсу ВЕРХНЕГО УРОВНЯ: триггер
+      `check_course_has_no_parents` запрещает связь с вложенным курсом (409).
+      Доступ к главам внутри преподаватель получает по дереву, отдельная связь
+      на каждую главу не нужна.
     - После создания связи преподаватель появится в списке преподавателей курса
+
+    .. note::
+       До tsk-433 здесь было написано «триггер БД автоматически привяжет всех
+       детей курса». Это неверно: ни одна функция БД не пишет в
+       ``teacher_courses`` (проверено на проде запросом по ``pg_proc``).
+       Единственный триггер на таблице — запрет привязки к вложенному курсу.
     """
     try:
         await service.add_link(db, teacher_id, course_id)
     except DomainError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+    except SQLAlchemyError as exc:
+        if "has parents" in str(exc).lower():
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Закрепить преподавателя можно только за курсом верхнего "
+                    "уровня. Выбранный курс вложен в другой — закрепите за тем, "
+                    "внутри которого он лежит."
+                ),
+            ) from exc
+        raise
 
 
 @router.delete(
@@ -276,7 +304,8 @@ async def add_teacher_course_link(
 async def remove_teacher_course_link(
     course_id: int = Path(..., description="ID курса", examples=[1, 2, 3]),
     teacher_id: int = Path(..., description="ID преподавателя", examples=[16, 17]),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> None:
     """
     Отвязать преподавателя от курса.

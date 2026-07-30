@@ -23,6 +23,11 @@ service = StudentTeacherLinksService()
 # require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
 _PEOPLE_READ_GATE = require_role("methodist", "admin")
 
+# tsk-433 Волна 3.2: привязка ученика к преподавателю доступна кабинету.
+# Роли те же, что на чтении: кто видит людей, тот и распределяет. Отдельная
+# константа — чтобы запись можно было сузить, не трогая чтение.
+_PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+
 @router.get(
     "/users/{student_id}/teachers",
     response_model=List[UserRead],
@@ -107,7 +112,8 @@ async def list_student_teachers(
 async def add_student_teacher_link(
     student_id: int,
     teacher_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> None:
     """
     Привязать преподавателя к студенту.
@@ -157,7 +163,8 @@ async def add_student_teacher_link(
 async def remove_student_teacher_link(
     student_id: int,
     teacher_id: int,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> None:
     """
     Удалить связь между студентом и преподавателем.

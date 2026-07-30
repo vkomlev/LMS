@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Body, status, Query
+from fastapi import APIRouter, Depends, Body, HTTPException, status, Query
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -139,6 +140,11 @@ async def _get_student_courses(
 # require_role пропускает ТГ-ботов, которые ходят с ключом в адресе.
 _PEOPLE_READ_GATE = require_role("methodist", "admin")
 
+# tsk-433 Волна 3.2: зачисление на курсы из кабинета. Роли те же, что на
+# чтении людей; отдельная константа — чтобы запись можно было сузить позже,
+# не трогая чтение.
+_PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+
 @router.get(
     "/users/{user_id}/courses",
     response_model=UserCourseListResponse,
@@ -275,24 +281,44 @@ async def bulk_assign_courses_endpoint(
             },
         ],
     ),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> List[UserCourseRead]:
     """
     Массовая привязка курсов к пользователю.
-    
+
     Правила:
     - Курсы привязываются с автоматической нумерацией (order_number устанавливается триггером БД).
     - Если курс уже привязан к пользователю, он пропускается (не создается дубликат).
     - Порядок в списке course_ids определяет порядок order_number.
-    
+
     Ошибки:
     - 400: Пустой список курсов или некорректные данные.
     - 404: Пользователь не найден.
+    - 409: Курс вложен в другой — зачислять можно только на корневые (tsk-433).
     """
-    created_user_courses = await user_courses_service.bulk_assign_courses(
-        db, user_id, payload.course_ids
-    )
-    
+    try:
+        created_user_courses = await user_courses_service.bulk_assign_courses(
+            db, user_id, payload.course_ids
+        )
+    except SQLAlchemyError as exc:
+        # Триггер `trg_check_user_course_no_parents` запрещает зачисление на
+        # курс, у которого есть родитель: ученику выдаётся корневой курс, а
+        # главы внутри открываются движком. Без этой ветки методист получал бы
+        # голый 500 вместо объяснения (тот же приём, что с циклом иерархии
+        # в Волне 2.3).
+        if "has parents" in str(exc).lower():
+            await db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Зачислять можно только на курс верхнего уровня. "
+                    "Выбранный курс вложен в другой — зачислите на курс, "
+                    "внутри которого он лежит."
+                ),
+            ) from exc
+        raise
+
     return [UserCourseRead.model_validate(uc) for uc in created_user_courses]
 
 

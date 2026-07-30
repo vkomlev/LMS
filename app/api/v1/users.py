@@ -2,6 +2,7 @@
 from typing import List, Optional
 from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import asc, desc
 import logging
@@ -44,6 +45,12 @@ class SortOrder(str, Enum):
 # `is_service` в require_role проходит без проверки роли — ТГ-боты, которые
 # ходят с ключом в адресе, продолжают работать (это их основной экран людей).
 _PEOPLE_READ_GATE = require_role("methodist", "admin")
+
+# tsk-433 Волна 3.2: правка карточки человека из кабинета. Роли те же, что на
+# чтении; отдельная константа — чтобы запись можно было сузить, не трогая
+# чтение. Ограничение по ПОЛЯМ (tg_id не меняется) живёт в обработчике: это не
+# вопрос роли, а вопрос того, что именно поле значит.
+_PEOPLE_WRITE_GATE = require_role("methodist", "admin")
 
 @router.get(
     "/search",
@@ -400,7 +407,7 @@ async def patch_user(
     id: int,
     obj_in: UserUpdate = Body(..., description="Данные для обновления пользователя (все поля опциональны)"),
     db: AsyncSession = Depends(get_async_db),
-    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
+    current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> UserRead:
     """
     Частично обновить данные пользователя.
@@ -426,14 +433,38 @@ async def patch_user(
     **Примеры:**
     - Обновить только имя: `{"full_name": "Новое Имя"}`
     - Обновить email и имя: `{"email": "new@example.com", "full_name": "Обновленное Имя"}`
-    - Обновить только Telegram ID: `{"tg_id": 987654321}`
+    - Обновить только Telegram ID: `{"tg_id": 987654321}` — только сервисным ключом
+
+    tsk-433 Волна 3.2: человеку из кабинета (методисту) разрешены имя и почта.
+    `tg_id` остаётся за сервисными потребителями: это идентификатор входа через
+    бота, и смена его из кабинета означала бы передачу доступа к чужому
+    аккаунту. Решение оператора 2026-07-30.
     """
     db_obj = await service.get_by_id(db, id)
     if not db_obj:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
-    
+
     payload = obj_in.model_dump(exclude_unset=True)
-    updated = await service.update(db, db_obj, payload)
+
+    if "tg_id" in payload and not current_user.is_service:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Идентификатор Telegram из кабинета не меняется: это ключ входа "
+                "через бота. Привязку меняет сам пользователь в своём профиле."
+            ),
+        )
+
+    try:
+        updated = await service.update(db, db_obj, payload)
+    except IntegrityError as exc:
+        # Частичный уникальный индекс на users.email (WHERE email IS NOT NULL).
+        # Без этой ветки занятая почта давала бы 500 вместо объяснения.
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Такая почта уже записана у другого человека.",
+        ) from exc
     return updated
 
 @router.get(
