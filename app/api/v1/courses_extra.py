@@ -4,13 +4,14 @@ import logging
 from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from fastapi import APIRouter, Depends, Body, status, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_bare_db, get_current_user, require_role
+from app.api.deps import get_db, get_async_db, get_bare_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.courses import (
+    AccessLevel,
     CourseRead,
     CourseWithOrderNumber,
     CourseReadWithChildren,
@@ -46,6 +47,11 @@ _COURSE_TREE_GATE = require_role("teacher", "methodist", "admin")
 # родителей) — только методист и админ: преподавателю дерево курсов доступно
 # на чтение, но не на перестройку.
 _STRUCTURE_GATE = require_role("methodist", "admin")
+
+# tsk-433, аудит 2026-07-30: состав курса (кто на нём учится) — персональные
+# данные, поэтому гейт тот же, что у списков людей в Волне 3.1, а не более
+# широкий `_COURSE_TREE_GATE`. Преподаватель сюда не входит намеренно.
+_PEOPLE_READ_GATE = require_role("methodist", "admin")
 
 
 @router.get(
@@ -657,13 +663,19 @@ async def get_course_users_endpoint(
     course_id: int,
     limit: int = Query(100, ge=1, le=1000, description="Максимум результатов на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
-    # tsk-433: НАМЕРЕННО оставлен на legacy-гейте. Отдаёт персональные данные
-    # (email/ФИО/tg_id каждого зачисленного), а роль-гейт без `teacher_course_acl`
-    # открыл бы списки учеников любого курса любому преподавателю. В Волне 1
-    # потребителя нет — карточка курса считает людей по другим источникам.
-    # Когда блок «зачисленные» понадобится: роль methodist/admin + course-ACL
-    # для teacher, по образцу `manual_progress_service.ensure_can_edit_progress`.
-    db: AsyncSession = Depends(get_db),
+    # tsk-433, аудит 2026-07-30: потребитель появился — блок «кто учится» на
+    # карточке курса. В Волне 1 путь намеренно оставался на legacy-гейте: он
+    # отдаёт персональные данные (email/ФИО/tg_id каждого зачисленного), и
+    # роль-гейт без `teacher_course_acl` открыл бы состав любого курса любому
+    # преподавателю.
+    #
+    # Взят гейт УЖЕ, чем предполагалось тогда: не «methodist/admin + course-ACL
+    # для teacher», а только methodist/admin — то же решение, что по людям в
+    # Волне 3.1. Преподавателю состав чужого курса не нужен: свой ростер он
+    # берёт через `/users/{teacher_id}/students`, а course-ACL пришлось бы
+    # заводить и поддерживать ради роли, которой этот экран не адресован.
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> CourseUsersResponse:
     """
     Получить список студентов (пользователей), привязанных к курсу.
@@ -1156,5 +1168,97 @@ async def patch_course_structure(
         current_user.id,
         payload.parent_course_ids,
         payload.replace_parents,
+    )
+    return updated
+
+
+# ---------------------------------------------------------------------------
+# tsk-433: правка карточки курса из веб-кабинета
+# ---------------------------------------------------------------------------
+
+
+class CourseCardPatch(BaseModel):
+    """Правка карточки курса: то, что методист читает глазами.
+
+    Умышленно у́же, чем `CourseUpdate`: структура графа сюда не входит — она
+    правится через `PATCH /courses/{id}/structure`. Разделение то же, что у
+    материала и задания: содержание карточки и место в дереве — разные
+    операции с разной ценой ошибки.
+    """
+
+    title: Optional[str] = Field(
+        None, min_length=1, description="Название курса", examples=["Python для ЕГЭ"]
+    )
+    description: Optional[str] = Field(None, description="Описание курса")
+    access_level: Optional[AccessLevel] = Field(
+        None, description="Тип доступа/проверки", examples=["manual_check"]
+    )
+    course_uid: Optional[str] = Field(
+        None, description="Внешний код курса (уникален)", examples=["wp:python-ege"]
+    )
+
+
+@router.patch(
+    "/courses/{course_id}/card",
+    response_model=CourseRead,
+    summary="Правка карточки курса (название, описание, доступ, код)",
+    description=(
+        "Изменить то, что видно в карточке курса. Структура графа правится "
+        "отдельным путём `PATCH /courses/{course_id}/structure`.\n\n"
+        "Отличие от общего `PATCH /courses/{course_id}`: тот висит на legacy "
+        "`?api_key=` и браузеру недоступен. Перекрывать его узкой схемой нельзя "
+        "— у него шире контракт, которым пользуются ТГ-боты."
+    ),
+    responses={
+        200: {"description": "Карточка обновлена"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет править курсы"},
+        404: {"description": "Курс не найден"},
+        409: {"description": "Такой код курса уже занят другим курсом"},
+    },
+)
+async def patch_course_card(
+    course_id: int,
+    payload: CourseCardPatch = Body(...),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Обновить карточку курса.
+
+    Заведено по дизайн- и функциональному аудиту 2026-07-30: курс оставался
+    единственной сущностью кабинета, которую нельзя было править, — у материала
+    и задания правка была с Волны 2.
+
+    :param course_id: идентификатор курса.
+    :param payload: изменяемые поля карточки (все опциональны).
+    :returns: обновлённый курс.
+    :raises HTTPException: 404 — курса нет; 409 — код курса занят.
+    """
+    logger = logging.getLogger("api.courses_extra")
+    service = CoursesService()
+    course = await service.get_by_id(db, course_id)
+    if course is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        return course
+
+    try:
+        updated = await service.update(db, course, data)
+    except IntegrityError as e:
+        # `course_uid` уникален на уровне БД: без этой ветки занятый код давал
+        # бы 500 вместо объяснения.
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Такой код курса уже занят другим курсом.",
+        ) from e
+
+    logger.info(
+        "tsk-433: карточка курса %s изменена пользователем %s (поля=%s)",
+        course_id,
+        current_user.id,
+        sorted(data),
     )
     return updated

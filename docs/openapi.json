@@ -2196,6 +2196,9 @@
         "operationId": "get_course_users_endpoint_api_v1_courses__course_id__users_get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -2235,6 +2238,54 @@
               "title": "Offset"
             },
             "description": "Смещение"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
@@ -2507,6 +2558,127 @@
           },
           "409": {
             "description": "Такая связь создала бы цикл в иерархии"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/courses/{course_id}/card": {
+      "patch": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Правка карточки курса (название, описание, доступ, код)",
+        "description": "Изменить то, что видно в карточке курса. Структура графа правится отдельным путём `PATCH /courses/{course_id}/structure`.\n\nОтличие от общего `PATCH /courses/{course_id}`: тот висит на legacy `?api_key=` и браузеру недоступен. Перекрывать его узкой схемой нельзя — у него шире контракт, которым пользуются ТГ-боты.",
+        "operationId": "patch_course_card_api_v1_courses__course_id__card_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseCardPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Карточка обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRead"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет править курсы"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "409": {
+            "description": "Такой код курса уже занят другим курсом"
           },
           "422": {
             "description": "Validation Error",
@@ -25901,6 +26073,70 @@
         "type": "object",
         "title": "CheckResultDetails",
         "description": "Расширенная информация о проверке ответа.\n\nПоля опциональны и используются по ситуации:\n- для SC/MC: correct_options, user_options;\n- для SA/SA_COM: matched_short_answer;\n- для TA: rubric_scores."
+      },
+      "CourseCardPatch": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Название курса",
+            "examples": [
+              "Python для ЕГЭ"
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Описание курса"
+          },
+          "access_level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AccessLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Тип доступа/проверки",
+            "examples": [
+              "manual_check"
+            ]
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "Внешний код курса (уникален)",
+            "examples": [
+              "wp:python-ege"
+            ]
+          }
+        },
+        "type": "object",
+        "title": "CourseCardPatch",
+        "description": "Правка карточки курса: то, что методист читает глазами.\n\nУмышленно у́же, чем `CourseUpdate`: структура графа сюда не входит — она\nправится через `PATCH /courses/{id}/structure`. Разделение то же, что у\nматериала и задания: содержание карточки и место в дереве — разные\nоперации с разной ценой ошибки."
       },
       "CourseCreate": {
         "properties": {

@@ -142,20 +142,27 @@ async def test_anonymous_denied(db, client):
 
 @pytest.mark.asyncio
 async def test_pii_endpoints_stay_on_legacy_gate(db, client):
-    """Список зачисленных НЕ должен открыться по cookie (ревью tsk-433).
+    """Без потребителя PII-путь остаётся закрытым.
 
-    Отдаёт email/ФИО/tg_id учеников; роль-гейт без course-ACL открыл бы состав
-    любого курса любому преподавателю. Потребителя в Волне 1 нет — держим закрытым.
+    Исходно (Волна 1) сюда входил и `GET /courses/{id}/users`: он отдаёт
+    email/ФИО/tg_id учеников, а потребителя тогда не было — держали закрытым.
+
+    Аудит 2026-07-30 потребителя дал (блок «кто на курсе» в карточке), и путь
+    переведён на гейт `methodist/admin` — намеренно у́же, чем предполагалось в
+    Волне 1 («роль + course-ACL для teacher»): преподавателю состав чужого
+    курса не нужен. Проверки на него живут теперь в
+    `tests/test_tsk433_audit_fixes.py`, включая отказ преподавателю.
+
+    Здесь остаётся то, у чего потребителя по-прежнему НЕТ.
     """
     uid, token = await _user_with_session(db, "methodist")
     cid = await _course(db)
     try:
-        for path in (
-            f"/api/v1/courses/{cid}/users",
+        resp = await client.get(
             f"/api/v1/courses/{cid}/materials/stats",
-        ):
-            resp = await client.get(path, headers={"Authorization": f"Bearer {token}"})
-            assert resp.status_code == 403, f"{path} → {resp.status_code} {resp.text}"
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403, f"materials/stats → {resp.status_code} {resp.text}"
     finally:
         await _cleanup(db, [uid], [cid])
 
