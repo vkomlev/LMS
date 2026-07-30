@@ -380,12 +380,18 @@ async def list_help_requests(
     offset: int = 0,
     sort: str = "priority",
     overdue: bool = False,
+    student_id: Optional[int] = None,
 ) -> Tuple[list[dict[str, Any]], int]:
     """
     Список заявок с ACL. status_filter: open | closed | all.
     request_type_filter: manual_help | blocked_limit | all (этап 3.8.1).
     sort: priority | created_at | due_at (этап 3.9).
     overdue: True — только просроченные (due_at < now), ортогонально типу (tsk-312).
+    student_id: tsk-473 — сузить до ОДНОГО ученика на уровне SQL (не постфильтр
+    в Python по общей странице учителя) — иначе `status_filter="all"` с большой
+    историей учителя рискует не влезть в `limit` и потерять недавние заявки
+    именно этого ученика (сортировка не по recency-для-ученика, а по
+    priority/due_at по ВСЕМ его заявкам сразу).
     Возвращает (items, total). items — словари для HelpRequestListItem.
     """
     status_cond = ""
@@ -398,6 +404,7 @@ async def list_help_requests(
         type_cond = "AND hr.request_type = 'manual_help'"
     elif request_type_filter == "blocked_limit":
         type_cond = "AND hr.request_type = 'blocked_limit'"
+    student_cond = ""
     order_sql = _order_by_sort(sort)
 
     # Y-4.1: переиспользуем общий HELP_REQUESTS_ACL_SQL из teacher_queue_service —
@@ -405,6 +412,9 @@ async def list_help_requests(
     acl_sql = HELP_REQUESTS_ACL_SQL
     now = datetime.now(timezone.utc)
     params: dict[str, Any] = {"teacher_id": teacher_id}
+    if student_id is not None:
+        student_cond = "AND hr.student_id = :student_id"
+        params["student_id"] = student_id
 
     # tsk-312: отдельная ось фильтра «только просроченные» (ортогональна типу).
     # Предикат зеркалит get_teacher_workload.overdue_total, чтобы ячейка
@@ -419,7 +429,7 @@ async def list_help_requests(
     r = await db.execute(
         text(f"""
             SELECT COUNT(*) FROM help_requests hr
-            WHERE {acl_sql} {status_cond} {type_cond} {overdue_cond}
+            WHERE {acl_sql} {status_cond} {type_cond} {student_cond} {overdue_cond}
         """),
         params,
     )
@@ -440,7 +450,7 @@ async def list_help_requests(
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
-            WHERE {acl_sql} {status_cond} {type_cond} {overdue_cond}
+            WHERE {acl_sql} {status_cond} {type_cond} {student_cond} {overdue_cond}
             {order_sql}
             LIMIT :limit OFFSET :offset
         """),

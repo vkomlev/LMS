@@ -44,6 +44,10 @@ _MISSED_STREAK_LOOKBACK = 12
 #: Провенанс синтетических (ручных) результатов — не считаются реальной сдачей.
 _MANUAL_SOURCE = "manual_teacher"
 
+#: Терминальные статусы задания/материала — совпадает с критерием `done` в
+#: свёртке процента прогресса (см. `_load_course_progress_and_blocked`).
+_DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
+
 _participant_repo = LessonOccurrenceParticipantRepository()
 
 
@@ -151,10 +155,11 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
 async def _load_homework_window(
     db: AsyncSession, *, student_id: int, window_from: Optional[datetime], window_to: datetime,
 ) -> dict[str, int]:
-    """Метрики ДЗ за окно: сколько заданий сдано верно + сколько материалов
-    изучено (``completed`` — сумма обоих, оператор явно попросил не сводить
-    ДЗ только к заданиям), сколько заданий сдано с первого раза (нет более
-    раннего результата по этому заданию у ученика — ``count_retry`` не
+    """Метрики ДЗ за окно: сколько заданий сдано верно (``tasks_completed``) и
+    сколько материалов изучено (``theory_completed``) — РАЗДЕЛЬНО (tsk-473:
+    откат объединения от 2026-07-27, оператор попросил вернуть разбивку после
+    практической эксплуатации), сколько заданий сдано с первого раза (нет
+    более раннего результата по этому заданию у ученика — ``count_retry`` не
     годится, см. docstring модуля; у материалов понятия "с первого раза" нет,
     метрика их не считает), сколько заявок помощи создано."""
     completed_row = (
@@ -226,44 +231,87 @@ async def _load_homework_window(
 
     tasks_completed = int(completed_row["completed"] or 0) if completed_row else 0
     return {
-        "completed": tasks_completed + int(materials_completed or 0),
+        "tasks_completed": tasks_completed,
+        "theory_completed": int(materials_completed or 0),
         "first_try": int(completed_row["first_try"] or 0) if completed_row else 0,
         "help_requested": int(help_count or 0),
     }
 
 
-async def _load_open_help_requests(
-    db: AsyncSession, *, teacher_id: int, student_id: int,
-) -> list[dict[str, Any]]:
-    """Открытые заявки помощи ЭТОГО ученика с текстом (не только счётчик) —
-    `list_help_requests` не фильтрует по студенту, фильтруем в Python; заявок
-    на одного ученика единицы, стоимость незначительна."""
-    items, _total = await help_requests_service.list_help_requests(
-        db, teacher_id, status_filter="open", limit=200, offset=0,
+async def _load_help_requests(
+    db: AsyncSession,
+    *,
+    teacher_id: int,
+    student_id: int,
+    window_from: Optional[datetime],
+    window_to: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(открытые заявки помощи, заявки закрытые в ЭТОМ ЖЕ окне ДЗ) ЭТОГО
+    ученика — с текстом, не только счётчик. Фильтр по студенту — на уровне
+    SQL (`list_help_requests(student_id=...)`, tsk-473), НЕ постфильтр по
+    общей странице учителя: с `status_filter="all"` общая история учителя
+    может быть большой, а сортировка `list_help_requests` — по priority/
+    due_at/created_at ASC (старые первыми), не по recency для конкретного
+    ученика — без SQL-фильтра `limit` мог бы обрезать список ДО того, как в
+    него попадут недавние заявки нужного ученика. При фильтре по одному
+    ученику `limit=200` — фактический потолок, столько заявок у одного
+    ученика не бывает ("единицы", как и было в исходном комментарии).
+    Закрытые ограничены окном ДЗ по `closed_at` (не `updated_at` — тот
+    двигается на любую правку, не только закрытие) — иначе список рос бы
+    неограниченно всей историей ученика."""
+    own, _total = await help_requests_service.list_help_requests(
+        db, teacher_id, status_filter="all", student_id=student_id, limit=200, offset=0,
     )
-    own = [i for i in items if i["student_id"] == student_id]
-    result: list[dict[str, Any]] = []
-    for item in own:
+    lower_bound = window_from or datetime.min.replace(tzinfo=timezone.utc)
+
+    async def _to_summary(item: dict[str, Any]) -> Optional[dict[str, Any]]:
         detail, error = await help_requests_service.get_help_request_detail(
             db, item["request_id"], teacher_id,
         )
         if error is not None or detail is None:
-            continue
-        result.append({
+            return None
+        return {
             "request_id": detail["request_id"],
+            "task_id": detail.get("task_id"),
             "task_title": detail.get("task_title"),
             "message": detail.get("message"),
             "created_at": detail["created_at"],
-        })
-    return result
+            "resolution_comment": detail.get("resolution_comment"),
+            "_closed_at": detail.get("closed_at"),
+        }
+
+    open_result: list[dict[str, Any]] = []
+    closed_result: list[dict[str, Any]] = []
+    for item in own:
+        summary = await _to_summary(item)
+        if summary is None:
+            continue
+        closed_at = summary.pop("_closed_at", None)
+        if item["status"] == "open":
+            open_result.append(summary)
+        elif (
+            item["status"] == "closed"
+            and closed_at is not None
+            and lower_bound <= closed_at <= window_to
+        ):
+            closed_result.append(summary)
+
+    return open_result, closed_result
 
 
 async def _load_course_progress_and_blocked(
     db: AsyncSession, *, current_user: CurrentUser, student_id: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """% прогресса по каждому доступному курсу ученика + список заблокированных
-    лимитом попыток заданий (текущий снепшот, не оконный) — оба берутся из уже
-    посчитанного `get_student_progress`, без новой агрегации."""
+    """% прогресса по каждому доступному курсу ученика + текущая позиция
+    (раздел курса + конкретный элемент, tsk-473) + список заблокированных
+    лимитом попыток заданий (текущий снепшот, не оконный) — всё берётся из
+    уже посчитанного `get_student_progress`, без новой агрегации.
+
+    Текущая позиция — первый НЕзавершённый элемент (`_DONE_STATUSES`) в
+    учебном порядке `items` (материалы/задания, узлы `course` пропускаются).
+    Раздел — заголовок его непосредственного `parent_course_id`; если элемент
+    лежит прямо в корне запрошенного курса (раздела как такового нет) или
+    курс пройден целиком — `None`."""
     courses = await manual_progress_service.list_accessible_student_courses(
         db, current_user, student_id,
     )
@@ -276,11 +324,28 @@ async def _load_course_progress_and_blocked(
         )
         items = data["items"]
         countable = [i for i in items if i["item_type"] != "course"]
-        done = sum(1 for i in countable if i["status"] in ("PASSED", "COMPLETED", "SKIPPED"))
+        done = sum(1 for i in countable if i["status"] in _DONE_STATUSES)
         total = len(countable)
         percent = round(done / total * 100) if total else 0
+
+        section_titles = {i["item_id"]: i["title"] for i in items if i["item_type"] == "course"}
+        current_section_title: Optional[str] = None
+        current_item_title: Optional[str] = None
+        for i in countable:
+            if i["status"] in _DONE_STATUSES:
+                continue
+            current_item_title = i["title"]
+            parent_id = i.get("parent_course_id")
+            if parent_id is not None and parent_id != course_id:
+                current_section_title = section_titles.get(parent_id)
+            break
+
         progress.append({
-            "course_id": course_id, "title": course["title"], "percent_complete": percent,
+            "course_id": course_id,
+            "title": course["title"],
+            "percent_complete": percent,
+            "current_section_title": current_section_title,
+            "current_item_title": current_item_title,
         })
         for i in countable:
             if i["item_type"] == "task" and i["status"] == "BLOCKED_LIMIT":
@@ -334,7 +399,13 @@ async def get_occurrence_summary(
         homework = await _load_homework_window(
             db, student_id=p.student_id, window_from=window_from, window_to=now_utc,
         )
-        open_help = await _load_open_help_requests(db, teacher_id=teacher_id, student_id=p.student_id)
+        open_help, closed_help = await _load_help_requests(
+            db,
+            teacher_id=teacher_id,
+            student_id=p.student_id,
+            window_from=window_from,
+            window_to=now_utc,
+        )
         course_progress, blocked_tasks = await _load_course_progress_and_blocked(
             db, current_user=current_user, student_id=p.student_id,
         )
@@ -351,6 +422,7 @@ async def get_occurrence_summary(
             "homework": homework,
             "blocked_tasks": blocked_tasks,
             "open_help_requests": open_help,
+            "closed_help_requests": closed_help,
             "missed_streak": missed_streak,
             "course_progress": course_progress,
         })

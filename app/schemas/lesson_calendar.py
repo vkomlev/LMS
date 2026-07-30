@@ -243,12 +243,20 @@ class TeacherSummaryActivity(BaseModel):
 
 
 class TeacherSummaryHelpRequest(BaseModel):
-    """Открытая заявка на помощь — с текстом, не только счётчик."""
+    """Заявка на помощь (открытая или закрытая в текущем окне ДЗ) — с текстом,
+    не только счётчик."""
 
     request_id: int
+    task_id: Optional[int] = Field(
+        default=None, description="Для ссылки на задание (тот же аффорданс, что у blocked_tasks)"
+    )
     task_title: Optional[str] = None
     message: Optional[str] = None
     created_at: datetime
+    resolution_comment: Optional[str] = Field(
+        default=None,
+        description="Комментарий преподавателя при закрытии заявки — только у закрытых",
+    )
 
 
 class TeacherSummaryBlockedTask(BaseModel):
@@ -263,15 +271,27 @@ class TeacherSummaryCourseProgress(BaseModel):
     course_id: int
     title: str
     percent_complete: int = Field(..., ge=0, le=100)
+    current_section_title: Optional[str] = Field(
+        default=None,
+        description="Раздел/подкурс, где сейчас ученик — родительский узел ближайшего "
+        "незавершённого элемента дерева курса; None, если незавершённый элемент лежит "
+        "прямо в корне курса (раздел совпадает с самим курсом) или курс пройден целиком",
+    )
+    current_item_title: Optional[str] = Field(
+        default=None,
+        description="Конкретное следующее незавершённое задание/материал в этом курсе; "
+        "None, если курс пройден целиком (не путать с last_activity — тот про "
+        "последнее ЗАВЕРШЁННОЕ действие, этот про следующее НЕзавершённое)",
+    )
 
 
 class TeacherSummaryHomework(BaseModel):
     """Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence
-    этого ученика до момента запроса)."""
+    этого ученика до момента запроса). tsk-473: раздельные счётчики —
+    операторский откат объединения от 2026-07-27 (tsk-410)."""
 
-    completed: int = Field(
-        ..., description="Заданий сдано верно + материалов изучено в окне (сумма обоих)"
-    )
+    tasks_completed: int = Field(..., description="Заданий сдано верно в окне")
+    theory_completed: int = Field(..., description="Материалов (теории) изучено в окне")
     first_try: int = Field(
         ..., description="Из заданий (не материалов) — сколько верно с первой попытки"
     )
@@ -296,6 +316,11 @@ class TeacherSummaryParticipant(BaseModel):
     homework: TeacherSummaryHomework
     blocked_tasks: list[TeacherSummaryBlockedTask] = Field(default_factory=list)
     open_help_requests: list[TeacherSummaryHelpRequest] = Field(default_factory=list)
+    closed_help_requests: list[TeacherSummaryHelpRequest] = Field(
+        default_factory=list,
+        description="Заявки, закрытые в том же окне ДЗ, что и остальные метрики "
+        "(не вся история — иначе список рос бы неограниченно)",
+    )
     missed_streak: int = Field(
         description="Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
     )

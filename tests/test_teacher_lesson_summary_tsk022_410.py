@@ -289,7 +289,9 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
     assert p["status"] == "scheduled"
     assert p["missed_streak"] == 0
     assert p["window_from"] is None
-    assert p["homework"] == {"completed": 0, "first_try": 0, "help_requested": 0}
+    assert p["homework"] == {
+        "tasks_completed": 0, "theory_completed": 0, "first_try": 0, "help_requested": 0,
+    }
 
 
 # ============================== Homework window metrics ==============================
@@ -330,16 +332,18 @@ async def test_summary_completed_and_first_try_from_prior_occurrence_window(db, 
     assert resp.status_code == 200, resp.text
     p = resp.json()["participants"][0]
     assert p["window_from"] is not None
-    assert p["homework"]["completed"] == 1
+    assert p["homework"]["tasks_completed"] == 1
+    assert p["homework"]["theory_completed"] == 0
     assert p["homework"]["first_try"] == 1
     assert p["last_activity"]["kind"] == "task"
     assert p["days_since_last_activity"] == 0
 
 
 @pytest.mark.asyncio
-async def test_summary_completed_counts_materials_alongside_tasks(db, client):
-    """Изученный материал в окне тоже "выполнено" — не только задания.
-    В "с первого раза" материалы не входят (нет понятия правильности)."""
+async def test_summary_completed_counts_materials_separately_from_tasks(db, client):
+    """tsk-473: задания и материалы считаются РАЗДЕЛЬНО (tasks_completed/
+    theory_completed) — откат объединения от 2026-07-27. В "с первого раза"
+    материалы не входят (нет понятия правильности)."""
     teacher_id, token = await _new_user(db, role="teacher", name="teach")
     student_id, _ = await _new_user(db, role="student", name="stud")
     course_id = await _new_course(db, f"{_TAG}-course")
@@ -368,7 +372,8 @@ async def test_summary_completed_counts_materials_alongside_tasks(db, client):
     )
     assert resp.status_code == 200, resp.text
     p = resp.json()["participants"][0]
-    assert p["homework"]["completed"] == 2
+    assert p["homework"]["tasks_completed"] == 1
+    assert p["homework"]["theory_completed"] == 1
     assert p["homework"]["first_try"] == 1
     assert p["last_activity"]["kind"] == "material"
 
@@ -405,7 +410,7 @@ async def test_summary_not_first_try_when_earlier_result_exists(db, client):
     )
     assert resp.status_code == 200, resp.text
     p = resp.json()["participants"][0]
-    assert p["homework"]["completed"] == 1
+    assert p["homework"]["tasks_completed"] == 1
     assert p["homework"]["first_try"] == 0
 
 
@@ -437,6 +442,115 @@ async def test_summary_help_requested_counted_in_window(db, client):
     assert p["homework"]["help_requested"] == 1
     assert len(p["open_help_requests"]) == 1
     assert p["open_help_requests"][0]["task_title"]
+    assert p["open_help_requests"][0]["task_id"] == task_id
+    assert p["closed_help_requests"] == []
+
+
+@pytest.mark.asyncio
+async def test_summary_help_requests_scoped_to_own_student_at_sql_level(db, client):
+    """tsk-473: заявки ДРУГОГО ученика того же преподавателя не должны
+    попадать в сводку — фильтр по student_id теперь на уровне SQL
+    (`list_help_requests(student_id=...)`), не постфильтр по общей странице
+    учителя (та ограничена limit + сортировкой не по recency — легко потерять
+    заявку нужного ученика на большой истории)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    other_student_id, _ = await _new_user(db, role="student", name="other")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    await _link_student_teacher(db, student_id=other_student_id, teacher_id=teacher_id)
+    task_id = await _new_task(db, course_id=course_id, uid="a")
+    other_task_id = await _new_task(db, course_id=course_id, uid="b")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(hours=1),
+    )
+    await _insert_help_request(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        teacher_id=teacher_id, created_at=now - timedelta(hours=1),
+    )
+    await _insert_help_request(
+        db, student_id=other_student_id, task_id=other_task_id, course_id=course_id,
+        teacher_id=teacher_id, created_at=now - timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    assert p["student_id"] == student_id
+    assert len(p["open_help_requests"]) == 1
+    assert p["open_help_requests"][0]["task_id"] == task_id
+
+
+@pytest.mark.asyncio
+async def test_summary_closed_help_request_shown_within_window_only(db, client):
+    """tsk-473: заявка, закрытая в том же окне ДЗ, что и остальные метрики,
+    попадает в closed_help_requests — с task_id (ссылка) и resolution_comment.
+    Заявка, закрытая ДО начала окна, в список не попадает (иначе список рос бы
+    неограниченно всей историей)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    task_id = await _new_task(db, course_id=course_id, uid="a")
+    old_task_id = await _new_task(db, course_id=course_id, uid="b")
+
+    now = datetime.now(UTC)
+    prev_occ_end = now - timedelta(days=6, hours=23)
+    await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=prev_occ_end - timedelta(hours=1),
+        status="completed", duration_minutes=60,
+    )
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(hours=1),
+    )
+
+    # Закрыта ВНУТРИ окна — должна попасть в ответ.
+    await _insert_help_request(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        teacher_id=teacher_id, created_at=now - timedelta(hours=2),
+    )
+    await db.execute(
+        text(
+            "UPDATE help_requests SET status = 'closed', closed_at = :ts, "
+            "resolution_comment = :c WHERE task_id = :t AND student_id = :s"
+        ),
+        {"ts": now - timedelta(hours=1), "c": f"{_TAG} решено", "t": task_id, "s": student_id},
+    )
+    # Закрыта ДО окна (до конца предыдущего occurrence) — не должна попасть.
+    await _insert_help_request(
+        db, student_id=student_id, task_id=old_task_id, course_id=course_id,
+        teacher_id=teacher_id, created_at=prev_occ_end - timedelta(days=2),
+    )
+    await db.execute(
+        text(
+            "UPDATE help_requests SET status = 'closed', closed_at = :ts "
+            "WHERE task_id = :t AND student_id = :s"
+        ),
+        {"ts": prev_occ_end - timedelta(days=1), "t": old_task_id, "s": student_id},
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    assert p["open_help_requests"] == []
+    assert len(p["closed_help_requests"]) == 1
+    closed = p["closed_help_requests"][0]
+    assert closed["task_id"] == task_id
+    assert closed["resolution_comment"] == f"{_TAG} решено"
 
 
 # ============================== Course progress + blocked ==============================
@@ -473,6 +587,80 @@ async def test_summary_course_progress_percent(db, client):
     progress = next((c for c in p["course_progress"] if c["course_id"] == course_id), None)
     assert progress is not None
     assert progress["percent_complete"] == 50
+    # task_b — следующий незавершённый, лежит прямо в корне запрошенного
+    # курса (нет подкурса) — раздела как такового нет.
+    assert progress["current_section_title"] is None
+    assert progress["current_item_title"]
+
+
+@pytest.mark.asyncio
+async def test_summary_current_position_reports_subcourse_section(db, client):
+    """tsk-473: если следующее незавершённое задание лежит в подкурсе,
+    current_section_title — заголовок ЭТОГО подкурса (не корня)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    root_course_id = await _new_course(db, f"{_TAG}-root")
+    sub_course_id = await _new_course(db, f"{_TAG}-раздел-Б")
+    await db.execute(
+        text("INSERT INTO course_parents (course_id, parent_course_id) VALUES (:c, :p)"),
+        {"c": sub_course_id, "p": root_course_id},
+    )
+    await db.commit()
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    await _enroll_student(db, student_id=student_id, course_id=root_course_id)
+    await _new_task(db, course_id=sub_course_id, uid="a")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    progress = next((c for c in p["course_progress"] if c["course_id"] == root_course_id), None)
+    assert progress is not None
+    assert progress["current_section_title"] == f"{_TAG}-раздел-Б"
+    assert progress["current_item_title"]
+
+
+@pytest.mark.asyncio
+async def test_summary_current_position_none_when_course_completed(db, client):
+    """Курс пройден целиком — current_section_title/current_item_title оба
+    None (не путать со "статичным" 100% percent_complete)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course-done")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    await _enroll_student(db, student_id=student_id, course_id=course_id)
+    task_id = await _new_task(db, course_id=course_id, uid="a")
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(hours=1),
+    )
+    await _insert_task_result(
+        db, student_id=student_id, task_id=task_id, course_id=course_id,
+        is_correct=True, submitted_at=now - timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    p = resp.json()["participants"][0]
+    progress = next((c for c in p["course_progress"] if c["course_id"] == course_id), None)
+    assert progress is not None
+    assert progress["percent_complete"] == 100
+    assert progress["current_section_title"] is None
+    assert progress["current_item_title"] is None
 
 
 # ============================== Missed streak ==============================

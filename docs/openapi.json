@@ -36464,6 +36464,30 @@
             "maximum": 100.0,
             "minimum": 0.0,
             "title": "Percent Complete"
+          },
+          "current_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Section Title",
+            "description": "Раздел/подкурс, где сейчас ученик — родительский узел ближайшего незавершённого элемента дерева курса; None, если незавершённый элемент лежит прямо в корне курса (раздел совпадает с самим курсом) или курс пройден целиком"
+          },
+          "current_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Item Title",
+            "description": "Конкретное следующее незавершённое задание/материал в этом курсе; None, если курс пройден целиком (не путать с last_activity — тот про последнее ЗАВЕРШЁННОЕ действие, этот про следующее НЕзавершённое)"
           }
         },
         "type": "object",
@@ -36479,6 +36503,18 @@
           "request_id": {
             "type": "integer",
             "title": "Request Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "Для ссылки на задание (тот же аффорданс, что у blocked_tasks)"
           },
           "task_title": {
             "anyOf": [
@@ -36506,6 +36542,18 @@
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "resolution_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Comment",
+            "description": "Комментарий преподавателя при закрытии заявки — только у закрытых"
           }
         },
         "type": "object",
@@ -36514,14 +36562,19 @@
           "created_at"
         ],
         "title": "TeacherSummaryHelpRequest",
-        "description": "Открытая заявка на помощь — с текстом, не только счётчик."
+        "description": "Заявка на помощь (открытая или закрытая в текущем окне ДЗ) — с текстом,\nне только счётчик."
       },
       "TeacherSummaryHomework": {
         "properties": {
-          "completed": {
+          "tasks_completed": {
             "type": "integer",
-            "title": "Completed",
-            "description": "Заданий сдано верно + материалов изучено в окне (сумма обоих)"
+            "title": "Tasks Completed",
+            "description": "Заданий сдано верно в окне"
+          },
+          "theory_completed": {
+            "type": "integer",
+            "title": "Theory Completed",
+            "description": "Материалов (теории) изучено в окне"
           },
           "first_try": {
             "type": "integer",
@@ -36536,12 +36589,13 @@
         },
         "type": "object",
         "required": [
-          "completed",
+          "tasks_completed",
+          "theory_completed",
           "first_try",
           "help_requested"
         ],
         "title": "TeacherSummaryHomework",
-        "description": "Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence\nэтого ученика до момента запроса)."
+        "description": "Метрики ДЗ за окно «между занятиями» (с конца предыдущего occurrence\nэтого ученика до момента запроса). tsk-473: раздельные счётчики —\nоператорский откат объединения от 2026-07-27 (tsk-410)."
       },
       "TeacherSummaryParticipant": {
         "properties": {
@@ -36630,6 +36684,14 @@
             },
             "type": "array",
             "title": "Open Help Requests"
+          },
+          "closed_help_requests": {
+            "items": {
+              "$ref": "#/components/schemas/TeacherSummaryHelpRequest"
+            },
+            "type": "array",
+            "title": "Closed Help Requests",
+            "description": "Заявки, закрытые в том же окне ДЗ, что и остальные метрики (не вся история — иначе список рос бы неограниченно)"
           },
           "missed_streak": {
             "type": "integer",
