@@ -174,6 +174,46 @@ async def test_methodist_reads_student_links_and_courses(db, client):
 
 
 @pytest.mark.asyncio
+async def test_methodist_reads_any_teacher_roster(db, client):
+    """Ростер ЛЮБОГО преподавателя открыт методисту.
+
+    Живой прогон (2026-07-30) вскрыл: `/users/{teacher_id}/students` с tsk-298
+    держит identity-гейт «только свой ростер», и методист получал 403 на чужого
+    преподавателя — секция «Ведёт учеников» в карточке рисовала ошибку, хотя в
+    проде у этого человека 36 учеников. Прошлый тест волны проверял только
+    `/teachers`, парный путь в набор не попал.
+    """
+    teacher_id, _ = await _user(db, "teacher")
+    _, token = await _user(db, "methodist")
+
+    r = await client.get(f"/api/v1/users/{teacher_id}/students", headers=_auth(token))
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
+async def test_teacher_still_cannot_read_someone_roster(db, client):
+    """При этом чужой ростер преподавателю по-прежнему закрыт.
+
+    Именно ради этого проверка роли делается внутри обработчика, а не заменой
+    гейта: identity-ветка «свой ростер» обязана остаться.
+    """
+    other_id, _ = await _user(db, "teacher")
+    _, token = await _user(db, "teacher")
+
+    r = await client.get(f"/api/v1/users/{other_id}/students", headers=_auth(token))
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_teacher_reads_own_roster(db, client):
+    """Свой ростер преподаватель читает как и раньше (tsk-298 не сломан)."""
+    teacher_id, token = await _user(db, "teacher")
+
+    r = await client.get(f"/api/v1/users/{teacher_id}/students", headers=_auth(token))
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.asyncio
 async def test_student_cannot_read_someone_links(db, client):
     other_id, _ = await _user(db, "student")
     _, token = await _user(db, "student")

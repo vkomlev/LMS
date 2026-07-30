@@ -225,10 +225,22 @@ async def list_teacher_students(
     Сервисный токен (TG-бот) по-прежнему проходит (bypass). Остальные эндпоинты
     этого роутера (link CRUD) остаются service/admin.
 
+    tsk-433 Волна 3.1: сверх этого пускаем методиста и админа — им нужен ростер
+    ЛЮБОГО преподавателя в карточке человека. Проверка роли делается здесь, а не
+    через `require_role`, потому что identity-ветка («свой ростер») обязана
+    остаться: иначе преподаватель, у которого нет роли методиста, потерял бы
+    доступ к собственным ученикам, а с ролью — получил бы чужие.
+
     **Ответ:** массив `UserRead` (может быть пустым).
     - `200` - Список получен успешно
-    - `403` - Чужой teacher_id или нет аутентификации
+    - `403` - Чужой teacher_id без роли методиста/админа, или нет аутентификации
     """
     if not current_user.is_service and current_user.id != teacher_id:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+        # Ленивый импорт — тот же приём, что в require_role: roles_service
+        # тянет модели, а этот роутер грузится рано.
+        from app.services import roles_service  # noqa: PLC0415
+
+        roles = set(await roles_service.get_user_role_names(db, current_user.id))
+        if roles.isdisjoint({"methodist", "admin"}):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     return await service.list_students(db, teacher_id)
