@@ -79,7 +79,8 @@ async def search_courses_endpoint(
     q: str = Query(..., min_length=2, description="Поисковый запрос (поиск по title и course_uid)"),
     limit: int = Query(20, ge=1, le=200, description="Максимум результатов"),
     offset: int = Query(0, ge=0, description="Смещение"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
 ) -> List[CourseRead]:
     """
     Поиск курсов по названию (title) или коду (course_uid).

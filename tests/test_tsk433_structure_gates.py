@@ -327,3 +327,54 @@ async def test_reorder_denied_for_student(db, client):
         f"/api/v1/courses/{course}/materials/reorder", json=[], headers=_auth(token)
     )
     assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Поиск курсов для привязки (tsk-433 Волна 2.3, найдено живой проверкой)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_course_search_finds_subcourses_not_only_roots(db, client):
+    """Поиск для привязки обязан находить и подкурсы, а не только корневые.
+
+    Живая проверка вскрыла: форма искала родителя среди корневых курсов, и
+    вложить курс в подкурс (например, в «Главу 1» внутри «Информатики 5-11»)
+    было нельзя — нужного узла просто не было в списке. Общий поиск ищет по
+    всему дереву.
+    """
+    parent = await _course(db, "поиск-родитель")
+    child = await _course(db, "поиск-вложенный")
+    _, token = await _user_with_session(db, "methodist")
+
+    # делаем child подкурсом — теперь он не корневой
+    await client.patch(
+        f"/api/v1/courses/{child}/structure",
+        json={"parent_course_ids": [parent], "replace_parents": True},
+        headers=_auth(token),
+    )
+
+    r = await client.get(
+        "/api/v1/courses/search", params={"q": "поиск-вложенный"}, headers=_auth(token)
+    )
+    assert r.status_code == 200, r.text
+    assert any(c["id"] == child for c in r.json()), (
+        "подкурс обязан находиться поиском — иначе его нельзя выбрать родителем"
+    )
+
+
+@pytest.mark.asyncio
+async def test_course_search_denied_for_student(db, client):
+    _, token = await _user_with_session(db, "student")
+    r = await client.get("/api/v1/courses/search", params={"q": "любой"}, headers=_auth(token))
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_course_search_works_for_service_key(db, client):
+    """Боты продолжают искать курсы по ключу в адресе."""
+    await _course(db, "поиск-ботом")
+    r = await client.get(
+        "/api/v1/courses/search", params={"q": "поиск-ботом", "api_key": _api_key()}
+    )
+    assert r.status_code == 200, r.text
