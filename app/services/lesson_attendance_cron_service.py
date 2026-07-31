@@ -160,7 +160,10 @@ async def _mark_no_show(db: AsyncSession, *, threshold_minutes: int) -> int:
         # пропуске ученика на СВОЁМ занятии.
         teacher_ids_res = await db.execute(
             text(
-                "SELECT teacher_id FROM lesson_occurrence_teacher WHERE occurrence_id = :oid"
+                # tsk-492: is_active — разовая подмена. Подменённый не ведёт это
+                # занятие и не должен получать письма о пропусках на нём.
+                "SELECT teacher_id FROM lesson_occurrence_teacher "
+                "WHERE occurrence_id = :oid AND is_active"
             ),
             {"oid": int(occurrence_id)},
         )

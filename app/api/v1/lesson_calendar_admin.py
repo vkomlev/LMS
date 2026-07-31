@@ -236,6 +236,86 @@ async def remove_slot_participant(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+class OccurrenceTeacherRead(BaseModel):
+    """Ведущий одного занятия."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    occurrence_id: int
+    teacher_id: int
+    is_active: bool
+    is_one_off: bool
+
+
+@router.get(
+    "/lesson-occurrences/{occurrence_id}/teachers",
+    response_model=list[OccurrenceTeacherRead],
+    summary="Кто ведёт это занятие",
+    description=(
+        "Состав ведущих КОНКРЕТНОГО занятия, с учётом разовых исключений. "
+        "Постоянный состав — у слота (`/lesson-slots/{id}/teachers`)."
+    ),
+)
+async def list_occurrence_teachers(
+    occurrence_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> list[OccurrenceTeacherRead]:
+    rows = await lesson_calendar_service.list_occurrence_teachers(db, occurrence_id)
+    return [OccurrenceTeacherRead.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/lesson-occurrences/{occurrence_id}/teachers/{teacher_id}",
+    response_model=OccurrenceTeacherRead,
+    status_code=status.HTTP_200_OK,
+    summary="Поставить преподавателя на одно занятие",
+    description=(
+        "РАЗОВОЕ назначение: действует только на это занятие, состав слота не "
+        "меняется, следующие занятия идут как обычно. Годится и для усиления "
+        "(ведут двое), и для подмены — вместе со снятием штатного.\n\n"
+        "Постоянное назначение — это другое действие: "
+        "`POST /lesson-slots/{id}/teachers/{teacher_id}`."
+    ),
+    responses={404: {"description": "Занятие не найдено"}},
+)
+async def add_occurrence_teacher(
+    occurrence_id: int,
+    teacher_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> OccurrenceTeacherRead:
+    row = await lesson_calendar_service.add_occurrence_teacher(
+        db, occurrence_id, teacher_id
+    )
+    return OccurrenceTeacherRead.model_validate(row)
+
+
+@router.delete(
+    "/lesson-occurrences/{occurrence_id}/teachers/{teacher_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Снять преподавателя с одного занятия",
+    description=(
+        "РАЗОВОЕ снятие: «на этом занятии не ведёт» (болезнь, отпуск). Состав "
+        "слота не меняется — следующие занятия останутся за ним.\n\n"
+        "Снятие реализовано ГАШЕНИЕМ, а не удалением строки: генератор занятий "
+        "досыпает состав слота каждый тик и удалённую строку вернул бы обратно."
+    ),
+    responses={
+        404: {"description": "Занятие не найдено или преподаватель его не ведёт"},
+        409: {"description": "Последнего ведущего снять нельзя"},
+    },
+)
+async def remove_occurrence_teacher(
+    occurrence_id: int,
+    teacher_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> Response:
+    await lesson_calendar_service.remove_occurrence_teacher(db, occurrence_id, teacher_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 class TransferSlotParticipantRequest(BaseModel):
     """Куда переводим ученика."""
 

@@ -22696,6 +22696,325 @@
         }
       }
     },
+    "/api/v1/lesson-occurrences/{occurrence_id}/teachers": {
+      "get": {
+        "tags": [
+          "lesson_calendar_admin"
+        ],
+        "summary": "Кто ведёт это занятие",
+        "description": "Состав ведущих КОНКРЕТНОГО занятия, с учётом разовых исключений. Постоянный состав — у слота (`/lesson-slots/{id}/teachers`).",
+        "operationId": "list_occurrence_teachers_api_v1_lesson_occurrences__occurrence_id__teachers_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/OccurrenceTeacherRead"
+                  },
+                  "title": "Response List Occurrence Teachers Api V1 Lesson Occurrences  Occurrence Id  Teachers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lesson-occurrences/{occurrence_id}/teachers/{teacher_id}": {
+      "post": {
+        "tags": [
+          "lesson_calendar_admin"
+        ],
+        "summary": "Поставить преподавателя на одно занятие",
+        "description": "РАЗОВОЕ назначение: действует только на это занятие, состав слота не меняется, следующие занятия идут как обычно. Годится и для усиления (ведут двое), и для подмены — вместе со снятием штатного.\n\nПостоянное назначение — это другое действие: `POST /lesson-slots/{id}/teachers/{teacher_id}`.",
+        "operationId": "add_occurrence_teacher_api_v1_lesson_occurrences__occurrence_id__teachers__teacher_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OccurrenceTeacherRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Занятие не найдено"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "lesson_calendar_admin"
+        ],
+        "summary": "Снять преподавателя с одного занятия",
+        "description": "РАЗОВОЕ снятие: «на этом занятии не ведёт» (болезнь, отпуск). Состав слота не меняется — следующие занятия останутся за ним.\n\nСнятие реализовано ГАШЕНИЕМ, а не удалением строки: генератор занятий досыпает состав слота каждый тик и удалённую строку вернул бы обратно.",
+        "operationId": "remove_occurrence_teacher_api_v1_lesson_occurrences__occurrence_id__teachers__teacher_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "occurrence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Occurrence Id"
+            }
+          },
+          {
+            "name": "teacher_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Teacher Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Занятие не найдено или преподаватель его не ведёт"
+          },
+          "409": {
+            "description": "Последнего ведущего снять нельзя"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lesson-slots/{slot_id}/participants/{student_id}/transfer": {
       "post": {
         "tags": [
@@ -31965,6 +32284,35 @@
         },
         "type": "object",
         "title": "NotificationUpdate"
+      },
+      "OccurrenceTeacherRead": {
+        "properties": {
+          "occurrence_id": {
+            "type": "integer",
+            "title": "Occurrence Id"
+          },
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "is_one_off": {
+            "type": "boolean",
+            "title": "Is One Off"
+          }
+        },
+        "type": "object",
+        "required": [
+          "occurrence_id",
+          "teacher_id",
+          "is_active",
+          "is_one_off"
+        ],
+        "title": "OccurrenceTeacherRead",
+        "description": "Ведущий одного занятия."
       },
       "OperatingHoursCreate": {
         "properties": {

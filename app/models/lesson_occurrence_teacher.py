@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKeyConstraint,
     Integer,
@@ -19,9 +20,20 @@ class LessonOccurrenceTeacher(Base):
     """
     Преподаватель конкретного занятия — совместное ведение (tsk-443).
     M2M ``lesson_occurrence`` ↔ ``users``. Заполняется генератором из
-    ``lesson_slot_teacher`` на каждый тик (как участники) — не переносится
-    вручную. ``lesson_occurrence.teacher_id`` остаётся "основным"
-    преподавателем для обратной совместимости.
+    ``lesson_slot_teacher`` на каждый тик (как участники).
+    ``lesson_occurrence.teacher_id`` остаётся "основным" преподавателем
+    для обратной совместимости.
+
+    tsk-492 — разовые исключения на ОДНО занятие, поверх постоянного состава слота:
+
+    * ``is_active=False`` — «на этом занятии не ведёт» (подмена: заболел, отпуск).
+      Строка не удаляется намеренно: генератор вставляет состав слота через
+      ``ON CONFLICT DO NOTHING``, поэтому удалённую строку он воссоздал бы на
+      следующем тике, а существующую-погашенную не трогает. Удаление здесь
+      физически не может быть постоянным — гашение может.
+    * ``is_one_off=True`` — поставлен на это занятие вручную, а не из состава
+      слота. Такие строки переживают снятие преподавателя со СЛОТА: разовое
+      назначение — отдельное решение методиста, и оптовая чистка его не касается.
     """
 
     __tablename__ = "lesson_occurrence_teacher"
@@ -48,4 +60,10 @@ class LessonOccurrenceTeacher(Base):
         DateTime(timezone=True),
         server_default=text("now()"),
         nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("true"), nullable=False,
+    )
+    is_one_off: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False,
     )

@@ -97,12 +97,17 @@ async def get_occurrence_for_teacher(
     occurrence = await _occurrence_repo.get_by_id(db, occurrence_id)
     if occurrence is None:
         raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
-    is_owner = occurrence.teacher_id == teacher_id
-    if not is_owner:
-        link = await _occurrence_teacher_repo.get(
-            db, occurrence_id=occurrence_id, teacher_id=teacher_id
-        )
-        is_owner = link is not None
+    link = await _occurrence_teacher_repo.get(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id
+    )
+    if link is not None:
+        # tsk-492: погашенная строка — разовая подмена «на этом занятии не
+        # ведёт». Она сильнее колонки `teacher_id`: иначе снятие с одного
+        # занятия не действовало бы на основного, а слоты школы заведены
+        # именно на него.
+        is_owner = link.is_active
+    else:
+        is_owner = occurrence.teacher_id == teacher_id
     if not is_owner:
         raise DomainError("Занятие принадлежит другому преподавателю", status_code=403)
     return occurrence

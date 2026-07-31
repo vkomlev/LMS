@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, exists, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_occurrence import LessonOccurrence
@@ -199,13 +199,16 @@ class LessonOccurrenceTeacherRepository:
         return res.scalar_one_or_none()
 
     async def list_for_occurrence(
-        self, db: AsyncSession, occurrence_id: int
+        self, db: AsyncSession, occurrence_id: int, *, active_only: bool = True
     ) -> list[LessonOccurrenceTeacher]:
-        res = await db.execute(
-            select(LessonOccurrenceTeacher).where(
-                LessonOccurrenceTeacher.occurrence_id == occurrence_id
-            )
+        """Кто ведёт это занятие. По умолчанию без погашенных (tsk-492: разовая
+        подмена гасит строку, а не удаляет — удалённую генератор вернул бы)."""
+        stmt = select(LessonOccurrenceTeacher).where(
+            LessonOccurrenceTeacher.occurrence_id == occurrence_id
         )
+        if active_only:
+            stmt = stmt.where(LessonOccurrenceTeacher.is_active.is_(True))
+        res = await db.execute(stmt)
         return list(res.scalars().all())
 
     async def create(self, db: AsyncSession, **fields) -> LessonOccurrenceTeacher:
@@ -265,6 +268,35 @@ class LessonSlotStudentRepository:
         return row
 
 
+def _leads_occurrence(main_match, link_match):
+    """Условие «этот преподаватель (или кто-то из списка) ведёт занятие».
+
+    Дороги две: он основной у самого занятия (`lesson_occurrence.teacher_id`)
+    ИЛИ есть активная связь в `lesson_occurrence_teacher`.
+
+    Разовая подмена (tsk-492) гасит связь, а не удаляет её. Поэтому основного
+    мало проверить по полю: нужно ещё убедиться, что для него нет ГАСЯЩЕЙ
+    строки на этом занятии, — иначе снятие с одного занятия ничего не изменило
+    бы ровно для того, кто в нём же значится основным. А это самый частый
+    случай: слоты школы заведены на одного человека.
+    """
+    suppressed_main = exists(
+        select(LessonOccurrenceTeacher.id).where(
+            LessonOccurrenceTeacher.occurrence_id == LessonOccurrence.id,
+            LessonOccurrenceTeacher.teacher_id == LessonOccurrence.teacher_id,
+            LessonOccurrenceTeacher.is_active.is_(False),
+        )
+    )
+    return or_(
+        LessonOccurrence.id.in_(
+            select(LessonOccurrenceTeacher.occurrence_id).where(
+                link_match, LessonOccurrenceTeacher.is_active.is_(True)
+            )
+        ),
+        and_(main_match, ~suppressed_main),
+    )
+
+
 class LessonOccurrenceRepository:
     """Занятия (create — генератор/ad-hoc сервис). Участники — отдельно,
     см. `LessonOccurrenceParticipantRepository`; со-преподаватели —
@@ -286,13 +318,9 @@ class LessonOccurrenceRepository:
         со-преподаватель (через `lesson_occurrence_teacher`, tsk-443:
         совместное ведение; OR, не эксклюзивно M2M — см. docstring класса)."""
         stmt = select(LessonOccurrence).where(
-            or_(
+            _leads_occurrence(
                 LessonOccurrence.teacher_id == teacher_id,
-                LessonOccurrence.id.in_(
-                    select(LessonOccurrenceTeacher.occurrence_id).where(
-                        LessonOccurrenceTeacher.teacher_id == teacher_id
-                    )
-                ),
+                LessonOccurrenceTeacher.teacher_id == teacher_id,
             )
         )
         if from_dt is not None:
@@ -318,13 +346,9 @@ class LessonOccurrenceRepository:
         if not teacher_ids:
             return []
         stmt = select(LessonOccurrence).where(
-            or_(
+            _leads_occurrence(
                 LessonOccurrence.teacher_id.in_(teacher_ids),
-                LessonOccurrence.id.in_(
-                    select(LessonOccurrenceTeacher.occurrence_id).where(
-                        LessonOccurrenceTeacher.teacher_id.in_(teacher_ids)
-                    )
-                ),
+                LessonOccurrenceTeacher.teacher_id.in_(teacher_ids),
             )
         )
         if from_dt is not None:
@@ -346,7 +370,10 @@ class LessonOccurrenceRepository:
             await db.execute(
                 select(LessonOccurrenceTeacher.occurrence_id, Users.full_name)
                 .join(Users, Users.id == LessonOccurrenceTeacher.teacher_id)
-                .where(LessonOccurrenceTeacher.occurrence_id.in_(occurrence_ids))
+                .where(
+                    LessonOccurrenceTeacher.occurrence_id.in_(occurrence_ids),
+                    LessonOccurrenceTeacher.is_active.is_(True),
+                )
             )
         ).all()
         names_by_occurrence: dict[int, list[str]] = {}

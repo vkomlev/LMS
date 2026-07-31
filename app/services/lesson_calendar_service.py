@@ -17,6 +17,8 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.lesson_occurrence import LessonOccurrence
+from app.models.lesson_occurrence_teacher import LessonOccurrenceTeacher
 from app.models.lesson_slot import LessonSlot
 from app.models.lesson_slot_student import LessonSlotStudent
 from app.models.lesson_slot_teacher import LessonSlotTeacher
@@ -317,6 +319,10 @@ async def update_lesson_slot(
                     DELETE FROM lesson_occurrence_teacher lot USING lesson_occurrence o
                     WHERE lot.occurrence_id = o.id AND lot.teacher_id = :old
                       AND o.slot_id = :slot_id AND o.scheduled_at > now()
+                      -- tsk-492: разовые назначения не трогаем. Их поставили
+                      -- на КОНКРЕТНОЕ занятие отдельным решением, и смена
+                      -- основного по слоту к ним отношения не имеет.
+                      AND NOT lot.is_one_off
                     """
                 ),
                 {"old": old_teacher_id, "slot_id": slot_id},
@@ -604,7 +610,115 @@ async def remove_slot_teacher(db: AsyncSession, slot_id: int, teacher_id: int) -
         )
 
     row.is_active = False
+
+    # tsk-492: снятие со слота действует ПОСТОЯННО — значит убирает его и из
+    # уже созданных будущих занятий. Иначе связь погашена, а преподаватель две
+    # недели продолжает видеть занятия и получать письма о пропусках: ровно тот
+    # дефект, что чинили для ученика в tsk-491, только с другой стороны.
+    # Разовые назначения не трогаем — это отдельные решения по конкретным
+    # занятиям, а не следствие состава слота.
+    await db.execute(
+        text(
+            """
+            DELETE FROM lesson_occurrence_teacher lot USING lesson_occurrence o
+            WHERE lot.occurrence_id = o.id AND lot.teacher_id = :tid
+              AND o.slot_id = :slot_id AND o.scheduled_at > now()
+              AND NOT lot.is_one_off
+            """
+        ),
+        {"tid": teacher_id, "slot_id": slot_id},
+    )
     await db.commit()
+
+
+async def list_occurrence_teachers(
+    db: AsyncSession, occurrence_id: int
+) -> list[LessonOccurrenceTeacher]:
+    """Кто ведёт ЭТО занятие (с учётом разовых исключений)."""
+    await _get_occurrence_or_404(db, occurrence_id)
+    return await _occurrence_teacher_repo.list_for_occurrence(db, occurrence_id)
+
+
+async def add_occurrence_teacher(
+    db: AsyncSession, occurrence_id: int, teacher_id: int
+) -> LessonOccurrenceTeacher:
+    """Поставить преподавателя на ОДНО занятие, не трогая состав слота.
+
+    Разовое усиление или подмена: «в этот четверг ведёт Светлана». Постоянный
+    состав остаётся прежним, следующие занятия пойдут как обычно.
+    """
+    await _get_occurrence_or_404(db, occurrence_id)
+    await ensure_user_has_role(db, teacher_id, "teacher")
+
+    row = await _occurrence_teacher_repo.get(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id
+    )
+    if row is None:
+        row = await _occurrence_teacher_repo.create(
+            db, occurrence_id=occurrence_id, teacher_id=teacher_id, is_one_off=True,
+        )
+    else:
+        # Был погашен (снят с этого занятия) — возвращаем. Пометку «разовый»
+        # не снимаем и не ставим: она говорит, откуда строка взялась.
+        row.is_active = True
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def remove_occurrence_teacher(
+    db: AsyncSession, occurrence_id: int, teacher_id: int
+) -> None:
+    """Снять преподавателя с ОДНОГО занятия, не трогая состав слота.
+
+    Разовая строка удаляется. Строка из состава слота ГАСИТСЯ, а не удаляется:
+    генератор занятий досыпает состав слота каждый тик через
+    `ON CONFLICT DO NOTHING` — удалённую строку он вернул бы на следующем тике,
+    и снятие продержалось бы до вечера. Погашенную не трогает.
+
+    Последнего ведущего снять нельзя (409) — занятие осталось бы без никого.
+    """
+    occurrence = await _get_occurrence_or_404(db, occurrence_id)
+    row = await _occurrence_teacher_repo.get(
+        db, occurrence_id=occurrence_id, teacher_id=teacher_id
+    )
+    leading_now = {t.teacher_id for t in
+                   await _occurrence_teacher_repo.list_for_occurrence(db, occurrence_id)}
+    if not leading_now:
+        # Строк ещё нет — занятие ведёт основной по колонке (генератор не
+        # дошёл либо занятие ad-hoc). Тогда снять можно только его.
+        leading_now = {occurrence.teacher_id}
+
+    if teacher_id not in leading_now:
+        raise DomainError(
+            f"Преподаватель id={teacher_id} не ведёт занятие id={occurrence_id}",
+            status_code=404,
+        )
+    if len(leading_now) <= 1:
+        raise DomainError(
+            "Нельзя снять последнего преподавателя занятия — оно осталось бы без "
+            "ведущего. Сначала поставьте другого.",
+            status_code=409,
+        )
+
+    if row is None:
+        # Основной по колонке, строки нет — заводим сразу погашенной, иначе
+        # гасить нечего, а удалить колонку у занятия мы не можем.
+        await _occurrence_teacher_repo.create(
+            db, occurrence_id=occurrence_id, teacher_id=teacher_id, is_active=False,
+        )
+    elif row.is_one_off:
+        await db.delete(row)
+    else:
+        row.is_active = False
+    await db.commit()
+
+
+async def _get_occurrence_or_404(db: AsyncSession, occurrence_id: int) -> LessonOccurrence:
+    occurrence = await _occurrence_repo.get_by_id(db, occurrence_id)
+    if occurrence is None:
+        raise DomainError(f"Занятие id={occurrence_id} не найдено", status_code=404)
+    return occurrence
 
 
 def _time_in_window(local_time: time, start_time: time, duration_minutes: int) -> bool:
