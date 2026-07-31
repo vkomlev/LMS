@@ -133,12 +133,47 @@ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
             {"source": source_id},
         )
 
+    # Карточные поля: почта и ФИО переезжают, если у target их нет (tsk-433,
+    # 2026-07-30). Раньше слияние переносило только связанные строки, а
+    # `users.email` оставался у source — и держал почту ЗАНЯТОЙ: частичный
+    # уникальный индекс считает и неактивные записи, поэтому проставить тот же
+    # адрес живому человеку было нельзя (409 при правке карточки). Плюс более
+    # полное ФИО («Астафьев Данил Алексеевич») пропадало вместе с дублем.
+    #
+    # Порядок важен: сперва СНЯТЬ адрес у source, только потом записать его
+    # target. Обратный порядок упирается в тот же уникальный индекс — адрес
+    # ещё занят дублем.
+    row = (
+        await db.execute(
+            text("SELECT email, full_name FROM users WHERE id = :source"),
+            {"source": source_id},
+        )
+    ).first()
+    source_email = row.email if row else None
+    source_name = row.full_name if row else None
+
     await db.execute(
         text(
-            "UPDATE users SET is_active = false, merged_into_user_id = :target "
-            "WHERE id = :source"
+            "UPDATE users SET is_active = false, merged_into_user_id = :target, "
+            "email = NULL WHERE id = :source"
         ),
         {"target": target_id, "source": source_id},
+    )
+
+    await db.execute(
+        text(
+            "UPDATE users SET "
+            "  email = COALESCE(email, CAST(:src_email AS varchar)), "
+            "  full_name = CASE "
+            "    WHEN full_name IS NULL OR btrim(full_name) = '' "
+            "      THEN CAST(:src_name AS varchar) "
+            "    WHEN CAST(:src_name AS varchar) IS NOT NULL "
+            "         AND length(CAST(:src_name AS varchar)) > length(full_name) "
+            "      THEN CAST(:src_name AS varchar) "
+            "    ELSE full_name END "
+            "WHERE id = :target"
+        ),
+        {"target": target_id, "src_email": source_email, "src_name": source_name},
     )
 
 
