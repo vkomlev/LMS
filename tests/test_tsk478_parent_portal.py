@@ -13,6 +13,7 @@ test_tsk494_student_dashboard.py.
 """
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -61,6 +62,26 @@ async def _has_role(db, *, user_id: int, role: str) -> bool:
         )
     ).first()
     return row is not None
+
+
+async def _new_course(db, title: str) -> int:
+    return (
+        await db.execute(
+            text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
+            {"t": title},
+        )
+    ).scalar()
+
+
+async def _enroll_student(db, *, student_id: int, course_id: int) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO user_courses (user_id, course_id, is_active) "
+            "VALUES (:u, :c, true) ON CONFLICT DO NOTHING"
+        ),
+        {"u": student_id, "c": course_id},
+    )
+    await db.commit()
 
 
 def _dt_params(period_from: datetime, period_to: datetime) -> dict[str, str]:
@@ -146,9 +167,17 @@ async def test_remove_link_by_methodist_is_idempotent(db, client):
 
 @pytest.mark.asyncio
 async def test_parent_sees_own_linked_student_dashboard(db, client):
+    """Регресс: courses[] молча оставался пустым для роли `parent`, потому
+    что `list_accessible_student_courses` внутри повторно звала
+    `can_edit_progress` (не знающую о `parent`) по каждому курсу — найдено
+    ЖИВОЙ проверкой на проде, не этим тестом (тестовый ученик тогда не был
+    записан ни на один курс, поэтому пустой список выглядел "правильным").
+    Теперь энроллим ученика на курс явно, чтобы сам тест ловил регресс."""
     admin_id, admin_token = await _new_user(db, role="admin", name="admin")
     parent_id, parent_token = await _new_user(db, role=None, name="parent")
     student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    await _enroll_student(db, student_id=student_id, course_id=course_id)
 
     link_resp = await client.post(
         f"/api/v1/users/{student_id}/parents/{parent_id}",
@@ -163,7 +192,9 @@ async def test_parent_sees_own_linked_student_dashboard(db, client):
         headers={"Authorization": f"Bearer {parent_token}"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["student_id"] == student_id
+    body = resp.json()
+    assert body["student_id"] == student_id
+    assert [c["course_id"] for c in body["courses"]] == [course_id]
 
 
 @pytest.mark.asyncio

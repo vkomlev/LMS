@@ -1,0 +1,90 @@
+diff --git a/app/api/v1/student_dashboard.py b/app/api/v1/student_dashboard.py
+index 6130ca7..9135c2d 100644
+--- a/app/api/v1/student_dashboard.py
++++ b/app/api/v1/student_dashboard.py
+@@ -71,7 +71,6 @@ async def get_student_dashboard(
+     data = await student_dashboard_service.get_student_dashboard(
+         db,
+         student_id=student_id,
+-        current_user=current_user,
+         period_from=from_dt,
+         period_to=to_dt,
+     )
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index dcd01d6..c45d311 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -41,7 +41,6 @@ from typing import Any, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.services import manual_progress_service
+ from app.services.teacher_lesson_summary_service import (
+@@ -161,6 +160,33 @@ async def _load_in_class_hours_window(
+     }
+ 
+ 
++async def _list_active_student_courses(db: AsyncSession, student_id: int) -> list[dict[str, Any]]:
++    """Активные курсы ученика (``user_courses.is_active``) — БЕЗ повторной
++    ACL-проверки. ``manual_progress_service.list_accessible_student_courses``
++    для этого не годится: она внутри звонит ``can_edit_progress`` ПО КАЖДОМУ
++    курсу, а та функция не знает о роли `parent` (tsk-478) — с ней courses[]
++    молча оставался бы пустым для родителя даже у реально записанного
++    ученика (найдено живой проверкой на проде, не тестами: тестовый ученик в
++    юнит-тестах случайно не имел записей на курсы, поэтому пустой список
++    выглядел "правильным"). Доступ к ЭТОМУ ученику уже проверен вызывающим
++    роутом (`_ensure_dashboard_access`) ДО вызова `get_student_dashboard` —
++    повторная per-course проверка здесь избыточна и для parent-ветки просто
++    ломает контракт."""
++    rows = (
++        await db.execute(
++            text(
++                "SELECT c.id AS course_id, c.title "
++                "FROM user_courses uc "
++                "JOIN courses c ON c.id = uc.course_id "
++                "WHERE uc.user_id = :student_id AND uc.is_active = true "
++                "ORDER BY uc.order_number ASC NULLS LAST, c.id"
++            ),
++            {"student_id": student_id},
++        )
++    ).mappings().fetchall()
++    return [{"course_id": int(r["course_id"]), "title": r["title"]} for r in rows]
++
++
+ async def _load_attendance(
+     db: AsyncSession, *, student_id: int, period_from: datetime, period_to: datetime,
+ ) -> dict[str, int]:
+@@ -256,15 +282,17 @@ async def get_student_dashboard(
+     db: AsyncSession,
+     *,
+     student_id: int,
+-    current_user: CurrentUser,
+     period_from: datetime,
+     period_to: datetime,
+ ) -> dict[str, Any]:
+     """Собрать периодный дашборд ученика (tsk-494) — состав из 5 пунктов
+     задачи: курсы+прогресс+прогноз, итог за период, посещение, ДЗ между
+     занятиями, произвольный период. Вызывающий обязан проверить доступ
+-    (``manual_progress_service.ensure_can_edit_progress`` или родительский
+-    ACL из tsk-478) ДО вызова — эта функция сама ACL не проверяет.
++    (композитный гейт роута — ``can_edit_progress`` ИЛИ родительская связка,
++    tsk-478) ДО вызова — эта функция сама ACL не проверяет и потому не
++    принимает ``current_user`` (раньше принимала для проброса в
++    `list_accessible_student_courses`, но та внутренняя ACL-проверка
++    ломала courses[] для роли `parent` — см. `_list_active_student_courses`).
+ 
+     :raises ValueError: ``period_from``/``period_to`` naive (без timezone) —
+         CLAUDE.md Date/Time Safety, тут не reject-им молча подменой на
+@@ -285,9 +313,7 @@ async def get_student_dashboard(
+         db, student_id=student_id, period_from=period_from, period_to=period_to,
+     )
+ 
+-    accessible = await manual_progress_service.list_accessible_student_courses(
+-        db, current_user, student_id,
+-    )
++    accessible = await _list_active_student_courses(db, student_id)
+     courses: list[dict[str, Any]] = []
+     for course in accessible:
+         course_id = course["course_id"]

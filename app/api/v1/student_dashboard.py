@@ -71,7 +71,6 @@ async def get_student_dashboard(
     data = await student_dashboard_service.get_student_dashboard(
         db,
         student_id=student_id,
-        current_user=current_user,
         period_from=from_dt,
         period_to=to_dt,
     )
