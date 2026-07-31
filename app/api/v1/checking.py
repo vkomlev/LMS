@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from app.api.deps import get_current_user
+from app.auth.current_user import CurrentUser
 from app.schemas.checking import (
     SingleCheckRequest,
     CheckResult,
@@ -59,12 +61,16 @@ checking_service = CheckingService()
                 }
             }
         },
+        401: {"description": "Не аутентифицирован"},
         422: {
             "description": "Ошибка валидации запроса (неверный формат JSON)",
         },
     },
 )
-async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
+async def check_task_endpoint(
+    payload: SingleCheckRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CheckResult:
     """
     Stateless-проверка **одной** задачи.
 
@@ -74,6 +80,9 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
     - answer: ответ ученика.
 
     На выходе — CheckResult без сохранения в БД.
+
+    Доступ: любой аутентифицированный пользователь (cookie ИЛИ сервисный ключ) —
+    tsk-461, до этого эндпоинт был открыт без единого гейта.
     """
     logger.info(
         "check_task: type=%s, scoring_mode=%s, has_custom_config=%s",
@@ -140,6 +149,7 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
         400: {
             "description": "Ошибка валидации данных задач или ответов",
         },
+        401: {"description": "Не аутентифицирован"},
         422: {
             "description": "Ошибка валидации запроса (неверный формат JSON)",
         },
@@ -147,6 +157,7 @@ async def check_task_endpoint(payload: SingleCheckRequest) -> CheckResult:
 )
 async def check_tasks_batch_endpoint(
     payload: BatchCheckRequest,
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> BatchCheckResponse:
     """
     Stateless-проверка **набора** задач.
@@ -154,6 +165,9 @@ async def check_tasks_batch_endpoint(
     Для каждого элемента массива items возвращается:
     - index: индекс элемента во входном списке;
     - result: CheckResult.
+
+    Доступ: любой аутентифицированный пользователь (cookie ИЛИ сервисный ключ) —
+    tsk-461, до этого эндпоинт был открыт без единого гейта.
     """
     logger.info("check_tasks_batch: items=%d", len(payload.items))
     results: list[BatchCheckItemResult] = []

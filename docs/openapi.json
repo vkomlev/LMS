@@ -1941,7 +1941,7 @@
           "courses"
         ],
         "summary": "Получить курс по его коду (course_uid)",
-        "description": "Вернуть курс по его внешнему коду (course_uid).\n\nДоступ: любой аутентифицированный пользователь (cookie ученика ИЛИ сервисный\nключ). tsk-127: SPW self-heal `CourseNotFoundResolver` зовёт этот эндпоинт со\nстуденческой cookie для резолва листового uid → id; раньше он висел на `get_db`\n(требует legacy api-key) и отдавал 403 ученику — отсюда «Курс не найден».\n\nСтатусы:\n- 200 — если курс найден;\n- 401 — если запрос не аутентифицирован;\n- 404 — если курс не найден (DomainError обрабатывается глобальным хэндлером).",
+        "description": "Вернуть курс по его внешнему коду (course_uid).\n\nДоступ: любой аутентифицированный пользователь (cookie ученика ИЛИ сервисный\nключ). tsk-127: SPW self-heal `CourseNotFoundResolver` зовёт этот эндпоинт со\nстуденческой cookie для резолва листового uid → id; раньше он висел на `get_db`\n(требует legacy api-key) и отдавал 403 ученику — отсюда «Курс не найден».\n\nНамеренно без `assert_course_access` (нет привязки к зачислению) — решение\nпереподтверждено оператором и зафиксировано в ADR-0004\n(docs/ai/adr/0004-courses-by-code-public-resolver.md, tsk-461).\n\nСтатусы:\n- 200 — если курс найден;\n- 401 — если запрос не аутентифицирован;\n- 404 — если курс не найден (DomainError обрабатывается глобальным хэндлером).",
         "operationId": "get_course_by_code_endpoint_api_v1_courses_by_code__code__get",
         "security": [
           {
@@ -11330,9 +11330,12 @@
           "task_results"
         ],
         "summary": "РџРѕР»СѓС‡РёС‚СЊ СЂРµР·СѓР»СЊС‚Р°С‚С‹ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё",
-        "description": "РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё.\n\nР’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚С‹, РіРґРµ:\n- checked_at = null (РµС‰Рµ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹)\n\nArgs:\n    course_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РєСѓСЂСЃСѓ\n    user_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ\n    limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000)\n    offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё\n\nReturns:\n    РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё",
+        "description": "РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё.\n\nACL (tsk-461): require_role(\"teacher\",\"methodist\",\"admin\"), сервисный ключ\n(TG_LMS боты) проходит через bypass. До этого висел на legacy `get_db`\n(только `?api_key=`, без идентификации вызывающего).\n\nР’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚С‹, РіРґРµ:\n- checked_at = null (РµС‰Рµ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹)\n\nArgs:\n    course_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РєСѓСЂСЃСѓ\n    user_id: РћРїС†РёРѕРЅР°Р»СЊРЅС‹Р№ С„РёР»СЊС‚СЂ РїРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»СЋ\n    limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ (1-1000)\n    offset: РЎРјРµС‰РµРЅРёРµ РґР»СЏ РїР°РіРёРЅР°С†РёРё\n\nReturns:\n    РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё",
         "operationId": "get_pending_review_results_api_v1_task_results_by_pending_review_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -11416,6 +11419,54 @@
               "title": "Offset"
             },
             "description": "РЎРјРµС‰РµРЅРёРµ"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
@@ -11432,6 +11483,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Требуется роль teacher/methodist/admin (или сервисный ключ)"
           },
           "422": {
             "description": "Validation Error",
@@ -14101,17 +14155,75 @@
           "checking"
         ],
         "summary": "Проверка одной задачи",
-        "description": "Stateless-проверка **одной** задачи.\n\nНа вход принимает:\n- task_content: JSON-описание задания;\n- solution_rules: JSON-правила проверки;\n- answer: ответ ученика.\n\nНа выходе — CheckResult без сохранения в БД.",
+        "description": "Stateless-проверка **одной** задачи.\n\nНа вход принимает:\n- task_content: JSON-описание задания;\n- solution_rules: JSON-правила проверки;\n- answer: ответ ученика.\n\nНа выходе — CheckResult без сохранения в БД.\n\nДоступ: любой аутентифицированный пользователь (cookie ИЛИ сервисный ключ) —\ntsk-461, до этого эндпоинт был открыт без единого гейта.",
         "operationId": "check_task_endpoint_api_v1_check_task_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SingleCheckRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -14146,6 +14258,9 @@
               }
             }
           },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
           "422": {
             "description": "Ошибка валидации запроса (неверный формат JSON)"
           }
@@ -14158,17 +14273,75 @@
           "checking"
         ],
         "summary": "Проверка набора задач",
-        "description": "Stateless-проверка **набора** задач.\n\nДля каждого элемента массива items возвращается:\n- index: индекс элемента во входном списке;\n- result: CheckResult.",
+        "description": "Stateless-проверка **набора** задач.\n\nДля каждого элемента массива items возвращается:\n- index: индекс элемента во входном списке;\n- result: CheckResult.\n\nДоступ: любой аутентифицированный пользователь (cookie ИЛИ сервисный ключ) —\ntsk-461, до этого эндпоинт был открыт без единого гейта.",
         "operationId": "check_tasks_batch_endpoint_api_v1_check_tasks_batch_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BatchCheckRequest"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -14205,6 +14378,9 @@
           },
           "400": {
             "description": "Ошибка валидации данных задач или ответов"
+          },
+          "401": {
+            "description": "Не аутентифицирован"
           },
           "422": {
             "description": "Ошибка валидации запроса (неверный формат JSON)"
@@ -25454,6 +25630,128 @@
         }
       }
     },
+    "/api/v1/students/{student_id}/dashboard": {
+      "get": {
+        "tags": [
+          "student_dashboard"
+        ],
+        "summary": "Get Student Dashboard",
+        "operationId": "get_student_dashboard_api_v1_students__student_id__dashboard_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Начало периода (включительно)",
+              "title": "From"
+            },
+            "description": "Начало периода (включительно)"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Конец периода (включительно)",
+              "title": "To"
+            },
+            "description": "Конец периода (включительно)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentDashboardRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -35702,6 +36000,168 @@
         ],
         "title": "StudentCourseRef",
         "description": "Курс ученика для селектора в карточке."
+      },
+      "StudentDashboardAttendanceRead": {
+        "properties": {
+          "total_occurrences": {
+            "type": "integer",
+            "title": "Total Occurrences"
+          },
+          "missed_total": {
+            "type": "integer",
+            "title": "Missed Total"
+          },
+          "missed_unresolved": {
+            "type": "integer",
+            "title": "Missed Unresolved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_occurrences",
+          "missed_total",
+          "missed_unresolved"
+        ],
+        "title": "StudentDashboardAttendanceRead"
+      },
+      "StudentDashboardCourseRead": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "percent_complete": {
+            "type": "integer",
+            "title": "Percent Complete"
+          },
+          "current_section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Section Title"
+          },
+          "current_item_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Item Title"
+          },
+          "forecast_completion_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Forecast Completion Date"
+          },
+          "is_completed": {
+            "type": "boolean",
+            "title": "Is Completed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "title",
+          "percent_complete",
+          "is_completed"
+        ],
+        "title": "StudentDashboardCourseRead"
+      },
+      "StudentDashboardMetricsRead": {
+        "properties": {
+          "tasks_completed": {
+            "type": "integer",
+            "title": "Tasks Completed"
+          },
+          "theory_completed": {
+            "type": "integer",
+            "title": "Theory Completed"
+          },
+          "first_try": {
+            "type": "integer",
+            "title": "First Try"
+          },
+          "help_requested_count": {
+            "type": "integer",
+            "title": "Help Requested Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks_completed",
+          "theory_completed",
+          "first_try",
+          "help_requested_count"
+        ],
+        "title": "StudentDashboardMetricsRead"
+      },
+      "StudentDashboardRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "period_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period From"
+          },
+          "period_to": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period To"
+          },
+          "courses": {
+            "items": {
+              "$ref": "#/components/schemas/StudentDashboardCourseRead"
+            },
+            "type": "array",
+            "title": "Courses"
+          },
+          "period_total": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "in_class_hours": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "between_lessons": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "attendance": {
+            "$ref": "#/components/schemas/StudentDashboardAttendanceRead"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "period_from",
+          "period_to",
+          "courses",
+          "period_total",
+          "in_class_hours",
+          "between_lessons",
+          "attendance"
+        ],
+        "title": "StudentDashboardRead"
       },
       "StudentResponse": {
         "properties": {

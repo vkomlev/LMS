@@ -573,6 +573,7 @@ async def get_user_detail(
         200: {
             "description": "РЎРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ, С‚СЂРµР±СѓСЋС‰РёС… РїСЂРѕРІРµСЂРєРё",
         },
+        403: {"description": "Требуется роль teacher/methodist/admin (или сервисный ключ)"},
     },
 )
 async def get_pending_review_results(
@@ -590,11 +591,16 @@ async def get_pending_review_results(
     ),
     limit: int = Query(50, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
     offset: int = Query(0, ge=0, description="РЎРјРµС‰РµРЅРёРµ"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STATS_GATE),
 ) -> List[TaskResultRead]:
     """
     РџРѕР»СѓС‡РёС‚СЊ СЃРїРёСЃРѕРє СЂРµР·СѓР»СЊС‚Р°С‚РѕРІ Р·Р°РґР°РЅРёР№, С‚СЂРµР±СѓСЋС‰РёС… СЂСѓС‡РЅРѕР№ РїСЂРѕРІРµСЂРєРё.
-    
+
+    ACL (tsk-461): require_role("teacher","methodist","admin"), сервисный ключ
+    (TG_LMS боты) проходит через bypass. До этого висел на legacy `get_db`
+    (только `?api_key=`, без идентификации вызывающего).
+
     Р’РѕР·РІСЂР°С‰Р°РµС‚ СЂРµР·СѓР»СЊС‚Р°С‚С‹, РіРґРµ:
     - checked_at = null (РµС‰Рµ РЅРµ РїСЂРѕРІРµСЂРµРЅС‹)
     
