@@ -72,20 +72,29 @@ async def main(apply: bool) -> int:
             return 0
 
         logger.info("Найдено привязок: %d", len(rows))
+
+        # Сколько строк попало в выборку по каждому пользователю. Считать
+        # остаток по ОДНОЙ строке нельзя: удаляем-то все разом, и у человека,
+        # у которого все привязки оказались тестовыми, не осталось бы ни одного
+        # способа войти.
+        selected_per_user: dict[int, int] = {}
+        for r in rows:
+            selected_per_user[r.user_id] = selected_per_user.get(r.user_id, 0) + 1
+
         safe: list[int] = []
         for r in rows:
             usage = (await db.execute(_USAGE, {"value": r.value})).one()
-            keeps = r.links_total - 1
+            keeps = r.links_total - selected_per_user[r.user_id]
             if usage.consumed:
                 mark = "ПРОПУСК (по адресу входили)"
             elif keeps < 1:
-                mark = "ПРОПУСК (осталась бы учётка без входа)"
+                mark = "ПРОПУСК (учётка осталась бы без единого входа)"
             else:
                 mark = "УДАЛИТЬ"
                 safe.append(r.id)
             logger.info(
                 "  [%s] id=%s · %s (%s, id=%s) · заведена %s · ссылок выдано %s, "
-                "входов %s · останется привязок: %s",
+                "входов %s · у человека останется привязок: %s",
                 mark, r.id, r.value, r.full_name, r.user_id,
                 r.created_at, usage.issued, usage.consumed, keeps,
             )
