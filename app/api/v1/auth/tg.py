@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, TgInitRequest
+from app.services import user_block_service
 from app.services.auth import session_service
 from app.services.auth.guest_attribution_service import attribute_guest_session
 from app.services.auth.tg_init_service import (
@@ -61,6 +62,10 @@ async def tg_init(
     user, created = await get_or_create_user_by_tg(
         db, tg_id_int, full_name, ip=ip, user_agent=ua,
     )
+
+    # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
+    # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.
+    await user_block_service.assert_not_blocked(db, user.id)
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)

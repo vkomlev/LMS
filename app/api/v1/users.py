@@ -1,17 +1,21 @@
 # app/api/v1/users.py
 from typing import List, Optional
 from enum import Enum
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Query, Body
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import asc, desc
 import logging
+
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.logger import setup_logging
 from app.api.deps import get_async_db, get_db, require_role
 from app.auth.current_user import CurrentUser
 from app.api.v1.crud import create_crud_router
 from app.services.users_service import UsersService
+from app.services import user_block_service, user_merge_api_service, users_dedup_service
 from app.schemas.users import UserID, UserRead, UserCreate, UserUpdate
 from app.models.users import Users
 from app.utils.pagination import Page, build_page
@@ -51,6 +55,11 @@ _PEOPLE_READ_GATE = require_role("methodist", "admin")
 # чтение. Ограничение по ПОЛЯМ (tg_id не меняется) живёт в обработчике: это не
 # вопрос роли, а вопрос того, что именно поле значит.
 _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+
+# Блокировка и слияние — единственное в кабинете, что закрывает человеку
+# доступ или необратимо меняет его данные. Методисту их не даём: он ведёт
+# учебный процесс, а не распоряжается учётными записями.
+_ACCESS_GATE = require_role("admin")
 
 @router.get(
     "/search",
@@ -467,6 +476,43 @@ async def patch_user(
         ) from exc
     return updated
 
+class DuplicateCandidateRead(BaseModel):
+    """Пара похожих учётных записей."""
+
+    user_a_id: int
+    user_a_name: str
+    user_a_has_identity: bool
+    user_b_id: int
+    user_b_name: str
+    user_b_has_identity: bool
+    score: float
+
+
+# `/duplicates` объявлен ДО `/{user_id}`: FastAPI матчит по порядку
+# регистрации, и параметрический путь съел бы литеральный — запрос
+# ушёл бы в карточку человека и упал бы на int("duplicates").
+@router.get(
+    "/duplicates",
+    response_model=List[DuplicateCandidateRead],
+    summary="Похожие учётные записи",
+    description=(
+        "Пары учётных записей с похожими именами — кандидаты на слияние. "
+        "Сравнение нечувствительно к порядку слов и отчеству.\n\n"
+        "`has_identity` показывает, есть ли у стороны хоть один способ войти: "
+        "запись без единого способа обычно и есть дубль, заведённый вручную."
+    ),
+)
+async def list_duplicate_candidates(
+    threshold: float = Query(
+        default=0.72, ge=0.5, le=1.0, description="Порог похожести имён",
+    ),
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> List[DuplicateCandidateRead]:
+    found = await users_dedup_service.find_duplicate_candidates(db, threshold=threshold)
+    return [DuplicateCandidateRead(**vars(c)) for c in found]
+
+
 @router.get(
     "/{user_id}",
     response_model=UserRead,
@@ -502,6 +548,181 @@ async def get_user_card(
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     return user
+
+
+# ---------------------------------------------------------------------------
+# tsk-432: блокировка учётной записи (администратор)
+# ---------------------------------------------------------------------------
+
+
+
+class BlockUserRequest(BaseModel):
+    """Причина блокировки — для карточки, не для человека."""
+
+    reason: Optional[str] = Field(
+        default=None,
+        max_length=500,
+        description="Зачем закрыт доступ. Видно администратору, самому человеку не показывается",
+    )
+
+
+class BlockedStateRead(BaseModel):
+    """Состояние доступа."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    blocked_at: Optional[datetime] = None
+    blocked_reason: Optional[str] = None
+    blocked_by_user_id: Optional[int] = None
+
+
+@router.post(
+    "/{user_id}/block",
+    response_model=BlockedStateRead,
+    summary="Закрыть доступ к аккаунту",
+    description=(
+        "Закрывает вход и обрывает уже открытые сеансы. Данные человека, его "
+        "работы и история остаются на месте и видны преподавателю — это НЕ "
+        "удаление и НЕ слияние.\n\n"
+        "Отказы: нельзя заблокировать самого себя и нельзя заблокировать "
+        "последнего администратора со входом (разблокировать станет некому)."
+    ),
+    responses={
+        404: {"description": "Пользователь не найден"},
+        409: {"description": "Сам себя либо последний администратор"},
+    },
+)
+async def block_user(
+    user_id: int,
+    body: BlockUserRequest = Body(default=BlockUserRequest()),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> BlockedStateRead:
+    user = await user_block_service.block_user(
+        db,
+        user_id=user_id,
+        actor_id=None if current_user.is_service else current_user.id,
+        reason=body.reason,
+    )
+    return BlockedStateRead.model_validate(user)
+
+
+@router.post(
+    "/{user_id}/unblock",
+    response_model=BlockedStateRead,
+    summary="Открыть доступ к аккаунту",
+    description=(
+        "Снимает блокировку. Прежние сеансы не восстанавливаются — человек "
+        "входит заново."
+    ),
+    responses={404: {"description": "Пользователь не найден"}},
+)
+async def unblock_user(
+    user_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> BlockedStateRead:
+    user = await user_block_service.unblock_user(
+        db, user_id=user_id, actor_id=None if current_user.is_service else current_user.id
+    )
+    return BlockedStateRead.model_validate(user)
+
+
+# ---------------------------------------------------------------------------
+# tsk-432: слияние профилей (администратор)
+# ---------------------------------------------------------------------------
+
+
+class MergeLineRead(BaseModel):
+    """Строка предпросмотра слияния."""
+
+    label: str
+    rows: int
+    table: str
+    column: str
+
+
+class MergePreviewRead(BaseModel):
+    """Что произойдёт при слиянии."""
+
+    source_id: int
+    source_name: Optional[str] = None
+    target_id: int
+    target_name: Optional[str] = None
+    total_rows: int
+    lines: List[MergeLineRead]
+
+
+class MergeRequest(BaseModel):
+    """Кого в кого сливаем."""
+
+    source_id: int = Field(..., description="Учётная запись, которая закроется")
+    target_id: int = Field(..., description="Учётная запись, которая останется рабочей")
+
+
+@router.post(
+    "/merge/preview",
+    response_model=MergePreviewRead,
+    summary="Что переедет при слиянии",
+    description=(
+        "Показывает, сколько и каких данных перенесётся, ДО самого слияния. "
+        "Ничего не меняет.\n\n"
+        "Слияние необратимо и затрагивает два десятка таблиц — предпросмотр "
+        "существует, чтобы такую кнопку не нажимали вслепую."
+    ),
+    responses={
+        404: {"description": "Одна из учётных записей не найдена"},
+        409: {"description": "Одна из записей уже слита в другую"},
+        422: {"description": "Указана одна и та же запись"},
+    },
+)
+async def preview_user_merge(
+    body: MergeRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> MergePreviewRead:
+    preview = await user_merge_api_service.preview_merge(
+        db, source_id=body.source_id, target_id=body.target_id
+    )
+    return MergePreviewRead(
+        source_id=preview.source_id,
+        source_name=preview.source_name,
+        target_id=preview.target_id,
+        target_name=preview.target_name,
+        total_rows=preview.total_rows,
+        lines=[MergeLineRead(**vars(line)) for line in preview.lines],
+    )
+
+
+@router.post(
+    "/merge",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Слить учётные записи",
+    description=(
+        "**Необратимо.** Данные `source` переезжают в `target`, `source` "
+        "закрывается (`is_active=false`, `merged_into_user_id`) и теряет все "
+        "способы входа.\n\n"
+        "Перед вызовом покажите пользователю `POST /users/merge/preview`."
+    ),
+    responses={
+        404: {"description": "Одна из учётных записей не найдена"},
+        409: {"description": "Одна из записей уже слита в другую"},
+        422: {"description": "Указана одна и та же запись"},
+    },
+)
+async def merge_users_endpoint(
+    body: MergeRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> Response:
+    await user_merge_api_service.merge(
+        db,
+        source_id=body.source_id,
+        target_id=body.target_id,
+        actor_id=None if current_user.is_service else current_user.id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 crud_router = create_crud_router(

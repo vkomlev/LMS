@@ -56,6 +56,20 @@ class Users(Base):
         Integer, ForeignKey("users.id"), nullable=True,
         comment="Если учётка слита в другую — id учётки-получателя",
     )
+    # tsk-432. Блокировка — НЕ то же, что `is_active=false`. Слитая учётка
+    # исчезает из списков, потому что человека там больше нет; заблокированный
+    # человек есть, его работы и история нужны преподавателю — закрыт только вход.
+    blocked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Когда закрыт вход. NULL — доступ открыт",
+    )
+    blocked_reason: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Почему закрыт вход — видно администратору в карточке",
+    )
+    blocked_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, comment="Кто закрыл вход",
+    )
 
     role: Mapped[List["Roles"]] = relationship(
         "Roles", secondary=t_user_roles, back_populates="user"

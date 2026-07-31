@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_bare_db
 from app.core.config import Settings
 from app.schemas.auth import AuthTokenResponse, VkCallbackRequest
+from app.services import user_block_service
 from app.services.auth import session_service
 from app.services.auth.exceptions import IdentityConflictError
 from app.services.auth.guest_attribution_service import attribute_guest_session
@@ -99,6 +100,10 @@ async def vk_callback(
                 ),
             },
         )
+
+    # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
+    # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.
+    await user_block_service.assert_not_blocked(db, user.id)
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)

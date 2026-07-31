@@ -562,6 +562,114 @@
         }
       }
     },
+    "/api/v1/users/duplicates": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Похожие учётные записи",
+        "description": "Пары учётных записей с похожими именами — кандидаты на слияние. Сравнение нечувствительно к порядку слов и отчеству.\n\n`has_identity` показывает, есть ли у стороны хоть один способ войти: запись без единого способа обычно и есть дубль, заведённый вручную.",
+        "operationId": "list_duplicate_candidates_api_v1_users_duplicates_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 1.0,
+              "minimum": 0.5,
+              "description": "Порог похожести имён",
+              "default": 0.72,
+              "title": "Threshold"
+            },
+            "description": "Порог похожести имён"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DuplicateCandidateRead"
+                  },
+                  "title": "Response List Duplicate Candidates Api V1 Users Duplicates Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}": {
       "get": {
         "tags": [
@@ -663,6 +771,414 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/block": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Закрыть доступ к аккаунту",
+        "description": "Закрывает вход и обрывает уже открытые сеансы. Данные человека, его работы и история остаются на месте и видны преподавателю — это НЕ удаление и НЕ слияние.\n\nОтказы: нельзя заблокировать самого себя и нельзя заблокировать последнего администратора со входом (разблокировать станет некому).",
+        "operationId": "block_user_api_v1_users__user_id__block_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockUserRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockedStateRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден"
+          },
+          "409": {
+            "description": "Сам себя либо последний администратор"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{user_id}/unblock": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Открыть доступ к аккаунту",
+        "description": "Снимает блокировку. Прежние сеансы не восстанавливаются — человек входит заново.",
+        "operationId": "unblock_user_api_v1_users__user_id__unblock_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockedStateRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/merge/preview": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Что переедет при слиянии",
+        "description": "Показывает, сколько и каких данных перенесётся, ДО самого слияния. Ничего не меняет.\n\nСлияние необратимо и затрагивает два десятка таблиц — предпросмотр существует, чтобы такую кнопку не нажимали вслепую.",
+        "operationId": "preview_user_merge_api_v1_users_merge_preview_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergePreviewRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Одна из учётных записей не найдена"
+          },
+          "409": {
+            "description": "Одна из записей уже слита в другую"
+          },
+          "422": {
+            "description": "Указана одна и та же запись"
+          }
+        }
+      }
+    },
+    "/api/v1/users/merge": {
+      "post": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Слить учётные записи",
+        "description": "**Необратимо.** Данные `source` переезжают в `target`, `source` закрывается (`is_active=false`, `merged_into_user_id`) и теряет все способы входа.\n\nПеред вызовом покажите пользователю `POST /users/merge/preview`.",
+        "operationId": "merge_users_endpoint_api_v1_users_merge_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Одна из учётных записей не найдена"
+          },
+          "409": {
+            "description": "Одна из записей уже слита в другую"
+          },
+          "422": {
+            "description": "Указана одна и та же запись"
           }
         }
       }
@@ -26287,6 +26803,74 @@
         "title": "BatchCheckResponse",
         "description": "Ответ на пакетную stateless-проверку задач."
       },
+      "BlockUserRequest": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Зачем закрыт доступ. Видно администратору, самому человеку не показывается"
+          }
+        },
+        "type": "object",
+        "title": "BlockUserRequest",
+        "description": "Причина блокировки — для карточки, не для человека."
+      },
+      "BlockedStateRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "blocked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked At"
+          },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
+          "blocked_by_user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked By User Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "BlockedStateRead",
+        "description": "Состояние доступа."
+      },
       "Body_attach_file_to_message_endpoint_api_v1_messages__message_id__attachment_post": {
         "properties": {
           "file": {
@@ -27822,6 +28406,50 @@
         "type": "object",
         "title": "DifficultyLevelUpdate",
         "description": "Схема частичного обновления уровня сложности.\nВсе поля опциональны."
+      },
+      "DuplicateCandidateRead": {
+        "properties": {
+          "user_a_id": {
+            "type": "integer",
+            "title": "User A Id"
+          },
+          "user_a_name": {
+            "type": "string",
+            "title": "User A Name"
+          },
+          "user_a_has_identity": {
+            "type": "boolean",
+            "title": "User A Has Identity"
+          },
+          "user_b_id": {
+            "type": "integer",
+            "title": "User B Id"
+          },
+          "user_b_name": {
+            "type": "string",
+            "title": "User B Name"
+          },
+          "user_b_has_identity": {
+            "type": "boolean",
+            "title": "User B Has Identity"
+          },
+          "score": {
+            "type": "number",
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "user_a_id",
+          "user_a_name",
+          "user_a_has_identity",
+          "user_b_id",
+          "user_b_name",
+          "user_b_has_identity",
+          "score"
+        ],
+        "title": "DuplicateCandidateRead",
+        "description": "Пара похожих учётных записей."
       },
       "EmbedAuthIssueRequest": {
         "properties": {
@@ -31349,6 +31977,110 @@
         ],
         "title": "MeUpdateRequest",
         "description": "Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).\n\nВалидация формата выполняется в эндпоинте через `validate_full_name`\n(единое серверное правило), чтобы вернуть чистое русское 422-сообщение."
+      },
+      "MergeLineRead": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "table": {
+            "type": "string",
+            "title": "Table"
+          },
+          "column": {
+            "type": "string",
+            "title": "Column"
+          }
+        },
+        "type": "object",
+        "required": [
+          "label",
+          "rows",
+          "table",
+          "column"
+        ],
+        "title": "MergeLineRead",
+        "description": "Строка предпросмотра слияния."
+      },
+      "MergePreviewRead": {
+        "properties": {
+          "source_id": {
+            "type": "integer",
+            "title": "Source Id"
+          },
+          "source_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Name"
+          },
+          "target_id": {
+            "type": "integer",
+            "title": "Target Id"
+          },
+          "target_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Name"
+          },
+          "total_rows": {
+            "type": "integer",
+            "title": "Total Rows"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/MergeLineRead"
+            },
+            "type": "array",
+            "title": "Lines"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "target_id",
+          "total_rows",
+          "lines"
+        ],
+        "title": "MergePreviewRead",
+        "description": "Что произойдёт при слиянии."
+      },
+      "MergeRequest": {
+        "properties": {
+          "source_id": {
+            "type": "integer",
+            "title": "Source Id",
+            "description": "Учётная запись, которая закроется"
+          },
+          "target_id": {
+            "type": "integer",
+            "title": "Target Id",
+            "description": "Учётная запись, которая останется рабочей"
+          }
+        },
+        "type": "object",
+        "required": [
+          "source_id",
+          "target_id"
+        ],
+        "title": "MergeRequest",
+        "description": "Кого в кого сливаем."
       },
       "MessageBulkRequest": {
         "properties": {

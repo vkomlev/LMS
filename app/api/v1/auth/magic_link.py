@@ -14,6 +14,7 @@ from app.schemas.auth import (
     MagicLinkVerifyRequest,
     MessageResponse,
 )
+from app.services import user_block_service
 from app.services.auth import magic_link_service, session_service
 from app.services.auth.cookie import set_refresh_cookie, set_session_cookie
 from app.services.auth.exceptions import IdentityConflictError
@@ -123,6 +124,10 @@ async def verify_magic_link(
                 ),
             },
         )
+
+    # tsk-432: заблокированному отказываем ДО создания сеанса — иначе он
+    # «вошёл бы» и упёрся в отказ на первом же экране, не понимая причины.
+    await user_block_service.assert_not_blocked(db, user.id)
 
     if body.guest_session_id:
         await attribute_guest_session(db, body.guest_session_id, user.id)

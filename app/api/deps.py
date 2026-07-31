@@ -11,6 +11,7 @@ from app.auth.service_api_key import is_valid_service_key
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.services.auth import session_service
+from app.services import user_block_service
 
 settings = Settings()
 
@@ -82,6 +83,16 @@ async def get_current_user(
                 )
                 user = result.scalar_one_or_none()
                 if user:
+                    # tsk-432: блокировка действует СРАЗУ, а не после протухания
+                    # токена. Пользователь и так грузится из базы на каждом
+                    # запросе — проверка бесплатна. 403, а не 401: ключ доступа
+                    # исправен, закрыт сам аккаунт, и 401 увёл бы человека на
+                    # форму входа по кругу вместо объяснения.
+                    if user.blocked_at is not None:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=user_block_service.BLOCKED_MESSAGE,
+                        )
                     # Y-4 pre-S5: defensive self-heal — если у legacy-юзера нет
                     # ни одной роли, тихо назначаем 'student' + audit. Soft-fail:
                     # любой сбой helper'а или commit'а не должен валить auth.
