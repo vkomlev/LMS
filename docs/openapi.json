@@ -775,6 +775,108 @@
         }
       }
     },
+    "/api/v1/users/{user_id}/access": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Состояние доступа к аккаунту",
+        "description": "Закрыт ли вход, когда и почему. Причина — служебная пометка для администратора, поэтому её нет в общей карточке `GET /users/{id}`: ту читают и методист, и боты.",
+        "operationId": "get_user_access_api_v1_users__user_id__access_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockedStateRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Пользователь не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/users/{user_id}/block": {
       "post": {
         "tags": [
@@ -39959,6 +40061,23 @@
             "description": "Дата и время регистрации пользователя",
             "examples": [
               "2026-01-26T14:21:50.221Z"
+            ]
+          },
+          "blocked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked At",
+            "description": "Когда закрыт вход. NULL — доступ открыт",
+            "examples": [
+              "2026-07-31T12:00:00Z",
+              null
             ]
           }
         },

@@ -577,6 +577,28 @@ class BlockedStateRead(BaseModel):
     blocked_by_user_id: Optional[int] = None
 
 
+@router.get(
+    "/{user_id}/access",
+    response_model=BlockedStateRead,
+    summary="Состояние доступа к аккаунту",
+    description=(
+        "Закрыт ли вход, когда и почему. Причина — служебная пометка для "
+        "администратора, поэтому её нет в общей карточке `GET /users/{id}`: "
+        "ту читают и методист, и боты."
+    ),
+    responses={404: {"description": "Пользователь не найден"}},
+)
+async def get_user_access(
+    user_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_ACCESS_GATE),
+) -> BlockedStateRead:
+    user = await service.get_by_id(db, user_id)
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+    return BlockedStateRead.model_validate(user)
+
+
 @router.post(
     "/{user_id}/block",
     response_model=BlockedStateRead,

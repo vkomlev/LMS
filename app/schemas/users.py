@@ -61,6 +61,15 @@ class UserRead(BaseModel):
     full_name: Optional[str] = Field(None, description="Полное имя пользователя", examples=["Иван Иванов", None])
     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[123456789, None])
     created_at: datetime = Field(..., description="Дата и время регистрации пользователя", examples=["2026-01-26T14:21:50.221Z"])
+    # tsk-432. Отдаём во ВСЕХ выдачах людей, а не только администратору:
+    # заблокированный человек по решению остаётся видимым в списках, и пометка
+    # «вход закрыт» нужна там же, где его имя. Поле добавочное — потребители,
+    # которые о нём не знают, продолжают работать.
+    blocked_at: Optional[datetime] = Field(
+        None,
+        description="Когда закрыт вход. NULL — доступ открыт",
+        examples=["2026-07-31T12:00:00Z", None],
+    )
 
     @field_validator("email", mode="before")
     @classmethod
