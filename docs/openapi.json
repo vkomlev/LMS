@@ -22696,6 +22696,123 @@
         }
       }
     },
+    "/api/v1/lesson-slots/{slot_id}/participants/{student_id}/transfer": {
+      "post": {
+        "tags": [
+          "lesson_calendar_admin"
+        ],
+        "summary": "Перевести ученика в другой слот",
+        "description": "Перевод НАСОВСЕМ: ученик снимается с исходного слота и ставится на целевой одной транзакцией — он либо переехал целиком, либо остался там, где был.\n\nБудущие занятия исходного слота, где ученик ещё ничего не решил сам, он покидает; целевого — получает сразу, не дожидаясь генератора. Прошедшие занятия и уже отмеченная явка не трогаются.\n\nРазовый перенос одного занятия — это другое действие (`POST /lesson-occurrences/{id}/reschedule` в кабинете ученика).",
+        "operationId": "transfer_slot_participant_api_v1_lesson_slots__slot_id__participants__student_id__transfer_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Slot Id"
+            }
+          },
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferSlotParticipantRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlotParticipantRead"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Слот не найден или ученик не числится в исходном слоте"
+          },
+          "409": {
+            "description": "Целевой слот выключен либо время занято другим слотом ученика"
+          },
+          "422": {
+            "description": "Исходный и целевой слоты совпадают"
+          }
+        }
+      }
+    },
     "/api/v1/lesson-slots/{slot_id}/teachers": {
       "get": {
         "tags": [
@@ -38364,6 +38481,21 @@
           "init_data"
         ],
         "title": "TgInitRequest"
+      },
+      "TransferSlotParticipantRequest": {
+        "properties": {
+          "target_slot_id": {
+            "type": "integer",
+            "title": "Target Slot Id",
+            "description": "Слот, в который ученик переезжает"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_slot_id"
+        ],
+        "title": "TransferSlotParticipantRequest",
+        "description": "Куда переводим ученика."
       },
       "UnreadBySenderItem": {
         "properties": {

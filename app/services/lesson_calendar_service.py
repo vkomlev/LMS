@@ -345,13 +345,15 @@ async def deactivate_lesson_slot(db: AsyncSession, slot_id: int) -> None:
     await db.commit()
 
 
-async def add_slot_participant(
+async def _attach_student_to_slot(
     db: AsyncSession, slot_id: int, student_id: int, *, added_by: Optional[int]
 ) -> LessonSlotStudent:
-    """Добавить ученика в групповой слот. Бэкфиллит его участником во ВСЕ уже
-    сгенерированные БУДУЩИЕ occurrence этого слота — иначе он не увидит уже
-    существующие занятия до следующего тика генератора."""
-    slot = await get_lesson_slot(db, slot_id)
+    """Связать ученика со слотом и добавить его во ВСЕ уже сгенерированные
+    БУДУЩИЕ occurrence этого слота — иначе он не увидит существующие занятия
+    до следующего тика генератора.
+
+    Без commit: вызывающий решает границы транзакции (перевод между слотами
+    обязан быть одним целым)."""
     await ensure_user_has_role(db, student_id, "student")
 
     existing = await _slot_student_repo.get(db, slot_id=slot_id, student_id=student_id)
@@ -367,12 +369,10 @@ async def add_slot_participant(
         )
     await db.flush()
 
-    future_occurrences = await _occurrence_repo.list_for_teacher(
-        db, teacher_id=slot.teacher_id, from_dt=datetime.now(timezone.utc), limit=500,
+    future_occurrences = await _occurrence_repo.list_for_slot(
+        db, slot_id, from_dt=datetime.now(timezone.utc),
     )
     for occurrence in future_occurrences:
-        if occurrence.slot_id != slot_id:
-            continue
         already = await _participant_repo.get(
             db, occurrence_id=occurrence.id, student_id=student_id
         )
@@ -380,17 +380,24 @@ async def add_slot_participant(
             await _participant_repo.create(
                 db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
             )
-
-    await db.commit()
-    await db.refresh(row)
     return row
 
 
-async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: int) -> None:
-    """Убрать ученика из слота (мягко). Будущие occurrence, где у него ещё нет
-    собственного действия явки (status='scheduled'), удаляются как участник —
-    его личное решение (joined/declined и т.п.) не трогаем."""
-    await get_lesson_slot(db, slot_id)
+async def _detach_student_from_slot(
+    db: AsyncSession, slot_id: int, student_id: int
+) -> LessonSlotStudent:
+    """Снять ученика со слота и убрать его из БУДУЩИХ occurrence этого слота,
+    где он ещё ничего не решил сам (`status='scheduled'`).
+
+    Записи с собственным действием ученика (`confirmed`, `declined`, `no_show`,
+    `rescheduled`) НЕ трогаем: это его история и уже отмеченная явка.
+
+    tsk-491: раньше чистки не было вовсе — гасилась только связь со слотом,
+    а ученик продолжал числиться в уже созданных занятиях (на проде такой
+    «хвост» и нашёлся: ученик 4526, слот 4, 2 будущих занятия). Открепление
+    выглядело сработавшим, но преподаватель видел ученика в списке явки.
+
+    Без commit — см. `_attach_student_to_slot`."""
     row = await _slot_student_repo.get(db, slot_id=slot_id, student_id=student_id)
     if row is None or not row.is_active:
         raise DomainError(
@@ -398,7 +405,130 @@ async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: in
             status_code=404,
         )
     row.is_active = False
+
+    future_occurrences = await _occurrence_repo.list_for_slot(
+        db, slot_id, from_dt=datetime.now(timezone.utc),
+    )
+    for occurrence in future_occurrences:
+        participant = await _participant_repo.get(
+            db, occurrence_id=occurrence.id, student_id=student_id
+        )
+        if participant is not None and participant.status == "scheduled":
+            await db.delete(participant)
+    await db.flush()
+    return row
+
+
+async def add_slot_participant(
+    db: AsyncSession, slot_id: int, student_id: int, *, added_by: Optional[int]
+) -> LessonSlotStudent:
+    """Добавить ученика в групповой слот (с бэкфиллом будущих занятий)."""
+    await get_lesson_slot(db, slot_id)
+    row = await _attach_student_to_slot(db, slot_id, student_id, added_by=added_by)
     await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: int) -> None:
+    """Убрать ученика из слота (мягко) вместе с будущими занятиями."""
+    await get_lesson_slot(db, slot_id)
+    await _detach_student_from_slot(db, slot_id, student_id)
+    await db.commit()
+
+
+async def transfer_slot_participant(
+    db: AsyncSession,
+    *,
+    source_slot_id: int,
+    target_slot_id: int,
+    student_id: int,
+    added_by: Optional[int],
+) -> LessonSlotStudent:
+    """Перевести ученика из одного слота в другой НАСОВСЕМ, одним действием.
+
+    Открепление и прикрепление по отдельности дают тот же результат только
+    если не забыть второй шаг и если первый не упадёт на полпути. Здесь оба
+    шага — одна транзакция: ученик либо переехал целиком, либо остался там,
+    где был.
+
+    Прошедшие занятия и уже отмеченная явка не трогаются — это история.
+    """
+    if source_slot_id == target_slot_id:
+        raise DomainError(
+            "Исходный и целевой слоты совпадают — переводить некуда",
+            status_code=422,
+        )
+
+    await get_lesson_slot(db, source_slot_id)
+    target = await get_lesson_slot(db, target_slot_id)
+    if not target.is_active:
+        raise DomainError(
+            f"Слот id={target_slot_id} выключен — ученик остался бы без занятий",
+            status_code=409,
+        )
+
+    # Ученик не может быть в двух местах в одно время. Проверяем ДО правок,
+    # чтобы не оставить его в промежуточном состоянии.
+    conflict = await _find_conflicting_slot(
+        db,
+        student_id=student_id,
+        target=target,
+        exclude_slot_ids={source_slot_id, target_slot_id},
+    )
+    if conflict is not None:
+        raise DomainError(
+            f"У ученика уже есть слот id={conflict.id} в это же время "
+            f"({WEEKDAY_NAMES[conflict.weekday]}, {conflict.start_time:%H:%M}) — "
+            "сначала освободите его",
+            status_code=409,
+        )
+
+    await _detach_student_from_slot(db, source_slot_id, student_id)
+    row = await _attach_student_to_slot(
+        db, target_slot_id, student_id, added_by=added_by
+    )
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+WEEKDAY_NAMES = (
+    "понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье",
+)
+
+
+async def _find_conflicting_slot(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    target: LessonSlot,
+    exclude_slot_ids: set[int],
+) -> Optional[LessonSlot]:
+    """Активный слот ученика, который пересекается по времени с целевым.
+
+    Сравниваем в пределах дня недели: слот — повторяющееся окно, поэтому
+    достаточно пересечения отрезков [начало, начало+длительность).
+    """
+    memberships = await _slot_student_repo.list_for_student(db, student_id)
+    target_start = _minutes(target.start_time)
+    target_end = target_start + target.duration_minutes
+
+    for membership in memberships:
+        if membership.slot_id in exclude_slot_ids:
+            continue
+        other = await _lesson_slot_repo.get_by_id(db, membership.slot_id)
+        if other is None or not other.is_active or other.weekday != target.weekday:
+            continue
+        other_start = _minutes(other.start_time)
+        if other_start < target_end and target_start < other_start + other.duration_minutes:
+            return other
+    return None
+
+
+def _minutes(value: time) -> int:
+    """Время начала в минутах от полуночи — для сравнения отрезков."""
+    return value.hour * 60 + value.minute
 
 
 async def add_slot_teacher(

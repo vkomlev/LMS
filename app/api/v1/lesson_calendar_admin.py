@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
@@ -234,6 +234,50 @@ async def remove_slot_participant(
 ) -> Response:
     await lesson_calendar_service.remove_slot_participant(db, slot_id, student_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class TransferSlotParticipantRequest(BaseModel):
+    """Куда переводим ученика."""
+
+    target_slot_id: int = Field(..., description="Слот, в который ученик переезжает")
+
+
+@router.post(
+    "/lesson-slots/{slot_id}/participants/{student_id}/transfer",
+    response_model=SlotParticipantRead,
+    status_code=status.HTTP_200_OK,
+    summary="Перевести ученика в другой слот",
+    description=(
+        "Перевод НАСОВСЕМ: ученик снимается с исходного слота и ставится на "
+        "целевой одной транзакцией — он либо переехал целиком, либо остался "
+        "там, где был.\n\n"
+        "Будущие занятия исходного слота, где ученик ещё ничего не решил сам, "
+        "он покидает; целевого — получает сразу, не дожидаясь генератора. "
+        "Прошедшие занятия и уже отмеченная явка не трогаются.\n\n"
+        "Разовый перенос одного занятия — это другое действие "
+        "(`POST /lesson-occurrences/{id}/reschedule` в кабинете ученика)."
+    ),
+    responses={
+        404: {"description": "Слот не найден или ученик не числится в исходном слоте"},
+        409: {"description": "Целевой слот выключен либо время занято другим слотом ученика"},
+        422: {"description": "Исходный и целевой слоты совпадают"},
+    },
+)
+async def transfer_slot_participant(
+    slot_id: int,
+    student_id: int,
+    body: TransferSlotParticipantRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_ADMIN_GATE),
+) -> SlotParticipantRead:
+    row = await lesson_calendar_service.transfer_slot_participant(
+        db,
+        source_slot_id=slot_id,
+        target_slot_id=body.target_slot_id,
+        student_id=student_id,
+        added_by=current_user.id if not current_user.is_service else None,
+    )
+    return SlotParticipantRead.model_validate(row)
 
 
 # ---------------------------------------------------------------------------
