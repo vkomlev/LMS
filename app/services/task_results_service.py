@@ -17,6 +17,27 @@ from app.services.checking_service import CheckingService
 PASS_THRESHOLD_RATIO = 0.5
 
 
+def _correct_percentage(correct_count: int, judged_count: int) -> float | None:
+    """Доля верных ответов среди ОЦЕНЁННЫХ попыток.
+
+    Раньше знаменателем были все попытки, и попытка с неизвестным результатом
+    (`is_correct IS NULL` — работа ещё не проверена либо признак не проставлен
+    на старых записях) считалась неверной. На задании с единственной такой
+    попыткой карточка показывала «верных ответов 0 %», хотя верных не ноль, а
+    неизвестно: методист читал это как «задание все проваливают».
+
+    Найдено аудитом 2026-07-30; на проде затронуто 3 задания из 12419 попыток —
+    мало по объёму, но вывод по такому заданию делается ложный.
+
+    :param correct_count: сколько попыток оценены как верные.
+    :param judged_count: сколько попыток вообще оценены (не NULL).
+    :returns: процент либо ``None``, если оценённых попыток нет.
+    """
+    if judged_count <= 0:
+        return None
+    return round(correct_count / judged_count * 100, 2)
+
+
 class TaskResultsService(BaseService[TaskResults]):
     """
     Сервис для результатов выполнения заданий.
@@ -460,7 +481,7 @@ class TaskResultsService(BaseService[TaskResults]):
                 "task_id": task_id,
                 "total_attempts": 0,
                 "average_score": 0.0,
-                "correct_percentage": 0.0,
+                "correct_percentage": None,
                 "min_score": 0,
                 "max_score": 0,
                 "score_distribution": {},
@@ -478,6 +499,10 @@ class TaskResultsService(BaseService[TaskResults]):
             select(
                 func.avg(TaskResults.score).label("avg_score"),
                 func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+                # Знаменатель — только ОЦЕНЁННЫЕ попытки (tsk-433, аудит
+                # 2026-07-30): раньше делили на все, и попытка с неизвестным
+                # результатом попадала в знаменатель как неверная.
+                func.count(TaskResults.is_correct).label("judged_count"),
                 func.min(TaskResults.score).label("min_score"),
                 func.max(TaskResults.score).label("max_score"),
             )
@@ -490,13 +515,13 @@ class TaskResultsService(BaseService[TaskResults]):
 
         average_score = float(stats_row.avg_score or 0)
         correct_count = stats_row.correct_count or 0
-        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        correct_percentage = _correct_percentage(correct_count, stats_row.judged_count or 0)
 
         return {
             "task_id": task_id,
             "total_attempts": total_attempts,
             "average_score": round(average_score, 2),
-            "correct_percentage": round(correct_percentage, 2),
+            "correct_percentage": correct_percentage,
             "min_score": stats_row.min_score or 0,
             "max_score": stats_row.max_score or 0,
             "score_distribution": {},
@@ -531,7 +556,7 @@ class TaskResultsService(BaseService[TaskResults]):
                 "course_id": course_id,
                 "total_attempts": 0,
                 "average_score": 0.0,
-                "correct_percentage": 0.0,
+                "correct_percentage": None,
                 "tasks_count": 0,
                 "progress_percent": 0.0,
                 "passed_tasks_count": 0,
@@ -554,6 +579,8 @@ class TaskResultsService(BaseService[TaskResults]):
                 func.count(TaskResults.id).label("total_attempts"),
                 func.avg(TaskResults.score).label("avg_score"),
                 func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+                # См. пояснение у статистики по заданию: считаем от оценённых.
+                func.count(TaskResults.is_correct).label("judged_count"),
             )
             .select_from(TaskResults)
             .join(Attempts, TaskResults.attempt_id == Attempts.id)
@@ -568,13 +595,13 @@ class TaskResultsService(BaseService[TaskResults]):
         total_attempts = stats_row.total_attempts or 0
         average_score = float(stats_row.avg_score or 0)
         correct_count = stats_row.correct_count or 0
-        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        correct_percentage = _correct_percentage(correct_count, stats_row.judged_count or 0)
 
         return {
             "course_id": course_id,
             "total_attempts": total_attempts,
             "average_score": round(average_score, 2),
-            "correct_percentage": round(correct_percentage, 2),
+            "correct_percentage": correct_percentage,
             "tasks_count": len(task_ids),
             "progress_percent": round(progress_percent, 2),
             "passed_tasks_count": last_passed,
@@ -609,6 +636,8 @@ class TaskResultsService(BaseService[TaskResults]):
                 func.count(TaskResults.id).label("total_attempts"),
                 func.avg(TaskResults.score).label("avg_score"),
                 func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
+                # См. `_correct_percentage`: знаменатель — оценённые попытки.
+                func.count(TaskResults.is_correct).label("judged_count"),
                 func.sum(TaskResults.max_score).label("total_max_score"),
                 func.sum(TaskResults.score).label("total_score"),
             )
@@ -627,7 +656,7 @@ class TaskResultsService(BaseService[TaskResults]):
                 "user_id": user_id,
                 "total_attempts": 0,
                 "average_score": 0.0,
-                "correct_percentage": 0.0,
+                "correct_percentage": None,
                 "total_score": 0,
                 "total_max_score": 0,
                 "completion_percentage": 0.0,
@@ -646,7 +675,7 @@ class TaskResultsService(BaseService[TaskResults]):
 
         average_score = float(stats_row.avg_score or 0)
         correct_count = stats_row.correct_count or 0
-        correct_percentage = (correct_count / total_attempts * 100) if total_attempts > 0 else 0.0
+        correct_percentage = _correct_percentage(correct_count, stats_row.judged_count or 0)
         total_score = stats_row.total_score or 0
         total_max_score = stats_row.total_max_score or 0
         completion_percentage = (total_score / total_max_score * 100) if total_max_score and total_max_score > 0 else 0.0
@@ -655,7 +684,7 @@ class TaskResultsService(BaseService[TaskResults]):
             "user_id": user_id,
             "total_attempts": total_attempts,
             "average_score": round(average_score, 2),
-            "correct_percentage": round(correct_percentage, 2),
+            "correct_percentage": correct_percentage,
             "total_score": total_score,
             "total_max_score": total_max_score,
             "completion_percentage": round(completion_percentage, 2),
