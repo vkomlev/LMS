@@ -14,6 +14,7 @@ from datetime import datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_slot import LessonSlot
@@ -247,6 +248,7 @@ async def update_lesson_slot(
     duration_minutes: Optional[int] = None,
     timezone: Optional[str] = None,
     is_active: Optional[bool] = None,
+    teacher_id: Optional[int] = None,
 ) -> LessonSlot:
     row = await get_lesson_slot(db, slot_id)
 
@@ -282,6 +284,54 @@ async def update_lesson_slot(
         row.timezone = timezone
     if is_active is not None:
         row.is_active = is_active
+
+    # tsk-437: смена основного преподавателя слота.
+    #
+    # Раньше поля не было в контракте вовсе — сменить ведущего можно было
+    # только пересозданием слота, а с ним терялись прикреплённые ученики.
+    #
+    # Будущие занятия переводим на нового: они ещё не состоялись, и вести их
+    # будет он. Прошедшие НЕ трогаем — это история, кто вёл, тот и вёл.
+    if teacher_id is not None and teacher_id != row.teacher_id:
+        await ensure_user_has_role(db, teacher_id, "teacher")
+        old_teacher_id = row.teacher_id
+        row.teacher_id = teacher_id
+        await db.flush()
+
+        await db.execute(
+            text(
+                "UPDATE lesson_occurrence SET teacher_id = :new "
+                "WHERE slot_id = :slot_id AND scheduled_at > now()"
+            ),
+            {"new": teacher_id, "slot_id": slot_id},
+        )
+        # Состав ведущих у будущих занятий: снимаем прежнего основного, если он
+        # не остался в составе слота отдельной записью, и ставим нового.
+        keeps_leading = any(
+            t.teacher_id == old_teacher_id for t in await list_slot_teachers(db, slot_id)
+        )
+        if not keeps_leading:
+            await db.execute(
+                text(
+                    """
+                    DELETE FROM lesson_occurrence_teacher lot USING lesson_occurrence o
+                    WHERE lot.occurrence_id = o.id AND lot.teacher_id = :old
+                      AND o.slot_id = :slot_id AND o.scheduled_at > now()
+                    """
+                ),
+                {"old": old_teacher_id, "slot_id": slot_id},
+            )
+        await db.execute(
+            text(
+                """
+                INSERT INTO lesson_occurrence_teacher (occurrence_id, teacher_id)
+                SELECT o.id, :new FROM lesson_occurrence o
+                WHERE o.slot_id = :slot_id AND o.scheduled_at > now()
+                ON CONFLICT DO NOTHING
+                """
+            ),
+            {"new": teacher_id, "slot_id": slot_id},
+        )
 
     await db.commit()
     await db.refresh(row)
@@ -398,7 +448,15 @@ async def add_slot_teacher(
 
 
 async def remove_slot_teacher(db: AsyncSession, slot_id: int, teacher_id: int) -> None:
-    """Убрать со-преподавателя из слота (мягко)."""
+    """Убрать со-преподавателя из слота (мягко).
+
+    tsk-437: последнего снять НЕЛЬЗЯ (409). Пустой состав генератор занятий
+    молча трактует как «ведёт основной» (`slot_teacher_ids or [slot.teacher_id]`
+    в `lesson_occurrence_generator_service`), то есть снятие выглядело бы
+    успешным, а по факту вернуло бы прежнего ведущего. Раньше эта функция
+    наружу не выставлялась и вызвать её было неоткуда; с вебом методиста —
+    можно, поэтому защита нужна.
+    """
     await get_lesson_slot(db, slot_id)
     row = await _slot_teacher_repo.get(db, slot_id=slot_id, teacher_id=teacher_id)
     if row is None or not row.is_active:
@@ -406,6 +464,15 @@ async def remove_slot_teacher(db: AsyncSession, slot_id: int, teacher_id: int) -
             f"Преподаватель id={teacher_id} не числится активным на слоте id={slot_id}",
             status_code=404,
         )
+
+    active = await list_slot_teachers(db, slot_id)
+    if len(active) <= 1:
+        raise DomainError(
+            "Нельзя снять последнего преподавателя слота — занятия останутся без "
+            "ведущего. Сначала поставьте другого.",
+            status_code=409,
+        )
+
     row.is_active = False
     await db.commit()
 

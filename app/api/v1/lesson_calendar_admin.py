@@ -2,15 +2,17 @@
 Admin API Календаря LMS (tsk-428/435): часы работы школы + групповые слоты
 расписания + их участники.
 
-Гейт: роль ``admin`` (или сервисный токен) — расписание создаётся
-централизованно оператором, не самим преподавателем/учеником (требование
-оператора, см. docs/specs/2026-07-26-plan-kalendar-lms.md).
+Гейт: роли ``methodist``/``admin`` (или сервисный токен) — расписание создаётся
+централизованно, не самим преподавателем/учеником. С tsk-437 (2026-07-31)
+расписание ведёт методист из веб-кабинета; раньше гейт был только ``admin``, и
+браузеру методиста слоты были недоступны (бот проходил сервисным ключом).
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, Response, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
@@ -30,7 +32,20 @@ from app.services import lesson_calendar_service
 
 router = APIRouter(tags=["lesson_calendar_admin"])
 
-_ADMIN_GATE = require_role("admin")
+# tsk-437 (2026-07-31): расписание ведёт МЕТОДИСТ, не админ.
+#
+# Раньше гейт был `require_role("admin")`, и веб-кабинету методиста слоты были
+# недоступны: ТГ-бот проходил мимо роли сервисным ключом (`is_service` в
+# `require_role` возвращает раньше проверки), а браузер под cookie-сессией —
+# нет. Роль admin оставлена: у неё доступ ко всему.
+#
+# Преподаватель сюда НЕ входит намеренно: слот определяет, кто и когда ведёт
+# занятие, — это распорядительное решение методиста, а не самого преподавателя.
+_SCHEDULE_GATE = require_role("methodist", "admin")
+
+#: Историческое имя. Оставлено, чтобы не переписывать 13 обработчиков разом
+#: и не смешивать смену гейта с правкой их логики.
+_ADMIN_GATE = _SCHEDULE_GATE
 _slot_student_repo = LessonSlotStudentRepository()
 
 
@@ -162,6 +177,7 @@ async def update_lesson_slot(
         duration_minutes=body.duration_minutes,
         timezone=body.timezone,
         is_active=body.is_active,
+        teacher_id=body.teacher_id,
     )
     return await _to_slot_read(db, row)
 
@@ -217,4 +233,89 @@ async def remove_slot_participant(
     _current_user: CurrentUser = Depends(_ADMIN_GATE),
 ) -> Response:
     await lesson_calendar_service.remove_slot_participant(db, slot_id, student_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# tsk-437: кто ведёт слот (состав преподавателей)
+# ---------------------------------------------------------------------------
+
+
+class SlotTeacherRead(BaseModel):
+    """Преподаватель, закреплённый за слотом."""
+
+    slot_id: int
+    teacher_id: int
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+@router.get(
+    "/lesson-slots/{slot_id}/teachers",
+    response_model=list[SlotTeacherRead],
+    summary="Кто ведёт слот",
+    description=(
+        "Состав преподавателей слота. Именно он определяет, у кого занятие "
+        "появится в кабинете; `lesson_slot.teacher_id` — основной/создатель.\n\n"
+        "Если состав пуст, генератор занятий подставляет основного."
+    ),
+)
+async def list_slot_teachers_endpoint(
+    slot_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> list[SlotTeacherRead]:
+    rows = await lesson_calendar_service.list_slot_teachers(db, slot_id)
+    return [SlotTeacherRead.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/lesson-slots/{slot_id}/teachers/{teacher_id}",
+    response_model=SlotTeacherRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Поставить преподавателя на слот",
+    description=(
+        "Идемпотентно: повторный вызов вернёт существующую запись, снятую — "
+        "поднимет обратно.\n\n"
+        "Отражается на уже созданные БУДУЩИЕ занятия слота — иначе "
+        "преподаватель не увидел бы их до следующего прогона генератора."
+    ),
+    responses={404: {"description": "Слот или преподаватель не найден"}},
+)
+async def add_slot_teacher_endpoint(
+    slot_id: int,
+    teacher_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> SlotTeacherRead:
+    row = await lesson_calendar_service.add_slot_teacher(
+        db, slot_id, teacher_id,
+        added_by=_current_user.id if not _current_user.is_service else None,
+    )
+    return SlotTeacherRead.model_validate(row)
+
+
+@router.delete(
+    "/lesson-slots/{slot_id}/teachers/{teacher_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Снять преподавателя со слота",
+    description=(
+        "Мягкое снятие. Прошедшие занятия не трогаются — кто вёл, тот и вёл; "
+        "снимается только с будущих.\n\n"
+        "**Последнего преподавателя снять нельзя** (409): слот остался бы без "
+        "ведущего, а генератор молча вернул бы основного."
+    ),
+    responses={
+        404: {"description": "Слот не найден"},
+        409: {"description": "Это последний преподаватель слота"},
+    },
+)
+async def remove_slot_teacher_endpoint(
+    slot_id: int,
+    teacher_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> Response:
+    await lesson_calendar_service.remove_slot_teacher(db, slot_id, teacher_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -77,6 +77,11 @@ class LessonSlotUpdate(BaseModel):
     duration_minutes: Optional[int] = Field(default=None, gt=0, le=480)
     timezone: Optional[str] = None
     is_active: Optional[bool] = None
+    #: tsk-437: смена основного преподавателя слота. Поля не было вовсе —
+    #: сменить ведущего можно было только пересозданием слота, а с ним
+    #: терялись прикреплённые ученики. Будущие занятия переезжают на нового,
+    #: прошедшие остаются как история.
+    teacher_id: Optional[int] = None
 
 
 class LessonSlotRead(BaseModel):

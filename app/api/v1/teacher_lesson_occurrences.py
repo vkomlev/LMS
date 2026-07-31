@@ -43,8 +43,28 @@ from app.services import lesson_occurrence_service, teacher_lesson_summary_servi
 router = APIRouter(prefix="/teacher", tags=["teacher_lesson_occurrences"])
 
 
-def _ensure_self_or_service(current_user: CurrentUser, teacher_id: int) -> None:
-    if not current_user.is_service and current_user.id != teacher_id:
+async def _ensure_self_or_service(
+    db: AsyncSession, current_user: CurrentUser, teacher_id: int
+) -> None:
+    """Свои занятия — преподавателю, любые — методисту и админу.
+
+    tsk-437 (2026-07-31): методист ведёт расписание всей школы, и занятия
+    чужого преподавателя ему нужны по работе. Роль проверяется здесь, а не
+    заменой гейта на `require_role`, потому что identity-ветка «свои занятия»
+    обязана остаться: иначе преподаватель без роли методиста потерял бы доступ
+    к собственному расписанию, а с ролью — получил бы чужое молча.
+
+    Тот же приём и та же причина, что у ростера учеников в tsk-433 Волне 3.1
+    (`/users/{teacher_id}/students`).
+    """
+    if current_user.is_service or current_user.id == teacher_id:
+        return
+
+    # Ленивый импорт: roles_service тянет модели, а роутер грузится рано.
+    from app.services import roles_service  # noqa: PLC0415
+
+    roles = set(await roles_service.get_user_role_names(db, current_user.id))
+    if roles.isdisjoint({"methodist", "admin"}):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
 
@@ -60,7 +80,7 @@ async def list_teacher_occurrences(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> list[TeacherLessonOccurrenceRead]:
-    _ensure_self_or_service(current_user, teacher_id)
+    await _ensure_self_or_service(db, current_user, teacher_id)
     threshold_minutes = Settings().lesson_no_show_threshold_minutes
     pairs = await lesson_occurrence_service.list_for_teacher(
         db,
@@ -98,7 +118,7 @@ async def get_teacher_lesson_summary(
     ``teacher_lesson_summary_service``): последнее выполненное задание/
     материал, метрики ДЗ между занятиями, заблокированные лимитом задания,
     открытые заявки помощи, серия пропусков подряд, % прогресса курса."""
-    _ensure_self_or_service(current_user, teacher_id)
+    await _ensure_self_or_service(db, current_user, teacher_id)
     threshold_minutes = Settings().lesson_no_show_threshold_minutes
     data = await teacher_lesson_summary_service.get_occurrence_summary(
         db,
@@ -122,7 +142,7 @@ async def post_teacher_attendance(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ParticipantRead:
-    _ensure_self_or_service(current_user, teacher_id)
+    await _ensure_self_or_service(db, current_user, teacher_id)
     ip = request.client.host if request.client else None
     participant = await lesson_occurrence_service.record_teacher_attendance(
         db,
@@ -145,7 +165,7 @@ async def add_student_to_schedule(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> LessonOccurrenceRead:
-    _ensure_self_or_service(current_user, body.teacher_id)
+    await _ensure_self_or_service(db, current_user, body.teacher_id)
     occurrence, _participant = await lesson_occurrence_service.create_ad_hoc_occurrence(
         db,
         student_id=body.student_id,
@@ -168,7 +188,7 @@ async def add_participant_to_occurrence(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> ParticipantRead:
-    _ensure_self_or_service(current_user, teacher_id)
+    await _ensure_self_or_service(db, current_user, teacher_id)
     participant = await lesson_occurrence_service.add_participant_to_occurrence(
         db, occurrence_id=occurrence_id, student_id=body.student_id, teacher_id=teacher_id,
     )
