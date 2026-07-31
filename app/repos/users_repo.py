@@ -64,6 +64,17 @@ class UsersRepository(BaseRepository[Users]):
         
         # Базовый запрос
         stmt = select(Users)
+        # Только действующие люди (tsk-433, аудит 2026-07-30).
+        #
+        # Слитая учётка (`merged_into_user_id IS NOT NULL`, `is_active=false`)
+        # — это не человек, а указатель на того, в кого её слили. Показывать её
+        # отдельной строкой значит рисовать дубль: именно так «дубли» и попадали
+        # в кабинет методиста, хотя автослияние (tsk-455) их уже обработало.
+        #
+        # Критерий тот же, что в `search_by_full_name_with_role` ниже
+        # (`is_active IS TRUE`): раньше поиск фильтровал, а список — нет, и один
+        # и тот же человек то был дублем, то не был, смотря как его открыть.
+        stmt = stmt.where(Users.is_active.is_(True))
         
         # Фильтр по роли через JOIN
         if role_name:
@@ -97,7 +108,7 @@ class UsersRepository(BaseRepository[Users]):
         items: List[Users] = list(result.scalars().all())
         
         # Подсчет общего количества с теми же фильтрами
-        count_stmt = select(func.count(Users.id))
+        count_stmt = select(func.count(Users.id)).where(Users.is_active.is_(True))
         if role_name:
             role_names = _role_aliases(role_name)
             count_stmt = (
