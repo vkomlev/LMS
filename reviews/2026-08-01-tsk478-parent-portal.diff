@@ -1,0 +1,152 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 42f0ba7..183deab 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -410,6 +410,10 @@ app.include_router(teacher_lesson_occurrences_router, prefix=API_PREFIX)
+ from app.api.v1.student_dashboard import router as student_dashboard_router
+ app.include_router(student_dashboard_router, prefix=API_PREFIX)
+ 
++# tsk-478 (кабинет родителя): связка родитель↔ученик
++from app.api.v1.parent_student_links import router as parent_student_links_router
++app.include_router(parent_student_links_router, prefix=API_PREFIX)
++
+ # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
+ app.include_router(media_router, prefix=API_PREFIX)
+ 
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index fa8e657..ef9686d 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -49,6 +49,7 @@ from app.schemas.me import (
+ )
+ from app.schemas.task_history import TaskHistoryResponse
+ from app.schemas.users import UserRead
++from app.services.parent_student_links_service import ParentStudentLinksService
+ from app.services.student_teacher_links_service import StudentTeacherLinksService
+ from app.services import lesson_calendar_service, me_service, roles_service, task_history_service
+ from app.services.tasks_acl_service import assert_task_access
+@@ -74,6 +75,7 @@ logger = logging.getLogger(__name__)
+ router = APIRouter(prefix="/me", tags=["me"])
+ _settings = Settings()
+ _student_teacher_links_service = StudentTeacherLinksService()
++_parent_student_links_service = ParentStudentLinksService()
+ 
+ 
+ # ── GET /me ─────────────────────────────────────────────────────────────────
+@@ -245,6 +247,27 @@ async def list_my_teachers(
+     return [UserRead.model_validate(t) for t in teachers]
+ 
+ 
++# ── GET /me/children (tsk-478, кабинет родителя) ────────────────────────────
++
++@router.get(
++    "/children",
++    response_model=list[UserRead],
++    summary="Ученики, привязанные к текущему родителю",
++    description=(
++        "Родитель узнаёт ID своего(-их) ученика(ов), чтобы запросить его "
++        "дашборд (`GET /students/{student_id}/dashboard`). Пусто, если "
++        "связок нет — не 403: роль `parent` без связки не ошибка входа, "
++        "а состояние 'пока не привязан'."
++    ),
++)
++async def list_my_children(
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> list[UserRead]:
++    children = await _parent_student_links_service.list_children(db, current_user.id)
++    return [UserRead.model_validate(c) for c in children]
++
++
+ # ── GET /me/courses/{course_id}/syllabus-states (Phase Y-6.2) ───────────────
+ 
+ @router.get(
+diff --git a/app/api/v1/student_dashboard.py b/app/api/v1/student_dashboard.py
+index 4af6535..6130ca7 100644
+--- a/app/api/v1/student_dashboard.py
++++ b/app/api/v1/student_dashboard.py
+@@ -6,10 +6,13 @@
+   итог за период, посещение, ДЗ между занятиями (см.
+   `app/services/student_dashboard_service.py`).
+ 
+-Гейт — `manual_progress_service.ensure_can_edit_progress` (тот же ACL, что у
+-`GET /teacher/students/{id}/...`-эндпоинтов: сервисный токен и
+-admin/methodist — полный доступ, teacher — только свои ученики). Родительский
+-ACL — НЕ здесь, добавляется в tsk-478 отдельным гейтом поверх того же сервиса.
++Гейт — композитная проверка (tsk-478): `manual_progress_service.can_edit_progress`
++(сервисный токен/admin/methodist — полный доступ, teacher — только свои
++ученики) ИЛИ роль `parent` со связкой в `parent_student_links` на ЭТОГО
++ученика. Родительская ветка НАМЕРЕННО не подмешана в
++`can_edit_progress` — та функция используется по всему сервису и для
++настоящего РЕДАКТИРОВАНИЯ прогресса; смешение создало бы риск скрытого
++write-доступа родителю. Композиция — только здесь, в этом роуте.
+ """
+ from __future__ import annotations
+ 
+@@ -21,9 +24,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.api.deps import get_async_db, get_current_user
+ from app.auth.current_user import CurrentUser
+ from app.schemas.student_dashboard import StudentDashboardRead
+-from app.services import manual_progress_service, student_dashboard_service
++from app.services import manual_progress_service, roles_service, student_dashboard_service
++from app.services.parent_student_links_service import ParentStudentLinksService
+ 
+ router = APIRouter(tags=["student_dashboard"])
++_parent_links_service = ParentStudentLinksService()
++
++
++async def _ensure_dashboard_access(
++    db: AsyncSession, current_user: CurrentUser, student_id: int,
++) -> None:
++    """Сервис/admin/methodist/teacher (через `can_edit_progress`) ИЛИ
++    родитель, привязанный именно к этому ученику (`parent_student_links`).
++    403 с общим текстом — не раскрывать вызывающему, какая из двух ветвей
++    сработала бы при других правах."""
++    if await manual_progress_service.can_edit_progress(db, current_user, student_id):
++        return
++    if not current_user.is_service:
++        roles = {r.lower().strip() for r in await roles_service.get_user_role_names(db, current_user.id)}
++        if "parent" in roles and await _parent_links_service.is_linked(db, current_user.id, student_id):
++            return
++    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Доступ к дашборду этого ученика запрещён")
+ 
+ 
+ @router.get(
+@@ -45,7 +66,7 @@ async def get_student_dashboard(
+     if to_dt <= from_dt:
+         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="to должен быть позже from")
+ 
+-    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
++    await _ensure_dashboard_access(db, current_user, student_id)
+ 
+     data = await student_dashboard_service.get_student_dashboard(
+         db,
+diff --git a/app/models/association_tables.py b/app/models/association_tables.py
+index 32f90b4..d2cbdc2 100644
+--- a/app/models/association_tables.py
++++ b/app/models/association_tables.py
+@@ -64,6 +64,24 @@ t_student_teacher_links = Table(
+     comment="Привязка студентов к преподавателям"
+ )
+ 
++t_parent_student_links = Table(
++    "parent_student_links",
++    Base.metadata,
++    Column("parent_id", Integer, primary_key=True, nullable=False, comment="ID родителя"),
++    Column("student_id", Integer, primary_key=True, nullable=False, comment="ID студента"),
++    Column("linked_at",  DateTime(timezone=True), server_default=text("now()"), nullable=False, comment="Когда добавлена связка"),
++    ForeignKeyConstraint(
++        ["parent_id"], ["users.id"],
++        ondelete="CASCADE", name="parent_student_links_parent_id_fkey"
++    ),
++    ForeignKeyConstraint(
++        ["student_id"], ["users.id"],
++        ondelete="CASCADE", name="parent_student_links_student_id_fkey"
++    ),
++    PrimaryKeyConstraint("parent_id", "student_id", name="parent_student_links_pkey"),
++    comment="Привязка родителей к ученикам (tsk-478, кабинет родителя)"
++)
++
+ t_course_parents = Table(
+     "course_parents",
+     Base.metadata,

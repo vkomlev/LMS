@@ -6,10 +6,13 @@
   итог за период, посещение, ДЗ между занятиями (см.
   `app/services/student_dashboard_service.py`).
 
-Гейт — `manual_progress_service.ensure_can_edit_progress` (тот же ACL, что у
-`GET /teacher/students/{id}/...`-эндпоинтов: сервисный токен и
-admin/methodist — полный доступ, teacher — только свои ученики). Родительский
-ACL — НЕ здесь, добавляется в tsk-478 отдельным гейтом поверх того же сервиса.
+Гейт — композитная проверка (tsk-478): `manual_progress_service.can_edit_progress`
+(сервисный токен/admin/methodist — полный доступ, teacher — только свои
+ученики) ИЛИ роль `parent` со связкой в `parent_student_links` на ЭТОГО
+ученика. Родительская ветка НАМЕРЕННО не подмешана в
+`can_edit_progress` — та функция используется по всему сервису и для
+настоящего РЕДАКТИРОВАНИЯ прогресса; смешение создало бы риск скрытого
+write-доступа родителю. Композиция — только здесь, в этом роуте.
 """
 from __future__ import annotations
 
@@ -21,9 +24,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
 from app.schemas.student_dashboard import StudentDashboardRead
-from app.services import manual_progress_service, student_dashboard_service
+from app.services import manual_progress_service, roles_service, student_dashboard_service
+from app.services.parent_student_links_service import ParentStudentLinksService
 
 router = APIRouter(tags=["student_dashboard"])
+_parent_links_service = ParentStudentLinksService()
+
+
+async def _ensure_dashboard_access(
+    db: AsyncSession, current_user: CurrentUser, student_id: int,
+) -> None:
+    """Сервис/admin/methodist/teacher (через `can_edit_progress`) ИЛИ
+    родитель, привязанный именно к этому ученику (`parent_student_links`).
+    403 с общим текстом — не раскрывать вызывающему, какая из двух ветвей
+    сработала бы при других правах."""
+    if await manual_progress_service.can_edit_progress(db, current_user, student_id):
+        return
+    if not current_user.is_service:
+        roles = {r.lower().strip() for r in await roles_service.get_user_role_names(db, current_user.id)}
+        if "parent" in roles and await _parent_links_service.is_linked(db, current_user.id, student_id):
+            return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Доступ к дашборду этого ученика запрещён")
 
 
 @router.get(
@@ -45,7 +66,7 @@ async def get_student_dashboard(
     if to_dt <= from_dt:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="to должен быть позже from")
 
-    await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
+    await _ensure_dashboard_access(db, current_user, student_id)
 
     data = await student_dashboard_service.get_student_dashboard(
         db,

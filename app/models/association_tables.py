@@ -64,6 +64,24 @@ t_student_teacher_links = Table(
     comment="Привязка студентов к преподавателям"
 )
 
+t_parent_student_links = Table(
+    "parent_student_links",
+    Base.metadata,
+    Column("parent_id", Integer, primary_key=True, nullable=False, comment="ID родителя"),
+    Column("student_id", Integer, primary_key=True, nullable=False, comment="ID студента"),
+    Column("linked_at",  DateTime(timezone=True), server_default=text("now()"), nullable=False, comment="Когда добавлена связка"),
+    ForeignKeyConstraint(
+        ["parent_id"], ["users.id"],
+        ondelete="CASCADE", name="parent_student_links_parent_id_fkey"
+    ),
+    ForeignKeyConstraint(
+        ["student_id"], ["users.id"],
+        ondelete="CASCADE", name="parent_student_links_student_id_fkey"
+    ),
+    PrimaryKeyConstraint("parent_id", "student_id", name="parent_student_links_pkey"),
+    comment="Привязка родителей к ученикам (tsk-478, кабинет родителя)"
+)
+
 t_course_parents = Table(
     "course_parents",
     Base.metadata,

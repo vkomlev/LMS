@@ -410,6 +410,10 @@ app.include_router(teacher_lesson_occurrences_router, prefix=API_PREFIX)
 from app.api.v1.student_dashboard import router as student_dashboard_router
 app.include_router(student_dashboard_router, prefix=API_PREFIX)
 
+# tsk-478 (кабинет родителя): связка родитель↔ученик
+from app.api.v1.parent_student_links import router as parent_student_links_router
+app.include_router(parent_student_links_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 

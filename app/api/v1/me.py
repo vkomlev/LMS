@@ -49,6 +49,7 @@ from app.schemas.me import (
 )
 from app.schemas.task_history import TaskHistoryResponse
 from app.schemas.users import UserRead
+from app.services.parent_student_links_service import ParentStudentLinksService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services import lesson_calendar_service, me_service, roles_service, task_history_service
 from app.services.tasks_acl_service import assert_task_access
@@ -74,6 +75,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/me", tags=["me"])
 _settings = Settings()
 _student_teacher_links_service = StudentTeacherLinksService()
+_parent_student_links_service = ParentStudentLinksService()
 
 
 # ── GET /me ─────────────────────────────────────────────────────────────────
@@ -243,6 +245,27 @@ async def list_my_teachers(
             if restricted:
                 return [UserRead.model_validate(t) for t in restricted]
     return [UserRead.model_validate(t) for t in teachers]
+
+
+# ── GET /me/children (tsk-478, кабинет родителя) ────────────────────────────
+
+@router.get(
+    "/children",
+    response_model=list[UserRead],
+    summary="Ученики, привязанные к текущему родителю",
+    description=(
+        "Родитель узнаёт ID своего(-их) ученика(ов), чтобы запросить его "
+        "дашборд (`GET /students/{student_id}/dashboard`). Пусто, если "
+        "связок нет — не 403: роль `parent` без связки не ошибка входа, "
+        "а состояние 'пока не привязан'."
+    ),
+)
+async def list_my_children(
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> list[UserRead]:
+    children = await _parent_student_links_service.list_children(db, current_user.id)
+    return [UserRead.model_validate(c) for c in children]
 
 
 # ── GET /me/courses/{course_id}/syllabus-states (Phase Y-6.2) ───────────────
