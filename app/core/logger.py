@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from logging.config import dictConfig
 from logging.handlers import RotatingFileHandler
 
@@ -63,6 +64,66 @@ class _WinSafeRotatingFileHandler(RotatingFileHandler):
         except PermissionError:
             # Другой процесс держит app.log открытым — пропускаем ротацию.
             pass
+
+
+class AccessLogRedactingFilter(logging.Filter):
+    """Маскирует секреты в access-логе uvicorn (tsk-496, рецидив tsk-402).
+
+    `uvicorn.access` — отдельный логгер uvicorn (`propagate=False`, свой
+    StreamHandler в stdout), который наш `dictConfig` ниже не настраивает и
+    не видит: он пишет полную request line `"GET /path?api_key=<ключ> HTTP/1.1"
+    200`, а на VPS `lms.service` перенаправляет stdout процесса в
+    `/var/log/lms/app.log` — так боевой сервисный ключ (legacy
+    `?api_key=`-авторизация ботов TG_LMS, `app/auth/service_api_key.py`)
+    десятки раз попадал в лог открытым текстом. Паттерн — тот же, что в
+    TG_LMS `src/common/logger.py::SecretRedactingFilter` (tsk-402), которая
+    закрыла зеркальную утечку на стороне httpx-клиента, НО реализация другая:
+    `uvicorn.logging.AccessFormatter.formatMessage` распаковывает
+    `record.args` как кортеж из 5 позиционных элементов
+    (`client_addr, method, full_path, http_version, status_code = record.args`)
+    — обнулить `args` и подменить только `record.msg` (как в httpx-варианте)
+    нельзя: на реальном запросе это уронет `formatMessage` с `ValueError`
+    (недостаточно значений для распаковки), и access-лог перестанет писаться
+    вовсе. Поэтому здесь редактируется КАЖДЫЙ строковый элемент `args` на
+    месте — длина и позиции кортежа не меняются.
+    """
+
+    _QUERY_KEY_RE = re.compile(r"(api_key=)[^&\s\"'<>]+", re.IGNORECASE)
+    _MASK = "***REDACTED***"
+
+    def __init__(self, secrets: tuple[str, ...] = ()) -> None:
+        super().__init__()
+        self._secrets = tuple(s for s in secrets if s)
+
+    def _redact(self, text: str) -> str:
+        text = self._QUERY_KEY_RE.sub(r"\1" + self._MASK, text)
+        for secret in self._secrets:
+            if secret in text:
+                text = text.replace(secret, self._MASK)
+        return text
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 — сигнатура logging.Filter
+        try:
+            if isinstance(record.args, tuple) and record.args:
+                new_args = tuple(
+                    self._redact(a) if isinstance(a, str) else a
+                    for a in record.args
+                )
+                if new_args != record.args:
+                    record.args = new_args
+                return True
+            # Записи без позиционных args (или с dict-style args) — редактируем
+            # уже собранный текст напрямую; на uvicorn.access этот путь не
+            # используется, но не должен молча пропускать секрет, если формат
+            # логгера когда-нибудь изменится.
+            message = record.getMessage()
+            redacted = self._redact(message)
+            if redacted != message:
+                record.msg = redacted
+                record.args = ()
+        except Exception:  # noqa: BLE001 — не роняем логирование из-за форматирования
+            return True
+        return True
 
 
 def setup_logging() -> None:
@@ -126,3 +187,12 @@ def setup_logging() -> None:
     # только WARNING+ (медленные, висящие транзакции). Override через env LOG_LEVEL_SQL.
     sql_level = os.environ.get("LMS_LOG_LEVEL_SQL", "WARNING").upper()
     logging.getLogger("sqlalchemy.engine").setLevel(sql_level)
+
+    # tsk-496: uvicorn.access — отдельный логгер (propagate=False, свой
+    # обработчик в stdout), dictConfig выше его не настраивает и не видит.
+    # На VPS lms.service перенаправляет stdout процесса в /var/log/lms/app.log —
+    # без фильтра боевой api_key (legacy ?api_key= авторизация ботов) уходит
+    # туда открытым текстом в каждой строке request line.
+    logging.getLogger("uvicorn.access").addFilter(
+        AccessLogRedactingFilter(secrets=tuple(settings.valid_api_keys))
+    )
