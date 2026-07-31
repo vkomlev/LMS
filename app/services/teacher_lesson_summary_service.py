@@ -42,11 +42,13 @@ from app.utils.task_title import humanize_task_title
 _MISSED_STREAK_LOOKBACK = 12
 
 #: Провенанс синтетических (ручных) результатов — не считаются реальной сдачей.
-_MANUAL_SOURCE = "manual_teacher"
+#: Публичная константа — переиспользуется ``student_dashboard_service`` (tsk-494).
+MANUAL_SOURCE = "manual_teacher"
 
 #: Терминальные статусы задания/материала — совпадает с критерием `done` в
 #: свёртке процента прогресса (см. `_load_course_progress_and_blocked`).
-_DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
+#: Публичная константа — переиспользуется ``student_dashboard_service`` (tsk-494).
+DONE_STATUSES = ("PASSED", "COMPLETED", "SKIPPED")
 
 _participant_repo = LessonOccurrenceParticipantRepository()
 
@@ -110,7 +112,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
                 "JOIN tasks tk ON tk.id = t.task_id "
                 "LEFT JOIN courses c ON c.id = tk.course_id"
             ),
-            {"student_id": student_id, "manual_source": _MANUAL_SOURCE},
+            {"student_id": student_id, "manual_source": MANUAL_SOURCE},
         )
     ).mappings().fetchone()
 
@@ -126,7 +128,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
                 "  AND smp.source IS DISTINCT FROM :manual_source "
                 "ORDER BY smp.completed_at DESC LIMIT 1"
             ),
-            {"student_id": student_id, "manual_source": _MANUAL_SOURCE},
+            {"student_id": student_id, "manual_source": MANUAL_SOURCE},
         )
     ).mappings().fetchone()
 
@@ -152,7 +154,7 @@ async def _load_last_activity(db: AsyncSession, *, student_id: int) -> Optional[
     return max(candidates, key=lambda c: c["timestamp"])
 
 
-async def _load_homework_window(
+async def load_homework_window(
     db: AsyncSession, *, student_id: int, window_from: Optional[datetime], window_to: datetime,
 ) -> dict[str, int]:
     """Метрики ДЗ за окно: сколько заданий сдано верно (``tasks_completed``) и
@@ -187,7 +189,7 @@ async def _load_homework_window(
             ),
             {
                 "student_id": student_id,
-                "manual_source": _MANUAL_SOURCE,
+                "manual_source": MANUAL_SOURCE,
                 "window_from": window_from,
                 "window_to": window_to,
             },
@@ -222,7 +224,7 @@ async def _load_homework_window(
             ),
             {
                 "student_id": student_id,
-                "manual_source": _MANUAL_SOURCE,
+                "manual_source": MANUAL_SOURCE,
                 "window_from": window_from,
                 "window_to": window_to,
             },
@@ -307,7 +309,7 @@ async def _load_course_progress_and_blocked(
     лимитом попыток заданий (текущий снепшот, не оконный) — всё берётся из
     уже посчитанного `get_student_progress`, без новой агрегации.
 
-    Текущая позиция — первый НЕзавершённый элемент (`_DONE_STATUSES`) в
+    Текущая позиция — первый НЕзавершённый элемент (`DONE_STATUSES`) в
     учебном порядке `items` (материалы/задания, узлы `course` пропускаются).
     Раздел — заголовок его непосредственного `parent_course_id`; если элемент
     лежит прямо в корне запрошенного курса (раздела как такового нет) или
@@ -324,7 +326,7 @@ async def _load_course_progress_and_blocked(
         )
         items = data["items"]
         countable = [i for i in items if i["item_type"] != "course"]
-        done = sum(1 for i in countable if i["status"] in _DONE_STATUSES)
+        done = sum(1 for i in countable if i["status"] in DONE_STATUSES)
         total = len(countable)
         percent = round(done / total * 100) if total else 0
 
@@ -332,7 +334,7 @@ async def _load_course_progress_and_blocked(
         current_section_title: Optional[str] = None
         current_item_title: Optional[str] = None
         for i in countable:
-            if i["status"] in _DONE_STATUSES:
+            if i["status"] in DONE_STATUSES:
                 continue
             current_item_title = i["title"]
             parent_id = i.get("parent_course_id")
@@ -396,7 +398,7 @@ async def get_occurrence_summary(
         days_since = None
         if last_activity is not None:
             days_since = max(0, (now_utc - last_activity["timestamp"]).days)
-        homework = await _load_homework_window(
+        homework = await load_homework_window(
             db, student_id=p.student_id, window_from=window_from, window_to=now_utc,
         )
         open_help, closed_help = await _load_help_requests(

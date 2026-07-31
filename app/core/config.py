@@ -189,6 +189,12 @@ class Settings:
         self.lesson_no_show_threshold_minutes: int = int(
             os.getenv("LESSON_NO_SHOW_THRESHOLD_MINUTES", "10")
         )
+        # tsk-494 (дашборд ученика): сколько последних недель считать
+        # "типичным" темпом для прогноза окончания курса (простая эвристика,
+        # не ML — план docs/specs/2026-08-01-plan-tsk494-student-dashboard-api.md).
+        self.student_forecast_pace_weeks: int = int(
+            os.getenv("STUDENT_FORECAST_PACE_WEEKS", "4")
+        )
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(
