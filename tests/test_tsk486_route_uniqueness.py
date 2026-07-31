@@ -8,6 +8,16 @@ FastAPI матчит маршруты по порядку регистрации
 Это уже третий случай в проекте: `GET /courses/{id}` (Волна 1 tsk-433),
 `GET /users/{id}` (Волна 3.1) и `GET /users/{id}/courses` (эта задача).
 
+**Затенение бывает двух видов, и второй проверка изначально пропускала.**
+
+1. *Одинаковые пути* — два обработчика на одном адресе.
+2. *Литерал под параметром* — `/roles/catalog` объявлен ПОСЛЕ `/roles/{item_id}`.
+   Строки разные, столкновения по первому виду нет, но литеральный путь всё
+   равно мёртв: параметр матчит слово «catalog», и запрос падает на разборе его
+   числом. Типизация в сигнатуре (`item_id: int`) путь НЕ сужает — она проверяет
+   значение уже ПОСЛЕ матчинга, отдавая 422. За сутки этот класс всплыл трижды:
+   `/users/{id}/courses`, `/users/duplicates`, `/roles/catalog`.
+
 **Две тонкости, без которых проверка бесполезна.**
 
 1. Сравнивать пути надо с нормализацией имени параметра. Дубль из этой задачи
@@ -49,6 +59,57 @@ def _collect() -> dict[tuple[str, str], list[str]]:
                 continue
             routes[(method, _normalize(path))].append(getattr(route, "name", "?"))
     return routes
+
+
+def _ordered_routes() -> list[tuple[int, str, str, str, object]]:
+    """Маршруты В ПОРЯДКЕ РЕГИСТРАЦИИ — именно он решает, кто победит."""
+    out = []
+    for index, route in enumerate(app.routes):
+        path = getattr(route, "path", None)
+        regex = getattr(route, "path_regex", None)
+        if not path or not path.startswith("/api/") or regex is None:
+            continue
+        for method in getattr(route, "methods", None) or []:
+            if method in ("HEAD", "OPTIONS"):
+                continue
+            out.append((index, method, path, getattr(route, "name", "?"), regex))
+    return out
+
+
+def test_literal_path_not_shadowed_by_parametric() -> None:
+    """Литеральный путь обязан регистрироваться РАНЬШЕ параметрического.
+
+    Сопоставление берём у самого FastAPI (`path_regex`), а не угадываем своими
+    правилами: проверка должна отвечать на вопрос «дойдёт ли запрос», а не на
+    вопрос «похожи ли строки».
+    """
+    routes = _ordered_routes()
+    shadowed: list[str] = []
+
+    for index, method, path, name, _regex in routes:
+        if "{" not in path:
+            concrete = path
+        else:
+            # Подставляем значение, которое подойдёт любому параметру: спор
+            # именно о том, что параметр съедает и слова тоже.
+            concrete = re.sub(r"\{[^}]+\}", "1", path)
+
+        for earlier_index, earlier_method, earlier_path, earlier_name, earlier_regex in routes:
+            if earlier_index >= index or earlier_method != method:
+                continue
+            if earlier_path == path:
+                continue  # полные дубли ловит соседняя проверка
+            if not earlier_regex.match(concrete):
+                continue
+            # Затенение generic-CRUD своим обработчиком — приём, а не дефект.
+            if name in _GENERIC_CRUD_NAMES:
+                continue
+            shadowed.append(
+                f"{method} {path} ({name}) недостижим: раньше зарегистрирован "
+                f"{earlier_path} ({earlier_name})"
+            )
+
+    assert not shadowed, "Мёртвые маршруты: " + "; ".join(shadowed)
 
 
 def test_no_two_handwritten_handlers_on_one_route() -> None:

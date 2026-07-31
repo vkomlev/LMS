@@ -8076,6 +8076,132 @@
         }
       }
     },
+    "/api/v1/tasks/search": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Поиск заданий по содержимому",
+        "description": "Поиск заданий по содержимому.\n\nПоиск выполняется по:\n- task_content.stem (формулировка вопроса)\n- task_content.title (название задания, если указано)\n- external_uid (внешний идентификатор)\n\nПоиск регистронезависимый (case-insensitive).\n\nArgs:\n    q: Поисковый запрос (минимум 2 символа)\n    course_id: Опциональный фильтр по курсу\n    limit: Максимум результатов (1-200)\n    offset: Смещение для пагинации\n\nReturns:\n    Список найденных заданий",
+        "operationId": "search_tasks_api_v1_tasks_search_get",
+        "security": [
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 2,
+              "description": "Поисковый запрос (минимум 2 символа)",
+              "title": "Q"
+            },
+            "description": "Поисковый запрос (минимум 2 символа)"
+          },
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр по курсу",
+              "title": "Course Id"
+            },
+            "description": "Фильтр по курсу"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "Максимум результатов",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Максимум результатов"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список найденных заданий",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskRead"
+                  },
+                  "title": "Response Search Tasks Api V1 Tasks Search Get"
+                },
+                "example": [
+                  {
+                    "id": 1,
+                    "external_uid": "TASK-SC-001",
+                    "task_content": {
+                      "type": "SC",
+                      "stem": "Что такое переменная в Python?",
+                      "options": [
+                        {
+                          "id": "A",
+                          "text": "Область памяти",
+                          "is_active": true
+                        }
+                      ]
+                    },
+                    "solution_rules": {
+                      "max_score": 10,
+                      "correct_options": [
+                        "A"
+                      ]
+                    },
+                    "course_id": 1,
+                    "difficulty_id": 3,
+                    "max_score": 10
+                  }
+                ]
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/{task_id}": {
       "get": {
         "tags": [
@@ -8812,132 +8938,6 @@
           },
           "404": {
             "description": "Курс не найден"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/tasks/search": {
-      "get": {
-        "tags": [
-          "tasks"
-        ],
-        "summary": "Поиск заданий по содержимому",
-        "description": "Поиск заданий по содержимому.\n\nПоиск выполняется по:\n- task_content.stem (формулировка вопроса)\n- task_content.title (название задания, если указано)\n- external_uid (внешний идентификатор)\n\nПоиск регистронезависимый (case-insensitive).\n\nArgs:\n    q: Поисковый запрос (минимум 2 символа)\n    course_id: Опциональный фильтр по курсу\n    limit: Максимум результатов (1-200)\n    offset: Смещение для пагинации\n\nReturns:\n    Список найденных заданий",
-        "operationId": "search_tasks_api_v1_tasks_search_get",
-        "security": [
-          {
-            "APIKeyQuery": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 2,
-              "description": "Поисковый запрос (минимум 2 символа)",
-              "title": "Q"
-            },
-            "description": "Поисковый запрос (минимум 2 символа)"
-          },
-          {
-            "name": "course_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Фильтр по курсу",
-              "title": "Course Id"
-            },
-            "description": "Фильтр по курсу"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "description": "Максимум результатов",
-              "default": 20,
-              "title": "Limit"
-            },
-            "description": "Максимум результатов"
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "description": "Смещение",
-              "default": 0,
-              "title": "Offset"
-            },
-            "description": "Смещение"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Список найденных заданий",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TaskRead"
-                  },
-                  "title": "Response Search Tasks Api V1 Tasks Search Get"
-                },
-                "example": [
-                  {
-                    "id": 1,
-                    "external_uid": "TASK-SC-001",
-                    "task_content": {
-                      "type": "SC",
-                      "stem": "Что такое переменная в Python?",
-                      "options": [
-                        {
-                          "id": "A",
-                          "text": "Область памяти",
-                          "is_active": true
-                        }
-                      ]
-                    },
-                    "solution_rules": {
-                      "max_score": 10,
-                      "correct_options": [
-                        "A"
-                      ]
-                    },
-                    "course_id": 1,
-                    "difficulty_id": 3,
-                    "max_score": 10
-                  }
-                ]
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
