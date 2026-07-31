@@ -3875,6 +3875,100 @@
         }
       }
     },
+    "/api/v1/roles/catalog": {
+      "get": {
+        "tags": [
+          "roles"
+        ],
+        "summary": "Справочник ролей",
+        "description": "Все роли школы — для выбора в кабинете администратора.",
+        "operationId": "list_roles_catalog_api_v1_roles_catalog_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RoleRead"
+                  },
+                  "title": "Response List Roles Catalog Api V1 Roles Catalog Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/roles/": {
       "post": {
         "tags": [
@@ -11766,6 +11860,9 @@
         "operationId": "add_user_role_api_v1_users__user_id__roles__role_id__post",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -11786,6 +11883,54 @@
             "schema": {
               "type": "integer",
               "title": "Role Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -11810,9 +11955,12 @@
           "user_roles"
         ],
         "summary": "Remove User Role",
-        "description": "Снять роль role_id с пользователя user_id.",
+        "description": "Снять роль role_id с пользователя user_id.\n\nРоль администратора снять у последнего администратора нельзя: школа\nосталась бы без человека, способного вернуть права, — та же защита, что у\nблокировки (tsk-432). Себя обезоруживать тоже не даём.",
         "operationId": "remove_user_role_api_v1_users__user_id__roles__role_id__delete",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -11834,6 +11982,54 @@
             "schema": {
               "type": "integer",
               "title": "Role Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],

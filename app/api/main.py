@@ -15,6 +15,7 @@ from app.api.v1.crud import create_crud_router, create_composite_router
 from app.api.v1.user_achievements import router as user_achievements_router
 from app.api.v1.user_courses import router as user_courses_router
 from app.api.v1.user_roles import router as user_roles_router
+from app.api.v1.user_roles import catalog_router as roles_catalog_router
 from app.api.v1.course_dependencies import router as course_dependencies_router
 from app.api.v1.access_requests import router as access_requests_router
 from app.api.v1.student_teacher_links import router as student_teacher_links_router
@@ -228,6 +229,10 @@ app.include_router(
     ),
     prefix=API_PREFIX,
 )
+
+# `/roles/catalog` объявлен ДО общего CRUD: иначе литеральный путь уйдёт в
+# `/roles/{item_id}` и упадёт на попытке прочитать «catalog» числом.
+app.include_router(roles_catalog_router, prefix=API_PREFIX)
 
 app.include_router(
     create_crud_router(
