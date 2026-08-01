@@ -26147,6 +26147,401 @@
         }
       }
     },
+    "/api/v1/students/{student_id}/access-links": {
+      "post": {
+        "tags": [
+          "parent_access_links"
+        ],
+        "summary": "Выдать родительскую ссылку на дашборд ученика",
+        "description": "Возвращает готовую ссылку и сам токен — ЕДИНСТВЕННЫЙ раз. В базе хранится только хеш: показать эту же ссылку повторно нельзя, можно лишь выпустить новую. Срока годности нет, гасится ручным отзывом.",
+        "operationId": "create_access_link_api_v1_students__student_id__access_links_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ParentAccessLinkCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAccessLinkCreatedRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "parent_access_links"
+        ],
+        "summary": "Родительские ссылки ученика",
+        "description": "История выдач, включая отозванные. Самих ссылок здесь нет — только их метки и состояние (см. описание создания).",
+        "operationId": "list_access_links_api_v1_students__student_id__access_links_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ParentAccessLinkRead"
+                  },
+                  "title": "Response List Access Links Api V1 Students  Student Id  Access Links Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/parent-access-links/{link_id}": {
+      "delete": {
+        "tags": [
+          "parent_access_links"
+        ],
+        "summary": "Отозвать родительскую ссылку",
+        "description": "Идемпотентно: повторный отзыв не ошибка, время первого сохраняется.",
+        "operationId": "revoke_access_link_api_v1_parent_access_links__link_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentAccessLinkRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/parent-dashboard/{token}": {
+      "get": {
+        "tags": [
+          "parent_access_links_public"
+        ],
+        "summary": "Дашборд ученика по родительской ссылке (без авторизации)",
+        "description": "Открывается по токену из ссылки, которую выдал оператор. Отозванный и несуществующий токен неотличимы — оба 404.",
+        "operationId": "get_dashboard_by_token_api_v1_public_parent_dashboard__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicParentDashboardRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/media/{sha_ext}": {
       "get": {
         "tags": [
@@ -34260,6 +34655,162 @@
         ],
         "title": "Page[UserRead]"
       },
+      "ParentAccessLinkCreateRequest": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "title": "ParentAccessLinkCreateRequest"
+      },
+      "ParentAccessLinkCreatedRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "token": {
+            "type": "string",
+            "title": "Token"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "created_at",
+          "is_active",
+          "token",
+          "url"
+        ],
+        "title": "ParentAccessLinkCreatedRead",
+        "description": "Ответ на создание — единственное место, где виден сам токен и ссылка."
+      },
+      "ParentAccessLinkRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "created_at",
+          "is_active"
+        ],
+        "title": "ParentAccessLinkRead"
+      },
       "ParentCourseWithOrder": {
         "properties": {
           "parent_course_id": {
@@ -34928,6 +35479,67 @@
         ],
         "title": "ProgressTreeResponse",
         "description": "Прогресс ученика по дереву курса + список доступных курсов для селектора."
+      },
+      "PublicParentDashboardRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "period_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period From"
+          },
+          "period_to": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Period To"
+          },
+          "courses": {
+            "items": {
+              "$ref": "#/components/schemas/StudentDashboardCourseRead"
+            },
+            "type": "array",
+            "title": "Courses"
+          },
+          "period_total": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "in_class_hours": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "between_lessons": {
+            "$ref": "#/components/schemas/StudentDashboardMetricsRead"
+          },
+          "attendance": {
+            "$ref": "#/components/schemas/StudentDashboardAttendanceRead"
+          },
+          "student_full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Full Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "period_from",
+          "period_to",
+          "courses",
+          "period_total",
+          "in_class_hours",
+          "between_lessons",
+          "attendance"
+        ],
+        "title": "PublicParentDashboardRead",
+        "description": "Дашборд, открытый по ссылке. Тот же состав, что у привилегированных\nзрителей (контракт tsk-494 — без `solution_rules` и текста заявок помощи),\nплюс имя ученика: родитель по ссылке не имеет профиля и иначе не увидел\nбы, чей это дашборд."
       },
       "QuizRules": {
         "properties": {

@@ -41,4 +41,5 @@ import app.models.lesson_occurrence
 import app.models.lesson_occurrence_participant
 import app.models.lesson_occurrence_teacher
 import app.models.attendance_event
+import app.models.parent_access_link
 

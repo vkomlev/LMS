@@ -414,6 +414,14 @@ app.include_router(student_dashboard_router, prefix=API_PREFIX)
 from app.api.v1.parent_student_links import router as parent_student_links_router
 app.include_router(parent_student_links_router, prefix=API_PREFIX)
 
+# tsk-498 (родительская ссылка без регистрации): выдача/отзыв + публичный дашборд
+from app.api.v1.parent_access_links import (
+    public_router as parent_access_links_public_router,
+    router as parent_access_links_router,
+)
+app.include_router(parent_access_links_router, prefix=API_PREFIX)
+app.include_router(parent_access_links_public_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 

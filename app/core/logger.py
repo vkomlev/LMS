@@ -89,6 +89,13 @@ class AccessLogRedactingFilter(logging.Filter):
     """
 
     _QUERY_KEY_RE = re.compile(r"(api_key=)[^&\s\"'<>]+", re.IGNORECASE)
+    #: tsk-498: родительская ссылка несёт токен в ПУТИ, а не в query — под
+    #: `_QUERY_KEY_RE` он не попадает. Для magic-link такой лог был почти
+    #: безобиден (токен одноразовый, живёт 15 минут), здесь наоборот: ссылка
+    #: бессрочная и многоразовая, поэтому строка в `/var/log/lms/app.log` —
+    #: это рабочий пропуск к данным ученика навсегда, для любого, у кого есть
+    #: доступ к логам.
+    _PATH_TOKEN_RE = re.compile(r"(/public/parent-dashboard/)[^/\s?\"'<>]+", re.IGNORECASE)
     _MASK = "***REDACTED***"
 
     def __init__(self, secrets: tuple[str, ...] = ()) -> None:
@@ -97,6 +104,7 @@ class AccessLogRedactingFilter(logging.Filter):
 
     def _redact(self, text: str) -> str:
         text = self._QUERY_KEY_RE.sub(r"\1" + self._MASK, text)
+        text = self._PATH_TOKEN_RE.sub(r"\1" + self._MASK, text)
         for secret in self._secrets:
             if secret in text:
                 text = text.replace(secret, self._MASK)

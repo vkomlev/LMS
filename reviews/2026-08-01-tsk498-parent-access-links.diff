@@ -1,0 +1,55 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 183deab..cad7ece 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -414,6 +414,14 @@ app.include_router(student_dashboard_router, prefix=API_PREFIX)
+ from app.api.v1.parent_student_links import router as parent_student_links_router
+ app.include_router(parent_student_links_router, prefix=API_PREFIX)
+ 
++# tsk-498 (родительская ссылка без регистрации): выдача/отзыв + публичный дашборд
++from app.api.v1.parent_access_links import (
++    public_router as parent_access_links_public_router,
++    router as parent_access_links_router,
++)
++app.include_router(parent_access_links_router, prefix=API_PREFIX)
++app.include_router(parent_access_links_public_router, prefix=API_PREFIX)
++
+ # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
+ app.include_router(media_router, prefix=API_PREFIX)
+ 
+diff --git a/app/core/logger.py b/app/core/logger.py
+index 6ae65c2..9175064 100644
+--- a/app/core/logger.py
++++ b/app/core/logger.py
+@@ -89,6 +89,13 @@ class AccessLogRedactingFilter(logging.Filter):
+     """
+ 
+     _QUERY_KEY_RE = re.compile(r"(api_key=)[^&\s\"'<>]+", re.IGNORECASE)
++    #: tsk-498: родительская ссылка несёт токен в ПУТИ, а не в query — под
++    #: `_QUERY_KEY_RE` он не попадает. Для magic-link такой лог был почти
++    #: безобиден (токен одноразовый, живёт 15 минут), здесь наоборот: ссылка
++    #: бессрочная и многоразовая, поэтому строка в `/var/log/lms/app.log` —
++    #: это рабочий пропуск к данным ученика навсегда, для любого, у кого есть
++    #: доступ к логам.
++    _PATH_TOKEN_RE = re.compile(r"(/public/parent-dashboard/)[^/\s?\"'<>]+", re.IGNORECASE)
+     _MASK = "***REDACTED***"
+ 
+     def __init__(self, secrets: tuple[str, ...] = ()) -> None:
+@@ -97,6 +104,7 @@ class AccessLogRedactingFilter(logging.Filter):
+ 
+     def _redact(self, text: str) -> str:
+         text = self._QUERY_KEY_RE.sub(r"\1" + self._MASK, text)
++        text = self._PATH_TOKEN_RE.sub(r"\1" + self._MASK, text)
+         for secret in self._secrets:
+             if secret in text:
+                 text = text.replace(secret, self._MASK)
+diff --git a/app/db/base.py b/app/db/base.py
+index c3839a1..92ddbee 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -41,4 +41,5 @@ import app.models.lesson_occurrence
+ import app.models.lesson_occurrence_participant
+ import app.models.lesson_occurrence_teacher
+ import app.models.attendance_event
++import app.models.parent_access_link
+ 
