@@ -28,6 +28,7 @@ __all__ = [
     "recalculate_student_group",
     "recalculate_month",
     "recalculate_for_student",
+    "recalculate_open_months_for_student",
     "list_charges",
     "set_manual_amount",
     "clear_manual_amount",
@@ -171,6 +172,18 @@ async def recalculate_student_group(
     period = month_start(period)
     base = await _base_price_minor(db, student_id=student_id, group_id=group_id)
     if base is None:
+        # Считать больше не из чего (сняли ручную цену, курс перестал продаваться).
+        # Открытую строку убираем: иначе она замрёт со старой суммой и останется
+        # призрачным начислением, которое никто уже не пересчитает. Закрытые
+        # месяцы не трогаем — это история, а не текущее состояние.
+        await db.execute(
+            text(
+                "DELETE FROM student_monthly_charge "
+                "WHERE student_id = :s AND group_id = :g AND period = :p "
+                "  AND status = 'open'"
+            ),
+            {"s": student_id, "g": group_id, "p": period},
+        )
         return None
 
     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
@@ -330,6 +343,30 @@ async def _ensure_charge_row(
 def next_month(period: date) -> date:
     """Следующий месяц — точка переноса поправок."""
     return date(period.year + (period.month // 12), (period.month % 12) + 1, 1)
+
+
+async def recalculate_open_months_for_student(
+    db: AsyncSession, *, student_id: int
+) -> None:
+    """Пересчитать ученику ВСЕ открытые месяцы, а не только текущий.
+
+    Ручная цена действует бессрочно, поэтому её снятие обесценивает каждый
+    незакрытый месяц. Пересчёт одного текущего оставил бы в остальных
+    призрачные суммы, которые уже никто не тронет.
+    """
+    periods = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT period FROM student_monthly_charge "
+                "WHERE student_id = :s AND status = 'open'"
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    targets = {row.period for row in periods}
+    targets.add(month_start(date.today()))
+    for target in sorted(targets):
+        await recalculate_for_student(db, student_id=student_id, period=target)
 
 
 async def recalculate_for_student(

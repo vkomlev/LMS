@@ -502,3 +502,46 @@ def test_prorate_rounds_in_favour_of_student():
 def test_next_month_crosses_year():
     assert charge_service.next_month(date(2026, 12, 1)) == date(2027, 1, 1)
     assert charge_service.next_month(date(2026, 1, 1)) == date(2026, 2, 1)
+
+
+async def test_clearing_manual_price_removes_ghost_charge(db, client):
+    """Снятие ручной цены не оставляет призрачное начисление.
+
+    У ученика без расписания считать больше не из чего. Раньше строка месяца
+    замирала со старой суммой и оставалась в списке навсегда — это нашлось
+    живым прогоном на проде.
+    """
+    _, token = await _new_user(db, role="marketer", name="m-ghost")
+    student_id, _ = await _new_user(db, role="student", name="s-ghost")
+    # Частотная сетка, как в боевой группе «Базовый»: без расписания расчёт
+    # ничего не даёт, и цена может взяться только из ручной.
+    group_id = await _new_group(
+        db,
+        "ghost",
+        [
+            ("2 раза", 550000, "attendance_frequency", "2"),
+            ("1 раз", 275000, "attendance_frequency", "1"),
+        ],
+    )
+    course_id = await _new_course(db, "ghost")
+    await _price_course(db, course_id=course_id, group_id=group_id)
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    # Расписания намеренно нет — цена может взяться только из ручной.
+
+    await client.put(
+        "/api/v1/marketer/price-overrides",
+        json={"student_id": student_id, "group_id": group_id, "price_minor": 400000},
+        headers=_auth(token),
+    )
+    await charge_service.recalculate_month(db, period=PERIOD)
+    assert (await _charge(client, token, student_id))["total_minor"] == 400000
+
+    resp = await client.delete(
+        f"/api/v1/marketer/price-overrides/{student_id}/{group_id}",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 204
+
+    assert await _charge(client, token, student_id) is None, (
+        "начисление без основания должно исчезнуть, а не замереть со старой суммой"
+    )

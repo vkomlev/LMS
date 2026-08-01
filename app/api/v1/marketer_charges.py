@@ -192,7 +192,9 @@ async def set_override(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "Тарифная группа не найдена"
         ) from exc
-    await charge_service.recalculate_for_student(db, student_id=body.student_id)
+    await charge_service.recalculate_open_months_for_student(
+        db, student_id=body.student_id
+    )
     rows = await charge_service.list_overrides(db)
     return [PriceOverrideRead(**r) for r in rows]
 
@@ -213,7 +215,9 @@ async def clear_override(
         db, student_id=student_id, group_id=group_id
     ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ручная цена не найдена")
-    await charge_service.recalculate_for_student(db, student_id=student_id)
+    await charge_service.recalculate_open_months_for_student(
+        db, student_id=student_id
+    )
 
 
 async def _reload_charge(db: AsyncSession, charge_id: int) -> ChargeRead:
