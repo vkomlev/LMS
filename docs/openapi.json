@@ -30243,6 +30243,222 @@
         }
       }
     },
+    "/api/v1/me/payments/gateway-status": {
+      "get": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Доступна ли оплата картой",
+        "description": "Кабинет спрашивает до показа кнопки: способ может быть не настроен.",
+        "operationId": "gateway_status_api_v1_me_payments_gateway_status_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Gateway Status Api V1 Me Payments Gateway Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/payments/gateway": {
+      "post": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Оплатить картой",
+        "description": "Заводит платёж в платёжном сервисе и возвращает ссылку, по которой плательщик вводит данные карты. Деньги зачисляются не здесь, а по уведомлению от сервиса.",
+        "operationId": "start_gateway_payment_api_v1_me_payments_gateway_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayPaymentStart"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/yookassa/webhook": {
+      "post": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Уведомление платёжного сервиса",
+        "description": "Открытый адрес: сервис стучится без нашей сессии. Телу уведомления не верим — статус платежа перезапрашивается у сервиса.",
+        "operationId": "yookassa_webhook_api_v1_payments_yookassa_webhook_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Yookassa Webhook Api V1 Payments Yookassa Webhook Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/breaks": {
       "get": {
         "tags": [
@@ -34639,6 +34855,35 @@
         ],
         "title": "EscalationListResponse",
         "description": "Ответ /escalations/pending."
+      },
+      "GatewayPaymentStart": {
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "title": "Payment Id"
+          },
+          "confirmation_url": {
+            "type": "string",
+            "title": "Confirmation Url"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "test_mode": {
+            "type": "boolean",
+            "title": "Test Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "payment_id",
+          "confirmation_url",
+          "amount_minor",
+          "test_mode"
+        ],
+        "title": "GatewayPaymentStart",
+        "description": "Куда отправить плательщика вводить данные карты."
       },
       "GuestAttemptCreateRequest": {
         "properties": {
@@ -40106,6 +40351,32 @@
         ],
         "title": "PaymentRead",
         "description": "Платёж глазами кабинета маркетолога."
+      },
+      "PaymentStartRequest": {
+        "properties": {
+          "charge_id": {
+            "type": "integer",
+            "title": "Charge Id"
+          },
+          "amount_minor": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Minor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "charge_id"
+        ],
+        "title": "PaymentStartRequest",
+        "description": "Запрос на оплату картой.\n\nСумму можно не указывать — тогда платим весь остаток по месяцу; это самый\nчастый случай, и лишнее поле в форме только повод ошибиться."
       },
       "PenaltiesRules": {
         "properties": {

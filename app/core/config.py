@@ -52,6 +52,21 @@ class Settings:
         self.payment_due_day: int = int(os.getenv("PAYMENT_DUE_DAY", "5"))
         self.payment_grace_days: int = int(os.getenv("PAYMENT_GRACE_DAYS", "7"))
 
+        # tsk-010: оплата картой через ЮKassa. Пусто — способ выключен, кабинет
+        # показывает только загрузку чека.
+        self.yookassa_shop_id: str = os.getenv("YOOKASSA_SHOP_ID", "")
+        self.yookassa_secret_key: str = os.getenv("YOOKASSA_SECRET_KEY", "")
+        # Предохранитель против боевых платежей на этапе разработки: ключ
+        # тестового магазина начинается с `test_`. Боевой ключ принимается
+        # только при явном YOOKASSA_ALLOW_LIVE=true — то есть случайно
+        # настоящие деньги не спишутся, даже если ключ перепутали местами.
+        self.yookassa_allow_live: bool = (
+            os.getenv("YOOKASSA_ALLOW_LIVE", "false").lower() in ("true", "1", "yes")
+        )
+        self.yookassa_api_url: str = os.getenv(
+            "YOOKASSA_API_URL", "https://api.yookassa.ru/v3"
+        )
+
         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
         self.materials_upload_dir: Path = Path(
             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")

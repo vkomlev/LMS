@@ -84,6 +84,27 @@ class StudentChargeRead(BaseModel):
     payments: list[StudentPaymentRead] = Field(default_factory=list)
 
 
+class PaymentStartRequest(BaseModel):
+    """Запрос на оплату картой.
+
+    Сумму можно не указывать — тогда платим весь остаток по месяцу; это самый
+    частый случай, и лишнее поле в форме только повод ошибиться.
+    """
+
+    charge_id: int
+    amount_minor: Optional[int] = Field(default=None, gt=0)
+
+
+class GatewayPaymentStart(BaseModel):
+    """Куда отправить плательщика вводить данные карты."""
+
+    payment_id: str
+    confirmation_url: str
+    amount_minor: int
+    #: Платёж тестовый — деньги не спишутся. Показываем честно, а не прячем.
+    test_mode: bool
+
+
 class PaymentDecisionRequest(BaseModel):
     """Решение маркетолога по платежу."""
 

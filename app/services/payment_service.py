@@ -36,6 +36,8 @@ __all__ = [
     "charge_for_student",
     "list_student_charges",
     "create_manual_payment",
+    "record_gateway_payment",
+    "charge_by_id",
     "list_payments",
     "confirm_payment",
     "reject_payment",
@@ -357,6 +359,87 @@ async def create_manual_payment(
         submitted_by,
     )
     return int(row.id)
+
+
+async def record_gateway_payment(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    group_id: int,
+    period: date,
+    amount_minor: int,
+    gateway: str,
+    gateway_payment_id: str,
+    paid_on: Optional[date],
+) -> bool:
+    """Зачесть платёж, пришедший от шлюза. `True` — записали, `False` — уже был.
+
+    Сразу `confirmed`: деньги на счёте, подтверждать маркетологу нечего. Автор
+    решения — не человек, поэтому `reviewed_by` пуст, а `reviewed_at` заполнен
+    (без него строка не пройдёт проверку «решение всегда со следом»).
+
+    Идемпотентность держится на уникальном индексе по паре «шлюз + номер
+    транзакции», а не на проверке в коде: повторная доставка уведомления —
+    обычное дело, и две одновременные доставки не должны разойтись в гонке.
+    """
+    res = await db.execute(
+        text(
+            """
+            INSERT INTO student_payment
+                   (student_id, group_id, period, amount_minor, method,
+                    gateway, gateway_payment_id, paid_on,
+                    status, reviewed_at, review_note)
+            VALUES (:s, :g, :p, :amt, 'gateway',
+                    :gw, :txn, :paid_on,
+                    'confirmed', now(), 'Оплата картой, подтверждена шлюзом')
+            ON CONFLICT (gateway, gateway_payment_id)
+                WHERE gateway_payment_id IS NOT NULL
+            DO NOTHING
+            RETURNING id
+            """
+        ),
+        {
+            "s": student_id,
+            "g": group_id,
+            "p": period,
+            "amt": amount_minor,
+            "gw": gateway,
+            "txn": gateway_payment_id,
+            "paid_on": paid_on,
+        },
+    )
+    row = res.first()
+    await db.commit()
+    if row is None:
+        logger.info(
+            "tsk-010: повторное уведомление по транзакции %s/%s — платёж уже учтён",
+            gateway,
+            gateway_payment_id,
+        )
+        return False
+    logger.info(
+        "tsk-010: платёж картой %s зачтён ученику %s за %s на %s коп. (транзакция %s)",
+        row.id,
+        student_id,
+        period,
+        amount_minor,
+        gateway_payment_id,
+    )
+    return True
+
+
+async def charge_by_id(db: AsyncSession, *, charge_id: int) -> Optional[dict]:
+    """Начисление по номеру — для сверки данных, пришедших от шлюза."""
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, student_id, group_id, period, status "
+                "  FROM student_monthly_charge WHERE id = :id"
+            ),
+            {"id": charge_id},
+        )
+    ).first()
+    return dict(row._mapping) if row is not None else None
 
 
 async def list_payments(

@@ -441,6 +441,12 @@ app.include_router(me_payments_router, prefix=API_PREFIX)
 from app.api.v1.marketer_payments import router as marketer_payments_router
 app.include_router(marketer_payments_router, prefix=API_PREFIX)
 
+# tsk-010: оплата картой и приём уведомлений от платёжного сервиса.
+# Адрес уведомлений открыт (сервис стучится без нашей сессии) — защита в том,
+# что зачисление идёт только по перезапросу платежа у самого сервиса.
+from app.api.v1.payments_gateway import router as payments_gateway_router
+app.include_router(payments_gateway_router, prefix=API_PREFIX)
+
 # tsk-513 (кабинет методиста): перерывы ученика — гасят занятия и влияют на цену
 from app.api.v1.methodist_breaks import router as methodist_breaks_router
 app.include_router(methodist_breaks_router, prefix=API_PREFIX)
