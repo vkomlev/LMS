@@ -10,6 +10,7 @@ audit_event 'email.failed' и продолжает.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Optional
 
 import httpx
@@ -117,4 +118,91 @@ async def send_sa_com_graded(
             "Исключение при отправке SA_COM graded email для %s: %s",
             recipient_email, e,
         )
+        return False
+
+
+# --- tsk-010: напоминание о просроченной оплате -----------------------------
+
+
+def _render_overdue_html(
+    *,
+    full_name: Optional[str],
+    period: date,
+    group_name: str,
+    due_minor: int,
+    payments_url: str,
+) -> str:
+    """Письмо о долге.
+
+    Тон намеренно спокойный: человек мог просто забыть, а не отказаться платить.
+    Никаких угроз доступом — по решению оператора доступ за неоплату не
+    закрывается, и письмо не должно обещать того, чего система не делает.
+    """
+    greeting = f"Здравствуйте, {full_name}!" if full_name else "Здравствуйте!"
+    amount = f"{due_minor // 100} ₽" if due_minor % 100 == 0 else f"{due_minor / 100:.2f} ₽"
+    return (
+        f"<p>{greeting}</p>"
+        f"<p>Напоминаем про оплату обучения за {period:%m.%Y} "
+        f"(направление «{group_name}»).</p>"
+        f"<p><strong>Осталось оплатить: {amount}</strong></p>"
+        f"<p>Оплатить картой или приложить чек можно в личном кабинете:</p>"
+        f'<p><a href="{payments_url}">{payments_url}</a></p>'
+        f"<p>Если вы уже оплатили — спасибо, письмо можно не читать: "
+        f"оплата отражается в кабинете после подтверждения.</p>"
+    )
+
+
+async def send_payment_overdue(
+    *,
+    recipient_email: str,
+    full_name: Optional[str],
+    period: date,
+    group_name: str,
+    due_minor: int,
+    settings: Settings,
+) -> bool:
+    """Отправить напоминание о долге. Как и остальные письма — best-effort.
+
+    `False` вместо исключения: неудачная отправка одному человеку не должна
+    обрывать рассылку остальным.
+    """
+    if not settings.resend_api_key:
+        logger.warning(
+            "RESEND_API_KEY не задан — напоминание об оплате не отправлено для %s",
+            recipient_email,
+        )
+        return False
+    payments_url = f"{settings.public_base_url.rstrip('/')}/me/payments"
+    html = _render_overdue_html(
+        full_name=full_name,
+        period=period,
+        group_name=group_name,
+        due_minor=due_minor,
+        payments_url=payments_url,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                _RESEND_API_URL,
+                headers={
+                    "Authorization": f"Bearer {settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": settings.smtp_from,
+                    "to": [recipient_email],
+                    "subject": f"Оплата обучения за {period:%m.%Y}",
+                    "html": html,
+                },
+            )
+        if resp.status_code >= 400:
+            logger.error(
+                "Resend API error %s при отправке напоминания об оплате: %s",
+                resp.status_code,
+                resp.text[:300],
+            )
+            return False
+        return True
+    except (httpx.HTTPError, httpx.TimeoutException) as e:
+        logger.exception("Исключение при отправке напоминания об оплате: %s", e)
         return False

@@ -20,7 +20,7 @@ from app.schemas.payment import (
     PaymentRead,
     PaymentStatus,
 )
-from app.services import payment_service, yookassa_service
+from app.services import payment_reminder_service, payment_service, yookassa_service
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -147,6 +147,65 @@ async def export(
         db, date_from=date_from, date_to=date_to
     )
     return [PaymentExportRow(**r) for r in rows]
+
+
+@router.get(
+    "/payments/reminders",
+    summary="Кому уйдёт напоминание о просрочке",
+    description=(
+        "Предпросмотр перед отправкой: кто просрочил, кому уже писали на этой "
+        "неделе и кому написать некуда — у того нет почты."
+    ),
+)
+async def reminders_preview(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> dict:
+    debtors = await payment_reminder_service.list_overdue(db)
+    return {
+        "total": len(debtors),
+        "will_send": [
+            _debtor_view(d) for d in debtors if d.email and not d.reminded_recently
+        ],
+        "already_reminded": [
+            _debtor_view(d) for d in debtors if d.email and d.reminded_recently
+        ],
+        # Этим письмо не уйдёт — с ними нужно связаться самому.
+        "without_email": [_debtor_view(d) for d in debtors if not d.email],
+    }
+
+
+@router.post(
+    "/payments/reminders/send",
+    summary="Отправить напоминания о просрочке",
+    description=(
+        "Письма уходят только тем, кому на этой неделе ещё не писали. "
+        "Ученикам без почты не уходит ничего — они возвращаются списком."
+    ),
+)
+async def reminders_send(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> dict:
+    run = await payment_reminder_service.send_reminders(db, sent_by=current_user.id)
+    return {
+        "sent": run.sent,
+        "failed": run.failed,
+        "skipped_recent": run.skipped_recent,
+        "without_email": run.without_email,
+    }
+
+
+def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
+    return {
+        "student_id": debtor.student_id,
+        "full_name": debtor.full_name,
+        "period": debtor.period.isoformat(),
+        "group_name": debtor.group_name,
+        "due_minor": debtor.due_minor,
+        # Сам адрес не отдаём: на экране он не нужен, а в логах браузера лишний.
+        "has_email": debtor.email is not None,
+    }
 
 
 @router.post(
