@@ -247,6 +247,69 @@ async def test_payment_start_returns_link_and_test_flag(db, client, monkeypatch,
     assert captured["metadata"]["charge_id"] == str(charge_id)
 
 
+async def test_reconcile_picks_up_lost_payment(db, client, monkeypatch, gateway_on):
+    """Сверка добирает платёж, о котором уведомление не дошло.
+
+    Это не гипотетический случай: на живой проверке уведомления не были
+    настроены в кабинете шлюза, деньги ушли, а в кабинете висел долг.
+    """
+    env = await _setup(db, "gw-recon", price=550000)
+    await _recalc(db, student_id=env["student_id"])
+    charge_id = await _charge_id(db, student_id=env["student_id"])
+
+    lost = _gateway_payment(payment_id="lost-1", charge_id=charge_id,
+                            student_id=env["student_id"])
+    orphan = _gateway_payment(payment_id="orphan-1", charge_id=10**7,
+                              student_id=env["student_id"])
+
+    async def fake_list(**kwargs) -> list[GatewayPayment]:
+        return [lost, orphan]
+
+    monkeypatch.setattr(yookassa_service, "list_succeeded", fake_list)
+
+    today = date.today().isoformat()
+    first = await client.post(
+        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
+        headers=_auth(env["token"]),
+    )
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["added"] == 1
+    # Платёж, которому не нашлось начисления, назван поимённо — молчать о
+    # деньгах, которые некуда положить, нельзя.
+    assert body["without_charge"] == ["orphan-1"]
+
+    # Повторная сверка ничего не задваивает.
+    second = await client.post(
+        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
+        headers=_auth(env["token"]),
+    )
+    assert second.json()["added"] == 0
+
+    rows = (
+        await db.execute(
+            text("SELECT count(*) AS n, sum(amount_minor) AS total FROM student_payment "
+                 "WHERE student_id = :s"),
+            {"s": env["student_id"]},
+        )
+    ).one()
+    assert rows.n == 1
+    assert rows.total == 550000
+
+
+async def test_reconcile_is_closed_for_students(db, client, gateway_on):
+    """Сверка — инструмент маркетолога, ученику она недоступна."""
+    env = await _setup(db, "gw-recon-gate", price=550000)
+    _, token = await _login_as(db, env["student_id"])
+    today = date.today().isoformat()
+
+    resp = await client.post(
+        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 403
+
+
 def test_amount_conversion_has_no_float_drift():
     """Рубли шлюза переводятся в копейки без плавающей точки."""
     parsed = yookassa_service._parse(

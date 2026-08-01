@@ -20,7 +20,7 @@ from app.schemas.payment import (
     PaymentRead,
     PaymentStatus,
 )
-from app.services import payment_service
+from app.services import payment_service, yookassa_service
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -147,6 +147,80 @@ async def export(
         db, date_from=date_from, date_to=date_to
     )
     return [PaymentExportRow(**r) for r in rows]
+
+
+@router.post(
+    "/payments/reconcile",
+    summary="Сверить оплаты картой со шлюзом",
+    description=(
+        "Берёт успешные платежи платёжного сервиса за период и дозакрывает те, "
+        "что у нас не учтены. Нужна, когда уведомление не дошло: деньги списаны, "
+        "а в кабинете висит долг."
+    ),
+)
+async def reconcile(
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_payments_gate),
+) -> dict:
+    if date_to < date_from:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Конец периода раньше начала"
+        )
+    try:
+        payments = await yookassa_service.list_succeeded(
+            created_from=date_from, created_to=date_to
+        )
+    except yookassa_service.GatewayDisabledError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except yookassa_service.GatewayError as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не ответил"
+        ) from exc
+
+    added = 0
+    skipped_no_charge: list[str] = []
+    for payment in payments:
+        if not payment.paid:
+            continue
+        charge_id = payment.metadata.get("charge_id")
+        charge = (
+            await payment_service.charge_by_id(db, charge_id=int(charge_id))
+            if str(charge_id or "").isdigit()
+            else None
+        )
+        if charge is None:
+            # Платёж есть, а начисления нет — молча пропускать нельзя: это
+            # деньги, которые некуда положить, и человек должен о них узнать.
+            skipped_no_charge.append(payment.id)
+            continue
+        if await payment_service.record_gateway_payment(
+            db,
+            student_id=charge["student_id"],
+            group_id=charge["group_id"],
+            period=charge["period"],
+            amount_minor=payment.amount_minor,
+            gateway="yookassa",
+            gateway_payment_id=payment.id,
+            paid_on=date_from if date_from == date_to else None,
+        ):
+            added += 1
+
+    logger.info(
+        "tsk-010: сверка за %s—%s: у шлюза %s, дозакрыто %s, без начисления %s",
+        date_from,
+        date_to,
+        len(payments),
+        added,
+        len(skipped_no_charge),
+    )
+    return {
+        "checked": len(payments),
+        "added": added,
+        "already_recorded": len(payments) - added - len(skipped_no_charge),
+        "without_charge": skipped_no_charge,
+    }
 
 
 async def _reload(db: AsyncSession, payment_id: int) -> PaymentRead:

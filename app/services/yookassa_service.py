@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Optional
 
 import httpx
@@ -35,6 +36,7 @@ __all__ = [
     "is_test_mode",
     "create_payment",
     "fetch_payment",
+    "list_succeeded",
 ]
 
 #: Ключ тестового магазина. Всё остальное считаем боевым.
@@ -148,6 +150,49 @@ async def create_payment(
         logger.error("tsk-010: ЮKassa вернула %s на создание платежа", resp.status_code)
         raise GatewayError(f"шлюз отказал: HTTP {resp.status_code}")
     return _parse(resp.json())
+
+
+async def list_succeeded(
+    *, created_from: date, created_to: date, limit: int = 100
+) -> list[GatewayPayment]:
+    """Успешные платежи шлюза за период — основа сверки.
+
+    Нужна потому, что уведомление может не дойти: не настроено, не достучалось,
+    наш сервер перезагружался. Тогда деньги списаны, а у нас долг. Сверка
+    смотрит на шлюз как на источник правды и добирает пропущенное.
+    """
+    shop_id, secret = _guard()
+    params = {
+        "status": "succeeded",
+        "created_at.gte": f"{created_from.isoformat()}T00:00:00.000Z",
+        "created_at.lte": f"{created_to.isoformat()}T23:59:59.999Z",
+        "limit": min(limit, 100),
+    }
+    collected: list[GatewayPayment] = []
+    cursor: Optional[str] = None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            # Пагинация курсором: без неё сверка молча ограничилась бы первой
+            # сотней платежей и «не нашла» как раз старые потерянные.
+            while True:
+                query = dict(params)
+                if cursor:
+                    query["cursor"] = cursor
+                resp = await client.get(
+                    f"{settings.yookassa_api_url}/payments",
+                    params=query,
+                    auth=(shop_id, secret),
+                )
+                if resp.status_code >= 400:
+                    raise GatewayError(f"шлюз отказал: HTTP {resp.status_code}")
+                data = resp.json()
+                collected.extend(_parse(item) for item in data.get("items", []))
+                cursor = data.get("next_cursor")
+                if not cursor or len(collected) >= limit:
+                    break
+    except httpx.HTTPError as exc:
+        raise GatewayError(f"шлюз недоступен: {exc}") from exc
+    return collected
 
 
 async def fetch_payment(payment_id: str) -> GatewayPayment:
