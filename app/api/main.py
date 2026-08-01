@@ -430,6 +430,14 @@ app.include_router(marketer_pricing_router, prefix=API_PREFIX)
 from app.api.v1.marketer_leads import router as marketer_leads_router
 app.include_router(marketer_leads_router, prefix=API_PREFIX)
 
+# tsk-511/512 (кабинет маркетолога): помесячные начисления и ручная цена ученика
+from app.api.v1.marketer_charges import router as marketer_charges_router
+app.include_router(marketer_charges_router, prefix=API_PREFIX)
+
+# tsk-513 (кабинет методиста): перерывы ученика — гасят занятия и влияют на цену
+from app.api.v1.methodist_breaks import router as methodist_breaks_router
+app.include_router(methodist_breaks_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 
