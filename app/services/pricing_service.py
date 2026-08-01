@@ -1,0 +1,474 @@
+"""Тарифы курсов и расчёт цены ученика (tsk-505).
+
+Почему цена считается так, а не «цена у курса»: календарь LMS не знает о курсах
+(ни `lesson_slot`, ни `lesson_occurrence` не имеют `course_id`), поэтому «сколько
+раз в неделю ученик ходит на ЭТОТ курс» технически невыводимо — выводится только
+«сколько раз в неделю ученик ходит вообще». Оператор 2026-08-01 закрепил из этого
+модель: платит ученик, курс лишь относит его к тарифной ГРУППЕ, а внутри группы
+цена берётся один раз (пара «Python для ЕГЭ» + «ЕГЭ по информатике» — один продукт).
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.schemas.pricing import (
+    CoursePricingRead,
+    PricingGroupRead,
+    StudentGroupPricing,
+    StudentPricingRead,
+    TariffRead,
+)
+
+logger = logging.getLogger(__name__)
+
+#: Колонки, которые правка вправе трогать (см. `_build_patch`).
+_GROUP_PATCH_COLUMNS = frozenset({"name", "description", "is_active"})
+_TARIFF_PATCH_COLUMNS = frozenset(
+    {"name", "price_minor", "period", "is_default", "sort_order", "is_active"}
+)
+
+__all__ = [
+    "list_groups",
+    "create_group",
+    "update_group",
+    "delete_group",
+    "create_tariff",
+    "update_tariff",
+    "delete_tariff",
+    "list_course_pricing",
+    "is_root_course",
+    "set_course_pricing",
+    "list_student_pricing",
+]
+
+
+# ---------------------------------------------------------------- тарифные группы
+
+
+async def list_groups(db: AsyncSession) -> list[PricingGroupRead]:
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id, name, description, is_active FROM pricing_group "
+                "ORDER BY is_active DESC, name"
+            )
+        )
+    ).all()
+    tariffs = await _load_tariffs(db)
+    return [
+        PricingGroupRead(
+            id=r.id,
+            name=r.name,
+            description=r.description,
+            is_active=r.is_active,
+            tariffs=tariffs.get(r.id, []),
+        )
+        for r in rows
+    ]
+
+
+async def _load_tariffs(
+    db: AsyncSession, *, only_active: bool = False
+) -> dict[int, list[TariffRead]]:
+    sql = (
+        "SELECT id, group_id, name, price_minor, currency, period, match_kind, "
+        "match_value, is_default, sort_order, is_active FROM pricing_tariff "
+    )
+    if only_active:
+        sql += "WHERE is_active "
+    sql += "ORDER BY group_id, sort_order, id"
+
+    result: dict[int, list[TariffRead]] = {}
+    for row in (await db.execute(text(sql))).all():
+        result.setdefault(row.group_id, []).append(TariffRead.model_validate(row))
+    return result
+
+
+async def create_group(db: AsyncSession, *, name: str, description: Optional[str]) -> int:
+    group_id = (
+        await db.execute(
+            text(
+                "INSERT INTO pricing_group (name, description) VALUES (:name, :description) "
+                "RETURNING id"
+            ),
+            {"name": name, "description": description},
+        )
+    ).scalar_one()
+    await db.commit()
+    return int(group_id)
+
+
+async def update_group(db: AsyncSession, *, group_id: int, patch: dict) -> bool:
+    """`patch` — `model_dump(exclude_unset=True)`, см. `_build_patch`."""
+    sets, params = _build_patch(patch, _GROUP_PATCH_COLUMNS)
+    if not sets:
+        return await _exists(db, "pricing_group", group_id)
+    params["id"] = group_id
+    res = await db.execute(
+        text(f"UPDATE pricing_group SET {sets}, updated_at = now() WHERE id = :id"), params
+    )
+    await db.commit()
+    return res.rowcount > 0
+
+
+async def delete_group(db: AsyncSession, *, group_id: int) -> bool:
+    res = await db.execute(
+        text("DELETE FROM pricing_group WHERE id = :id"), {"id": group_id}
+    )
+    await db.commit()
+    return res.rowcount > 0
+
+
+# ---------------------------------------------------------------- варианты тарифа
+
+
+async def create_tariff(db: AsyncSession, *, payload: dict) -> int:
+    tariff_id = (
+        await db.execute(
+            text(
+                "INSERT INTO pricing_tariff "
+                "(group_id, name, price_minor, currency, period, match_kind, match_value, "
+                " is_default, sort_order) "
+                "VALUES (:group_id, :name, :price_minor, :currency, :period, :match_kind, "
+                " :match_value, :is_default, :sort_order) RETURNING id"
+            ),
+            payload,
+        )
+    ).scalar_one()
+    await db.commit()
+    return int(tariff_id)
+
+
+async def update_tariff(db: AsyncSession, *, tariff_id: int, patch: dict) -> bool:
+    """`patch` — `model_dump(exclude_unset=True)`, см. `_build_patch`."""
+    sets, params = _build_patch(patch, _TARIFF_PATCH_COLUMNS)
+    if not sets:
+        return await _exists(db, "pricing_tariff", tariff_id)
+    params["id"] = tariff_id
+    res = await db.execute(
+        text(f"UPDATE pricing_tariff SET {sets}, updated_at = now() WHERE id = :id"), params
+    )
+    await db.commit()
+    return res.rowcount > 0
+
+
+async def delete_tariff(db: AsyncSession, *, tariff_id: int) -> bool:
+    res = await db.execute(
+        text("DELETE FROM pricing_tariff WHERE id = :id"), {"id": tariff_id}
+    )
+    await db.commit()
+    return res.rowcount > 0
+
+
+# ---------------------------------------------------------------- цены курсов
+
+
+async def list_course_pricing(db: AsyncSession) -> list[CoursePricingRead]:
+    """Корневые курсы и их продаваемость.
+
+    Только корневые: зачисление в LMS идёт на корень (триггеры БД), поэтому цену
+    вложенному курсу назначить некому.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT c.id            AS course_id,
+                       c.title,
+                       c.course_uid,
+                       cp.sale_status,
+                       cp.group_id,
+                       pg.name          AS group_name,
+                       cp.note,
+                       (SELECT count(*) FROM user_courses uc
+                         WHERE uc.course_id = c.id AND uc.is_active) AS active_students
+                  FROM courses c
+                  LEFT JOIN course_parents parents ON parents.course_id = c.id
+                  LEFT JOIN course_pricing cp ON cp.course_id = c.id
+                  LEFT JOIN pricing_group pg ON pg.id = cp.group_id
+                 WHERE parents.course_id IS NULL
+                 ORDER BY (cp.sale_status = 'paid') DESC NULLS LAST, c.title
+                """
+            )
+        )
+    ).all()
+    tariffs = await _load_tariffs(db, only_active=True)
+    return [
+        CoursePricingRead(
+            course_id=r.course_id,
+            title=r.title,
+            course_uid=r.course_uid,
+            sale_status=r.sale_status,
+            group_id=r.group_id,
+            group_name=r.group_name,
+            note=r.note,
+            tariffs=tariffs.get(r.group_id, []) if r.group_id is not None else [],
+            active_students=r.active_students,
+        )
+        for r in rows
+    ]
+
+
+async def is_root_course(db: AsyncSession, course_id: int) -> bool:
+    """Существует ли курс и является ли он корневым.
+
+    Внешний ключ этого не ловит — он смотрит только на `courses.id`. Без явной
+    проверки ДО записи строка вложенного курса создавалась и коммитилась, а
+    ответом всё равно был 404 (список цен отдаёт только корни): пользователь
+    видел ошибку, а база молча пачкалась.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM courses c "
+                "LEFT JOIN course_parents p ON p.course_id = c.id "
+                "WHERE c.id = :id AND p.course_id IS NULL"
+            ),
+            {"id": course_id},
+        )
+    ).first()
+    return row is not None
+
+
+async def set_course_pricing(
+    db: AsyncSession,
+    *,
+    course_id: int,
+    sale_status: str,
+    group_id: Optional[int],
+    note: Optional[str],
+    updated_by: Optional[int],
+) -> None:
+    await db.execute(
+        text(
+            "INSERT INTO course_pricing (course_id, sale_status, group_id, note, updated_by) "
+            "VALUES (:course_id, :sale_status, :group_id, :note, :updated_by) "
+            "ON CONFLICT (course_id) DO UPDATE SET "
+            "  sale_status = EXCLUDED.sale_status, "
+            "  group_id = EXCLUDED.group_id, "
+            "  note = EXCLUDED.note, "
+            "  updated_by = EXCLUDED.updated_by, "
+            "  updated_at = now()"
+        ),
+        {
+            "course_id": course_id,
+            "sale_status": sale_status,
+            "group_id": group_id,
+            "note": note,
+            "updated_by": updated_by,
+        },
+    )
+    await db.commit()
+
+
+# ---------------------------------------------------------------- расчёт по ученикам
+
+
+async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
+    """Расчётная цена по каждому ученику с активным зачислением на платный курс.
+
+    Экран только для просмотра: он существует, чтобы расхождение расчёта с
+    реальностью было видно глазами ДО того, как на эту модель сядут деньги.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT u.id                AS student_id,
+                       u.full_name,
+                       cp.group_id,
+                       pg.name             AS group_name,
+                       c.title             AS course_title,
+                       (SELECT count(*)
+                          FROM lesson_slot_student lss
+                          JOIN lesson_slot ls ON ls.id = lss.slot_id
+                         WHERE lss.student_id = u.id
+                           AND lss.is_active
+                           AND ls.is_active)  AS weekly_lessons
+                  FROM users u
+                  JOIN user_courses uc ON uc.user_id = u.id AND uc.is_active
+                  JOIN course_pricing cp ON cp.course_id = uc.course_id
+                                        AND cp.sale_status = 'paid'
+                  JOIN courses c ON c.id = uc.course_id
+                  JOIN pricing_group pg ON pg.id = cp.group_id
+                 WHERE u.is_active
+                 ORDER BY u.full_name, pg.name, c.title
+                """
+            )
+        )
+    ).all()
+
+    tariffs = await _load_tariffs(db, only_active=True)
+
+    students: dict[int, StudentPricingRead] = {}
+    # (student_id, group_id) → курсы этой группы у этого ученика
+    buckets: dict[tuple[int, int], StudentGroupPricing] = {}
+
+    for row in rows:
+        student = students.get(row.student_id)
+        if student is None:
+            student = StudentPricingRead(
+                student_id=row.student_id,
+                full_name=row.full_name,
+                weekly_lessons=row.weekly_lessons,
+                groups=[],
+                total_price_minor=None,
+            )
+            students[row.student_id] = student
+
+        key = (row.student_id, row.group_id)
+        bucket = buckets.get(key)
+        if bucket is None:
+            bucket = _resolve_group_price(
+                group_id=row.group_id,
+                group_name=row.group_name,
+                weekly_lessons=row.weekly_lessons,
+                tariffs=tariffs.get(row.group_id, []),
+            )
+            buckets[key] = bucket
+            student.groups.append(bucket)
+        bucket.course_titles.append(row.course_title)
+
+    for student in students.values():
+        prices = [g.price_minor for g in student.groups]
+        # Сумма показывается только когда посчитались ВСЕ группы: частичная сумма
+        # выглядела бы как полная цена и увела бы решение.
+        student.total_price_minor = (
+            sum(p for p in prices if p is not None) if all(p is not None for p in prices) else None
+        )
+
+    return sorted(students.values(), key=lambda s: (s.full_name or "", s.student_id))
+
+
+def _resolve_group_price(
+    *,
+    group_id: int,
+    group_name: str,
+    weekly_lessons: int,
+    tariffs: list[TariffRead],
+) -> StudentGroupPricing:
+    """Подбор варианта тарифа группы под фактическую частоту занятий ученика."""
+    base = StudentGroupPricing(
+        group_id=group_id,
+        group_name=group_name,
+        course_titles=[],
+        status="no_tariff",
+        tariff_id=None,
+        tariff_name=None,
+        price_minor=None,
+    )
+    if not tariffs:
+        return base
+
+    segment_options = [t for t in tariffs if t.match_kind == "segment"]
+    # Нечисловое значение частоты — испорченная настройка, а не «частота 0».
+    # Раньше такой тариф проходил как `(None or 0) <= weekly_lessons` и молча
+    # становился ценой ученика со статусом «почти точный расчёт».
+    by_frequency = [
+        t
+        for t in tariffs
+        if t.match_kind == "attendance_frequency" and _as_int(t.match_value) is not None
+    ]
+
+    if by_frequency:
+        exact = next(
+            (t for t in by_frequency if _as_int(t.match_value) == weekly_lessons), None
+        )
+        if exact is not None:
+            return _apply(base, exact, "exact")
+
+        if weekly_lessons > 0:
+            # Занятий больше, чем есть в тарифной сетке (напр. 3 при вариантах 1 и 2):
+            # берём ближайший меньший и ПОМЕЧАЕМ это, а не выдаём за точное попадание.
+            lower = [t for t in by_frequency if _as_int(t.match_value) <= weekly_lessons]
+            if lower:
+                best = max(lower, key=lambda t: _as_int(t.match_value) or 0)
+                return _apply(base, best, "fallback_lower")
+
+            # Занятий МЕНЬШЕ нижней ступени сетки. Проваливаться отсюда к
+            # «единственному варианту» нельзя: он вернулся бы со статусом
+            # «точное совпадение», то есть догадка выдавалась бы за расчёт.
+            base.status = "below_grid"
+            base.options = by_frequency
+            return base
+
+        # Расписания нет вовсе. Сегмент от расписания не зависит — если он в
+        # группе есть, человеку есть что выбрать, и это не «нет расписания».
+        if segment_options:
+            base.status = "needs_choice"
+            base.options = segment_options
+            return base
+        base.status = "no_schedule"
+        return base
+
+    if segment_options:
+        # Сегмент выбирает человек — автоподбора здесь быть не может.
+        base.status = "needs_choice"
+        base.options = segment_options
+        return base
+
+    single = next((t for t in tariffs if t.match_kind is None), None)
+    if single is not None:
+        return _apply(base, single, "exact")
+
+    default = next((t for t in tariffs if t.is_default), None)
+    if default is not None:
+        return _apply(base, default, "fallback_lower")
+
+    base.status = "needs_choice"
+    base.options = tariffs
+    return base
+
+
+def _apply(
+    base: StudentGroupPricing, tariff: TariffRead, status: str
+) -> StudentGroupPricing:
+    base.status = status  # type: ignore[assignment]
+    base.tariff_id = tariff.id
+    base.tariff_name = tariff.name
+    base.price_minor = tariff.price_minor
+    return base
+
+
+def _as_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Нечисловое значение частоты в тарифе: %r", value)
+        return None
+
+
+# ---------------------------------------------------------------- вспомогательное
+
+
+def _build_patch(fields: dict, allowed: frozenset[str]) -> tuple[str, dict]:
+    """Собирает SET-часть UPDATE из ПРИСЛАННЫХ полей, включая `None`.
+
+    `None` не фильтруется: иначе описание группы нельзя было бы стереть — сервер
+    отвечал бы успехом, оставляя прежний текст.
+
+    Имена колонок сверяются с белым списком. Сегодня произвольный ключ сюда не
+    доедет (pydantic по умолчанию отбрасывает лишнее), но эта защита невидима в
+    диффе: одна строка `ConfigDict(extra="allow")` в схеме превратила бы сборку
+    SET в инъекцию.
+    """
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"Недопустимые поля правки: {sorted(unknown)}")
+    params = dict(fields)
+    sets = ", ".join(f"{k} = :{k}" for k in params)
+    return sets, params
+
+
+async def _exists(db: AsyncSession, table: str, row_id: int) -> bool:
+    # Имя таблицы — не пользовательский ввод: вызывается с литералами из этого модуля.
+    row = (
+        await db.execute(text(f"SELECT 1 FROM {table} WHERE id = :id"), {"id": row_id})
+    ).first()
+    return row is not None

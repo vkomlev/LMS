@@ -1,0 +1,1548 @@
+diff --git a/components/layout/AdminHeader.tsx b/components/layout/AdminHeader.tsx
+index 6b99813..d38654e 100644
+--- a/components/layout/AdminHeader.tsx
++++ b/components/layout/AdminHeader.tsx
+@@ -12,6 +12,7 @@ import {
+   ArrowLeftRight,
+   GraduationCap,
+   BookOpenCheck,
++  Megaphone,
+ } from "lucide-react";
+ import { cn } from "@/lib/utils";
+ import {
+@@ -126,6 +127,16 @@ function AdminUserDropdown({ roles }: { roles: string[] }) {
+         }
+       />
+       <DropdownMenuContent align="end" className="w-56">
++        {roles.includes("marketer") && (
++          <DropdownMenuItem
++            render={
++              <Link href={"/marketer/pricing" as Route} data-testid="admin-dropdown-marketer">
++                <Megaphone className="h-4 w-4" aria-hidden />
++                Кабинет маркетолога
++              </Link>
++            }
++          />
++        )}
+         {roles.includes("methodist") && (
+           <DropdownMenuItem
+             render={
+diff --git a/components/layout/AppHeader.tsx b/components/layout/AppHeader.tsx
+index fc889ae..88d49d9 100644
+--- a/components/layout/AppHeader.tsx
++++ b/components/layout/AppHeader.tsx
+@@ -5,7 +5,7 @@ import Link from "next/link";
+ import type { Route } from "next";
+ import { usePathname } from "next/navigation";
+ import { useQuery } from "@tanstack/react-query";
+-import { Menu, User, LogOut, BookOpen, History, MessageCircle, BarChart3, GraduationCap, CalendarClock, BookOpenCheck, ShieldCheck, Users } from "lucide-react";
++import { Menu, User, LogOut, BookOpen, History, MessageCircle, BarChart3, GraduationCap, CalendarClock, BookOpenCheck, ShieldCheck, Users, Megaphone } from "lucide-react";
+ import { cn } from "@/lib/utils";
+ import {
+   Sheet,
+@@ -109,6 +109,9 @@ export function AppHeader() {
+   // при первом входе, см. LMS spec tsk-478) — без переключателя он застрял
+   // бы в ученической зоне без пути к своему кабинету.
+   const isParent = (probe.data.roles ?? []).includes("parent");
++  // tsk-505: у маркетолога свой кабинет — без перехода он был бы доступен
++  // только по прямому адресу.
++  const isMarketer = (probe.data.roles ?? []).includes("marketer");
+ 
+   return (
+     <header
+@@ -117,7 +120,12 @@ export function AppHeader() {
+       className="sticky top-0 z-40 w-full border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+     >
+       <div className="mx-auto flex h-14 w-full max-w-6xl items-center gap-2 px-3 md:h-16 md:gap-4 md:px-6">
+-        <MobileMenuTrigger pathname={pathname} isTeacher={isTeacher} isParent={isParent} />
++        <MobileMenuTrigger
++          pathname={pathname}
++          isTeacher={isTeacher}
++          isParent={isParent}
++          isMarketer={isMarketer}
++        />
+ 
+         <BrandLink />
+ 
+@@ -191,6 +199,17 @@ export function AppHeader() {
+               <span className="hidden lg:inline">Кабинет родителя</span>
+             </Link>
+           )}
++          {isMarketer && (
++            <Link
++              href={"/marketer/pricing" as Route}
++              data-testid="switch-to-marketer"
++              aria-label="Кабинет маркетолога"
++              className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground md:px-3"
++            >
++              <Megaphone className="h-5 w-5" aria-hidden />
++              <span className="hidden lg:inline">Кабинет маркетолога</span>
++            </Link>
++          )}
+           <ThemeToggle variant="icon" />
+           <UnreadBadge compact />
+           <UserDropdown />
+@@ -220,10 +239,12 @@ function MobileMenuTrigger({
+   pathname,
+   isTeacher,
+   isParent,
++  isMarketer,
+ }: {
+   pathname: string;
+   isTeacher: boolean;
+   isParent: boolean;
++  isMarketer: boolean;
+ }) {
+   const [open, setOpen] = useState(false);
+   const logout = useLogout();
+@@ -295,6 +316,20 @@ function MobileMenuTrigger({
+               </Link>
+             </>
+           )}
++          {isMarketer && (
++            <>
++              <div className="my-2 border-t border-border" />
++              <Link
++                href={"/marketer/pricing" as Route}
++                data-testid="drawer-switch-to-marketer"
++                onClick={() => setOpen(false)}
++                className="flex min-h-11 items-center gap-3 px-4 py-3 text-sm font-medium text-foreground hover:bg-muted/60"
++              >
++                <Megaphone className="h-5 w-5 shrink-0" aria-hidden />
++                Кабинет маркетолога
++              </Link>
++            </>
++          )}
+           <div className="my-2 border-t border-border" />
+           <button
+             type="button"
+diff --git a/components/layout/MethodistHeader.tsx b/components/layout/MethodistHeader.tsx
+index 6791710..cd79f13 100644
+--- a/components/layout/MethodistHeader.tsx
++++ b/components/layout/MethodistHeader.tsx
+@@ -18,6 +18,7 @@ import {
+   GraduationCap,
+   ChevronDown,
+   ShieldCheck,
++  Megaphone,
+ } from "lucide-react";
+ import { cn } from "@/lib/utils";
+ import {
+@@ -216,6 +217,8 @@ function MethodistUserDropdown({ isTeacher }: { isTeacher: boolean }) {
+   // tsk-432: переход в кабинет администратора — там же, где остальные.
+   const { data: me } = useCurrentUser();
+   const isAdmin = (me?.roles ?? []).includes("admin");
++  // tsk-505: кабинет маркетолога — тот же принцип, одно место на все переходы.
++  const isMarketer = (me?.roles ?? []).includes("marketer");
+   return (
+     <DropdownMenu>
+       <DropdownMenuTrigger
+@@ -251,6 +254,16 @@ function MethodistUserDropdown({ isTeacher }: { isTeacher: boolean }) {
+             }
+           />
+         )}
++        {isMarketer && (
++          <DropdownMenuItem
++            render={
++              <Link href={"/marketer/pricing" as Route} data-testid="methodist-dropdown-marketer">
++                <Megaphone className="h-4 w-4" aria-hidden />
++                Кабинет маркетолога
++              </Link>
++            }
++          />
++        )}
+         <DropdownMenuItem
+           render={
+             <Link href={"/me/continue" as Route} data-testid="methodist-dropdown-student">
+diff --git a/components/layout/TeacherHeader.tsx b/components/layout/TeacherHeader.tsx
+index 1de0c21..089e40c 100644
+--- a/components/layout/TeacherHeader.tsx
++++ b/components/layout/TeacherHeader.tsx
+@@ -3,7 +3,7 @@
+ import Link from "next/link";
+ import type { Route } from "next";
+ import { usePathname } from "next/navigation";
+-import { GraduationCap, User, LogOut, ArrowLeftRight, ClipboardList, Users, HelpCircle, MessageCircle, Activity, CalendarClock, BookOpenCheck, ShieldCheck } from "lucide-react";
++import { GraduationCap, User, LogOut, ArrowLeftRight, ClipboardList, Users, HelpCircle, MessageCircle, Activity, CalendarClock, BookOpenCheck, ShieldCheck, Megaphone } from "lucide-react";
+ import { cn } from "@/lib/utils";
+ import {
+   DropdownMenu,
+@@ -130,6 +130,8 @@ function TeacherUserDropdown() {
+   // tsk-432: у администратора теперь свой кабинет — переход туда живёт здесь же,
+   // рядом с остальными: одно место на все переходы (решение tsk-466).
+   const isAdmin = (me?.roles ?? []).includes("admin");
++  // tsk-505: кабинет маркетолога.
++  const isMarketer = (me?.roles ?? []).includes("marketer");
+   return (
+     <DropdownMenu>
+       <DropdownMenuTrigger
+@@ -165,6 +167,16 @@ function TeacherUserDropdown() {
+             }
+           />
+         )}
++        {isMarketer && (
++          <DropdownMenuItem
++            render={
++              <Link href={"/marketer/pricing" as Route} data-testid="teacher-dropdown-marketer">
++                <Megaphone className="h-4 w-4" aria-hidden />
++                Кабинет маркетолога
++              </Link>
++            }
++          />
++        )}
+         <DropdownMenuItem
+           render={
+             <Link href={"/me/continue" as Route} data-testid="teacher-dropdown-student">
+diff --git a/components/methodist/PersonPickers.tsx b/components/methodist/PersonPickers.tsx
+index ddd51d4..d833cc6 100644
+--- a/components/methodist/PersonPickers.tsx
++++ b/components/methodist/PersonPickers.tsx
+@@ -90,8 +90,22 @@ export function RootCoursePicker({
+   );
+ }
+ 
++/** Минимум, которого хватает, чтобы показать человека в списке выбора. */
++export type PersonOption = { id: number; full_name?: string | null };
++
++/**
++ * Источник поиска людей. Вынесен в проп, потому что общий `/users/search`
++ * отдаёт полную карточку с персональными данными и закрыт гейтом методиста и
++ * администратора — кабинету маркетолога (tsk-506) нужен свой узкий адрес,
++ * но сам выбор человека при этом остаётся одним компонентом.
++ */
++export type PersonSearchHook<T extends PersonOption> = (
++  query: string,
++  role: PeopleRole | null,
++) => { data?: T[]; isPending: boolean };
++
+ /** Выбор человека нужной роли — поиск по имени от двух букв (короче сервер не примет). */
+-export function PersonPicker({
++export function PersonPicker<T extends PersonOption = UserRead>({
+   role,
+   excludeIds,
+   onPick,
+@@ -99,17 +113,22 @@ export function PersonPicker({
+   label,
+   placeholder,
+   testId,
++  useSearch,
+ }: {
+-  role: PeopleRole;
++  role: PeopleRole | null;
+   excludeIds: number[];
+-  onPick: (person: UserRead) => void;
++  onPick: (person: T) => void;
+   disabled?: boolean;
+   label: string;
+   placeholder: string;
+   testId: string;
++  /** По умолчанию — общий поиск людей под гейтом методиста и администратора. */
++  useSearch?: PersonSearchHook<T>;
+ }) {
+   const [query, setQuery] = useState("");
+-  const found = usePeopleSearch(query, role);
++  // Вызывается безусловно на каждом рендере, поэтому порядок хуков стабилен.
++  const runSearch = useSearch ?? (usePeopleSearch as unknown as PersonSearchHook<T>);
++  const found = runSearch(query, role);
+ 
+   const matches = (found.data ?? [])
+     .filter((p) => !excludeIds.includes(p.id))
+diff --git a/lib/api-types.ts b/lib/api-types.ts
+index e64f0e6..bee63ea 100644
+--- a/lib/api-types.ts
++++ b/lib/api-types.ts
+@@ -5266,6 +5266,238 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/marketer/pricing/courses": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Корневые курсы и их цены
++         * @description Только корневые курсы: зачисление в LMS идёт на корень, поэтому цену вложенному курсу назначить некому. Курс без строки цены — «не назначено», и это не то же самое, что «не продаётся».
++         */
++        get: operations["list_course_pricing_api_v1_marketer_pricing_courses_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/pricing/courses/{course_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        /** Назначить курсу статус продаваемости и тарифную группу */
++        put: operations["set_course_pricing_api_v1_marketer_pricing_courses__course_id__put"];
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/pricing/groups": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** Тарифные группы с вариантами */
++        get: operations["list_groups_api_v1_marketer_pricing_groups_get"];
++        put?: never;
++        /** Создать тарифную группу */
++        post: operations["create_group_api_v1_marketer_pricing_groups_post"];
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/pricing/groups/{group_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        post?: never;
++        /**
++         * Удалить тарифную группу
++         * @description Группа, назначенная курсу, не удаляется — сперва снимите её с курсов.
++         */
++        delete: operations["delete_group_api_v1_marketer_pricing_groups__group_id__delete"];
++        options?: never;
++        head?: never;
++        /** Изменить тарифную группу */
++        patch: operations["update_group_api_v1_marketer_pricing_groups__group_id__patch"];
++        trace?: never;
++    };
++    "/api/v1/marketer/pricing/tariffs": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /**
++         * Добавить вариант тарифа в группу
++         * @description Возвращает группу целиком — экран цен показывает варианты вместе, а не по одному.
++         */
++        post: operations["create_tariff_api_v1_marketer_pricing_tariffs_post"];
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/pricing/tariffs/{tariff_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        post?: never;
++        /** Удалить вариант тарифа */
++        delete: operations["delete_tariff_api_v1_marketer_pricing_tariffs__tariff_id__delete"];
++        options?: never;
++        head?: never;
++        /** Изменить вариант тарифа */
++        patch: operations["update_tariff_api_v1_marketer_pricing_tariffs__tariff_id__patch"];
++        trace?: never;
++    };
++    "/api/v1/marketer/students/pricing": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Ученики и их расчётная цена
++         * @description Только просмотр. Частота берётся из расписания (число активных недельных слотов ученика), цена считается один раз на тарифную группу. Каждая строка показывает, как именно получилась цена — точное попадание, ближайший меньший тариф, нужен выбор человека или нет расписания.
++         */
++        get: operations["list_student_pricing_api_v1_marketer_students_pricing_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/lead-sources": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** Справочник каналов привлечения */
++        get: operations["list_sources_api_v1_marketer_lead_sources_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/students/search": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Поиск ученика для привязки лида
++         * @description Узкая выдача: только номер и имя. Общий поиск людей с персональными данными остаётся под гейтом методиста и администратора.
++         */
++        get: operations["search_students_api_v1_marketer_students_search_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/leads": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Список лидов
++         * @description Фильтр `linked`: `true` — уже привязанные, `false` — ещё нет.
++         */
++        get: operations["list_leads_api_v1_marketer_leads_get"];
++        put?: never;
++        /** Завести лида */
++        post: operations["create_lead_api_v1_marketer_leads_post"];
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/marketer/leads/{lead_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /** Карточка лида */
++        get: operations["get_lead_api_v1_marketer_leads__lead_id__get"];
++        put?: never;
++        post?: never;
++        /** Удалить лида */
++        delete: operations["delete_lead_api_v1_marketer_leads__lead_id__delete"];
++        options?: never;
++        head?: never;
++        /** Изменить лида */
++        patch: operations["update_lead_api_v1_marketer_leads__lead_id__patch"];
++        trace?: never;
++    };
++    "/api/v1/marketer/leads/{lead_id}/link": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        get?: never;
++        put?: never;
++        /**
++         * Привязать лида к учётке ученика
++         * @description Идемпотентно: повторная привязка того же ученика не ошибка.
++         */
++        post: operations["link_student_api_v1_marketer_leads__lead_id__link_post"];
++        /** Снять привязку лида к ученику */
++        delete: operations["unlink_student_api_v1_marketer_leads__lead_id__link_delete"];
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/media/{sha_ext}": {
+         parameters: {
+             query?: never;
+@@ -6707,6 +6939,48 @@ export interface components {
+              */
+             order_number: number | null;
+         };
++        /**
++         * CoursePricingRead
++         * @description Строка экрана «Цены»: корневой курс и что с ним по деньгам.
++         */
++        CoursePricingRead: {
++            /** Course Id */
++            course_id: number;
++            /** Title */
++            title: string;
++            /** Course Uid */
++            course_uid: string | null;
++            /** Sale Status */
++            sale_status: ("paid" | "free" | "not_for_sale") | null;
++            /** Group Id */
++            group_id: number | null;
++            /** Group Name */
++            group_name: string | null;
++            /** Note */
++            note: string | null;
++            /**
++             * Tariffs
++             * @default []
++             */
++            tariffs: components["schemas"]["TariffRead"][];
++            /**
++             * Active Students
++             * @description Сколько учеников сейчас зачислено на курс
++             */
++            active_students: number;
++        };
++        /** CoursePricingUpdateRequest */
++        CoursePricingUpdateRequest: {
++            /**
++             * Sale Status
++             * @enum {string}
++             */
++            sale_status: "paid" | "free" | "not_for_sale";
++            /** Group Id */
++            group_id?: number | null;
++            /** Note */
++            note?: string | null;
++        };
+         /** CourseProgress */
+         CourseProgress: {
+             /** Tasks Total */
+@@ -8084,6 +8358,81 @@ export interface components {
+              */
+             last_active_at: string;
+         };
++        /** LeadCreateRequest */
++        LeadCreateRequest: {
++            /** Source Id */
++            source_id: number;
++            /** Source Detail */
++            source_detail?: string | null;
++            /** Full Name */
++            full_name?: string | null;
++            /** Contact */
++            contact: string;
++            /** Note */
++            note?: string | null;
++        };
++        /** LeadLinkRequest */
++        LeadLinkRequest: {
++            /** Student Id */
++            student_id: number;
++        };
++        /** LeadRead */
++        LeadRead: {
++            /** Id */
++            id: number;
++            /** Source Id */
++            source_id: number;
++            /** Source Code */
++            source_code: string;
++            /** Source Name */
++            source_name: string;
++            /** Source Detail */
++            source_detail: string | null;
++            /** Full Name */
++            full_name: string | null;
++            /** Contact */
++            contact: string;
++            /** Note */
++            note: string | null;
++            /** Linked Student Id */
++            linked_student_id: number | null;
++            /** Linked Student Name */
++            linked_student_name: string | null;
++            /**
++             * Created At
++             * Format: date-time
++             */
++            created_at: string;
++            /**
++             * Updated At
++             * Format: date-time
++             */
++            updated_at: string;
++        };
++        /** LeadSourceRead */
++        LeadSourceRead: {
++            /** Id */
++            id: number;
++            /** Code */
++            code: string;
++            /** Name */
++            name: string;
++            /** Sort Order */
++            sort_order: number;
++        };
++        /** LeadUpdateRequest */
++        LeadUpdateRequest: {
++            /** Source Id */
++            source_id?: number | null;
++            /** Source Detail */
++            source_detail?: string | null;
++            /** Full Name */
++            full_name?: string | null;
++            /** Contact */
++            contact?: string | null;
++            /** Note */
++            note?: string | null;
++        };
+         /** LearningSkipRequest */
+         LearningSkipRequest: {
+             /**
+@@ -9591,6 +9940,38 @@ export interface components {
+              */
+             total: number;
+         };
++        /** PricingGroupCreateRequest */
++        PricingGroupCreateRequest: {
++            /** Name */
++            name: string;
++            /** Description */
++            description?: string | null;
++        };
++        /** PricingGroupRead */
++        PricingGroupRead: {
++            /** Id */
++            id: number;
++            /** Name */
++            name: string;
++            /** Description */
++            description: string | null;
++            /** Is Active */
++            is_active: boolean;
++            /**
++             * Tariffs
++             * @default []
++             */
++            tariffs: components["schemas"]["TariffRead"][];
++        };
++        /** PricingGroupUpdateRequest */
++        PricingGroupUpdateRequest: {
++            /** Name */
++            name?: string | null;
++            /** Description */
++            description?: string | null;
++            /** Is Active */
++            is_active?: boolean | null;
++        };
+         /**
+          * ProgressBulkResponse
+          * @description Ответ массовой операции по дереву узла.
+@@ -10558,10 +10939,24 @@ export interface components {
+             response: components["schemas"]["StudentResponse"];
+         };
+         /**
+-         * StudentCourseRef
+-         * @description Курс ученика для селектора в карточке.
++         * StudentBrief
++         * @description Узкая карточка ученика для привязки лида.
++         *
++         *     Намеренно без почты, телефона и ролей: маркетологу для привязки хватает
++         *     имени и номера, а общий `/users/search` с полными персональными данными
++         *     остаётся под прежним гейтом.
+          */
+-        StudentCourseRef: {
++        StudentBrief: {
++            /** Id */
++            id: number;
++            /** Full Name */
++            full_name: string | null;
++        };
++        /**
++         * StudentCourseRef
++         * @description Курс ученика для селектора в карточке.
++         */
++        StudentCourseRef: {
+             /** Course Id */
+             course_id: number;
+             /** Title */
+@@ -10625,6 +11020,56 @@ export interface components {
+             between_lessons: components["schemas"]["StudentDashboardMetricsRead"];
+             attendance: components["schemas"]["StudentDashboardAttendanceRead"];
+         };
++        /**
++         * StudentGroupPricing
++         * @description Что насчиталось ученику по одной тарифной группе.
++         */
++        StudentGroupPricing: {
++            /** Group Id */
++            group_id: number;
++            /** Group Name */
++            group_name: string;
++            /**
++             * Course Titles
++             * @description Курсы этой группы, на которые зачислен ученик — цена берётся один раз на группу
++             */
++            course_titles: string[];
++            /**
++             * Status
++             * @enum {string}
++             */
++            status: "exact" | "fallback_lower" | "needs_choice" | "no_schedule" | "no_tariff";
++            /** Tariff Id */
++            tariff_id: number | null;
++            /** Tariff Name */
++            tariff_name: string | null;
++            /** Price Minor */
++            price_minor: number | null;
++            /**
++             * Options
++             * @default []
++             */
++            options: components["schemas"]["TariffRead"][];
++        };
++        /** StudentPricingRead */
++        StudentPricingRead: {
++            /** Student Id */
++            student_id: number;
++            /** Full Name */
++            full_name: string | null;
++            /**
++             * Weekly Lessons
++             * @description Активных занятий в неделю по расписанию
++             */
++            weekly_lessons: number;
++            /**
++             * Groups
++             * @default []
++             */
++            groups: components["schemas"]["StudentGroupPricing"][];
++            /** Total Price Minor */
++            total_price_minor: number | null;
++        };
+         /**
+          * StudentResponse
+          * @description Ответ ученика в терминах конкретной задачи.
+@@ -10843,6 +11288,79 @@ export interface components {
+              */
+             row_order_matters: boolean;
+         };
++        /** TariffCreateRequest */
++        TariffCreateRequest: {
++            /** Group Id */
++            group_id: number;
++            /** Name */
++            name: string;
++            /** Price Minor */
++            price_minor: number;
++            /**
++             * Currency
++             * @default RUB
++             */
++            currency: string;
++            /**
++             * Period
++             * @default month
++             */
++            period: string;
++            /** Match Kind */
++            match_kind?: ("attendance_frequency" | "segment") | null;
++            /** Match Value */
++            match_value?: string | null;
++            /**
++             * Is Default
++             * @default false
++             */
++            is_default: boolean;
++            /**
++             * Sort Order
++             * @default 0
++             */
++            sort_order: number;
++        };
++        /** TariffRead */
++        TariffRead: {
++            /** Id */
++            id: number;
++            /** Group Id */
++            group_id: number;
++            /** Name */
++            name: string;
++            /** Price Minor */
++            price_minor: number;
++            /** Currency */
++            currency: string;
++            /** Period */
++            period: string;
++            /** Match Kind */
++            match_kind: ("attendance_frequency" | "segment") | null;
++            /** Match Value */
++            match_value: string | null;
++            /** Is Default */
++            is_default: boolean;
++            /** Sort Order */
++            sort_order: number;
++            /** Is Active */
++            is_active: boolean;
++        };
++        /** TariffUpdateRequest */
++        TariffUpdateRequest: {
++            /** Name */
++            name?: string | null;
++            /** Price Minor */
++            price_minor?: number | null;
++            /** Period */
++            period?: string | null;
++            /** Is Default */
++            is_default?: boolean | null;
++            /** Sort Order */
++            sort_order?: number | null;
++            /** Is Active */
++            is_active?: boolean | null;
++        };
+         /**
+          * TaskBulkUpsertRequest
+          * @description Тело запроса для массового upsert'а задач.
+@@ -26235,6 +26753,720 @@ export interface operations {
+             };
+         };
+     };
++    list_course_pricing_api_v1_marketer_pricing_courses_get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["CoursePricingRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    set_course_pricing_api_v1_marketer_pricing_courses__course_id__put: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                course_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["CoursePricingUpdateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["CoursePricingRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    list_groups_api_v1_marketer_pricing_groups_get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["PricingGroupRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    create_group_api_v1_marketer_pricing_groups_post: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["PricingGroupCreateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            201: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["PricingGroupRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    delete_group_api_v1_marketer_pricing_groups__group_id__delete: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                group_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            204: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    update_group_api_v1_marketer_pricing_groups__group_id__patch: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                group_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["PricingGroupUpdateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["PricingGroupRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    create_tariff_api_v1_marketer_pricing_tariffs_post: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["TariffCreateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            201: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["PricingGroupRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    delete_tariff_api_v1_marketer_pricing_tariffs__tariff_id__delete: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                tariff_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            204: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    update_tariff_api_v1_marketer_pricing_tariffs__tariff_id__patch: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                tariff_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["TariffUpdateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["PricingGroupRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    list_student_pricing_api_v1_marketer_students_pricing_get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StudentPricingRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    list_sources_api_v1_marketer_lead_sources_get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadSourceRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    search_students_api_v1_marketer_students_search_get: {
++        parameters: {
++            query: {
++                q: string;
++                limit?: number;
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StudentBrief"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    list_leads_api_v1_marketer_leads_get: {
++        parameters: {
++            query?: {
++                linked?: boolean | null;
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    create_lead_api_v1_marketer_leads_post: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["LeadCreateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            201: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    get_lead_api_v1_marketer_leads__lead_id__get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                lead_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    delete_lead_api_v1_marketer_leads__lead_id__delete: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                lead_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            204: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    update_lead_api_v1_marketer_leads__lead_id__patch: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                lead_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["LeadUpdateRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    link_student_api_v1_marketer_leads__lead_id__link_post: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                lead_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["LeadLinkRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    unlink_student_api_v1_marketer_leads__lead_id__link_delete: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                lead_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["LeadRead"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
+     get_cas_media_api_v1_media__sha_ext__get: {
+         parameters: {
+             query?: never;

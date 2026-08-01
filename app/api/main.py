@@ -422,6 +422,14 @@ from app.api.v1.parent_access_links import (
 app.include_router(parent_access_links_router, prefix=API_PREFIX)
 app.include_router(parent_access_links_public_router, prefix=API_PREFIX)
 
+# tsk-505 (кабинет маркетолога): тарифы курсов и расчётная цена ученика
+from app.api.v1.marketer_pricing import router as marketer_pricing_router
+app.include_router(marketer_pricing_router, prefix=API_PREFIX)
+
+# tsk-506 (кабинет маркетолога): мини-CRM лидов + узкий поиск учеников для привязки
+from app.api.v1.marketer_leads import router as marketer_leads_router
+app.include_router(marketer_leads_router, prefix=API_PREFIX)
+
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
 

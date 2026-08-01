@@ -42,4 +42,6 @@ import app.models.lesson_occurrence_participant
 import app.models.lesson_occurrence_teacher
 import app.models.attendance_event
 import app.models.parent_access_link
+import app.models.pricing            # тарифы курсов (tsk-505)
+import app.models.lead               # лиды кабинета маркетолога (tsk-506)
 
