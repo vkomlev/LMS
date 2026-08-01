@@ -434,6 +434,13 @@ app.include_router(marketer_leads_router, prefix=API_PREFIX)
 from app.api.v1.marketer_charges import router as marketer_charges_router
 app.include_router(marketer_charges_router, prefix=API_PREFIX)
 
+# tsk-010 (приём оплаты): чек от ученика/родителя и очередь подтверждения
+from app.api.v1.me_payments import router as me_payments_router
+app.include_router(me_payments_router, prefix=API_PREFIX)
+
+from app.api.v1.marketer_payments import router as marketer_payments_router
+app.include_router(marketer_payments_router, prefix=API_PREFIX)
+
 # tsk-513 (кабинет методиста): перерывы ученика — гасят занятия и влияют на цену
 from app.api.v1.methodist_breaks import router as methodist_breaks_router
 app.include_router(methodist_breaks_router, prefix=API_PREFIX)

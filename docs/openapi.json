@@ -29358,6 +29358,891 @@
         }
       }
     },
+    "/api/v1/me/charges": {
+      "get": {
+        "tags": [
+          "me_payments"
+        ],
+        "summary": "Мои начисления и оплаты",
+        "description": "Начисления по месяцам: сколько начислено, сколько уже оплачено, сколько ждёт подтверждения и что осталось. Родитель смотрит начисления ребёнка, передав его student_id.",
+        "operationId": "my_charges_api_v1_me_charges_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ребёнок родителя; своё — не указывать",
+              "title": "Student Id"
+            },
+            "description": "Ребёнок родителя; своё — не указывать"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StudentChargeRead"
+                  },
+                  "title": "Response My Charges Api V1 Me Charges Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/payments": {
+      "post": {
+        "tags": [
+          "me_payments"
+        ],
+        "summary": "Приложить чек об оплате",
+        "description": "Заявка уходит маркетологу на подтверждение. Долгом такая сумма уже не считается, но и оплаченной становится только после подтверждения.",
+        "operationId": "submit_payment_api_v1_me_payments_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_payment_api_v1_me_payments_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Submit Payment Api V1 Me Payments Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/payments/{payment_id}/receipt": {
+      "get": {
+        "tags": [
+          "me_payments"
+        ],
+        "summary": "Скачать свой чек",
+        "operationId": "download_own_receipt_api_v1_me_payments__payment_id__receipt_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments": {
+      "get": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Платежи: очередь на подтверждение и история",
+        "description": "Без фильтра сверху идут платежи, ждущие решения.",
+        "operationId": "list_payments_api_v1_marketer_payments_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "confirmed",
+                    "rejected"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Period"
+            }
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaymentRead"
+                  },
+                  "title": "Response List Payments Api V1 Marketer Payments Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments/{payment_id}/confirm": {
+      "post": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Подтвердить платёж",
+        "description": "Деньги считаются полученными. Налоговый чек в «Мой налог» система не выбивает — его оператор выдаёт сам, для сверки есть выгрузка по датам.",
+        "operationId": "confirm_api_v1_marketer_payments__payment_id__confirm_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments/{payment_id}/reject": {
+      "post": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Отклонить платёж",
+        "operationId": "reject_api_v1_marketer_payments__payment_id__reject_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments/{payment_id}/receipt": {
+      "get": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Посмотреть чек",
+        "operationId": "download_receipt_api_v1_marketer_payments__payment_id__receipt_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/payments/export": {
+      "get": {
+        "tags": [
+          "marketer_payments"
+        ],
+        "summary": "Выгрузка подтверждённых платежей за период",
+        "description": "Для сверки с чеками, выбитыми в «Мой налог» вручную. Дата — день платежа, а не день подтверждения.",
+        "operationId": "export_api_v1_marketer_payments_export_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Date From"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "title": "Date To"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaymentExportRow"
+                  },
+                  "title": "Response Export Api V1 Marketer Payments Export Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/breaks": {
       "get": {
         "tags": [
@@ -31506,6 +32391,59 @@
         ],
         "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
       },
+      "Body_submit_payment_api_v1_me_payments_post": {
+        "properties": {
+          "charge_id": {
+            "type": "integer",
+            "title": "Charge Id",
+            "description": "Начисление, за которое платят"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Minor",
+            "description": "Сумма платежа в копейках"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On",
+            "description": "День платежа"
+          },
+          "payer_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Note"
+          },
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File",
+            "description": "Чек: изображение или PDF"
+          }
+        },
+        "type": "object",
+        "required": [
+          "charge_id",
+          "amount_minor",
+          "file"
+        ],
+        "title": "Body_submit_payment_api_v1_me_payments_post"
+      },
       "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post": {
         "properties": {
           "file": {
@@ -31819,6 +32757,31 @@
               }
             ],
             "title": "Override Minor"
+          },
+          "paid_minor": {
+            "type": "integer",
+            "title": "Paid Minor",
+            "default": 0
+          },
+          "pending_minor": {
+            "type": "integer",
+            "title": "Pending Minor",
+            "default": 0
+          },
+          "due_minor": {
+            "type": "integer",
+            "title": "Due Minor",
+            "default": 0
+          },
+          "overpaid_minor": {
+            "type": "integer",
+            "title": "Overpaid Minor",
+            "default": 0
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "default": false
           }
         },
         "type": "object",
@@ -38854,6 +39817,296 @@
         ],
         "title": "ParticipantRead"
       },
+      "PaymentDecisionRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "PaymentDecisionRequest",
+        "description": "Решение маркетолога по платежу."
+      },
+      "PaymentExportRow": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "on_date": {
+            "type": "string",
+            "format": "date",
+            "title": "On Date"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "gateway"
+            ],
+            "title": "Method"
+          },
+          "gateway": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway"
+          },
+          "gateway_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Payment Id"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "on_date",
+          "group_name",
+          "period",
+          "amount_minor",
+          "method"
+        ],
+        "title": "PaymentExportRow",
+        "description": "Строка выгрузки для сверки с чеками «Мой налог»."
+      },
+      "PaymentRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "gateway"
+            ],
+            "title": "Method"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "receipt_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Name"
+          },
+          "has_receipt": {
+            "type": "boolean",
+            "title": "Has Receipt",
+            "default": false
+          },
+          "payer_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Note"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "gateway": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway"
+          },
+          "gateway_payment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gateway Payment Id"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "reviewed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "charge_total_minor": {
+            "type": "integer",
+            "title": "Charge Total Minor"
+          },
+          "charge_due_minor": {
+            "type": "integer",
+            "title": "Charge Due Minor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "group_id",
+          "group_name",
+          "period",
+          "amount_minor",
+          "method",
+          "status",
+          "created_at",
+          "charge_total_minor",
+          "charge_due_minor"
+        ],
+        "title": "PaymentRead",
+        "description": "Платёж глазами кабинета маркетолога."
+      },
       "PenaltiesRules": {
         "properties": {
           "wrong_answer": {
@@ -41151,6 +42404,88 @@
         "title": "StudentBrief",
         "description": "Узкая карточка ученика для привязки лида.\n\nНамеренно без почты, телефона и ролей: маркетологу для привязки хватает\nимени и номера, а общий `/users/search` с полными персональными данными\nостаётся под прежним гейтом."
       },
+      "StudentChargeRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period"
+          },
+          "total_minor": {
+            "type": "integer",
+            "title": "Total Minor"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "Status"
+          },
+          "due_on": {
+            "type": "string",
+            "format": "date",
+            "title": "Due On"
+          },
+          "paid_minor": {
+            "type": "integer",
+            "title": "Paid Minor",
+            "default": 0
+          },
+          "pending_minor": {
+            "type": "integer",
+            "title": "Pending Minor",
+            "default": 0
+          },
+          "due_minor": {
+            "type": "integer",
+            "title": "Due Minor",
+            "default": 0
+          },
+          "overpaid_minor": {
+            "type": "integer",
+            "title": "Overpaid Minor",
+            "default": 0
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "default": false
+          },
+          "payments": {
+            "items": {
+              "$ref": "#/components/schemas/StudentPaymentRead"
+            },
+            "type": "array",
+            "title": "Payments"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "group_id",
+          "group_name",
+          "period",
+          "total_minor",
+          "status",
+          "due_on"
+        ],
+        "title": "StudentChargeRead",
+        "description": "Месяц в кабинете ученика: сколько начислено, сколько пришло, что осталось."
+      },
       "StudentCourseRef": {
         "properties": {
           "course_id": {
@@ -41422,6 +42757,107 @@
         ],
         "title": "StudentGroupPricing",
         "description": "Что насчиталось ученику по одной тарифной группе."
+      },
+      "StudentPaymentRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "gateway"
+            ],
+            "title": "Method"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "receipt_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Name"
+          },
+          "payer_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Note"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "amount_minor",
+          "method",
+          "status",
+          "created_at"
+        ],
+        "title": "StudentPaymentRead",
+        "description": "Платёж глазами того, кто платил: без чужих имён и внутренних ссылок."
       },
       "StudentPricingRead": {
         "properties": {

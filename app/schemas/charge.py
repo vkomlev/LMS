@@ -65,6 +65,15 @@ class ChargeRead(BaseModel):
     #: У ученика стоит ручная ЦЕНА (не сумма месяца) — расчёт её не перебивает.
     has_price_override: bool = False
     override_minor: Optional[int] = None
+    #: tsk-010, факт оплаты. Не хранится в начислении, а считается по платежам.
+    paid_minor: int = 0
+    #: Чек приложен, решения маркетолога ещё нет. Долгом не считается.
+    pending_minor: int = 0
+    due_minor: int = 0
+    #: Пришло больше начисленного — видно отдельно, а не прячется в «оплачено».
+    overpaid_minor: int = 0
+    #: Срок вышел, а деньги так и не пришли — повод напомнить.
+    is_overdue: bool = False
 
 
 class ManualAmountRequest(BaseModel):

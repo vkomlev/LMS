@@ -1,0 +1,2575 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 7da7e2a..62ce06f 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -434,6 +434,13 @@ app.include_router(marketer_leads_router, prefix=API_PREFIX)
+ from app.api.v1.marketer_charges import router as marketer_charges_router
+ app.include_router(marketer_charges_router, prefix=API_PREFIX)
+ 
++# tsk-010 (приём оплаты): чек от ученика/родителя и очередь подтверждения
++from app.api.v1.me_payments import router as me_payments_router
++app.include_router(me_payments_router, prefix=API_PREFIX)
++
++from app.api.v1.marketer_payments import router as marketer_payments_router
++app.include_router(marketer_payments_router, prefix=API_PREFIX)
++
+ # tsk-513 (кабинет методиста): перерывы ученика — гасят занятия и влияют на цену
+ from app.api.v1.methodist_breaks import router as methodist_breaks_router
+ app.include_router(methodist_breaks_router, prefix=API_PREFIX)
+diff --git a/app/api/v1/marketer_charges.py b/app/api/v1/marketer_charges.py
+index e1a13a2..5c5ac11 100644
+--- a/app/api/v1/marketer_charges.py
++++ b/app/api/v1/marketer_charges.py
+@@ -20,7 +20,7 @@ from app.schemas.charge import (
+     PriceOverrideRequest,
+     RecalculateResult,
+ )
+-from app.services import break_service, charge_service
++from app.services import break_service, charge_service, payment_service
+ 
+ router = APIRouter(prefix="/marketer", tags=["marketer_charges"])
+ 
+@@ -58,7 +58,12 @@ async def list_charges(
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_charges_gate),
+ ) -> list[ChargeRead]:
+-    rows = await charge_service.list_charges(db, period=_resolve_period(period))
++    target = _resolve_period(period)
++    rows = await charge_service.list_charges(db, period=target)
++    # tsk-010: рядом с суммой месяца — что по ней уже пришло. Начисление и
++    # оплата остаются разными слоями: расчёт не знает о платежах, платежи
++    # дописываются поверх готовых строк.
++    rows = await payment_service.attach_payment_state(db, rows, period=target)
+     return [ChargeRead(**r) for r in rows]
+ 
+ 
+@@ -235,6 +240,7 @@ async def _reload_charge(db: AsyncSession, charge_id: int) -> ChargeRead:
+     if row is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
+     rows = await charge_service.list_charges(db, period=row.period)
++    rows = await payment_service.attach_payment_state(db, rows, period=row.period)
+     found = next((r for r in rows if r["id"] == charge_id), None)
+     if found is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
+diff --git a/app/core/config.py b/app/core/config.py
+index 4fd6cc2..e89927e 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -38,6 +38,20 @@ class Settings:
+         )
+         self.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
+ 
++        # tsk-010: чеки об оплате, которые загружает ученик или родитель.
++        # Отдельная директория от учебных вложений: это платёжные документы,
++        # у них другой срок хранения и другой круг читателей.
++        self.payment_receipts_upload_dir: Path = Path(
++            os.getenv("PAYMENT_RECEIPTS_UPLOAD_DIR", "uploads/receipts")
++        )
++        self.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
++
++        # До какого числа ждём оплату за текущий месяц и сколько дней после
++        # этого считаем задержкой, а не просрочкой. Решение оператора: 5-е
++        # число, дальше неделя мягкого напоминания. Меняется без правки кода.
++        self.payment_due_day: int = int(os.getenv("PAYMENT_DUE_DAY", "5"))
++        self.payment_grace_days: int = int(os.getenv("PAYMENT_GRACE_DAYS", "7"))
++
+         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
+         self.materials_upload_dir: Path = Path(
+             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")
+diff --git a/app/schemas/charge.py b/app/schemas/charge.py
+index d108d7b..9aa89f0 100644
+--- a/app/schemas/charge.py
++++ b/app/schemas/charge.py
+@@ -65,6 +65,15 @@ class ChargeRead(BaseModel):
+     #: У ученика стоит ручная ЦЕНА (не сумма месяца) — расчёт её не перебивает.
+     has_price_override: bool = False
+     override_minor: Optional[int] = None
++    #: tsk-010, факт оплаты. Не хранится в начислении, а считается по платежам.
++    paid_minor: int = 0
++    #: Чек приложен, решения маркетолога ещё нет. Долгом не считается.
++    pending_minor: int = 0
++    due_minor: int = 0
++    #: Пришло больше начисленного — видно отдельно, а не прячется в «оплачено».
++    overpaid_minor: int = 0
++    #: Срок вышел, а деньги так и не пришли — повод напомнить.
++    is_overdue: bool = False
+ 
+ 
+ class ManualAmountRequest(BaseModel):
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index b073333..ae9723d 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -15,6 +15,7 @@ from datetime import date
+ from typing import Optional
+ 
+ from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.services import pricing_service
+@@ -176,14 +177,29 @@ async def recalculate_student_group(
+         # Открытую строку убираем: иначе она замрёт со старой суммой и останется
+         # призрачным начислением, которое никто уже не пересчитает. Закрытые
+         # месяцы не трогаем — это история, а не текущее состояние.
+-        await db.execute(
++        #
++        # tsk-010: месяц с принятым платежом не удаляем. Иначе вместе со строкой
++        # исчезли бы деньги, которые к ней привязаны, — а внешний ключ платежа
++        # (ON DELETE RESTRICT) превратил бы это в ошибку посреди пересчёта.
++        res = await db.execute(
+             text(
+-                "DELETE FROM student_monthly_charge "
+-                "WHERE student_id = :s AND group_id = :g AND period = :p "
+-                "  AND status = 'open'"
++                "DELETE FROM student_monthly_charge ch "
++                "WHERE ch.student_id = :s AND ch.group_id = :g AND ch.period = :p "
++                "  AND ch.status = 'open' "
++                "  AND NOT EXISTS (SELECT 1 FROM student_payment p "
++                "                   WHERE p.student_id = ch.student_id "
++                "                     AND p.group_id = ch.group_id "
++                "                     AND p.period = ch.period)"
+             ),
+             {"s": student_id, "g": group_id, "p": period},
+         )
++        if res.rowcount == 0:
++            logger.info(
++                "Начисление %s/%s за %s оставлено: считать не из чего, но по нему есть платежи",
++                student_id,
++                group_id,
++                period,
++            )
+         return None
+ 
+     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
+@@ -405,12 +421,26 @@ async def recalculate_month(db: AsyncSession, *, period: date) -> int:
+     touched = 0
+     for student in students:
+         for group in student.groups:
+-            await recalculate_student_group(
+-                db,
+-                student_id=student.student_id,
+-                group_id=group.group_id,
+-                period=period,
+-            )
++            # Каждый ученик — в своей вложенной транзакции: платёж, пришедший
++            # ровно между проверкой «нет оплат» и удалением строки месяца
++            # (tsk-010), уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
++            try:
++                async with db.begin_nested():
++                    await recalculate_student_group(
++                        db,
++                        student_id=student.student_id,
++                        group_id=group.group_id,
++                        period=period,
++                    )
++            except IntegrityError:
++                logger.warning(
++                    "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
++                    student.student_id,
++                    group.group_id,
++                    period,
++                    exc_info=True,
++                )
++                continue
+             touched += 1
+     await db.commit()
+     return touched
+diff --git a/app/services/user_merge_service.py b/app/services/user_merge_service.py
+index a2665f0..6b13668 100644
+--- a/app/services/user_merge_service.py
++++ b/app/services/user_merge_service.py
+@@ -214,6 +214,28 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
+     if not source.is_active or not target.is_active:
+         return False
+ 
++    # tsk-010: за учёткой числятся деньги — слияние останавливаем.
++    # Платежи привязаны к начислению парой «ученик + группа + месяц», и просто
++    # переписать им `student_id` нельзя: у target может не быть строки того же
++    # месяца, а составной внешний ключ этого не допустит. Автослияние дублей
++    # (tsk-455) идёт молча при регистрации — оно не должно решать за человека
++    # судьбу подтверждённых платежей. Разбирать такую пару нужно руками.
++    money = (
++        await db.execute(
++            text("SELECT count(*) AS n FROM student_payment WHERE student_id = :s"),
++            {"s": source_id},
++        )
++    ).one()
++    if money.n > 0:
++        logger.warning(
++            "Слияние %s → %s остановлено: за source числится платежей: %s. "
++            "Нужен ручной разбор, деньги молча не переносим.",
++            source_id,
++            target_id,
++            money.n,
++        )
++        return False
++
+     async with db.begin_nested():
+         await apply_merge(db, source_id, target_id)
+         await db.flush()
+diff --git a/docs/openapi.json b/docs/openapi.json
+index ce1e399..52f70a0 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -29358,13 +29358,14 @@
+         }
+       }
+     },
+-    "/api/v1/methodist/breaks": {
++    "/api/v1/me/charges": {
+       "get": {
+         "tags": [
+-          "methodist_breaks"
++          "me_payments"
+         ],
+-        "summary": "Перерывы учеников",
+-        "operationId": "list_breaks_api_v1_methodist_breaks_get",
++        "summary": "Мои начисления и оплаты",
++        "description": "Начисления по месяцам: сколько начислено, сколько уже оплачено, сколько ждёт подтверждения и что осталось. Родитель смотрит начисления ребёнка, передав его student_id.",
++        "operationId": "my_charges_api_v1_me_charges_get",
+         "security": [
+           {
+             "APIKeyHeader": []
+@@ -29387,8 +29388,10 @@
+                   "type": "null"
+                 }
+               ],
++              "description": "Ребёнок родителя; своё — не указывать",
+               "title": "Student Id"
+-            }
++            },
++            "description": "Ребёнок родителя; своё — не указывать"
+           },
+           {
+             "name": "token",
+@@ -29447,9 +29450,9 @@
+                 "schema": {
+                   "type": "array",
+                   "items": {
+-                    "$ref": "#/components/schemas/BreakRead"
++                    "$ref": "#/components/schemas/StudentChargeRead"
+                   },
+-                  "title": "Response List Breaks Api V1 Methodist Breaks Get"
++                  "title": "Response My Charges Api V1 Me Charges Get"
+                 }
+               }
+             }
+@@ -29465,14 +29468,16 @@
+             }
+           }
+         }
+-      },
++      }
++    },
++    "/api/v1/me/payments": {
+       "post": {
+         "tags": [
+-          "methodist_breaks"
++          "me_payments"
+         ],
+-        "summary": "Завести перерыв",
+-        "description": "Занятия ученика в эти дни гаснут (статус on_break), а начисление текущего месяца пересчитывается сразу.",
+-        "operationId": "create_break_api_v1_methodist_breaks_post",
++        "summary": "Приложить чек об оплате",
++        "description": "Заявка уходит маркетологу на подтверждение. Долгом такая сумма уже не считается, но и оплаченной становится только после подтверждения.",
++        "operationId": "submit_payment_api_v1_me_payments_post",
+         "security": [
+           {
+             "APIKeyHeader": []
+@@ -29534,9 +29539,9 @@
+         "requestBody": {
+           "required": true,
+           "content": {
+-            "application/json": {
++            "multipart/form-data": {
+               "schema": {
+-                "$ref": "#/components/schemas/BreakCreateRequest"
++                "$ref": "#/components/schemas/Body_submit_payment_api_v1_me_payments_post"
+               }
+             }
+           }
+@@ -29547,7 +29552,9 @@
+             "content": {
+               "application/json": {
+                 "schema": {
+-                  "$ref": "#/components/schemas/BreakRead"
++                  "type": "object",
++                  "additionalProperties": true,
++                  "title": "Response Submit Payment Api V1 Me Payments Post"
+                 }
+               }
+             }
+@@ -29565,13 +29572,13 @@
+         }
+       }
+     },
+-    "/api/v1/methodist/breaks/{break_id}": {
+-      "patch": {
++    "/api/v1/me/payments/{payment_id}/receipt": {
++      "get": {
+         "tags": [
+-          "methodist_breaks"
++          "me_payments"
+         ],
+-        "summary": "Изменить перерыв",
+-        "operationId": "update_break_api_v1_methodist_breaks__break_id__patch",
++        "summary": "Скачать свой чек",
++        "operationId": "download_own_receipt_api_v1_me_payments__payment_id__receipt_get",
+         "security": [
+           {
+             "APIKeyHeader": []
+@@ -29582,12 +29589,12 @@
+         ],
+         "parameters": [
+           {
+-            "name": "break_id",
++            "name": "payment_id",
+             "in": "path",
+             "required": true,
+             "schema": {
+               "type": "integer",
+-              "title": "Break Id"
++              "title": "Payment Id"
+             }
+           },
+           {
+@@ -29639,24 +29646,12 @@
+             }
+           }
+         ],
+-        "requestBody": {
+-          "required": true,
+-          "content": {
+-            "application/json": {
+-              "schema": {
+-                "$ref": "#/components/schemas/BreakWriteRequest"
+-              }
+-            }
+-          }
+-        },
+         "responses": {
+           "200": {
+             "description": "Successful Response",
+             "content": {
+               "application/json": {
+-                "schema": {
+-                  "$ref": "#/components/schemas/BreakRead"
+-                }
++                "schema": {}
+               }
+             }
+           },
+@@ -29671,14 +29666,16 @@
+             }
+           }
+         }
+-      },
+-      "delete": {
++      }
++    },
++    "/api/v1/marketer/payments": {
++      "get": {
+         "tags": [
+-          "methodist_breaks"
++          "marketer_payments"
+         ],
+-        "summary": "Снять перерыв",
+-        "description": "Погашенные им занятия возвращаются в расписание.",
+-        "operationId": "delete_break_api_v1_methodist_breaks__break_id__delete",
++        "summary": "Платежи: очередь на подтверждение и история",
++        "description": "Без фильтра сверху идут платежи, ждущие решения.",
++        "operationId": "list_payments_api_v1_marketer_payments_get",
+         "security": [
+           {
+             "APIKeyHeader": []
+@@ -29689,12 +29686,57 @@
+         ],
+         "parameters": [
+           {
+-            "name": "break_id",
+-            "in": "path",
+-            "required": true,
++            "name": "status",
++            "in": "query",
++            "required": false,
+             "schema": {
+-              "type": "integer",
+-              "title": "Break Id"
++              "anyOf": [
++                {
++                  "enum": [
++                    "pending",
++                    "confirmed",
++                    "rejected"
++                  ],
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Status"
++            }
++          },
++          {
++            "name": "period",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string",
++                  "format": "date"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Period"
++            }
++          },
++          {
++            "name": "student_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Student Id"
+             }
+           },
+           {
+@@ -29747,8 +29789,19 @@
+           }
+         ],
+         "responses": {
+-          "204": {
+-            "description": "Successful Response"
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "array",
++                  "items": {
++                    "$ref": "#/components/schemas/PaymentRead"
++                  },
++                  "title": "Response List Payments Api V1 Marketer Payments Get"
++                }
++              }
++            }
+           },
+           "422": {
+             "description": "Validation Error",
+@@ -29763,31 +29816,99 @@
+         }
+       }
+     },
+-    "/api/v1/media/{sha_ext}": {
+-      "get": {
++    "/api/v1/marketer/payments/{payment_id}/confirm": {
++      "post": {
+         "tags": [
+-          "media"
++          "marketer_payments"
++        ],
++        "summary": "Подтвердить платёж",
++        "description": "Деньги считаются полученными. Налоговый чек в «Мой налог» система не выбивает — его оператор выдаёт сам, для сверки есть выгрузка по датам.",
++        "operationId": "confirm_api_v1_marketer_payments__payment_id__confirm_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
+         ],
+-        "summary": "Получить CAS-медиафайл по sha256-имени",
+-        "description": "Отдаёт файл из CAS-хранилища ContentBackbone (S3 в prod, локальный диск в dev).\n\nsha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).\nEndpoint публичный — не требует аутентификации (изображения задач доступны\nчерез guest-mode, sha256-имена не поддаются перебору).\n\nHTTP 400 — неверный формат sha_ext.\nHTTP 404 — файл отсутствует в CAS (только dev-режим; в S3-режиме 404 отдаёт сам S3).\nHTTP 307 — редирект на S3 (prod-режим).\nHTTP 200 — FileResponse с корректным content-type из allowlist (dev-режим).",
+-        "operationId": "get_cas_media_api_v1_media__sha_ext__get",
+         "parameters": [
+           {
+-            "name": "sha_ext",
++            "name": "payment_id",
+             "in": "path",
+             "required": true,
+             "schema": {
+-              "type": "string",
+-              "title": "Sha Ext"
++              "type": "integer",
++              "title": "Payment Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
+             }
+           }
+         ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/PaymentDecisionRequest"
++              }
++            }
++          }
++        },
+         "responses": {
+           "200": {
+             "description": "Successful Response",
+             "content": {
+               "application/json": {
+-                "schema": {}
++                "schema": {
++                  "$ref": "#/components/schemas/PaymentRead"
++                }
+               }
+             }
+           },
+@@ -29803,63 +29924,827 @@
+           }
+         }
+       }
+-    }
+-  },
+-  "components": {
+-    "schemas": {
+-      "AccessLevel": {
+-        "type": "string",
+-        "enum": [
+-          "self_guided",
+-          "auto_check",
+-          "manual_check",
+-          "group_sessions",
+-          "personal_teacher"
++    },
++    "/api/v1/marketer/payments/{payment_id}/reject": {
++      "post": {
++        "tags": [
++          "marketer_payments"
+         ],
+-        "title": "AccessLevel"
+-      },
+-      "AccessRequestCreate": {
+-        "properties": {
+-          "user_id": {
+-            "type": "integer",
+-            "title": "User Id",
+-            "description": "ID пользователя"
+-          },
+-          "role_id": {
+-            "type": "integer",
+-            "title": "Role Id",
+-            "description": "ID запрашиваемой роли"
++        "summary": "Отклонить платёж",
++        "operationId": "reject_api_v1_marketer_payments__payment_id__reject_post",
++        "security": [
++          {
++            "APIKeyHeader": []
+           },
+-          "flag": {
+-            "$ref": "#/components/schemas/AccessRequestFlag",
+-            "description": "Статус запроса",
+-            "default": "not_ready"
++          {
++            "APIKeyQuery": []
+           }
+-        },
+-        "type": "object",
+-        "required": [
+-          "user_id",
+-          "role_id"
+-        ],
+-        "title": "AccessRequestCreate",
+-        "description": "Схема создания — тот же набор полей, но без id и requested_at."
+-      },
+-      "AccessRequestFlag": {
+-        "type": "string",
+-        "enum": [
+-          "completed",
+-          "rejected",
+-          "not_ready",
+-          "wait for pay",
+-          "pay completed"
+         ],
+-        "title": "AccessRequestFlag"
+-      },
+-      "AccessRequestRead": {
+-        "properties": {
+-          "user_id": {
+-            "type": "integer",
+-            "title": "User Id",
++        "parameters": [
++          {
++            "name": "payment_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Payment Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/PaymentDecisionRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/PaymentRead"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/marketer/payments/{payment_id}/receipt": {
++      "get": {
++        "tags": [
++          "marketer_payments"
++        ],
++        "summary": "Посмотреть чек",
++        "operationId": "download_receipt_api_v1_marketer_payments__payment_id__receipt_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "payment_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Payment Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {}
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/marketer/payments/export": {
++      "get": {
++        "tags": [
++          "marketer_payments"
++        ],
++        "summary": "Выгрузка подтверждённых платежей за период",
++        "description": "Для сверки с чеками, выбитыми в «Мой налог» вручную. Дата — день платежа, а не день подтверждения.",
++        "operationId": "export_api_v1_marketer_payments_export_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "date_from",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "format": "date",
++              "title": "Date From"
++            }
++          },
++          {
++            "name": "date_to",
++            "in": "query",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "format": "date",
++              "title": "Date To"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "array",
++                  "items": {
++                    "$ref": "#/components/schemas/PaymentExportRow"
++                  },
++                  "title": "Response Export Api V1 Marketer Payments Export Get"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/methodist/breaks": {
++      "get": {
++        "tags": [
++          "methodist_breaks"
++        ],
++        "summary": "Перерывы учеников",
++        "operationId": "list_breaks_api_v1_methodist_breaks_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "student_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Student Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "array",
++                  "items": {
++                    "$ref": "#/components/schemas/BreakRead"
++                  },
++                  "title": "Response List Breaks Api V1 Methodist Breaks Get"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      },
++      "post": {
++        "tags": [
++          "methodist_breaks"
++        ],
++        "summary": "Завести перерыв",
++        "description": "Занятия ученика в эти дни гаснут (статус on_break), а начисление текущего месяца пересчитывается сразу.",
++        "operationId": "create_break_api_v1_methodist_breaks_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/BreakCreateRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "201": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/BreakRead"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/methodist/breaks/{break_id}": {
++      "patch": {
++        "tags": [
++          "methodist_breaks"
++        ],
++        "summary": "Изменить перерыв",
++        "operationId": "update_break_api_v1_methodist_breaks__break_id__patch",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "break_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Break Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/BreakWriteRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/BreakRead"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      },
++      "delete": {
++        "tags": [
++          "methodist_breaks"
++        ],
++        "summary": "Снять перерыв",
++        "description": "Погашенные им занятия возвращаются в расписание.",
++        "operationId": "delete_break_api_v1_methodist_breaks__break_id__delete",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "break_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Break Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "204": {
++            "description": "Successful Response"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/media/{sha_ext}": {
++      "get": {
++        "tags": [
++          "media"
++        ],
++        "summary": "Получить CAS-медиафайл по sha256-имени",
++        "description": "Отдаёт файл из CAS-хранилища ContentBackbone (S3 в prod, локальный диск в dev).\n\nsha_ext: строка вида ``<sha256hex>.<ext>`` (64 hex-символа + расширение).\nEndpoint публичный — не требует аутентификации (изображения задач доступны\nчерез guest-mode, sha256-имена не поддаются перебору).\n\nHTTP 400 — неверный формат sha_ext.\nHTTP 404 — файл отсутствует в CAS (только dev-режим; в S3-режиме 404 отдаёт сам S3).\nHTTP 307 — редирект на S3 (prod-режим).\nHTTP 200 — FileResponse с корректным content-type из allowlist (dev-режим).",
++        "operationId": "get_cas_media_api_v1_media__sha_ext__get",
++        "parameters": [
++          {
++            "name": "sha_ext",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "string",
++              "title": "Sha Ext"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {}
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++  },
++  "components": {
++    "schemas": {
++      "AccessLevel": {
++        "type": "string",
++        "enum": [
++          "self_guided",
++          "auto_check",
++          "manual_check",
++          "group_sessions",
++          "personal_teacher"
++        ],
++        "title": "AccessLevel"
++      },
++      "AccessRequestCreate": {
++        "properties": {
++          "user_id": {
++            "type": "integer",
++            "title": "User Id",
++            "description": "ID пользователя"
++          },
++          "role_id": {
++            "type": "integer",
++            "title": "Role Id",
++            "description": "ID запрашиваемой роли"
++          },
++          "flag": {
++            "$ref": "#/components/schemas/AccessRequestFlag",
++            "description": "Статус запроса",
++            "default": "not_ready"
++          }
++        },
++        "type": "object",
++        "required": [
++          "user_id",
++          "role_id"
++        ],
++        "title": "AccessRequestCreate",
++        "description": "Схема создания — тот же набор полей, но без id и requested_at."
++      },
++      "AccessRequestFlag": {
++        "type": "string",
++        "enum": [
++          "completed",
++          "rejected",
++          "not_ready",
++          "wait for pay",
++          "pay completed"
++        ],
++        "title": "AccessRequestFlag"
++      },
++      "AccessRequestRead": {
++        "properties": {
++          "user_id": {
++            "type": "integer",
++            "title": "User Id",
+             "description": "ID пользователя"
+           },
+           "role_id": {
+@@ -31491,20 +32376,73 @@
+         "required": [
+           "file"
+         ],
+-        "title": "Body_attach_file_to_message_endpoint_api_v1_messages__message_id__attachment_post"
+-      },
+-      "Body_mark_one_as_read_api_v1_messages__message_id__read_post": {
+-        "properties": {
+-          "user_id": {
+-            "type": "integer",
+-            "title": "User Id"
+-          }
+-        },
+-        "type": "object",
+-        "required": [
+-          "user_id"
+-        ],
+-        "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
++        "title": "Body_attach_file_to_message_endpoint_api_v1_messages__message_id__attachment_post"
++      },
++      "Body_mark_one_as_read_api_v1_messages__message_id__read_post": {
++        "properties": {
++          "user_id": {
++            "type": "integer",
++            "title": "User Id"
++          }
++        },
++        "type": "object",
++        "required": [
++          "user_id"
++        ],
++        "title": "Body_mark_one_as_read_api_v1_messages__message_id__read_post"
++      },
++      "Body_submit_payment_api_v1_me_payments_post": {
++        "properties": {
++          "charge_id": {
++            "type": "integer",
++            "title": "Charge Id",
++            "description": "Начисление, за которое платят"
++          },
++          "amount_minor": {
++            "type": "integer",
++            "exclusiveMinimum": 0.0,
++            "title": "Amount Minor",
++            "description": "Сумма платежа в копейках"
++          },
++          "paid_on": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Paid On",
++            "description": "День платежа"
++          },
++          "payer_note": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 500
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Payer Note"
++          },
++          "file": {
++            "type": "string",
++            "format": "binary",
++            "title": "File",
++            "description": "Чек: изображение или PDF"
++          }
++        },
++        "type": "object",
++        "required": [
++          "charge_id",
++          "amount_minor",
++          "file"
++        ],
++        "title": "Body_submit_payment_api_v1_me_payments_post"
+       },
+       "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post": {
+         "properties": {
+@@ -31819,6 +32757,31 @@
+               }
+             ],
+             "title": "Override Minor"
++          },
++          "paid_minor": {
++            "type": "integer",
++            "title": "Paid Minor",
++            "default": 0
++          },
++          "pending_minor": {
++            "type": "integer",
++            "title": "Pending Minor",
++            "default": 0
++          },
++          "due_minor": {
++            "type": "integer",
++            "title": "Due Minor",
++            "default": 0
++          },
++          "overpaid_minor": {
++            "type": "integer",
++            "title": "Overpaid Minor",
++            "default": 0
++          },
++          "is_overdue": {
++            "type": "boolean",
++            "title": "Is Overdue",
++            "default": false
+           }
+         },
+         "type": "object",
+@@ -38527,84 +39490,364 @@
+             "$ref": "#/components/schemas/PageMeta"
+           }
+         },
+-        "additionalProperties": false,
++        "additionalProperties": false,
++        "type": "object",
++        "required": [
++          "items",
++          "meta"
++        ],
++        "title": "Page[TaskResultRead]"
++      },
++      "Page_TeacherCourseRead_": {
++        "properties": {
++          "items": {
++            "items": {
++              "$ref": "#/components/schemas/TeacherCourseRead"
++            },
++            "type": "array",
++            "title": "Items"
++          },
++          "meta": {
++            "$ref": "#/components/schemas/PageMeta"
++          }
++        },
++        "additionalProperties": false,
++        "type": "object",
++        "required": [
++          "items",
++          "meta"
++        ],
++        "title": "Page[TeacherCourseRead]"
++      },
++      "Page_UserRead_": {
++        "properties": {
++          "items": {
++            "items": {
++              "$ref": "#/components/schemas/UserRead"
++            },
++            "type": "array",
++            "title": "Items"
++          },
++          "meta": {
++            "$ref": "#/components/schemas/PageMeta"
++          }
++        },
++        "additionalProperties": false,
++        "type": "object",
++        "required": [
++          "items",
++          "meta"
++        ],
++        "title": "Page[UserRead]"
++      },
++      "ParentAccessLinkCreateRequest": {
++        "properties": {
++          "label": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Label"
++          }
++        },
++        "type": "object",
++        "title": "ParentAccessLinkCreateRequest"
++      },
++      "ParentAccessLinkCreatedRead": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "student_id": {
++            "type": "integer",
++            "title": "Student Id"
++          },
++          "label": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Label"
++          },
++          "created_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Created At"
++          },
++          "revoked_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Revoked At"
++          },
++          "last_used_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Used At"
++          },
++          "is_active": {
++            "type": "boolean",
++            "title": "Is Active"
++          },
++          "token": {
++            "type": "string",
++            "title": "Token"
++          },
++          "url": {
++            "type": "string",
++            "title": "Url"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "student_id",
++          "created_at",
++          "is_active",
++          "token",
++          "url"
++        ],
++        "title": "ParentAccessLinkCreatedRead",
++        "description": "Ответ на создание — единственное место, где виден сам токен и ссылка."
++      },
++      "ParentAccessLinkRead": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "student_id": {
++            "type": "integer",
++            "title": "Student Id"
++          },
++          "label": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Label"
++          },
++          "created_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Created At"
++          },
++          "revoked_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Revoked At"
++          },
++          "last_used_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Last Used At"
++          },
++          "is_active": {
++            "type": "boolean",
++            "title": "Is Active"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "student_id",
++          "created_at",
++          "is_active"
++        ],
++        "title": "ParentAccessLinkRead"
++      },
++      "ParentCourseWithOrder": {
++        "properties": {
++          "parent_course_id": {
++            "type": "integer",
++            "title": "Parent Course Id",
++            "description": "ID родительского курса",
++            "examples": [
++              1
++            ]
++          },
++          "order_number": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Order Number",
++            "description": "Порядковый номер подкурса внутри родителя. Если не указан, устанавливается автоматически триггером БД.",
++            "examples": [
++              1,
++              2,
++              3,
++              null
++            ]
++          }
++        },
+         "type": "object",
+         "required": [
+-          "items",
+-          "meta"
++          "parent_course_id"
+         ],
+-        "title": "Page[TaskResultRead]"
++        "title": "ParentCourseWithOrder",
++        "description": "Родительский курс с порядковым номером.",
++        "examples": [
++          {
++            "order_number": 1,
++            "parent_course_id": 1
++          },
++          {
++            "parent_course_id": 2
++          }
++        ]
+       },
+-      "Page_TeacherCourseRead_": {
++      "PartialRule": {
+         "properties": {
+-          "items": {
++          "selected": {
+             "items": {
+-              "$ref": "#/components/schemas/TeacherCourseRead"
++              "type": "string"
+             },
+             "type": "array",
+-            "title": "Items"
++            "title": "Selected",
++            "description": "Набор ID вариантов ответа, для которых применяется данное правило."
+           },
+-          "meta": {
+-            "$ref": "#/components/schemas/PageMeta"
++          "score": {
++            "type": "integer",
++            "title": "Score",
++            "description": "Баллы, которые начисляются при таком наборе выбранных вариантов."
+           }
+         },
+-        "additionalProperties": false,
+         "type": "object",
+         "required": [
+-          "items",
+-          "meta"
++          "selected",
++          "score"
+         ],
+-        "title": "Page[TeacherCourseRead]"
++        "title": "PartialRule",
++        "description": "Правило частичного оценивания для задач с множественным выбором (MC)\nили сложных схем проверки."
+       },
+-      "Page_UserRead_": {
++      "ParticipantRead": {
+         "properties": {
+-          "items": {
+-            "items": {
+-              "$ref": "#/components/schemas/UserRead"
+-            },
+-            "type": "array",
+-            "title": "Items"
++          "id": {
++            "type": "integer",
++            "title": "Id"
+           },
+-          "meta": {
+-            "$ref": "#/components/schemas/PageMeta"
++          "occurrence_id": {
++            "type": "integer",
++            "title": "Occurrence Id"
++          },
++          "student_id": {
++            "type": "integer",
++            "title": "Student Id"
++          },
++          "status": {
++            "type": "string",
++            "title": "Status",
++            "description": "scheduled | confirmed | declined | rescheduled | no_show | completed"
++          },
++          "rescheduled_to_occurrence_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Rescheduled To Occurrence Id"
++          },
++          "created_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Created At"
++          },
++          "updated_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Updated At"
+           }
+         },
+-        "additionalProperties": false,
+         "type": "object",
+         "required": [
+-          "items",
+-          "meta"
++          "id",
++          "occurrence_id",
++          "student_id",
++          "status",
++          "created_at",
++          "updated_at"
+         ],
+-        "title": "Page[UserRead]"
++        "title": "ParticipantRead"
+       },
+-      "ParentAccessLinkCreateRequest": {
++      "PaymentDecisionRequest": {
+         "properties": {
+-          "label": {
++          "note": {
+             "anyOf": [
+               {
+-                "type": "string"
++                "type": "string",
++                "maxLength": 500
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Label"
++            "title": "Note"
+           }
+         },
+         "type": "object",
+-        "title": "ParentAccessLinkCreateRequest"
++        "title": "PaymentDecisionRequest",
++        "description": "Решение маркетолога по платежу."
+       },
+-      "ParentAccessLinkCreatedRead": {
++      "PaymentExportRow": {
+         "properties": {
+           "id": {
+             "type": "integer",
+             "title": "Id"
+           },
+-          "student_id": {
+-            "type": "integer",
+-            "title": "Student Id"
++          "on_date": {
++            "type": "string",
++            "format": "date",
++            "title": "On Date"
+           },
+-          "label": {
++          "full_name": {
+             "anyOf": [
+               {
+                 "type": "string"
+@@ -38613,26 +39856,52 @@
+                 "type": "null"
+               }
+             ],
+-            "title": "Label"
++            "title": "Full Name"
+           },
+-          "created_at": {
++          "group_name": {
+             "type": "string",
+-            "format": "date-time",
+-            "title": "Created At"
++            "title": "Group Name"
+           },
+-          "revoked_at": {
++          "period": {
++            "type": "string",
++            "format": "date",
++            "title": "Period"
++          },
++          "amount_minor": {
++            "type": "integer",
++            "title": "Amount Minor"
++          },
++          "method": {
++            "type": "string",
++            "enum": [
++              "manual",
++              "gateway"
++            ],
++            "title": "Method"
++          },
++          "gateway": {
+             "anyOf": [
+               {
+-                "type": "string",
+-                "format": "date-time"
++                "type": "string"
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Revoked At"
++            "title": "Gateway"
+           },
+-          "last_used_at": {
++          "gateway_payment_id": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Gateway Payment Id"
++          },
++          "reviewed_at": {
+             "anyOf": [
+               {
+                 "type": "string",
+@@ -38642,34 +39911,22 @@
+                 "type": "null"
+               }
+             ],
+-            "title": "Last Used At"
+-          },
+-          "is_active": {
+-            "type": "boolean",
+-            "title": "Is Active"
+-          },
+-          "token": {
+-            "type": "string",
+-            "title": "Token"
+-          },
+-          "url": {
+-            "type": "string",
+-            "title": "Url"
++            "title": "Reviewed At"
+           }
+         },
+         "type": "object",
+         "required": [
+           "id",
+-          "student_id",
+-          "created_at",
+-          "is_active",
+-          "token",
+-          "url"
++          "on_date",
++          "group_name",
++          "period",
++          "amount_minor",
++          "method"
+         ],
+-        "title": "ParentAccessLinkCreatedRead",
+-        "description": "Ответ на создание — единственное место, где виден сам токен и ссылка."
++        "title": "PaymentExportRow",
++        "description": "Строка выгрузки для сверки с чеками «Мой налог»."
+       },
+-      "ParentAccessLinkRead": {
++      "PaymentRead": {
+         "properties": {
+           "id": {
+             "type": "integer",
+@@ -38679,7 +39936,7 @@
+             "type": "integer",
+             "title": "Student Id"
+           },
+-          "label": {
++          "full_name": {
+             "anyOf": [
+               {
+                 "type": "string"
+@@ -38688,171 +39945,167 @@
+                 "type": "null"
+               }
+             ],
+-            "title": "Label"
++            "title": "Full Name"
+           },
+-          "created_at": {
++          "group_id": {
++            "type": "integer",
++            "title": "Group Id"
++          },
++          "group_name": {
+             "type": "string",
+-            "format": "date-time",
+-            "title": "Created At"
++            "title": "Group Name"
+           },
+-          "revoked_at": {
++          "period": {
++            "type": "string",
++            "format": "date",
++            "title": "Period"
++          },
++          "amount_minor": {
++            "type": "integer",
++            "title": "Amount Minor"
++          },
++          "method": {
++            "type": "string",
++            "enum": [
++              "manual",
++              "gateway"
++            ],
++            "title": "Method"
++          },
++          "status": {
++            "type": "string",
++            "enum": [
++              "pending",
++              "confirmed",
++              "rejected"
++            ],
++            "title": "Status"
++          },
++          "receipt_name": {
+             "anyOf": [
+               {
+-                "type": "string",
+-                "format": "date-time"
++                "type": "string"
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Revoked At"
++            "title": "Receipt Name"
+           },
+-          "last_used_at": {
++          "has_receipt": {
++            "type": "boolean",
++            "title": "Has Receipt",
++            "default": false
++          },
++          "payer_note": {
+             "anyOf": [
+               {
+-                "type": "string",
+-                "format": "date-time"
++                "type": "string"
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Last Used At"
++            "title": "Payer Note"
+           },
+-          "is_active": {
+-            "type": "boolean",
+-            "title": "Is Active"
+-          }
+-        },
+-        "type": "object",
+-        "required": [
+-          "id",
+-          "student_id",
+-          "created_at",
+-          "is_active"
+-        ],
+-        "title": "ParentAccessLinkRead"
+-      },
+-      "ParentCourseWithOrder": {
+-        "properties": {
+-          "parent_course_id": {
+-            "type": "integer",
+-            "title": "Parent Course Id",
+-            "description": "ID родительского курса",
+-            "examples": [
+-              1
+-            ]
++          "paid_on": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Paid On"
+           },
+-          "order_number": {
++          "gateway": {
+             "anyOf": [
+               {
+-                "type": "integer"
++                "type": "string"
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Order Number",
+-            "description": "Порядковый номер подкурса внутри родителя. Если не указан, устанавливается автоматически триггером БД.",
+-            "examples": [
+-              1,
+-              2,
+-              3,
+-              null
+-            ]
+-          }
+-        },
+-        "type": "object",
+-        "required": [
+-          "parent_course_id"
+-        ],
+-        "title": "ParentCourseWithOrder",
+-        "description": "Родительский курс с порядковым номером.",
+-        "examples": [
+-          {
+-            "order_number": 1,
+-            "parent_course_id": 1
+-          },
+-          {
+-            "parent_course_id": 2
+-          }
+-        ]
+-      },
+-      "PartialRule": {
+-        "properties": {
+-          "selected": {
+-            "items": {
+-              "type": "string"
+-            },
+-            "type": "array",
+-            "title": "Selected",
+-            "description": "Набор ID вариантов ответа, для которых применяется данное правило."
+-          },
+-          "score": {
+-            "type": "integer",
+-            "title": "Score",
+-            "description": "Баллы, которые начисляются при таком наборе выбранных вариантов."
+-          }
+-        },
+-        "type": "object",
+-        "required": [
+-          "selected",
+-          "score"
+-        ],
+-        "title": "PartialRule",
+-        "description": "Правило частичного оценивания для задач с множественным выбором (MC)\nили сложных схем проверки."
+-      },
+-      "ParticipantRead": {
+-        "properties": {
+-          "id": {
+-            "type": "integer",
+-            "title": "Id"
++            "title": "Gateway"
+           },
+-          "occurrence_id": {
+-            "type": "integer",
+-            "title": "Occurrence Id"
++          "gateway_payment_id": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Gateway Payment Id"
+           },
+-          "student_id": {
+-            "type": "integer",
+-            "title": "Student Id"
++          "review_note": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Review Note"
+           },
+-          "status": {
+-            "type": "string",
+-            "title": "Status",
+-            "description": "scheduled | confirmed | declined | rescheduled | no_show | completed"
++          "reviewed_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reviewed At"
+           },
+-          "rescheduled_to_occurrence_id": {
++          "reviewed_by_name": {
+             "anyOf": [
+               {
+-                "type": "integer"
++                "type": "string"
+               },
+               {
+                 "type": "null"
+               }
+             ],
+-            "title": "Rescheduled To Occurrence Id"
++            "title": "Reviewed By Name"
+           },
+           "created_at": {
+             "type": "string",
+             "format": "date-time",
+             "title": "Created At"
+           },
+-          "updated_at": {
+-            "type": "string",
+-            "format": "date-time",
+-            "title": "Updated At"
++          "charge_total_minor": {
++            "type": "integer",
++            "title": "Charge Total Minor"
++          },
++          "charge_due_minor": {
++            "type": "integer",
++            "title": "Charge Due Minor"
+           }
+         },
+         "type": "object",
+         "required": [
+           "id",
+-          "occurrence_id",
+           "student_id",
++          "group_id",
++          "group_name",
++          "period",
++          "amount_minor",
++          "method",
+           "status",
+           "created_at",
+-          "updated_at"
++          "charge_total_minor",
++          "charge_due_minor"
+         ],
+-        "title": "ParticipantRead"
++        "title": "PaymentRead",
++        "description": "Платёж глазами кабинета маркетолога."
+       },
+       "PenaltiesRules": {
+         "properties": {
+@@ -41151,6 +42404,88 @@
+         "title": "StudentBrief",
+         "description": "Узкая карточка ученика для привязки лида.\n\nНамеренно без почты, телефона и ролей: маркетологу для привязки хватает\nимени и номера, а общий `/users/search` с полными персональными данными\nостаётся под прежним гейтом."
+       },
++      "StudentChargeRead": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "group_id": {
++            "type": "integer",
++            "title": "Group Id"
++          },
++          "group_name": {
++            "type": "string",
++            "title": "Group Name"
++          },
++          "period": {
++            "type": "string",
++            "format": "date",
++            "title": "Period"
++          },
++          "total_minor": {
++            "type": "integer",
++            "title": "Total Minor"
++          },
++          "status": {
++            "type": "string",
++            "enum": [
++              "open",
++              "closed"
++            ],
++            "title": "Status"
++          },
++          "due_on": {
++            "type": "string",
++            "format": "date",
++            "title": "Due On"
++          },
++          "paid_minor": {
++            "type": "integer",
++            "title": "Paid Minor",
++            "default": 0
++          },
++          "pending_minor": {
++            "type": "integer",
++            "title": "Pending Minor",
++            "default": 0
++          },
++          "due_minor": {
++            "type": "integer",
++            "title": "Due Minor",
++            "default": 0
++          },
++          "overpaid_minor": {
++            "type": "integer",
++            "title": "Overpaid Minor",
++            "default": 0
++          },
++          "is_overdue": {
++            "type": "boolean",
++            "title": "Is Overdue",
++            "default": false
++          },
++          "payments": {
++            "items": {
++              "$ref": "#/components/schemas/StudentPaymentRead"
++            },
++            "type": "array",
++            "title": "Payments"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "group_id",
++          "group_name",
++          "period",
++          "total_minor",
++          "status",
++          "due_on"
++        ],
++        "title": "StudentChargeRead",
++        "description": "Месяц в кабинете ученика: сколько начислено, сколько пришло, что осталось."
++      },
+       "StudentCourseRef": {
+         "properties": {
+           "course_id": {
+@@ -41423,6 +42758,107 @@
+         "title": "StudentGroupPricing",
+         "description": "Что насчиталось ученику по одной тарифной группе."
+       },
++      "StudentPaymentRead": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "amount_minor": {
++            "type": "integer",
++            "title": "Amount Minor"
++          },
++          "method": {
++            "type": "string",
++            "enum": [
++              "manual",
++              "gateway"
++            ],
++            "title": "Method"
++          },
++          "status": {
++            "type": "string",
++            "enum": [
++              "pending",
++              "confirmed",
++              "rejected"
++            ],
++            "title": "Status"
++          },
++          "receipt_name": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Receipt Name"
++          },
++          "payer_note": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Payer Note"
++          },
++          "paid_on": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Paid On"
++          },
++          "review_note": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Review Note"
++          },
++          "reviewed_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reviewed At"
++          },
++          "created_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Created At"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "amount_minor",
++          "method",
++          "status",
++          "created_at"
++        ],
++        "title": "StudentPaymentRead",
++        "description": "Платёж глазами того, кто платил: без чужих имён и внутренних ссылок."
++      },
+       "StudentPricingRead": {
+         "properties": {
+           "student_id": {

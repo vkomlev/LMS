@@ -15,6 +15,7 @@ from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import pricing_service
@@ -176,14 +177,29 @@ async def recalculate_student_group(
         # Открытую строку убираем: иначе она замрёт со старой суммой и останется
         # призрачным начислением, которое никто уже не пересчитает. Закрытые
         # месяцы не трогаем — это история, а не текущее состояние.
-        await db.execute(
+        #
+        # tsk-010: месяц с принятым платежом не удаляем. Иначе вместе со строкой
+        # исчезли бы деньги, которые к ней привязаны, — а внешний ключ платежа
+        # (ON DELETE RESTRICT) превратил бы это в ошибку посреди пересчёта.
+        res = await db.execute(
             text(
-                "DELETE FROM student_monthly_charge "
-                "WHERE student_id = :s AND group_id = :g AND period = :p "
-                "  AND status = 'open'"
+                "DELETE FROM student_monthly_charge ch "
+                "WHERE ch.student_id = :s AND ch.group_id = :g AND ch.period = :p "
+                "  AND ch.status = 'open' "
+                "  AND NOT EXISTS (SELECT 1 FROM student_payment p "
+                "                   WHERE p.student_id = ch.student_id "
+                "                     AND p.group_id = ch.group_id "
+                "                     AND p.period = ch.period)"
             ),
             {"s": student_id, "g": group_id, "p": period},
         )
+        if res.rowcount == 0:
+            logger.info(
+                "Начисление %s/%s за %s оставлено: считать не из чего, но по нему есть платежи",
+                student_id,
+                group_id,
+                period,
+            )
         return None
 
     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
@@ -392,9 +408,24 @@ async def recalculate_for_student(
         )
     ).all()
     for row in groups:
-        await recalculate_student_group(
-            db, student_id=student_id, group_id=row.group_id, period=period
-        )
+        # Вложенная транзакция на группу — как в `recalculate_month`. Эту точку
+        # входа зовут смена расписания и правка перерыва, то есть она работает
+        # среди дня, когда идут платежи: платёж, пришедший ровно между проверкой
+        # «нет оплат» и удалением строки месяца (tsk-010), иначе уронил бы
+        # действие методиста ошибкой сервера.
+        try:
+            async with db.begin_nested():
+                await recalculate_student_group(
+                    db, student_id=student_id, group_id=row.group_id, period=period
+                )
+        except IntegrityError:
+            logger.warning(
+                "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
+                student_id,
+                row.group_id,
+                period,
+                exc_info=True,
+            )
     await db.commit()
 
 
@@ -405,12 +436,26 @@ async def recalculate_month(db: AsyncSession, *, period: date) -> int:
     touched = 0
     for student in students:
         for group in student.groups:
-            await recalculate_student_group(
-                db,
-                student_id=student.student_id,
-                group_id=group.group_id,
-                period=period,
-            )
+            # Каждый ученик — в своей вложенной транзакции: платёж, пришедший
+            # ровно между проверкой «нет оплат» и удалением строки месяца
+            # (tsk-010), уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
+            try:
+                async with db.begin_nested():
+                    await recalculate_student_group(
+                        db,
+                        student_id=student.student_id,
+                        group_id=group.group_id,
+                        period=period,
+                    )
+            except IntegrityError:
+                logger.warning(
+                    "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
+                    student.student_id,
+                    group.group_id,
+                    period,
+                    exc_info=True,
+                )
+                continue
             touched += 1
     await db.commit()
     return touched

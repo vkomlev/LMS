@@ -38,6 +38,20 @@ class Settings:
         )
         self.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
 
+        # tsk-010: чеки об оплате, которые загружает ученик или родитель.
+        # Отдельная директория от учебных вложений: это платёжные документы,
+        # у них другой срок хранения и другой круг читателей.
+        self.payment_receipts_upload_dir: Path = Path(
+            os.getenv("PAYMENT_RECEIPTS_UPLOAD_DIR", "uploads/receipts")
+        )
+        self.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # До какого числа ждём оплату за текущий месяц и сколько дней после
+        # этого считаем задержкой, а не просрочкой. Решение оператора: 5-е
+        # число, дальше неделя мягкого напоминания. Меняется без правки кода.
+        self.payment_due_day: int = int(os.getenv("PAYMENT_DUE_DAY", "5"))
+        self.payment_grace_days: int = int(os.getenv("PAYMENT_GRACE_DAYS", "7"))
+
         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
         self.materials_upload_dir: Path = Path(
             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")

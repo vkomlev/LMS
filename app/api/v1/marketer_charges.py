@@ -20,7 +20,7 @@ from app.schemas.charge import (
     PriceOverrideRequest,
     RecalculateResult,
 )
-from app.services import break_service, charge_service
+from app.services import break_service, charge_service, payment_service
 
 router = APIRouter(prefix="/marketer", tags=["marketer_charges"])
 
@@ -58,7 +58,12 @@ async def list_charges(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_charges_gate),
 ) -> list[ChargeRead]:
-    rows = await charge_service.list_charges(db, period=_resolve_period(period))
+    target = _resolve_period(period)
+    rows = await charge_service.list_charges(db, period=target)
+    # tsk-010: рядом с суммой месяца — что по ней уже пришло. Начисление и
+    # оплата остаются разными слоями: расчёт не знает о платежах, платежи
+    # дописываются поверх готовых строк.
+    rows = await payment_service.attach_payment_state(db, rows, period=target)
     return [ChargeRead(**r) for r in rows]
 
 
@@ -235,6 +240,7 @@ async def _reload_charge(db: AsyncSession, charge_id: int) -> ChargeRead:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
     rows = await charge_service.list_charges(db, period=row.period)
+    rows = await payment_service.attach_payment_state(db, rows, period=row.period)
     found = next((r for r in rows if r["id"] == charge_id), None)
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")

@@ -1,0 +1,581 @@
+"""tsk-010 — приём оплаты: факт денег поверх уже посчитанного начисления.
+
+Здесь нет ответа на вопрос «сколько должен ученик» — на него отвечает
+`charge_service` (`student_monthly_charge`). Этот модуль отвечает только на
+вопрос «сколько из этого пришло и чем подтверждено».
+
+Оплаченность не хранится полем: она каждый раз выводится суммой подтверждённых
+платежей против итога начисления. Так частичная оплата, правка суммы месяца и
+перенос с прошлого месяца не разъезжаются между двумя источниками правды.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from datetime import date, timedelta
+from typing import Literal, Optional
+
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import Settings
+from app.services import charge_service
+
+logger = logging.getLogger(__name__)
+settings = Settings()
+
+__all__ = [
+    "PaymentStatus",
+    "DuplicatePaymentError",
+    "ChargePaymentState",
+    "due_date_for",
+    "payment_state",
+    "attach_payment_state",
+    "charge_for_student",
+    "list_student_charges",
+    "create_manual_payment",
+    "list_payments",
+    "confirm_payment",
+    "reject_payment",
+    "get_receipt",
+    "export_confirmed",
+    "student_ids_for_parent",
+]
+
+PaymentStatus = Literal["pending", "confirmed", "rejected"]
+
+
+class DuplicatePaymentError(RuntimeError):
+    """Такой же чек уже отправлен и ещё не разобран."""
+
+#: Итог по начислению: сколько подтверждено, сколько ждёт решения, что осталось.
+@dataclass
+class ChargePaymentState:
+    paid_minor: int
+    pending_minor: int
+    due_minor: int
+    #: Пришло больше, чем начислено. Отдельным числом, потому что «долг = 0»
+    #: одинаково выглядит и при точной оплате, и при переплате — а разница в
+    #: деньгах человека.
+    overpaid_minor: int
+    is_overdue: bool
+
+
+def due_date_for(period: date) -> date:
+    """Крайний день оплаты месяца — по настройке оператора (по умолчанию 5-е).
+
+    День берётся с запасом: если в настройке стоит число, которого в месяце нет
+    (31 в феврале), срок приезжает на последний день месяца, а не в следующий.
+    """
+    day = max(1, settings.payment_due_day)
+    last_day = (charge_service.next_month(period) - timedelta(days=1)).day
+    return period.replace(day=min(day, last_day))
+
+
+def payment_state(
+    *, total_minor: int, paid_minor: int, pending_minor: int, period: date, today: date
+) -> ChargePaymentState:
+    """Состояние оплаты одного начисления.
+
+    Просрочка — это только про деньги, которых ещё нет: платёж, ждущий решения
+    маркетолога, просрочкой не считается, иначе ученик, честно приложивший чек
+    первого числа, оказался бы должником из-за нашей очереди. Но гасит просрочку
+    только чек, ПОКРЫВАЮЩИЙ остаток: иначе приложенный рубль снимал бы признак
+    просрочки с любого долга.
+    """
+    due = max(total_minor - paid_minor, 0)
+    overdue = (
+        due > 0
+        and pending_minor < due
+        and today > due_date_for(period) + timedelta(days=settings.payment_grace_days)
+    )
+    return ChargePaymentState(
+        paid_minor=paid_minor,
+        pending_minor=pending_minor,
+        due_minor=due,
+        overpaid_minor=max(paid_minor - total_minor, 0),
+        is_overdue=overdue,
+    )
+
+
+async def _totals_by_charge(
+    db: AsyncSession, *, period: Optional[date] = None, student_id: Optional[int] = None
+) -> dict[tuple[int, int, date], tuple[int, int]]:
+    """Подтверждено и ждёт решения — по каждому начислению разом.
+
+    Одним запросом на весь список: иначе экран начислений дал бы запрос на
+    строку и разъехался бы по времени между строками.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT student_id, group_id, period,
+                       COALESCE(sum(amount_minor) FILTER (WHERE status = 'confirmed'), 0) AS paid,
+                       COALESCE(sum(amount_minor) FILTER (WHERE status = 'pending'), 0) AS pending
+                  FROM student_payment
+                 -- CAST на параметре: у необязательного фильтра asyncpg иначе
+                 -- не может вывести тип NULL и роняет запрос целиком.
+                 WHERE (CAST(:p AS date) IS NULL OR period = CAST(:p AS date))
+                   AND (CAST(:s AS integer) IS NULL OR student_id = CAST(:s AS integer))
+                 GROUP BY student_id, group_id, period
+                """
+            ),
+            {"p": period, "s": student_id},
+        )
+    ).all()
+    return {
+        (r.student_id, r.group_id, r.period): (int(r.paid), int(r.pending)) for r in rows
+    }
+
+
+async def attach_payment_state(
+    db: AsyncSession, charges: list[dict], *, period: Optional[date] = None
+) -> list[dict]:
+    """Дописать к строкам начислений, сколько по ним уже пришло.
+
+    Работает поверх готового результата `charge_service.list_charges`, чтобы
+    расчёт остался единственным местом, где складывается сумма месяца.
+    """
+    totals = await _totals_by_charge(db, period=period)
+    today = date.today()
+    for row in charges:
+        key = (row["student_id"], row["group_id"], row["period"])
+        paid, pending = totals.get(key, (0, 0))
+        state = payment_state(
+            total_minor=row["total_minor"],
+            paid_minor=paid,
+            pending_minor=pending,
+            period=row["period"],
+            today=today,
+        )
+        row["paid_minor"] = state.paid_minor
+        row["pending_minor"] = state.pending_minor
+        row["due_minor"] = state.due_minor
+        row["overpaid_minor"] = state.overpaid_minor
+        row["is_overdue"] = state.is_overdue
+    return charges
+
+
+async def charge_for_student(
+    db: AsyncSession, *, charge_id: int, student_id: int
+) -> Optional[dict]:
+    """Начисление ученика по id — с проверкой, что оно действительно его.
+
+    Проверка принадлежности живёт в самом запросе: платёж по чужому id не должен
+    отличаться от платежа по несуществующему, иначе перебором номеров всплывут
+    чужие месяцы и суммы.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, student_id, group_id, period, status "
+                "  FROM student_monthly_charge "
+                " WHERE id = :id AND student_id = :s"
+            ),
+            {"id": charge_id, "s": student_id},
+        )
+    ).first()
+    return dict(row._mapping) if row is not None else None
+
+
+async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dict]:
+    """Начисления одного ученика для его кабинета — с историей платежей.
+
+    Отдаём и закрытые месяцы: ученик должен видеть, что за прошлый месяц долг
+    погашен, а не только текущую строку.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT ch.id,
+                       ch.group_id,
+                       pg.name AS group_name,
+                       ch.period,
+                       ch.calculated_minor,
+                       ch.manual_minor,
+                       ch.status,
+                       COALESCE(adj.total, 0) AS adjustments_minor
+                  FROM student_monthly_charge ch
+                  JOIN pricing_group pg ON pg.id = ch.group_id
+                  LEFT JOIN LATERAL (
+                        SELECT sum(a.amount_minor) AS total
+                          FROM charge_adjustment a
+                         WHERE a.student_id = ch.student_id
+                           AND a.group_id = ch.group_id
+                           AND a.period = ch.period
+                  ) adj ON TRUE
+                 WHERE ch.student_id = :s
+                 ORDER BY ch.period DESC, pg.name
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+
+    payments = await _payments_by_charge(db, student_id=student_id)
+    totals = await _totals_by_charge(db, student_id=student_id)
+    today = date.today()
+
+    result: list[dict] = []
+    for r in rows:
+        base = r.manual_minor if r.manual_minor is not None else r.calculated_minor
+        total = base + int(r.adjustments_minor)
+        paid, pending = totals.get((student_id, r.group_id, r.period), (0, 0))
+        state = payment_state(
+            total_minor=total,
+            paid_minor=paid,
+            pending_minor=pending,
+            period=r.period,
+            today=today,
+        )
+        result.append(
+            {
+                "id": r.id,
+                "group_id": r.group_id,
+                "group_name": r.group_name,
+                "period": r.period,
+                "total_minor": total,
+                "status": r.status,
+                "due_on": due_date_for(r.period),
+                "paid_minor": state.paid_minor,
+                "pending_minor": state.pending_minor,
+                "due_minor": state.due_minor,
+                "overpaid_minor": state.overpaid_minor,
+                "is_overdue": state.is_overdue,
+                "payments": payments.get((r.group_id, r.period), []),
+            }
+        )
+    return result
+
+
+async def _payments_by_charge(
+    db: AsyncSession, *, student_id: int
+) -> dict[tuple[int, date], list[dict]]:
+    """История платежей ученика, разложенная по месяцам и группам."""
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT id, group_id, period, amount_minor, method, status,
+                       receipt_name, payer_note, paid_on, review_note,
+                       reviewed_at, created_at
+                  FROM student_payment
+                 WHERE student_id = :s
+                 ORDER BY created_at DESC
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    grouped: dict[tuple[int, date], list[dict]] = {}
+    for r in rows:
+        grouped.setdefault((r.group_id, r.period), []).append(
+            {
+                "id": r.id,
+                "amount_minor": r.amount_minor,
+                "method": r.method,
+                "status": r.status,
+                "receipt_name": r.receipt_name,
+                "payer_note": r.payer_note,
+                "paid_on": r.paid_on,
+                "review_note": r.review_note,
+                "reviewed_at": r.reviewed_at,
+                "created_at": r.created_at,
+            }
+        )
+    return grouped
+
+
+async def create_manual_payment(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    group_id: int,
+    period: date,
+    amount_minor: int,
+    paid_on: Optional[date],
+    payer_note: Optional[str],
+    receipt_file: Optional[str],
+    receipt_name: Optional[str],
+    submitted_by: int,
+) -> int:
+    """Завести платёж, ждущий подтверждения. Возвращает его id.
+
+    Сумму не сверяем с начислением: ученик мог заплатить часть, а мог и с
+    запасом. Расхождение — повод для решения маркетолога, а не для отказа на
+    входе; отказ здесь просто оставил бы деньги вне системы.
+
+    `DuplicatePaymentError` — второй такой же чек, ещё не разобранный. Это почти
+    всегда потерянный ответ и повторное нажатие; пропустить его значит завести
+    вторые деньги, которые маркетолог подтвердит, не имея повода усомниться.
+
+    Оплату ЗАКРЫТОГО месяца принимаем сознательно. Закрытие замораживает сумму
+    месяца, а не запрещает гасить долг: иначе задолженность за уже закрытый июль
+    погасить было бы нечем.
+    """
+    try:
+        row = (
+            await db.execute(
+                text(
+                    """
+                    INSERT INTO student_payment
+                           (student_id, group_id, period, amount_minor, method,
+                            receipt_file, receipt_name, payer_note, paid_on, submitted_by)
+                    VALUES (:s, :g, :p, :amt, 'manual', :file, :name, :note, :paid_on, :by)
+                    RETURNING id
+                    """
+                ),
+                {
+                    "s": student_id,
+                    "g": group_id,
+                    "p": period,
+                    "amt": amount_minor,
+                    "file": receipt_file,
+                    "name": receipt_name,
+                    "note": payer_note,
+                    "paid_on": paid_on,
+                    "by": submitted_by,
+                },
+            )
+        ).one()
+    except IntegrityError as exc:
+        await db.rollback()
+        if "uq_student_payment_pending_duplicate" in str(exc.orig):
+            raise DuplicatePaymentError from exc
+        raise
+    await db.commit()
+    logger.info(
+        "tsk-010: платёж %s заведён ученику %s за %s на %s коп. (загрузил %s)",
+        row.id,
+        student_id,
+        period,
+        amount_minor,
+        submitted_by,
+    )
+    return int(row.id)
+
+
+async def list_payments(
+    db: AsyncSession,
+    *,
+    status: Optional[str] = None,
+    period: Optional[date] = None,
+    student_id: Optional[int] = None,
+    payment_id: Optional[int] = None,
+) -> list[dict]:
+    """Платежи для кабинета маркетолога: очередь и история.
+
+    Каждая строка несёт и сумму месяца, и остаток по нему. Без этого решение
+    принимается вслепую: платёж на 55 000 вместо 5 500 и два одинаковых чека
+    подряд выглядят на экране совершенно нормально, если не с чем сравнить.
+
+    Фильтры складываются в самом запросе, а не постфильтром в Python: иначе
+    ограничение выборки молча срезало бы часть строк ещё до фильтрации.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT p.id,
+                       p.student_id,
+                       u.full_name,
+                       p.group_id,
+                       pg.name AS group_name,
+                       p.period,
+                       p.amount_minor,
+                       p.method,
+                       p.status,
+                       p.receipt_name,
+                       (p.receipt_file IS NOT NULL) AS has_receipt,
+                       p.payer_note,
+                       p.paid_on,
+                       p.gateway,
+                       p.gateway_payment_id,
+                       p.review_note,
+                       p.reviewed_at,
+                       reviewer.full_name AS reviewed_by_name,
+                       p.created_at,
+                       -- Сумма месяца и что по нему уже подтверждено: то, без
+                       -- чего расхождение на экране не увидеть.
+                       COALESCE(ch.manual_minor, ch.calculated_minor)
+                           + COALESCE(adj.total, 0) AS charge_total_minor,
+                       COALESCE(paid.total, 0)      AS charge_paid_minor
+                  FROM student_payment p
+                  JOIN users u ON u.id = p.student_id
+                  JOIN pricing_group pg ON pg.id = p.group_id
+                  JOIN student_monthly_charge ch
+                       ON ch.student_id = p.student_id
+                      AND ch.group_id = p.group_id
+                      AND ch.period = p.period
+                  LEFT JOIN users reviewer ON reviewer.id = p.reviewed_by
+                  LEFT JOIN LATERAL (
+                        SELECT sum(a.amount_minor) AS total
+                          FROM charge_adjustment a
+                         WHERE a.student_id = p.student_id
+                           AND a.group_id = p.group_id
+                           AND a.period = p.period
+                  ) adj ON TRUE
+                  LEFT JOIN LATERAL (
+                        SELECT sum(x.amount_minor) AS total
+                          FROM student_payment x
+                         WHERE x.student_id = p.student_id
+                           AND x.group_id = p.group_id
+                           AND x.period = p.period
+                           AND x.status = 'confirmed'
+                  ) paid ON TRUE
+                 -- CAST на параметрах: см. _totals_by_charge, необязательный
+                 -- фильтр без явного типа asyncpg не разбирает.
+                 WHERE (CAST(:st AS text) IS NULL OR p.status = CAST(:st AS text))
+                   AND (CAST(:p AS date) IS NULL OR p.period = CAST(:p AS date))
+                   AND (CAST(:s AS integer) IS NULL OR p.student_id = CAST(:s AS integer))
+                   AND (CAST(:id AS integer) IS NULL OR p.id = CAST(:id AS integer))
+                 ORDER BY (p.status = 'pending') DESC, p.created_at DESC
+                """
+            ),
+            {"st": status, "p": period, "s": student_id, "id": payment_id},
+        )
+    ).all()
+    result: list[dict] = []
+    for r in rows:
+        row = dict(r._mapping)
+        total = int(row.pop("charge_total_minor"))
+        paid = int(row.pop("charge_paid_minor"))
+        row["charge_total_minor"] = total
+        # Остаток — фактический на сейчас: у ожидающего платежа он ещё не
+        # учитывает его самого (видно, что закроется по нажатию «получены»), у
+        # подтверждённого — уже учитывает, и это верно для истории.
+        row["charge_due_minor"] = max(total - paid, 0)
+        result.append(row)
+    return result
+
+
+async def _decide(
+    db: AsyncSession,
+    *,
+    payment_id: int,
+    new_status: str,
+    reviewed_by: int,
+    note: Optional[str],
+) -> Optional[dict]:
+    """Общий путь подтверждения и отклонения.
+
+    Условие `status = 'pending'` стоит в самом UPDATE: два маркетолога,
+    открывшие очередь одновременно, не должны переписать решение друг друга —
+    второй получит «уже обработан», а не тихо затрёт первое.
+    """
+    row = (
+        await db.execute(
+            text(
+                "UPDATE student_payment "
+                "   SET status = :st, reviewed_by = :by, reviewed_at = now(), "
+                "       review_note = :note, updated_at = now() "
+                " WHERE id = :id AND status = 'pending' "
+                "RETURNING id, student_id, group_id, period, amount_minor, status"
+            ),
+            {"id": payment_id, "st": new_status, "by": reviewed_by, "note": note},
+        )
+    ).first()
+    if row is None:
+        await db.rollback()
+        return None
+    await db.commit()
+    logger.info(
+        "tsk-010: платёж %s → %s (решил %s)", payment_id, new_status, reviewed_by
+    )
+    return dict(row._mapping)
+
+
+async def confirm_payment(
+    db: AsyncSession, *, payment_id: int, reviewed_by: int, note: Optional[str] = None
+) -> Optional[dict]:
+    """Подтвердить платёж: деньги считаются полученными.
+
+    Напоминание про чек «Мой налог» живёт на стороне кабинета — система его не
+    выбивает и не должна делать вид, что процесс на этом закончен.
+    """
+    return await _decide(
+        db,
+        payment_id=payment_id,
+        new_status="confirmed",
+        reviewed_by=reviewed_by,
+        note=note,
+    )
+
+
+async def reject_payment(
+    db: AsyncSession, *, payment_id: int, reviewed_by: int, note: Optional[str] = None
+) -> Optional[dict]:
+    """Отклонить платёж — например, чек не читается или уже был учтён."""
+    return await _decide(
+        db,
+        payment_id=payment_id,
+        new_status="rejected",
+        reviewed_by=reviewed_by,
+        note=note,
+    )
+
+
+async def get_receipt(db: AsyncSession, *, payment_id: int) -> Optional[dict]:
+    """Строка платежа для выдачи файла чека."""
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, student_id, receipt_file, receipt_name "
+                "  FROM student_payment WHERE id = :id"
+            ),
+            {"id": payment_id},
+        )
+    ).first()
+    return dict(row._mapping) if row is not None else None
+
+
+async def export_confirmed(
+    db: AsyncSession, *, date_from: date, date_to: date
+) -> list[dict]:
+    """Подтверждённые платежи за период — для сверки с чеками «Мой налог».
+
+    Дата берётся по дню платежа, а не по дню подтверждения: сверяем с тем, когда
+    деньги реально пришли. Если день платежа не указан, подставляем день
+    заведения записи — иначе такой платёж выпал бы из выгрузки совсем.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT p.id,
+                       COALESCE(p.paid_on, p.created_at::date) AS on_date,
+                       u.full_name,
+                       pg.name AS group_name,
+                       p.period,
+                       p.amount_minor,
+                       p.method,
+                       p.gateway,
+                       p.gateway_payment_id,
+                       p.reviewed_at
+                  FROM student_payment p
+                  JOIN users u ON u.id = p.student_id
+                  JOIN pricing_group pg ON pg.id = p.group_id
+                 WHERE p.status = 'confirmed'
+                   AND COALESCE(p.paid_on, p.created_at::date) BETWEEN :d1 AND :d2
+                 ORDER BY on_date, u.full_name
+                """
+            ),
+            {"d1": date_from, "d2": date_to},
+        )
+    ).all()
+    return [dict(r._mapping) for r in rows]
+
+
+async def student_ids_for_parent(db: AsyncSession, *, parent_id: int) -> list[int]:
+    """Дети родителя — чьи начисления и платежи ему видны."""
+    rows = (
+        await db.execute(
+            text("SELECT student_id FROM parent_student_links WHERE parent_id = :p"),
+            {"p": parent_id},
+        )
+    ).all()
+    return [int(r.student_id) for r in rows]

@@ -214,6 +214,28 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
     if not source.is_active or not target.is_active:
         return False
 
+    # tsk-010: за учёткой числятся деньги — слияние останавливаем.
+    # Платежи привязаны к начислению парой «ученик + группа + месяц», и просто
+    # переписать им `student_id` нельзя: у target может не быть строки того же
+    # месяца, а составной внешний ключ этого не допустит. Автослияние дублей
+    # (tsk-455) идёт молча при регистрации — оно не должно решать за человека
+    # судьбу подтверждённых платежей. Разбирать такую пару нужно руками.
+    money = (
+        await db.execute(
+            text("SELECT count(*) AS n FROM student_payment WHERE student_id = :s"),
+            {"s": source_id},
+        )
+    ).one()
+    if money.n > 0:
+        logger.warning(
+            "Слияние %s → %s остановлено: за source числится платежей: %s. "
+            "Нужен ручной разбор, деньги молча не переносим.",
+            source_id,
+            target_id,
+            money.n,
+        )
+        return False
+
     async with db.begin_nested():
         await apply_merge(db, source_id, target_id)
         await db.flush()
