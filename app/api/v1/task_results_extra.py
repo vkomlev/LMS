@@ -617,7 +617,7 @@ async def get_pending_review_results(
     from sqlalchemy import select, and_, or_, text as sa_text
     from app.models.task_results import TaskResults
     from app.models.tasks import Tasks
-    from app.services.teacher_queue_service import mandatory_review_sql
+    from app.services.teacher_queue_service import mandatory_review_sql, optional_review_sql
 
     now = datetime.now(timezone.utc)
     if review_kind == "optional":
@@ -625,13 +625,13 @@ async def get_pending_review_results(
         # преподаватель МОЖЕТ пересмотреть (но не обязан). checked_at IS NULL
         # (учитель ещё не подтверждал) + is_correct задан авто-чеком +
         # manual_review_required=false (обязательные идут в mandatory-очередь).
+        # tsk-372: type/mrr-часть предиката вынесена в teacher_queue_service
+        # (optional_review_sql) — единый источник с портальным
+        # `/teacher/reviews/pending?review_kind=optional`.
         conditions = [
             TaskResults.checked_at.is_(None),
             TaskResults.is_correct.isnot(None),
-            sa_text("tasks.task_content->>'type' IN ('SA_COM','TBL_COM')"),
-            sa_text(
-                "COALESCE((tasks.solution_rules->>'manual_review_required')::boolean, false) = false"
-            ),
+            sa_text(optional_review_sql("tasks")),
         ]
     else:
         # mandatory (default): очередь обязательной ручной проверки. tsk-247:

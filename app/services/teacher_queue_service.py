@@ -149,6 +149,34 @@ def mandatory_review_sql(tasks_alias: str = "t") -> str:
     return MANDATORY_REVIEW_TEMPLATE.format(tasks=tasks_alias)  # nosec B608
 
 
+# ─── tsk-372: единый предикат «опциональной проверки» ────────────────────────
+# Комплементарен MANDATORY_REVIEW_TEMPLATE: авто-проверенные SA_COM/TBL_COM
+# (manual_review_required=false) — вердикт уже вынес авто-чек, преподаватель
+# смотрит по желанию (включая честно-заваленные, is_correct=false). Введено
+# в tsk-230 для `GET /task-results/by-pending-review?review_kind=optional`
+# (бот), но предикат жил только инлайн в task_results_extra.py. Здесь —
+# единый источник, которым пользуется и бот, и портальный
+# `GET /teacher/reviews/pending?review_kind=optional` (tsk-372).
+#
+# Caller обязан ДОПОЛНИТЕЛЬНО проверить `is_correct IS NOT NULL` — этот
+# предикат сам по себе не гарантирует, что авто-чек уже отработал (тот же
+# паттерн, что у mandatory_review_sql: type/mrr здесь, checked_at/is_correct —
+# в WHERE вызывающего запроса).
+OPTIONAL_REVIEW_TEMPLATE = """
+    ({tasks}.task_content->>'type' IN ('SA_COM','TBL_COM')
+     AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS FALSE)
+"""
+
+
+def optional_review_sql(tasks_alias: str = "t") -> str:
+    """SQL-фрагмент «работа доступна для ОПЦИОНАЛЬНОГО просмотра» (tsk-230/372).
+
+    :param tasks_alias: алиас таблицы `tasks` в вызывающем запросе. User-input
+        сюда не попадает — только литералы из закрытого набора call-sites.
+    """
+    return OPTIONAL_REVIEW_TEMPLATE.format(tasks=tasks_alias)  # nosec B608
+
+
 def _token() -> str:
     return secrets.token_hex(32)
 
@@ -993,6 +1021,7 @@ async def list_pending_reviews(
     teacher_id: int,
     *,
     course_id: Optional[int] = None,
+    review_kind: str = "mandatory",
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[list[dict], int]:
@@ -1005,8 +1034,19 @@ async def list_pending_reviews(
     приходит при claim конкретной работы). `is_claimed` помечает работу, уже
     взятую кем-то на проверку (действующий lock), — для UI.
 
+    tsk-372: `review_kind` открывает то же деление очереди на портале, что уже
+    работает в ТГ-боте (`GET /task-results/by-pending-review?review_kind=...`,
+    tsk-230) — параметр аддитивный, default `mandatory` полностью совпадает с
+    поведением до tsk-372.
+
     :param teacher_id: ID преподавателя (ACL-scope через REVIEW_ACL_SQL).
     :param course_id: опциональный фильтр по курсу.
+    :param review_kind: `mandatory` (default) — TA либо SA_COM/TBL_COM с
+        `manual_review_required=true` (как раньше); `optional` — авто-проверенные
+        SA_COM/TBL_COM (`manual_review_required=false`, `is_correct` задан),
+        включая честно-заваленные; `all` — объединение обеих очередей. Захват
+        (`claim`) для optional-работ идёт по result_id (`claim_review_by_id`) —
+        `claim_next_review`/счётчик-бейдж по-прежнему видят только mandatory.
     :param limit: размер страницы.
     :param offset: смещение.
     :returns: (items, total) — total игнорирует limit/offset.
@@ -1017,9 +1057,19 @@ async def list_pending_reviews(
     if course_id is not None:
         params["course_id"] = course_id
 
+    if review_kind == "optional":
+        kind_sql = f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL)"
+    elif review_kind == "all":
+        kind_sql = (
+            f"({mandatory_review_sql('t')} "
+            f"OR ({optional_review_sql('t')} AND tr.is_correct IS NOT NULL))"
+        )
+    else:
+        kind_sql = mandatory_review_sql('t')
+
     where_sql = f"""
         WHERE tr.checked_at IS NULL
-          AND {mandatory_review_sql('t')}
+          AND {kind_sql}
           AND {REVIEW_ACL_SQL}
           {course_cond}
     """

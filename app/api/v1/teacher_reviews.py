@@ -9,7 +9,7 @@ Teacher reviews API (Learning Engine V1, этап 3.9 + Phase Y-4):
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -572,6 +572,16 @@ async def get_pending_count_endpoint(
 async def list_pending_reviews_endpoint(
     teacher_id: int = Query(..., description="ID преподавателя"),
     course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
+    review_kind: Literal["mandatory", "optional", "all"] = Query(
+        "mandatory",
+        description=(
+            "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с "
+            "manual_review_required=true (поведение как до tsk-372, без изменений). "
+            "optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, "
+            "is_correct задан), включая честно-заваленные — та же ось, что у бота "
+            "(tsk-230). all — объединение обеих очередей."
+        ),
+    ),
     limit: int = Query(50, ge=1, le=200, description="Размер страницы (max 200)"),
     offset: int = Query(0, ge=0, description="Смещение"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -583,11 +593,22 @@ async def list_pending_reviews_endpoint(
     ACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree
     преподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь
     не отдаётся (лёгкий item) — он приходит при claim конкретной работы.
+
+    tsk-372: `review_kind=optional`/`all` добавляют опциональную очередь
+    (авто-проверенные SA_COM/TBL_COM) — портал закрыл разрыв с ботом, который
+    её уже показывал (`/task-results/by-pending-review?review_kind=optional`).
+    Захват опциональной работы под оценку — существующий
+    `POST /{result_id}/claim` (claim_review_by_id), он не ограничен mandatory-
+    типами. `claim-next`/`pending-count`/`workload` НЕ меняются: они остаются
+    привязаны к обязательной очереди — счётчик «На проверке» в шапке портала
+    обязан совпадать с тем, что реально выдаёт «Следующая проверка» (см.
+    комментарий у `mandatory_review_sql`), иначе бейдж покажет число, которое
+    нельзя обнулить через claim-next (мотив бага tsk-210/247).
     """
     if not current_user.is_service and current_user.id != teacher_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     items, total = await list_pending_reviews(
-        db, teacher_id, course_id=course_id, limit=limit, offset=offset
+        db, teacher_id, course_id=course_id, review_kind=review_kind, limit=limit, offset=offset
     )
     return PendingReviewListResponse(
         items=[PendingReviewItem(**it) for it in items], total=total
