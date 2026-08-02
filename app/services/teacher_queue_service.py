@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Tuple
 
 from sqlalchemy import text
@@ -1028,6 +1028,10 @@ async def list_pending_reviews(
     course_id: Optional[int] = None,
     review_kind: str = "mandatory",
     has_evidence: Optional[bool] = None,
+    user_id: Optional[int] = None,
+    student_name: Optional[str] = None,
+    submitted_from: Optional[date] = None,
+    submitted_to: Optional[date] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[list[dict], int]:
@@ -1063,6 +1067,18 @@ async def list_pending_reviews(
         `claim_next_review`/счётчик-бейдж по-прежнему видят только mandatory.
     :param has_evidence: `None` (default) — без фильтра; `True`/`False` —
         только работы с/без комментария или вложения.
+    :param user_id: точный фильтр по ученику (тот же паттерн, что `user_id` в
+        `claim_next_review`).
+    :param student_name: фильтр по имени ученика (`ILIKE '%...%'` по
+        `full_name`, регистронезависимо) — для UI, где ID ученика неизвестен.
+        Можно комбинировать с `user_id` (оба условия — AND), хотя обычно
+        используется один из двух (tsk-539).
+    :param submitted_from: нижняя граница `submitted_at` (включительно, по
+        дате — весь день `submitted_from` входит).
+    :param submitted_to: верхняя граница `submitted_at` (включительно, по
+        дате — весь день `submitted_to` входит). Валидация
+        `submitted_to < submitted_from` — на вызывающей стороне (endpoint),
+        как и в `marketer_payments.py`.
     :param limit: размер страницы.
     :param offset: смещение.
     :returns: (items, total) — total игнорирует limit/offset.
@@ -1072,6 +1088,30 @@ async def list_pending_reviews(
     params: dict[str, Any] = {"teacher_id": teacher_id, "now_ts": now}
     if course_id is not None:
         params["course_id"] = course_id
+
+    # tsk-539: фильтр по ученику — user_id (точный, симметрично claim_next_review)
+    # и/или student_name (ILIKE по full_name — для UI, где id ученика неизвестен).
+    user_id_cond = ""
+    if user_id is not None:
+        user_id_cond = "AND tr.user_id = :user_id"
+        params["user_id"] = user_id
+    student_name_cond = ""
+    if student_name:
+        student_name_cond = "AND u.full_name ILIKE :student_name_pattern"
+        params["student_name_pattern"] = f"%{student_name}%"
+
+    # tsk-539: фильтр по датам сдачи — по дню (включительно), не по timestamp:
+    # submitted_to переводим в exclusive-верхнюю границу (+1 день) в Python,
+    # а не через SQL INTERVAL, чтобы не зависеть от часового пояса сессии БД.
+    date_cond = ""
+    if submitted_from is not None:
+        date_cond += "AND tr.submitted_at >= :submitted_from "
+        params["submitted_from"] = datetime.combine(submitted_from, datetime.min.time(), tzinfo=timezone.utc)
+    if submitted_to is not None:
+        date_cond += "AND tr.submitted_at < :submitted_to_excl "
+        params["submitted_to_excl"] = datetime.combine(
+            submitted_to + timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc
+        )
 
     if review_kind == "optional":
         kind_sql = f"({optional_review_sql('t')} AND tr.is_correct IS NOT NULL)"
@@ -1114,6 +1154,9 @@ async def list_pending_reviews(
           AND {REVIEW_ACL_SQL}
           {course_cond}
           {has_evidence_cond}
+          {user_id_cond}
+          {student_name_cond}
+          {date_cond}
     """
 
     total_row = await db.execute(
@@ -1121,6 +1164,7 @@ async def list_pending_reviews(
             SELECT COUNT(*)
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
+            LEFT JOIN users u ON u.id = tr.user_id
             {where_sql}
         """),  # nosec B608 — where_sql из закрытого набора литералов модуля
         params,

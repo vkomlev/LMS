@@ -9,6 +9,7 @@ Teacher reviews API (Learning Engine V1, этап 3.9 + Phase Y-4):
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Literal, Optional
 
 from fastapi import (
@@ -591,6 +592,23 @@ async def list_pending_reviews_endpoint(
             "None (default) — без фильтра."
         ),
     ),
+    user_id: Optional[int] = Query(
+        None, description="tsk-539: точный фильтр по ученику (ID)."
+    ),
+    student_name: Optional[str] = Query(
+        None,
+        min_length=2,
+        description=(
+            "tsk-539: фильтр по имени ученика (ILIKE по full_name, "
+            "регистронезависимо, минимум 2 символа)."
+        ),
+    ),
+    submitted_from: Optional[date] = Query(
+        None, description="tsk-539: нижняя граница даты сдачи (включительно)."
+    ),
+    submitted_to: Optional[date] = Query(
+        None, description="tsk-539: верхняя граница даты сдачи (включительно)."
+    ),
     limit: int = Query(50, ge=1, le=200, description="Размер страницы (max 200)"),
     offset: int = Query(0, ge=0, description="Смещение"),
     current_user: CurrentUser = Depends(get_current_user),
@@ -613,12 +631,24 @@ async def list_pending_reviews_endpoint(
     обязан совпадать с тем, что реально выдаёт «Следующая проверка» (см.
     комментарий у `mandatory_review_sql`), иначе бейдж покажет число, которое
     нельзя обнулить через claim-next (мотив бага tsk-210/247).
+
+    tsk-539: `user_id`/`student_name` (фильтр по ученику) и
+    `submitted_from`/`submitted_to` (диапазон дат сдачи, включительно с обеих
+    сторон). `limit`/`offset` были и раньше — SPW наконец их использует
+    («Показать ещё» вместо жёсткого `limit=100`, из-за которого очередь
+    обрывалась на сотне из 930 работ).
     """
     if not current_user.is_service and current_user.id != teacher_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    if submitted_from is not None and submitted_to is not None and submitted_to < submitted_from:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, "Конец периода раньше начала"
+        )
     items, total = await list_pending_reviews(
         db, teacher_id, course_id=course_id, review_kind=review_kind,
-        has_evidence=has_evidence, limit=limit, offset=offset,
+        has_evidence=has_evidence, user_id=user_id, student_name=student_name,
+        submitted_from=submitted_from, submitted_to=submitted_to,
+        limit=limit, offset=offset,
     )
     return PendingReviewListResponse(
         items=[PendingReviewItem(**it) for it in items], total=total
