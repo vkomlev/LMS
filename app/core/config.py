@@ -158,6 +158,17 @@ class Settings:
             os.getenv("LINK_AUDIT_MAX_EXAMPLES", "10")
         )
 
+        # tsk-541: фоновый пересчёт student_course_state для целей
+        # course_dependencies (см. course_dependency_state_cron_service.py).
+        # Без него подкурс-цель зависимости, записанной в обход API (прямой
+        # SQL — как в tsk-523), никогда не получает свежий кеш прогресса.
+        self.course_dependency_state_cron_enabled: bool = os.getenv(
+            "COURSE_DEPENDENCY_STATE_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.course_dependency_state_cron_interval_min: int = int(
+            os.getenv("COURSE_DEPENDENCY_STATE_CRON_INTERVAL_MIN", "15")
+        )
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )

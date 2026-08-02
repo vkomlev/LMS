@@ -1,0 +1,212 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 750307c..912c8a9 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -544,4 +544,26 @@ async def _stop_link_audit_scheduler() -> None:
+     try:
+         _link_audit_service.stop_scheduler()
+     except Exception:
+-        logger.exception("tsk-521: failed to stop link_audit scheduler")
+\ No newline at end of file
++        logger.exception("tsk-521: failed to stop link_audit scheduler")
++
++
++# tsk-541: фоновый пересчёт student_course_state для целей course_dependencies
++# (подкурсов, никогда не покрытых resolve_next_item/manual_progress_service).
++# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
++from app.services import course_dependency_state_cron_service as _course_dep_state_cron
++
++
++@app.on_event("startup")
++async def _start_course_dependency_state_scheduler() -> None:
++    try:
++        _course_dep_state_cron.start_scheduler()
++    except Exception:
++        logger.exception("tsk-541: failed to start course_dependency_state scheduler")
++
++
++@app.on_event("shutdown")
++async def _stop_course_dependency_state_scheduler() -> None:
++    try:
++        _course_dep_state_cron.stop_scheduler()
++    except Exception:
++        logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
+\ No newline at end of file
+diff --git a/app/core/config.py b/app/core/config.py
+index 1c345c1..9be1c68 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -158,6 +158,17 @@ class Settings:
+             os.getenv("LINK_AUDIT_MAX_EXAMPLES", "10")
+         )
+ 
++        # tsk-541: фоновый пересчёт student_course_state для целей
++        # course_dependencies (см. course_dependency_state_cron_service.py).
++        # Без него подкурс-цель зависимости, записанной в обход API (прямой
++        # SQL — как в tsk-523), никогда не получает свежий кеш прогресса.
++        self.course_dependency_state_cron_enabled: bool = os.getenv(
++            "COURSE_DEPENDENCY_STATE_CRON_ENABLED", "true"
++        ).lower() in ("true", "1", "yes")
++        self.course_dependency_state_cron_interval_min: int = int(
++            os.getenv("COURSE_DEPENDENCY_STATE_CRON_INTERVAL_MIN", "15")
++        )
++
+         self.max_attachment_size_bytes: int = int(
+             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
+         )
+diff --git a/app/services/course_dependencies_service.py b/app/services/course_dependencies_service.py
+index a481a33..2807747 100644
+--- a/app/services/course_dependencies_service.py
++++ b/app/services/course_dependencies_service.py
+@@ -1,18 +1,26 @@
+ # app/services/course_dependencies_service.py
+ 
+-from typing import List
++from typing import List, Optional
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.courses import Courses
+ from app.repos.course_dependencies_repository import CourseDependenciesRepository
++from app.services.learning_engine_service import LearningEngineService
+ 
+ 
+ class CourseDependenciesService:
+     """
+     Сервис для бизнес-логики работы с зависимостями курсов.
+     """
+-    def __init__(self, repo: CourseDependenciesRepository = None):
++    def __init__(
++        self,
++        repo: CourseDependenciesRepository = None,
++        engine: Optional[LearningEngineService] = None,
++    ):
+         self.repo = repo or CourseDependenciesRepository()
++        # tsk-541: пересчёт кеша student_course_state для узла, ставшего
++        # required_course_id, сразу при записи зависимости — см. add_dependency.
++        self.engine = engine or LearningEngineService()
+ 
+     async def list_dependencies(
+         self, db: AsyncSession, course_id: int
+@@ -23,6 +31,12 @@ class CourseDependenciesService:
+         self, db: AsyncSession, course_id: int, required_course_id: int
+     ) -> None:
+         await self.repo.add_dependency(db, course_id, required_course_id)
++        # tsk-541: без этого student_course_state для required_course_id не
++        # пишет никто до следующего прогона фонового тика — активный студент,
++        # уже прошедший пререквизит, видит новую зависимость как блокировку
++        # (ровно регрессия tsk-523).
++        await self.engine.backfill_dependency_state(db, course_id, required_course_id)
++        await db.commit()
+ 
+     async def remove_dependency(
+         self, db: AsyncSession, course_id: int, required_course_id: int
+@@ -34,10 +48,17 @@ class CourseDependenciesService:
+     ) -> List[Courses]:
+         """
+         Массовое добавление зависимостей для курса.
+-        
++
+         :param db: асинхронная сессия БД.
+         :param course_id: ID курса.
+         :param required_course_ids: Список ID курсов-зависимостей.
+         :return: Список успешно добавленных зависимостей.
+         """
+-        return await self.repo.bulk_add_dependencies(db, course_id, required_course_ids)
+\ No newline at end of file
++        added = await self.repo.bulk_add_dependencies(db, course_id, required_course_ids)
++        # tsk-541: тот же бэкфилл, что в add_dependency — по одному пересчёту
++        # на каждую реально добавленную зависимость (пропущенные конфликты/
++        # self-dependency уже отфильтрованы репозиторием).
++        for dep in added:
++            await self.engine.backfill_dependency_state(db, course_id, dep.id)
++        await db.commit()
++        return added
+\ No newline at end of file
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 0b19069..5eb8ff0 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -69,6 +69,26 @@ FROM ct
+ WHERE member_course_id = :course_id
+ """
+ 
++# tsk-541: зеркало _ACTIVE_ROOTS_OF_NODE_SQL — не «корни ученика», а «ученики
++# узла». Нужно, чтобы держать student_course_state свежим для ПОДКУРСОВ,
++# выступающих `course_id`/`required_course_id` в course_dependencies: и
++# resolve_next_item (только зависимости корня), и manual_progress_service.
++# _refresh_course_state (только корень touched-узла) кеш подкурса не пишут.
++_ACTIVE_STUDENTS_WITH_NODE_SQL = """
++WITH RECURSIVE ct AS (
++    SELECT uc.user_id, uc.course_id AS member_course_id
++    FROM user_courses uc
++    WHERE uc.is_active = true
++    UNION ALL
++    SELECT ct.user_id, cp.course_id
++    FROM ct
++    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
++)
++SELECT DISTINCT user_id
++FROM ct
++WHERE member_course_id = :course_id
++"""
++
+ 
+ class LearningEngineService:
+     """
+@@ -236,6 +256,56 @@ class LearningEngineService:
+         ).fetchall()
+         return [int(r[0]) for r in rows]
+ 
++    async def list_active_students_with_node_in_tree(
++        self,
++        db: AsyncSession,
++        course_id: int,
++    ) -> list[int]:
++        """Активные студенты, у кого `course_id` входит в дерево активного корня (tsk-541).
++
++        Зеркало `list_active_roots_of_node` в обратную сторону: не «корни
++        ученика», а «ученики узла». Используется, чтобы найти, для кого нужно
++        держать `student_course_state` этого узла свежим — узел может быть
++        подкурсом, выступающим `course_id` в `course_dependencies` (тем самым,
++        доступ к которому проверяется через `_BLOCKED_COURSES_SQL`).
++
++        Returns:
++            Список ID студентов (может быть пустым).
++        """
++        rows = (
++            await db.execute(text(_ACTIVE_STUDENTS_WITH_NODE_SQL), {"course_id": course_id})
++        ).fetchall()
++        return [int(r[0]) for r in rows]
++
++    async def backfill_dependency_state(
++        self,
++        db: AsyncSession,
++        course_id: int,
++        required_course_id: int,
++    ) -> int:
++        """Пересчитать `student_course_state[required_course_id]` для активных
++        студентов узла `course_id` (tsk-541).
++
++        Закрывает окно молчания `_BLOCKED_COURSES_SQL`: та трактует ЛЮБОЕ
++        отсутствие строки `student_course_state` как «не пройдено», а кеш
++        подкурса ранее не писал никто (ни `resolve_next_item` — тот считает
++        зависимости только КОРНЯ, ни `manual_progress_service.
++        _refresh_course_state` — тот считает состояние только корня
++        touched-узла). Используется сразу при записи `course_dependencies`
++        (см. `CourseDependenciesService`) — синхронный путь для API-записи;
++        фоновый тик `course_dependency_state_cron_service` — тот же расчёт для
++        путей записи в обход API (прямой SQL, как было в tsk-523).
++
++        Returns:
++            Число студентов, для которых пересчитан кеш.
++        """
++        student_ids = await self.list_active_students_with_node_in_tree(db, course_id)
++        for student_id in student_ids:
++            await self.compute_course_state(
++                db, student_id, required_course_id, update_state_table=True
++            )
++        return len(student_ids)
++
+     async def compute_task_state(
+         self,
+         db: AsyncSession,

@@ -69,6 +69,26 @@ FROM ct
 WHERE member_course_id = :course_id
 """
 
+# tsk-541: зеркало _ACTIVE_ROOTS_OF_NODE_SQL — не «корни ученика», а «ученики
+# узла». Нужно, чтобы держать student_course_state свежим для ПОДКУРСОВ,
+# выступающих `course_id`/`required_course_id` в course_dependencies: и
+# resolve_next_item (только зависимости корня), и manual_progress_service.
+# _refresh_course_state (только корень touched-узла) кеш подкурса не пишут.
+_ACTIVE_STUDENTS_WITH_NODE_SQL = """
+WITH RECURSIVE ct AS (
+    SELECT uc.user_id, uc.course_id AS member_course_id
+    FROM user_courses uc
+    WHERE uc.is_active = true
+    UNION ALL
+    SELECT ct.user_id, cp.course_id
+    FROM ct
+    JOIN course_parents cp ON cp.parent_course_id = ct.member_course_id
+)
+SELECT DISTINCT user_id
+FROM ct
+WHERE member_course_id = :course_id
+"""
+
 
 class LearningEngineService:
     """
@@ -235,6 +255,56 @@ class LearningEngineService:
             })
         ).fetchall()
         return [int(r[0]) for r in rows]
+
+    async def list_active_students_with_node_in_tree(
+        self,
+        db: AsyncSession,
+        course_id: int,
+    ) -> list[int]:
+        """Активные студенты, у кого `course_id` входит в дерево активного корня (tsk-541).
+
+        Зеркало `list_active_roots_of_node` в обратную сторону: не «корни
+        ученика», а «ученики узла». Используется, чтобы найти, для кого нужно
+        держать `student_course_state` этого узла свежим — узел может быть
+        подкурсом, выступающим `course_id` в `course_dependencies` (тем самым,
+        доступ к которому проверяется через `_BLOCKED_COURSES_SQL`).
+
+        Returns:
+            Список ID студентов (может быть пустым).
+        """
+        rows = (
+            await db.execute(text(_ACTIVE_STUDENTS_WITH_NODE_SQL), {"course_id": course_id})
+        ).fetchall()
+        return [int(r[0]) for r in rows]
+
+    async def backfill_dependency_state(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        required_course_id: int,
+    ) -> int:
+        """Пересчитать `student_course_state[required_course_id]` для активных
+        студентов узла `course_id` (tsk-541).
+
+        Закрывает окно молчания `_BLOCKED_COURSES_SQL`: та трактует ЛЮБОЕ
+        отсутствие строки `student_course_state` как «не пройдено», а кеш
+        подкурса ранее не писал никто (ни `resolve_next_item` — тот считает
+        зависимости только КОРНЯ, ни `manual_progress_service.
+        _refresh_course_state` — тот считает состояние только корня
+        touched-узла). Используется сразу при записи `course_dependencies`
+        (см. `CourseDependenciesService`) — синхронный путь для API-записи;
+        фоновый тик `course_dependency_state_cron_service` — тот же расчёт для
+        путей записи в обход API (прямой SQL, как было в tsk-523).
+
+        Returns:
+            Число студентов, для которых пересчитан кеш.
+        """
+        student_ids = await self.list_active_students_with_node_in_tree(db, course_id)
+        for student_id in student_ids:
+            await self.compute_course_state(
+                db, student_id, required_course_id, update_state_table=True
+            )
+        return len(student_ids)
 
     async def compute_task_state(
         self,

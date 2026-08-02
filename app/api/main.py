@@ -545,3 +545,25 @@ async def _stop_link_audit_scheduler() -> None:
         _link_audit_service.stop_scheduler()
     except Exception:
         logger.exception("tsk-521: failed to stop link_audit scheduler")
+
+
+# tsk-541: фоновый пересчёт student_course_state для целей course_dependencies
+# (подкурсов, никогда не покрытых resolve_next_item/manual_progress_service).
+# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+from app.services import course_dependency_state_cron_service as _course_dep_state_cron
+
+
+@app.on_event("startup")
+async def _start_course_dependency_state_scheduler() -> None:
+    try:
+        _course_dep_state_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-541: failed to start course_dependency_state scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_course_dependency_state_scheduler() -> None:
+    try:
+        _course_dep_state_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
