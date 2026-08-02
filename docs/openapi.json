@@ -44187,6 +44187,33 @@
             ],
             "title": "Period"
           },
+          "match_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "attendance_frequency",
+                  "segment"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Kind"
+          },
+          "match_value": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Match Value"
+          },
           "is_default": {
             "anyOf": [
               {
@@ -44222,7 +44249,8 @@
           }
         },
         "type": "object",
-        "title": "TariffUpdateRequest"
+        "title": "TariffUpdateRequest",
+        "description": "Правка варианта тарифа, включая ось (tsk-517).\n\nОсь (`match_kind`/`match_value`) правится по решению оператора 2026-08-02,\nотменившему прежний запрет. Она меняет СМЫСЛ варианта: смена «2 занятия» на\n«1 занятие» переносит учеников между ценами. Поэтому экран перед сохранением\nназывает число затронутых учеников, а сервер после правки пересчитывает\nоткрытые месяцы группы. Закрытые месяцы, как всегда, не переписываются.\n\nОсь задаётся парой: прислать одно поле без второго нельзя — иначе вариант\nостался бы наполовину частотным, наполовину ничьим."
       },
       "TaskBulkUpsertRequest": {
         "properties": {
