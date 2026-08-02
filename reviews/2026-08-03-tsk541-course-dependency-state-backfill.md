@@ -150,6 +150,30 @@ stash` на изменённые файлы + новый файл убран и�
   первого тика, а не после) — можно добавить позже по образцу
   `scripts/materials_junk_invariant.py`.
 
+## Живая проверка после деплоя (MCP `learn_prod_db`, read-only)
+
+Деплой: `sudo -u app bash deploy/vps/deploy.sh` на `lms-spw-vds`, `7ece711`, systemd
+`lms` перезапущен чисто, `/health` → `{"status":"ok"}`.
+
+Лог старта планировщика (`/var/log/lms/app.log`):
+```
+2026-08-02 20:16:40 | tsk-541 course_dependency_state scheduler started: interval=15min
+```
+
+Первый тик (через ~15 минут после старта):
+```
+2026-08-02 20:31:44 | tsk-541 course_dependency_state_cron_tick done pairs=81 recomputed=383
+```
+
+Повторный прогон диагностического запроса (тот же, что в разделе «DB Findings» выше) —
+**0 строк с `missing > 0`**: все 81 пары `course_dependencies` теперь имеют полное покрытие
+`student_course_state` по активным студентам своего дерева, включая курс 112, 1246/1247,
+1270-1274, 1281/1282 и всё дерево «Тестировщик» (1284-1420).
+
+Распределение состояний по 383 пересчитанным строкам — не слепое COMPLETED, а честный расчёт:
+`COMPLETED=173, IN_PROGRESS=51, NOT_STARTED=161`. Фикс подтверждён живыми данными, не только
+логикой кода и тестами.
+
 ## Operator handoff
 
 Коммит + пуш + деплой — ветвь А (durable-авторизация, `operator-handoff-rules.md`): review-gate
