@@ -102,6 +102,24 @@ class Settings:
         _s3_url = (os.getenv("S3_MEDIA_BUCKET_URL") or "").rstrip("/")
         self.s3_media_bucket_url: str | None = _s3_url or None
 
+        # ✅ Реквизиты записи в S3 (tsk-520) — те же, что у ContentBackbone: бакет
+        # общий, различаются только пространства ключей. Нужны, чтобы файлы
+        # материалов ложились в объектное хранилище, а не на диск приложения,
+        # который не переживает переезд машины (tsk-519: 0 файлов после переноса).
+        # Пусто — dev-режим: файл пишется в materials_upload_dir.
+        self.s3_endpoint_url: str = (os.getenv("S3_ENDPOINT_URL") or "").rstrip("/")
+        self.s3_bucket_name: str = os.getenv("S3_BUCKET_NAME", "")
+        self.s3_access_key: str = os.getenv("S3_ACCESS_KEY", "")
+        self.s3_secret_key: str = os.getenv("S3_SECRET_KEY", "")
+        self.s3_region: str = os.getenv("S3_REGION", "ru-1")
+
+        # Префикс ключей файлов материалов в бакете. Отделяет их от CAS-пространства
+        # заданий (`<sha[:2]>/<sha>.<ext>`), которое наполняет ContentBackbone и
+        # которое публично читается через /api/v1/media.
+        self.material_files_s3_prefix: str = os.getenv(
+            "MATERIAL_FILES_S3_PREFIX", "materials"
+        ).strip("/")
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )

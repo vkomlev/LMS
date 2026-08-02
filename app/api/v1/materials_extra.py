@@ -5,18 +5,14 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
-import os
 from collections import defaultdict
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Body, Query, File, UploadFile, HTTPException, status
 from pydantic import BaseModel, Field
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +46,7 @@ from app.schemas.materials import (
     MaterialsGoogleSheetsImportError,
     MaterialsImportByCourseItem,
 )
+from app.services import material_files_storage
 from app.services.materials_service import MaterialsService
 from app.services.google_sheets_service import GoogleSheetsService
 from app.services.materials_sheets_parser_service import MaterialsSheetsParserService
@@ -266,6 +263,8 @@ async def get_course_materials_stats(
     responses={
         401: {"description": "Не аутентифицирован"},
         403: {"description": "Роль не позволяет загружать файлы материалов"},
+        413: {"description": "Файл больше MAX_ATTACHMENT_SIZE_BYTES"},
+        503: {"description": "Хранилище не приняло файл, url не выдан (tsk-520)"},
     },
 )
 async def upload_material_file(
@@ -282,41 +281,29 @@ async def upload_material_file(
     источники (наш файл и внешняя ссылка могут сосуществовать в content.sources).
 
     Лимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).
-    Файлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).
+
+    tsk-520: файл уходит в S3-хранилище под именем `<sha256hex>.<ext>` — то же
+    адресование по содержимому, что у медиа заданий (ADR-0040/0047). Раньше он
+    ложился на диск приложения, который не переживает переезд машины: в tsk-519
+    БД перенесли, каталог загрузок нет, и материал полгода ссылался на файл,
+    которого на сервере не было. Без настроенных ключей S3 (dev) файл
+    по-прежнему пишется в MATERIALS_UPLOAD_DIR, но уже под CAS-именем.
 
     tsk-516: раньше загрузка была открыта анониму — вторая половина той же
     дыры, что и скачивание. Сервисный ключ (`?api_key=` / X-API-Key) проходит
     через `require_role` без проверки роли, поэтому TG_LMS работает как прежде.
     """
-    settings.materials_upload_dir.mkdir(parents=True, exist_ok=True)
     original = file.filename or "file"
-    safe_name = f"{uuid4().hex}_{original}"
-    file_path = settings.materials_upload_dir / safe_name
-
-    total = 0
     try:
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = await file.read(settings.attachment_chunk_size)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > settings.max_attachment_size_bytes:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Файл слишком большой. Максимум {settings.max_attachment_size_bytes} байт",
-                    )
-                f.write(chunk)
-    except HTTPException:
-        if file_path.exists():
-            try:
-                file_path.unlink()
-            except Exception:
-                pass
-        raise
+        sha_ext, total = await material_files_storage.store_upload(file)
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
-    url_path = f"/api/v1/materials/files/{safe_name}"
-    logger.info("upload_material_file filename=%s size=%s url=%s", original, total, url_path)
+    url_path = f"/api/v1/materials/files/{sha_ext}"
+    logger.info(
+        "upload_material_file filename=%s size=%s url=%s хранилище=%s",
+        original, total, url_path, "s3" if material_files_storage.s3_enabled() else "диск",
+    )
     return {"url": url_path, "filename": original}
 
 
@@ -329,6 +316,7 @@ async def upload_material_file(
         401: {"description": "Не аутентифицирован"},
         403: {"description": "Нет доступа к курсу материала, которому принадлежит файл"},
         404: {"description": "Файл не найден"},
+        503: {"description": "Хранилище файлов недоступно (tsk-520)"},
     },
 )
 async def download_material_file(
@@ -345,28 +333,34 @@ async def download_material_file(
     `GET /materials/{id}`. Доступ считается по курсу материала, в `content`
     которого вписан url файла (см. `assert_material_file_access`).
 
-    Порядок проверок умышленный: авторизация и ACL идут ДО обращения к диску,
-    иначе разница между 404 и 200 сама по себе выдавала бы анониму, какие
-    файлы существуют.
+    Порядок проверок умышленный: авторизация и ACL идут ДО обращения к
+    хранилищу, иначе разница между 404 и 200 сама по себе выдавала бы анониму,
+    какие файлы существуют.
+
+    tsk-520: содержимое приходит из S3 и отдаётся потоком через приложение.
+    Прямая ссылка на бакет клиенту не выдаётся намеренно — редирект (как у
+    публичного `/api/v1/media`) обошёл бы проверку доступа выше. Файлы,
+    загруженные до tsk-520, читаются с диска — запасной путь в `open_file`.
     """
     if "/" in file_id or "\\" in file_id or ".." in file_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
 
     await assert_material_file_access(db, current_user=current_user, file_id=file_id)
 
-    file_path = settings.materials_upload_dir / file_id
-    # Root-jail по образцу /api/v1/media: проверка символов выше отсекает
-    # разделители пути, это — страховка на случай экзотического имени
-    # (например, абсолютного пути после декодирования).
-    resolved = file_path.resolve()
-    if not resolved.is_relative_to(settings.materials_upload_dir.resolve()):
-        logger.error("tsk-516: попытка выхода за каталог загрузок file_id=%r", file_id)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
+    try:
+        opened = await material_files_storage.open_file(file_id)
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
-    if not resolved.exists() or not resolved.is_file():
+    if opened is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
-    media_type = mimetypes.guess_type(file_id)[0] or "application/octet-stream"
-    return FileResponse(path=str(resolved), media_type=media_type, filename=file_id)
+
+    stream, media_type = opened
+    return StreamingResponse(
+        stream,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{file_id}"'},
+    )
 
 
 @router.post(

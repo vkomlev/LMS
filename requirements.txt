@@ -36,3 +36,6 @@ bandit>=1.9.0
 
 # Phase Y-6 — escalation cron (review-loop)
 APScheduler>=3.10,<4
+
+# tsk-520 — файлы материалов лежат в S3-хранилище, а не на диске приложения
+boto3>=1.34
