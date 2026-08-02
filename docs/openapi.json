@@ -2205,6 +2205,9 @@
         "operationId": "get_course_tree_endpoint_api_v1_courses__course_id__tree_get",
         "security": [
           {
+            "APIKeyHeader": []
+          },
+          {
             "APIKeyQuery": []
           }
         ],
@@ -2216,6 +2219,54 @@
             "schema": {
               "type": "integer",
               "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -2233,8 +2284,11 @@
           "404": {
             "description": "Курс не найден"
           },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
           "403": {
-            "description": "Invalid or missing API Key"
+            "description": "Недостаточно прав: нужна роль teacher/methodist/admin"
           },
           "422": {
             "description": "Validation Error",
