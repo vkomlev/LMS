@@ -111,3 +111,10 @@ async def assert_material_access(
             status.HTTP_403_FORBIDDEN,
             "Доступ к материалу запрещён: вы не зачислены в этот курс",
         )
+
+    from app.services import payment_access_service
+
+    # tsk-010: зачислен, но просрочил оплату — материалы закрыты. Проверка стоит
+    # ПОСЛЕ bypass'ов роли: долг ученика не должен закрывать материал
+    # преподавателю или методисту.
+    await payment_access_service.assert_content_allowed(db, current_user.id)

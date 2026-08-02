@@ -4935,18 +4935,76 @@
         "tags": [
           "materials"
         ],
-        "summary": "Загрузить файл для использования в контенте материала",
-        "description": "Загружает файл на сервер. Возвращает url для подстановки в content материала\n(например, content.sources[].url для pdf/video или content.url для link).\n\nВажно: загрузка не обновляет поле content материала автоматически.\nКлиент должен выполнить PATCH материала, добавив возвращённый url в content.\nПри PATCH передавайте полный объект content, чтобы сохранить существующие\nисточники (наш файл и внешняя ссылка могут сосуществовать в content.sources).\n\nЛимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).\nФайлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).",
+        "summary": "Загрузить файл для использования в контенте материала (tsk-516: auth + роль)",
+        "description": "Загружает файл на сервер. Возвращает url для подстановки в content материала\n(например, content.sources[].url для pdf/video или content.url для link).\n\nВажно: загрузка не обновляет поле content материала автоматически.\nКлиент должен выполнить PATCH материала, добавив возвращённый url в content.\nПри PATCH передавайте полный объект content, чтобы сохранить существующие\nисточники (наш файл и внешняя ссылка могут сосуществовать в content.sources).\n\nЛимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).\nФайлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).\n\ntsk-516: раньше загрузка была открыта анониму — вторая половина той же\nдыры, что и скачивание. Сервисный ключ (`?api_key=` / X-API-Key) проходит\nчерез `require_role` без проверки роли, поэтому TG_LMS работает как прежде.",
         "operationId": "upload_material_file_api_v1_materials_upload_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "$ref": "#/components/schemas/Body_upload_material_file_api_v1_materials_upload_post"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -4954,14 +5012,20 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "type": "object",
                   "additionalProperties": {
                     "type": "string"
                   },
-                  "type": "object",
                   "title": "Response Upload Material File Api V1 Materials Upload Post"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет загружать файлы материалов"
           },
           "422": {
             "description": "Validation Error",
@@ -4981,9 +5045,17 @@
         "tags": [
           "materials"
         ],
-        "summary": "Скачать загруженный файл материала",
-        "description": "Отдаёт файл по идентификатору (имя файла, выданное при upload).\nИдентификатор не должен содержать / или ..",
+        "summary": "Скачать загруженный файл материала (tsk-516: auth + ACL)",
+        "description": "Отдаёт файл по идентификатору (имя файла, выданное при upload).\nИдентификатор не должен содержать / или ..\n\ntsk-516: раньше эндпоинт не проверял ничего — прямая ссылка открывалась\nанониму и отчисленному ученику, в отличие от соседнего\n`GET /materials/{id}`. Доступ считается по курсу материала, в `content`\nкоторого вписан url файла (см. `assert_material_file_access`).\n\nПорядок проверок умышленный: авторизация и ACL идут ДО обращения к диску,\nиначе разница между 404 и 200 сама по себе выдавала бы анониму, какие\nфайлы существуют.",
         "operationId": "download_material_file_api_v1_materials_files__file_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
         "parameters": [
           {
             "name": "file_id",
@@ -4993,16 +5065,76 @@
               "type": "string",
               "title": "File Id"
             }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Файл найден и доступен",
             "content": {
               "application/json": {
                 "schema": {}
               }
             }
+          },
+          "400": {
+            "description": "Недопустимый file_id"
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Нет доступа к курсу материала, которому принадлежит файл"
+          },
+          "404": {
+            "description": "Файл не найден"
           },
           "422": {
             "description": "Validation Error",

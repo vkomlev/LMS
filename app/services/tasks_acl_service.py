@@ -139,4 +139,9 @@ async def assert_task_access(
             "Доступ к задаче запрещён: вы не зачислены в этот курс",
         )
 
+    from app.services import payment_access_service
+
+    # tsk-010: просроченная оплата закрывает задания — см. materials_acl_service.
+    await payment_access_service.assert_content_allowed(db, current_user.id)
+
     return False

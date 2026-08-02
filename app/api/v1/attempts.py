@@ -177,6 +177,13 @@ async def create_attempt(
 ) -> AttemptRead:
     if not current_user.is_service and current_user.id != payload.user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает решение заданий. Этот адрес — путь
+    # в обход learning/start-or-get-attempt, поэтому гейт нужен и здесь.
+    if not current_user.is_service:
+        from app.services import payment_access_service
+
+        await payment_access_service.assert_content_allowed(db, payload.user_id)
     """
     Создать новую попытку.
 

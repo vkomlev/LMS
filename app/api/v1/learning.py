@@ -39,6 +39,7 @@ from app.services.help_requests_service import (
     get_or_create_help_request,
     get_or_create_blocked_limit_help_request,
 )
+from app.services import payment_access_service
 from app.services import lesson_attendance_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
@@ -89,6 +90,11 @@ async def get_next_item(
 ) -> NextItemResponse:
     if not current_user.is_service and current_user.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, student_id)
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
@@ -150,6 +156,11 @@ async def material_complete(
 ) -> MaterialCompleteResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
     if material is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
@@ -197,6 +208,11 @@ async def material_skip(
 ) -> LearningSkipResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
     if material is None or not material.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ")
@@ -255,6 +271,11 @@ async def task_skip(
 ) -> LearningSkipResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ")
@@ -297,6 +318,11 @@ async def start_or_get_attempt(
 ) -> StartOrGetAttemptResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -409,6 +435,11 @@ async def get_task_state(
 ) -> TaskStateResponse:
     if not current_user.is_service and current_user.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -484,6 +515,11 @@ async def request_help(
 ) -> RequestHelpResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -533,6 +569,11 @@ async def hint_events(
 ) -> HintEventResponse:
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, body.student_id)
     """
     Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
     """
