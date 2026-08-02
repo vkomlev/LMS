@@ -18192,7 +18192,7 @@
           "teacher_reviews"
         ],
         "summary": "Очередь ожидающих ручной проверки работ преподавателя (tsk-298 Фаза 2)",
-        "description": "Read-only очередь ручной проверки для веб-портала преподавателя (SPW).\n\nТот же предикат обязательной очереди, что у `claim-next`, но без захвата.\nACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree\nпреподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь\nне отдаётся (лёгкий item) — он приходит при claim конкретной работы.",
+        "description": "Read-only очередь ручной проверки для веб-портала преподавателя (SPW).\n\nТот же предикат обязательной очереди, что у `claim-next`, но без захвата.\nACL-scope — `REVIEW_ACL_SQL` внутри запроса (только работы в course-tree\nпреподавателя) + identity-гейт по `teacher_id`. Полный ответ ученика здесь\nне отдаётся (лёгкий item) — он приходит при claim конкретной работы.\n\ntsk-372: `review_kind=optional`/`all` добавляют опциональную очередь\n(авто-проверенные SA_COM/TBL_COM) — портал закрыл разрыв с ботом, который\nеё уже показывал (`/task-results/by-pending-review?review_kind=optional`).\nЗахват опциональной работы под оценку — существующий\n`POST /{result_id}/claim` (claim_review_by_id), он не ограничен mandatory-\nтипами. `claim-next`/`pending-count`/`workload` НЕ меняются: они остаются\nпривязаны к обязательной очереди — счётчик «На проверке» в шапке портала\nобязан совпадать с тем, что реально выдаёт «Следующая проверка» (см.\nкомментарий у `mandatory_review_sql`), иначе бейдж покажет число, которое\nнельзя обнулить через claim-next (мотив бага tsk-210/247).",
         "operationId": "list_pending_reviews_endpoint_api_v1_teacher_reviews_pending_get",
         "security": [
           {
@@ -18231,6 +18231,23 @@
               "title": "Course Id"
             },
             "description": "Фильтр по курсу"
+          },
+          {
+            "name": "review_kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "mandatory",
+                "optional",
+                "all"
+              ],
+              "type": "string",
+              "description": "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230). all — объединение обеих очередей.",
+              "default": "mandatory",
+              "title": "Review Kind"
+            },
+            "description": "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230). all — объединение обеих очередей."
           },
           {
             "name": "limit",
