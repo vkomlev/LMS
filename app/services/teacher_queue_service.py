@@ -150,20 +150,25 @@ def mandatory_review_sql(tasks_alias: str = "t") -> str:
 
 
 # ─── tsk-372: единый предикат «опциональной проверки» ────────────────────────
-# Комплементарен MANDATORY_REVIEW_TEMPLATE: авто-проверенные SA_COM/TBL_COM
-# (manual_review_required=false) — вердикт уже вынес авто-чек, преподаватель
-# смотрит по желанию (включая честно-заваленные, is_correct=false). Введено
-# в tsk-230 для `GET /task-results/by-pending-review?review_kind=optional`
-# (бот), но предикат жил только инлайн в task_results_extra.py. Здесь —
-# единый источник, которым пользуется и бот, и портальный
-# `GET /teacher/reviews/pending?review_kind=optional` (tsk-372).
+# Комплементарен MANDATORY_REVIEW_TEMPLATE по ТОЙ ЖЕ оси (mrr) и на ТОМ ЖЕ
+# наборе типов ('SA','SA_COM','TBL_COM') — авто-проверенные ответы
+# (manual_review_required=false), вердикт уже вынес авто-чек, преподаватель
+# смотрит по желанию (включая честно-заваленные, is_correct=false). TA сюда
+# никогда не попадает — как и у mandatory, TA обрабатывается отдельной веткой
+# (`_check_text_answer` не выносит авто-вердикт в принципе, "опционального"
+# состояния для него не существует).
 #
-# Caller обязан ДОПОЛНИТЕЛЬНО проверить `is_correct IS NOT NULL` — этот
-# предикат сам по себе не гарантирует, что авто-чек уже отработал (тот же
-# паттерн, что у mandatory_review_sql: type/mrr здесь, checked_at/is_correct —
-# в WHERE вызывающего запроса).
+# tsk-372 follow-up (2026-08-02, живая находка оператора): изначально (введено
+# в tsk-230 для `GET /task-results/by-pending-review?review_kind=optional`,
+# бот) предикат содержал только ('SA_COM','TBL_COM') — обычный `SA` не входил.
+# Прод-проверка (read-only) показала: 1495 активных заданий типа SA, из них
+# 419 уже сданных непроверенных ответов (checked_at IS NULL) были НЕВИДИМЫ
+# преподавателю ни в mandatory (mrr=false), ни в старом optional (тип не
+# входил в список) — ни в одном режиме портала/бота. Симптом ровно как у
+# tsk-247 (SA не пускало в mandatory), только для optional-стороны оси.
+# Добавление 'SA' сюда закрывает разрыв симметрично.
 OPTIONAL_REVIEW_TEMPLATE = """
-    ({tasks}.task_content->>'type' IN ('SA_COM','TBL_COM')
+    ({tasks}.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
      AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS FALSE)
 """
 
@@ -1022,6 +1027,7 @@ async def list_pending_reviews(
     *,
     course_id: Optional[int] = None,
     review_kind: str = "mandatory",
+    has_evidence: Optional[bool] = None,
     limit: int = 50,
     offset: int = 0,
 ) -> Tuple[list[dict], int]:
@@ -1039,14 +1045,24 @@ async def list_pending_reviews(
     tsk-230) — параметр аддитивный, default `mandatory` полностью совпадает с
     поведением до tsk-372.
 
+    tsk-372 follow-up: `has_evidence` — есть ли в ответе комментарий
+    (`response.comment`, там же и код для программистских заданий) или
+    вложение (`response.meta.attachments`). Item несёт это же как поле
+    `has_evidence` (для бейджа на карточке), фильтр — опциональное сужение
+    поверх него: преподаватель выборочно находит сдачи с реальным материалом
+    (код/файл/фото), а не просто короткий текстовый ответ — задел под будущую
+    ИИ-проверку кода (оператор, 2026-08-02).
+
     :param teacher_id: ID преподавателя (ACL-scope через REVIEW_ACL_SQL).
     :param course_id: опциональный фильтр по курсу.
-    :param review_kind: `mandatory` (default) — TA либо SA_COM/TBL_COM с
+    :param review_kind: `mandatory` (default) — TA либо SA/SA_COM/TBL_COM с
         `manual_review_required=true` (как раньше); `optional` — авто-проверенные
-        SA_COM/TBL_COM (`manual_review_required=false`, `is_correct` задан),
+        SA/SA_COM/TBL_COM (`manual_review_required=false`, `is_correct` задан),
         включая честно-заваленные; `all` — объединение обеих очередей. Захват
         (`claim`) для optional-работ идёт по result_id (`claim_review_by_id`) —
         `claim_next_review`/счётчик-бейдж по-прежнему видят только mandatory.
+    :param has_evidence: `None` (default) — без фильтра; `True`/`False` —
+        только работы с/без комментария или вложения.
     :param limit: размер страницы.
     :param offset: смещение.
     :returns: (items, total) — total игнорирует limit/offset.
@@ -1067,11 +1083,37 @@ async def list_pending_reviews(
     else:
         kind_sql = mandatory_review_sql('t')
 
+    # tsk-372 follow-up: "есть материал" — непустой response.comment (там же
+    # код для программистских заданий) ИЛИ непустой response.meta.attachments.
+    # jsonb_typeof-guard — legacy/malformed answer_json не должен ронять
+    # запрос ошибкой jsonb_array_length на не-массиве. COALESCE(..., false)
+    # вокруг attachments-ветки обязателен: без него NULL (нет meta/attachments
+    # в JSON вовсе) распространяется через AND/OR по трёхзначной SQL-логике —
+    # `false OR NULL` даёт NULL, а не false, и `AND NOT has_evidence_sql`
+    # молча теряет строку вместо честного "нет вложения" (найдено тестом
+    # test_pending_has_evidence_filter_false).
+    has_evidence_sql = """
+        (
+            NULLIF(TRIM(BOTH FROM (tr.answer_json->'response'->>'comment')), '') IS NOT NULL
+            OR COALESCE(
+                jsonb_typeof(tr.answer_json->'response'->'meta'->'attachments') = 'array'
+                AND jsonb_array_length(tr.answer_json->'response'->'meta'->'attachments') > 0,
+                false
+            )
+        )
+    """
+    has_evidence_cond = ""
+    if has_evidence is True:
+        has_evidence_cond = f"AND {has_evidence_sql}"
+    elif has_evidence is False:
+        has_evidence_cond = f"AND NOT {has_evidence_sql}"
+
     where_sql = f"""
         WHERE tr.checked_at IS NULL
           AND {kind_sql}
           AND {REVIEW_ACL_SQL}
           {course_cond}
+          {has_evidence_cond}
     """
 
     total_row = await db.execute(
@@ -1096,14 +1138,15 @@ async def list_pending_reviews(
                    (tr.review_claim_expires_at IS NOT NULL
                     AND tr.review_claim_expires_at >= :now_ts) AS is_claimed,
                    t.task_content->>'title' AS task_title_raw,
-                   t.task_content->>'stem' AS task_stem
+                   t.task_content->>'stem' AS task_stem,
+                   {has_evidence_sql} AS has_evidence
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
             {where_sql}
             ORDER BY tr.submitted_at ASC
             LIMIT :limit OFFSET :offset
-        """),  # nosec B608 — where_sql из закрытого набора литералов модуля
+        """),  # nosec B608 — where_sql/has_evidence_sql из закрытого набора литералов модуля
         page_params,
     )
     items = [
@@ -1121,6 +1164,7 @@ async def list_pending_reviews(
             "course_id": row[9],
             "user_name": row[10],
             "is_claimed": bool(row[11]),
+            "has_evidence": bool(row[14]),
         }
         for row in r.fetchall()
     ]

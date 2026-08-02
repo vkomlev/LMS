@@ -575,11 +575,20 @@ async def list_pending_reviews_endpoint(
     review_kind: Literal["mandatory", "optional", "all"] = Query(
         "mandatory",
         description=(
-            "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с "
+            "mandatory (default) — обязательная очередь: TA либо SA/SA_COM/TBL_COM с "
             "manual_review_required=true (поведение как до tsk-372, без изменений). "
-            "optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, "
+            "optional — авто-проверенные SA/SA_COM/TBL_COM (manual_review_required=false, "
             "is_correct задан), включая честно-заваленные — та же ось, что у бота "
-            "(tsk-230). all — объединение обеих очередей."
+            "(tsk-230; SA добавлен tsk-372 follow-up — раньше был невидим нигде). "
+            "all — объединение обеих очередей."
+        ),
+    ),
+    has_evidence: Optional[bool] = Query(
+        None,
+        description=(
+            "tsk-372 follow-up: фильтр по наличию комментария/вложения в ответе "
+            "(response.comment — там же код, или response.meta.attachments). "
+            "None (default) — без фильтра."
         ),
     ),
     limit: int = Query(50, ge=1, le=200, description="Размер страницы (max 200)"),
@@ -608,7 +617,8 @@ async def list_pending_reviews_endpoint(
     if not current_user.is_service and current_user.id != teacher_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
     items, total = await list_pending_reviews(
-        db, teacher_id, course_id=course_id, review_kind=review_kind, limit=limit, offset=offset
+        db, teacher_id, course_id=course_id, review_kind=review_kind,
+        has_evidence=has_evidence, limit=limit, offset=offset,
     )
     return PendingReviewListResponse(
         items=[PendingReviewItem(**it) for it in items], total=total

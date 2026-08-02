@@ -69,15 +69,21 @@ async def _create_task(db, *, type_: str = "SA_COM", manual: bool = True) -> int
     return tid
 
 
-async def _create_tr(db, *, user_id: int, task_id: int, is_correct: bool | None) -> int:
+async def _create_tr(
+    db, *, user_id: int, task_id: int, is_correct: bool | None,
+    answer_json: dict | None = None,
+) -> int:
     now = datetime.now(timezone.utc)
     res = await db.execute(
         text(
             "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
-            "received_at, max_score, source_system, is_correct) "
-            "VALUES (0, :u, :t, :now, 0, :now, 10, 'spw', :ic) RETURNING id"
+            "received_at, max_score, source_system, is_correct, answer_json) "
+            "VALUES (0, :u, :t, :now, 0, :now, 10, 'spw', :ic, CAST(:aj AS jsonb)) RETURNING id"
         ),
-        {"u": user_id, "t": task_id, "now": now, "ic": is_correct},
+        {
+            "u": user_id, "t": task_id, "now": now, "ic": is_correct,
+            "aj": json.dumps(answer_json) if answer_json is not None else None,
+        },
     )
     rid = res.scalar_one()
     await db.commit()
@@ -187,3 +193,172 @@ async def test_pending_review_kind_optional_excludes_not_yet_auto_checked(db, cl
         assert rid not in ids
     finally:
         await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+# ── tsk-372 follow-up: тип SA (не только SA_COM/TBL_COM) в очереди ───────────
+# Живая находка оператора 2026-08-02 + подтверждение read-only разведкой прод-БД:
+# 1495 активных заданий типа SA, 419 непроверенных ответов были невидимы ни в
+# каком режиме — optional_review_sql() проверял только ('SA_COM','TBL_COM').
+
+@pytest.mark.asyncio
+async def test_pending_review_kind_optional_includes_plain_sa(db, client):
+    """SA (не SA_COM) с manual_review_required=false теперь виден в optional."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA", manual=False)
+    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, is_correct=True)
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = [it["id"] for it in resp.json()["items"]]
+        assert rid in ids, "SA с mrr=false должен быть виден в optional (tsk-372 follow-up)"
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_pending_review_kind_mandatory_still_includes_plain_sa(db, client):
+    """SA с manual_review_required=true остаётся в mandatory (регресс на tsk-247 не допущен)."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA", manual=True)
+    rid = await _create_tr(db, user_id=stud_id, task_id=task_id, is_correct=None)
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = [it["id"] for it in resp.json()["items"]]
+        assert rid in ids
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+# ── tsk-372 follow-up: has_evidence (комментарий/вложение) ───────────────────
+
+@pytest.mark.asyncio
+async def test_pending_item_has_evidence_true_for_comment(db, client):
+    """Непустой response.comment -> has_evidence=true."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA_COM", manual=False)
+    rid = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "42", "comment": "print(42)"}},
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        mine = next(it for it in resp.json()["items"] if it["id"] == rid)
+        assert mine["has_evidence"] is True
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_pending_item_has_evidence_true_for_attachment(db, client):
+    """Непустой response.meta.attachments -> has_evidence=true."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA_COM", manual=False)
+    rid = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "42", "meta": {"attachments": [
+            {"attachment_id": "a1", "filename": "solution.py", "content_type": "text/plain"}
+        ]}}},
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        mine = next(it for it in resp.json()["items"] if it["id"] == rid)
+        assert mine["has_evidence"] is True
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_pending_item_has_evidence_false_plain_answer(db, client):
+    """Ни комментария, ни вложения -> has_evidence=false (плоский SA-ответ)."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA", manual=False)
+    rid = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "42"}},
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        mine = next(it for it in resp.json()["items"] if it["id"] == rid)
+        assert mine["has_evidence"] is False
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id], rids=[rid])
+
+
+@pytest.mark.asyncio
+async def test_pending_has_evidence_filter_true(db, client):
+    """has_evidence=true в query — оставляет только работы с материалом."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA_COM", manual=False)
+    with_evidence = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "1", "comment": "code here"}},
+    )
+    without_evidence = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "1"}},
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional&has_evidence=true",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = [it["id"] for it in resp.json()["items"]]
+        assert with_evidence in ids
+        assert without_evidence not in ids
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id],
+                       rids=[with_evidence, without_evidence])
+
+
+@pytest.mark.asyncio
+async def test_pending_has_evidence_filter_false(db, client):
+    """has_evidence=false в query — оставляет только работы БЕЗ материала."""
+    met_id, token = await _setup_methodist(db)
+    stud_id = await _create_student(db)
+    task_id = await _create_task(db, type_="SA_COM", manual=False)
+    with_evidence = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "1", "comment": "code here"}},
+    )
+    without_evidence = await _create_tr(
+        db, user_id=stud_id, task_id=task_id, is_correct=True,
+        answer_json={"response": {"value": "1"}},
+    )
+    try:
+        resp = await client.get(
+            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&review_kind=optional&has_evidence=false",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = [it["id"] for it in resp.json()["items"]]
+        assert without_evidence in ids
+        assert with_evidence not in ids
+    finally:
+        await _cleanup(db, user_ids=[met_id, stud_id], task_ids=[task_id],
+                       rids=[with_evidence, without_evidence])

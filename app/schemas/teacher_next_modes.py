@@ -112,6 +112,13 @@ class PendingReviewItem(BaseModel):
     is_correct: Optional[bool] = None
     submitted_at: datetime
     is_claimed: bool = Field(False, description="Работа уже взята кем-то на проверку (действующий lock)")
+    has_evidence: bool = Field(
+        False,
+        description=(
+            "tsk-372: есть комментарий (response.comment — там же код для "
+            "программистских заданий) или вложение (response.meta.attachments)"
+        ),
+    )
 
 
 class PendingReviewListResponse(BaseModel):

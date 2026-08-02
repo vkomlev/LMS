@@ -583,10 +583,11 @@ async def get_pending_review_results(
         "mandatory",
         description=(
             "mandatory (default) — очередь обязательной ручной проверки: TA либо "
-            "SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). "
-            "Тот же предикат, что у claim-next (tsk-247). "
-            "optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, "
-            "manual_review_required=false), доступные для опционального просмотра (tsk-230)."
+            "SA/SA_COM/TBL_COM с manual_review_required=true (checked_at IS NULL, замок "
+            "свободен). Тот же предикат, что у claim-next (tsk-247). "
+            "optional — авто-проверенные SA/SA_COM/TBL_COM (checked_at IS NULL, is_correct "
+            "задан, manual_review_required=false), доступные для опционального просмотра "
+            "(tsk-230; SA добавлен tsk-372 follow-up)."
         ),
     ),
     limit: int = Query(50, ge=1, le=1000, description="РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№ РЅР° СЃС‚СЂР°РЅРёС†Рµ"),
