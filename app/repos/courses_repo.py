@@ -1,5 +1,6 @@
 # app/repos/courses_repo.py
 
+from types import SimpleNamespace
 from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
 from sqlalchemy import select, text, delete, insert, or_, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,30 +56,30 @@ class CoursesRepository(BaseRepository[Courses]):
         query = text("""
             WITH RECURSIVE course_descendants AS (
                 -- Базовый случай: прямые дети
-                SELECT c.id, c.title, c.access_level, c.description, 
-                       c.created_at, c.is_required, c.course_uid
+                SELECT c.id, c.title, c.access_level, c.description,
+                       c.created_at, c.is_required, c.course_uid, c.is_public_demo
                 FROM courses c
                 INNER JOIN course_parents cp ON c.id = cp.course_id
                 WHERE cp.parent_course_id = :course_id
-                
+
                 UNION ALL
-                
+
                 -- Рекурсивный случай: дети детей
                 SELECT c.id, c.title, c.access_level, c.description,
-                       c.created_at, c.is_required, c.course_uid
+                       c.created_at, c.is_required, c.course_uid, c.is_public_demo
                 FROM courses c
                 INNER JOIN course_parents cp ON c.id = cp.course_id
                 INNER JOIN course_descendants cd ON cp.parent_course_id = cd.id
             )
             SELECT DISTINCT id, title, access_level, description,
-                   created_at, is_required, course_uid
+                   created_at, is_required, course_uid, is_public_demo
             FROM course_descendants
             ORDER BY id
         """)
-        
+
         result = await db.execute(query, {"course_id": course_id})
         rows = result.fetchall()
-        
+
         # Преобразуем строки в объекты Courses
         courses = []
         for row in rows:
@@ -89,10 +90,11 @@ class CoursesRepository(BaseRepository[Courses]):
                 description=row.description,
                 created_at=row.created_at,
                 is_required=row.is_required,
-                course_uid=row.course_uid
+                course_uid=row.course_uid,
+                is_public_demo=row.is_public_demo,
             )
             courses.append(course)
-        
+
         return courses
 
     async def get_root_courses(
@@ -156,25 +158,32 @@ class CoursesRepository(BaseRepository[Courses]):
         self,
         db: AsyncSession,
         course_id: int
-    ) -> Optional[Courses]:
+    ) -> Optional[SimpleNamespace]:
         """
         Получить дерево курса с детьми (рекурсивная структура).
-        Возвращает курс с загруженными детьми всех уровней.
-        Построение дерева выполняется в Python после получения всех курсов одним запросом.
+
+        Возвращает узел (обычный объект с атрибутами, читаемыми через
+        `CourseTreeRead.model_validate(..., from_attributes=True)`), а не ORM-объект
+        `Courses`: узлы дерева переиспользуются на разных уровнях вложенности (курс
+        с несколькими родителями), а `child_courses`/`parent_courses` — двусторонний
+        `relationship(back_populates=...)`. Присваивание в него (даже через
+        `object.__setattr__`) не обходит дескриптор SQLAlchemy — он всё равно
+        синхронизирует обратную сторону связи и в async-контексте ленивая подгрузка
+        падает `MissingGreenlet` (tsk-463). Отдельная структура убирает эту связь
+        совсем и заодно даёт полю верное имя `children`, которое ждёт схема
+        `CourseTreeRead` (репозиторий раньше писал в `child_courses`).
         """
-        # Получаем сам курс
+        # Получаем сам курс (BaseRepository.get грузит parent_courses селектом заранее)
         course = await self.get(db, course_id)
         if not course:
             return None
-        
+
         # Получаем всех потомков рекурсивно одним запросом
         all_children = await self.get_all_children(db, course_id)
-        
-        # Создаем словарь для быстрого доступа: parent_id -> список детей
-        children_map: Dict[int, List[Courses]] = {}
-        
-        # Группируем потомков по родителям (теперь у курса может быть несколько родителей)
-        # Получаем все связи родитель-ребенок для всех потомков
+
+        # parent_id -> [child_id, ...] и child_id -> [parent_id, ...] из одного запроса
+        children_ids_map: Dict[int, List[int]] = {}
+        parent_ids_map: Dict[int, List[int]] = {}
         if all_children:
             child_ids = [c.id for c in all_children]
             query = text("""
@@ -183,28 +192,32 @@ class CoursesRepository(BaseRepository[Courses]):
                 WHERE cp.course_id = ANY(:child_ids)
             """)
             result = await db.execute(query, {"child_ids": child_ids})
-            parent_child_pairs = result.fetchall()
-            
-            for parent_id, child_id in parent_child_pairs:
-                if parent_id not in children_map:
-                    children_map[parent_id] = []
-                # Находим объект курса-ребенка
-                child_course = next((c for c in all_children if c.id == child_id), None)
-                if child_course:
-                    children_map[parent_id].append(child_course)
-        
-        # Рекурсивно строим дерево
-        # ВАЖНО: используем object.__setattr__ для установки relationship без триггера lazy loading
-        def build_tree(course_obj: Courses) -> Courses:
-            """Рекурсивно строит дерево для курса."""
-            children = children_map.get(course_obj.id, [])
-            # Используем object.__setattr__ для установки атрибута без триггера lazy loading
-            # Это обходит механизм SQLAlchemy для lazy loading в async контексте
-            built_children = [build_tree(child) for child in children]
-            object.__setattr__(course_obj, 'child_courses', built_children)
-            return course_obj
-        
-        return build_tree(course)
+            for parent_id, child_id in result.fetchall():
+                children_ids_map.setdefault(parent_id, []).append(child_id)
+                parent_ids_map.setdefault(child_id, []).append(parent_id)
+
+        by_id: Dict[int, Courses] = {c.id: c for c in all_children}
+
+        def build_node(course_obj: Courses, parent_course_ids: List[int]) -> SimpleNamespace:
+            """Рекурсивно строит узел дерева без обращения к ORM-relationship'ам."""
+            child_ids = children_ids_map.get(course_obj.id, [])
+            return SimpleNamespace(
+                id=course_obj.id,
+                title=course_obj.title,
+                access_level=course_obj.access_level,
+                description=course_obj.description,
+                parent_course_ids=parent_course_ids,
+                created_at=course_obj.created_at,
+                is_required=course_obj.is_required,
+                course_uid=course_obj.course_uid,
+                is_public_demo=course_obj.is_public_demo,
+                children=[
+                    build_node(by_id[child_id], parent_ids_map.get(child_id, []))
+                    for child_id in child_ids
+                ],
+            )
+
+        return build_node(course, course.parent_course_ids)
     
     async def set_parent_courses(
         self,

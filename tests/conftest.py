@@ -1,6 +1,7 @@
 """Общие фикстуры для тестов Phase Y-1+."""
 import asyncio
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,48 @@ from app.db.session import get_async_db
 
 _settings = Settings()
 _logger = logging.getLogger(__name__)
+
+# tsk-467: разделение окружений — тестовый прогон не должен физически попасть
+# в боевую LMS.
+#
+# Находка при разборе задачи: партии `wp:bulk-*`/`wp:mix-good-*`, которые тикет
+# приписывал отладочным прогонам публикатора ContentBackbone, на деле генерирует
+# ЭТОТ репозиторий — `tests/test_materials_bulk_upsert.py` (см. префиксы `ext =
+# f"wp:bulk-{uuid...}"` / `ext_good = f"wp:mix-good-{uuid...}"`). Grep по
+# ContentBackbone (monolith/, scripts/) этих строк не находит вовсе. Вероятный
+# реальный механизм инцидента: этот и другие `SELF_MANAGED_CONNECTION_MODULES`
+# (реальные коммиты, без отката) были прогнаны в контексте, где `DATABASE_URL`
+# указывал на прод (например, SSH-сессия на /opt/lms, где `.env` — прод по
+# определению) — а не отладка публикатора.
+#
+# `db_write_gate.py` (`~/.claude/hooks`) это не ловит НАМЕРЕННО: `test_*.py`
+# исключены из анализа тела скрипта (тесты по соглашению не пишут в прод), и
+# сам файл документирует эту дыру как «ОСТАЁТСЯ НЕ ПОКРЫТЫМ» — скрипт берёт DSN
+# из `.env`/конфига приложения, в теле нет ни хоста, ни имени прод-переменной.
+# Раз хук статически не отличает прод от dev для этого класса файлов, отличать
+# должен сам тестовый прогон — рантайм-проверка по РЕАЛЬНОМУ DSN, а не по тексту
+# команды. Проверяется до создания любого движка/сессии, отказ — для всей сессии
+# pytest сразу, а не только для тестов, которые эту фикстуру используют явно.
+_PROD_DB_SIGNATURES: tuple[str, ...] = ("5.42.107.253", "lms_prod")
+
+
+def pytest_configure(config: "pytest.Config") -> None:
+    """Отказать всему прогону, если DATABASE_URL похож на боевую БД LMS.
+
+    Override — `ALLOW_PROD_TESTS=1`: используется только read-only живой
+    проверкой на проде через явный отдельный запуск, не для обычных pytest-сессий.
+    """
+    if os.environ.get("ALLOW_PROD_TESTS", "").strip().lower() in {"1", "true", "yes"}:
+        return
+    low = (_settings.database_url or "").lower()
+    if any(sig.lower() in low for sig in _PROD_DB_SIGNATURES):
+        raise pytest.UsageError(
+            "tsk-467: DATABASE_URL похож на БОЕВУЮ БД LMS (host/role совпадает с "
+            f"{_PROD_DB_SIGNATURES}). Тесты пишут напрямую и без отката "
+            "(SELF_MANAGED_CONNECTION_MODULES) — прогон против прода запрещён. "
+            "Осознанно нужно прод — установи ALLOW_PROD_TESTS=1 явно."
+        )
+
 
 # id «реальных» пользователей dev-БД, которых тестовый sweep не трогает
 # (см. scripts/cleanup_test_artifacts.py)

@@ -86,7 +86,10 @@ async def _run_bulk_upsert_tests() -> bool:
             "external_uid": ext,
             "title": title,
             "type": "text",
-            "content": {"text": "hello", "format": "markdown"},
+            # tsk-467: НЕ "hello"/"ok"/"test" — с этими значениями тела
+            # gate (см. schemas/materials.py::_JUNK_TEXT_BODIES) теперь
+            # отклоняет запись как тестовую заглушку публикатора.
+            "content": {"text": "Текст материала для интеграционного теста bulk-upsert", "format": "markdown"},
         }
         base_item.update(kwargs)
         return base_item
@@ -152,8 +155,8 @@ async def _run_bulk_upsert_tests() -> bool:
             f"/api/v1/materials/bulk-upsert?api_key={api_key}",
             json={
                 "items": [
-                    item_payload("Lose"),
-                    item_payload("Win"),
+                    item_payload("Losing title"),
+                    item_payload("Winning title"),
                 ]
             },
         )
@@ -181,8 +184,8 @@ async def _run_bulk_upsert_tests() -> bool:
             {"mid": material_id},
         )
         title_row = r2.first()
-        if not title_row or title_row[0] != "Win":
-            print(f"[FAIL] ожидали title Win после dup batch, got {title_row}")
+        if not title_row or title_row[0] != "Winning title":
+            print(f"[FAIL] ожидали title 'Winning title' после dup batch, got {title_row}")
             return False
 
     # несуществующий курс
@@ -223,9 +226,9 @@ async def _run_bulk_upsert_tests() -> bool:
                     {
                         "course_id": course_id,
                         "external_uid": ext_good,
-                        "title": "OK row",
+                        "title": "Good row",
                         "type": "text",
-                        "content": {"text": "ok", "format": "plain"},
+                        "content": {"text": "Валидный текст материала", "format": "plain"},
                     },
                     {
                         "course_id": course_id,
@@ -273,6 +276,76 @@ async def _run_bulk_upsert_tests() -> bool:
         ).scalar()
         if c_good != 1 or c_bad != 0:
             print(f"[FAIL] mixed DB counts good={c_good} bad={c_bad}")
+            return False
+
+    # tsk-467: gate против отладочных прогонов публикатора — точное воспроизведение
+    # прод-инцидента (title="Win"/content.text="hello", title="OK row"/content.text="ok")
+    # должно отклоняться per-item error, а не попадать в БД.
+    async with httpx.AsyncClient(transport=transport, base_url=base) as client:
+        ext_junk_title = f"wp:junk-title-{uuid.uuid4().hex}"
+        ext_junk_body = f"wp:junk-body-{uuid.uuid4().hex}"
+        ext_legit_short = f"wp:legit-short-{uuid.uuid4().hex}"
+        r8 = await client.post(
+            f"/api/v1/materials/bulk-upsert?api_key={api_key}",
+            json={
+                "items": [
+                    {
+                        "course_id": course_id,
+                        "external_uid": ext_junk_title,
+                        "title": "Win",
+                        "type": "text",
+                        "content": {"text": "содержательный текст, не заглушка", "format": "plain"},
+                    },
+                    {
+                        "course_id": course_id,
+                        "external_uid": ext_junk_body,
+                        "title": "Обычное название",
+                        "type": "text",
+                        "content": {"text": "hello", "format": "plain"},
+                    },
+                    {
+                        "course_id": course_id,
+                        "external_uid": ext_legit_short,
+                        # Регресс: короткое, но легитимное название (по образцу
+                        # реальных прод-материалов «Кэш»/«Итог» из tsk-467) не
+                        # должно попадать под gate.
+                        "title": "Кэш",
+                        "type": "text",
+                        "content": {"text": "Разбор темы кэширования на реальном примере", "format": "plain"},
+                    },
+                ]
+            },
+        )
+        if r8.status_code != 200:
+            print(f"[FAIL] tsk-467 gate HTTP: {r8.status_code} {r8.text}")
+            return False
+        d8 = r8.json()
+        items8 = {it["external_uid"]: it for it in d8.get("items", [])}
+        if items8.get(ext_junk_title, {}).get("status") != "error":
+            print(f"[FAIL] tsk-467: title 'Win' должен быть отклонён: {d8}")
+            return False
+        if items8.get(ext_junk_body, {}).get("status") != "error":
+            print(f"[FAIL] tsk-467: content.text 'hello' должен быть отклонён: {d8}")
+            return False
+        if items8.get(ext_legit_short, {}).get("status") != "created":
+            print(f"[FAIL] tsk-467: короткое легитимное название 'Кэш' не должно блокироваться: {d8}")
+            return False
+
+    async with async_session() as session:
+        cnt_junk_title = (
+            await session.execute(
+                text("SELECT COUNT(*) FROM materials WHERE course_id = :cid AND external_uid = :ext"),
+                {"cid": course_id, "ext": ext_junk_title},
+            )
+        ).scalar()
+        cnt_junk_body = (
+            await session.execute(
+                text("SELECT COUNT(*) FROM materials WHERE course_id = :cid AND external_uid = :ext"),
+                {"cid": course_id, "ext": ext_junk_body},
+            )
+        ).scalar()
+        if cnt_junk_title != 0 or cnt_junk_body != 0:
+            print(f"[FAIL] tsk-467: мусорные строки не должны попасть в БД: title={cnt_junk_title} body={cnt_junk_body}")
             return False
 
     # атомарность записи: второй create падает — откат всей транзакции

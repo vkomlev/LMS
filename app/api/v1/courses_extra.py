@@ -258,17 +258,18 @@ async def get_course_children_endpoint(
         404: {
             "description": "Курс не найден",
         },
-        403: {"description": "Invalid or missing API Key"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Недостаточно прав: нужна роль teacher/methodist/admin"},
     },
 )
 async def get_course_tree_endpoint(
     course_id: int,
-    # tsk-433: НЕ переведён на cookie вместе с roots/children/{id} намеренно —
-    # эндпоинт отдаёт 500 при любом гейте (см. tsk-463): репозиторий заполняет
-    # `child_courses`, а схема ждёт `children`, плюс lazy-load `parent_courses`
-    # в async-контексте. Веб-кабинет навигируется через roots + children.
-    # При починке tsk-463 перевести сюда `_COURSE_TREE_GATE`.
-    db: AsyncSession = Depends(get_db),
+    # tsk-463: эндпоинт был на legacy `get_db` намеренно, пока отдавал 500 при
+    # любом гейте (репозиторий писал в `child_courses` вместо `children` схемы,
+    # плюс `MissingGreenlet` от relationship back_populates). После починки
+    # переведён на тот же гейт, что у соседних roots/children/{id} (tsk-433).
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
 ) -> CourseTreeRead:
     """
     Получить дерево курса с детьми всех уровней (рекурсивная структура).

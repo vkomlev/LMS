@@ -77,9 +77,9 @@ def _paths(course_id: int, task_id: int = 1) -> list[str]:
         "/api/v1/courses/roots",
         f"/api/v1/courses/{course_id}",
         f"/api/v1/courses/{course_id}/children",
-        # `/courses/{id}/tree` намеренно НЕ здесь: он отдаёт 500 при любом гейте
-        # (предсуществующий баг, tsk-463) и в Волну 1 не входит — навигация по
-        # графу идёт через roots + children.
+        f"/api/v1/courses/{course_id}/tree",
+        # tsk-463: `/tree` отдавал 500 при любом гейте (предсуществующий баг) —
+        # починен и переведён на `_COURSE_TREE_GATE` тем же заходом.
         #
         # `/courses/{id}/users` и `/courses/{id}/materials/stats` тоже НЕ здесь:
         # оставлены на legacy-гейте намеренно (ревью tsk-433). Первый отдаёт

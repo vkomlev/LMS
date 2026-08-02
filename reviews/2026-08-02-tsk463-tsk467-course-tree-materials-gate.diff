@@ -1,0 +1,499 @@
+diff --git a/app/api/v1/courses_extra.py b/app/api/v1/courses_extra.py
+index 977f2a8..15f37dc 100644
+--- a/app/api/v1/courses_extra.py
++++ b/app/api/v1/courses_extra.py
+@@ -258,17 +258,18 @@ async def get_course_children_endpoint(
+         404: {
+             "description": "Курс не найден",
+         },
+-        403: {"description": "Invalid or missing API Key"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Недостаточно прав: нужна роль teacher/methodist/admin"},
+     },
+ )
+ async def get_course_tree_endpoint(
+     course_id: int,
+-    # tsk-433: НЕ переведён на cookie вместе с roots/children/{id} намеренно —
+-    # эндпоинт отдаёт 500 при любом гейте (см. tsk-463): репозиторий заполняет
+-    # `child_courses`, а схема ждёт `children`, плюс lazy-load `parent_courses`
+-    # в async-контексте. Веб-кабинет навигируется через roots + children.
+-    # При починке tsk-463 перевести сюда `_COURSE_TREE_GATE`.
+-    db: AsyncSession = Depends(get_db),
++    # tsk-463: эндпоинт был на legacy `get_db` намеренно, пока отдавал 500 при
++    # любом гейте (репозиторий писал в `child_courses` вместо `children` схемы,
++    # плюс `MissingGreenlet` от relationship back_populates). После починки
++    # переведён на тот же гейт, что у соседних roots/children/{id} (tsk-433).
++    db: AsyncSession = Depends(get_bare_db),
++    current_user: CurrentUser = Depends(_COURSE_TREE_GATE),
+ ) -> CourseTreeRead:
+     """
+     Получить дерево курса с детьми всех уровней (рекурсивная структура).
+diff --git a/app/repos/courses_repo.py b/app/repos/courses_repo.py
+index ba5a094..21c6d51 100644
+--- a/app/repos/courses_repo.py
++++ b/app/repos/courses_repo.py
+@@ -1,5 +1,6 @@
+ # app/repos/courses_repo.py
+ 
++from types import SimpleNamespace
+ from typing import Optional, List, Dict, Any, Tuple, Iterable, Set
+ from sqlalchemy import select, text, delete, insert, or_, update as sql_update
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -55,30 +56,30 @@ class CoursesRepository(BaseRepository[Courses]):
+         query = text("""
+             WITH RECURSIVE course_descendants AS (
+                 -- Базовый случай: прямые дети
+-                SELECT c.id, c.title, c.access_level, c.description, 
+-                       c.created_at, c.is_required, c.course_uid
++                SELECT c.id, c.title, c.access_level, c.description,
++                       c.created_at, c.is_required, c.course_uid, c.is_public_demo
+                 FROM courses c
+                 INNER JOIN course_parents cp ON c.id = cp.course_id
+                 WHERE cp.parent_course_id = :course_id
+-                
++
+                 UNION ALL
+-                
++
+                 -- Рекурсивный случай: дети детей
+                 SELECT c.id, c.title, c.access_level, c.description,
+-                       c.created_at, c.is_required, c.course_uid
++                       c.created_at, c.is_required, c.course_uid, c.is_public_demo
+                 FROM courses c
+                 INNER JOIN course_parents cp ON c.id = cp.course_id
+                 INNER JOIN course_descendants cd ON cp.parent_course_id = cd.id
+             )
+             SELECT DISTINCT id, title, access_level, description,
+-                   created_at, is_required, course_uid
++                   created_at, is_required, course_uid, is_public_demo
+             FROM course_descendants
+             ORDER BY id
+         """)
+-        
++
+         result = await db.execute(query, {"course_id": course_id})
+         rows = result.fetchall()
+-        
++
+         # Преобразуем строки в объекты Courses
+         courses = []
+         for row in rows:
+@@ -89,10 +90,11 @@ class CoursesRepository(BaseRepository[Courses]):
+                 description=row.description,
+                 created_at=row.created_at,
+                 is_required=row.is_required,
+-                course_uid=row.course_uid
++                course_uid=row.course_uid,
++                is_public_demo=row.is_public_demo,
+             )
+             courses.append(course)
+-        
++
+         return courses
+ 
+     async def get_root_courses(
+@@ -156,25 +158,32 @@ class CoursesRepository(BaseRepository[Courses]):
+         self,
+         db: AsyncSession,
+         course_id: int
+-    ) -> Optional[Courses]:
++    ) -> Optional[SimpleNamespace]:
+         """
+         Получить дерево курса с детьми (рекурсивная структура).
+-        Возвращает курс с загруженными детьми всех уровней.
+-        Построение дерева выполняется в Python после получения всех курсов одним запросом.
++
++        Возвращает узел (обычный объект с атрибутами, читаемыми через
++        `CourseTreeRead.model_validate(..., from_attributes=True)`), а не ORM-объект
++        `Courses`: узлы дерева переиспользуются на разных уровнях вложенности (курс
++        с несколькими родителями), а `child_courses`/`parent_courses` — двусторонний
++        `relationship(back_populates=...)`. Присваивание в него (даже через
++        `object.__setattr__`) не обходит дескриптор SQLAlchemy — он всё равно
++        синхронизирует обратную сторону связи и в async-контексте ленивая подгрузка
++        падает `MissingGreenlet` (tsk-463). Отдельная структура убирает эту связь
++        совсем и заодно даёт полю верное имя `children`, которое ждёт схема
++        `CourseTreeRead` (репозиторий раньше писал в `child_courses`).
+         """
+-        # Получаем сам курс
++        # Получаем сам курс (BaseRepository.get грузит parent_courses селектом заранее)
+         course = await self.get(db, course_id)
+         if not course:
+             return None
+-        
++
+         # Получаем всех потомков рекурсивно одним запросом
+         all_children = await self.get_all_children(db, course_id)
+-        
+-        # Создаем словарь для быстрого доступа: parent_id -> список детей
+-        children_map: Dict[int, List[Courses]] = {}
+-        
+-        # Группируем потомков по родителям (теперь у курса может быть несколько родителей)
+-        # Получаем все связи родитель-ребенок для всех потомков
++
++        # parent_id -> [child_id, ...] и child_id -> [parent_id, ...] из одного запроса
++        children_ids_map: Dict[int, List[int]] = {}
++        parent_ids_map: Dict[int, List[int]] = {}
+         if all_children:
+             child_ids = [c.id for c in all_children]
+             query = text("""
+@@ -183,28 +192,32 @@ class CoursesRepository(BaseRepository[Courses]):
+                 WHERE cp.course_id = ANY(:child_ids)
+             """)
+             result = await db.execute(query, {"child_ids": child_ids})
+-            parent_child_pairs = result.fetchall()
+-            
+-            for parent_id, child_id in parent_child_pairs:
+-                if parent_id not in children_map:
+-                    children_map[parent_id] = []
+-                # Находим объект курса-ребенка
+-                child_course = next((c for c in all_children if c.id == child_id), None)
+-                if child_course:
+-                    children_map[parent_id].append(child_course)
+-        
+-        # Рекурсивно строим дерево
+-        # ВАЖНО: используем object.__setattr__ для установки relationship без триггера lazy loading
+-        def build_tree(course_obj: Courses) -> Courses:
+-            """Рекурсивно строит дерево для курса."""
+-            children = children_map.get(course_obj.id, [])
+-            # Используем object.__setattr__ для установки атрибута без триггера lazy loading
+-            # Это обходит механизм SQLAlchemy для lazy loading в async контексте
+-            built_children = [build_tree(child) for child in children]
+-            object.__setattr__(course_obj, 'child_courses', built_children)
+-            return course_obj
+-        
+-        return build_tree(course)
++            for parent_id, child_id in result.fetchall():
++                children_ids_map.setdefault(parent_id, []).append(child_id)
++                parent_ids_map.setdefault(child_id, []).append(parent_id)
++
++        by_id: Dict[int, Courses] = {c.id: c for c in all_children}
++
++        def build_node(course_obj: Courses, parent_course_ids: List[int]) -> SimpleNamespace:
++            """Рекурсивно строит узел дерева без обращения к ORM-relationship'ам."""
++            child_ids = children_ids_map.get(course_obj.id, [])
++            return SimpleNamespace(
++                id=course_obj.id,
++                title=course_obj.title,
++                access_level=course_obj.access_level,
++                description=course_obj.description,
++                parent_course_ids=parent_course_ids,
++                created_at=course_obj.created_at,
++                is_required=course_obj.is_required,
++                course_uid=course_obj.course_uid,
++                is_public_demo=course_obj.is_public_demo,
++                children=[
++                    build_node(by_id[child_id], parent_ids_map.get(child_id, []))
++                    for child_id in child_ids
++                ],
++            )
++
++        return build_node(course, course.parent_course_ids)
+     
+     async def set_parent_courses(
+         self,
+diff --git a/app/schemas/materials.py b/app/schemas/materials.py
+index 3eb9513..9c579b3 100644
+--- a/app/schemas/materials.py
++++ b/app/schemas/materials.py
+@@ -169,6 +169,20 @@ class MaterialBulkUpdateResponse(BaseModel):
+ 
+ MaterialsBulkUpsertItemStatus = Literal["created", "updated", "unchanged", "error"]
+ 
++# tsk-467: отладочные прогоны публикатора ContentBackbone трижды (1, 3 и 6 июня)
++# записали в прод-БД `learn` тестовые материалы «Win»/«OK row» с телом
++# `hello`/`ok`. Порог по длине названия отклонён данными (короткие легитимные
++# названия массово встречаются — «Кэш», «Итог», см. tsk-467) — критерий
++# содержательный, не по длине: стоп-лист заведомо тестовых названий +
++# заведомо тестовое тело текстового материала.
++_JUNK_TITLES: frozenset[str] = frozenset({
++    "win", "ok row", "ok", "test", "hello", "foo", "bar",
++    "lorem", "lorem ipsum", "asdf", "qwerty", "123", "test row", "test title",
++})
++_JUNK_TEXT_BODIES: frozenset[str] = frozenset({
++    "ok", "hello", "test", "foo", "bar", "lorem ipsum", "asdf", "qwerty",
++})
++
+ 
+ class MaterialsBulkUpsertItem(BaseModel):
+     """Один элемент пакетного upsert материалов."""
+@@ -219,6 +233,13 @@ class MaterialsBulkUpsertItem(BaseModel):
+             return v.strip()
+         return v
+ 
++    @field_validator("title")
++    @classmethod
++    def title_not_blank(cls, v: str) -> str:
++        if not v.strip():
++            raise ValueError("title не может быть пустым")
++        return v
++
+     @model_validator(mode="after")
+     def validate_content_by_type(self) -> "MaterialsBulkUpsertItem":
+         if self.content is not None:
+@@ -227,8 +248,32 @@ class MaterialsBulkUpsertItem(BaseModel):
+                 object.__setattr__(self, "content", validated)
+             except Exception as e:
+                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
++        self._reject_known_junk()
+         return self
+ 
++    def _reject_known_junk(self) -> None:
++        """tsk-467: заблокировать заведомо отладочные значения публикатора.
++
++        Не порог по длине (отклонён данными — короткие названия массово
++        легитимны), а содержательные признаки: точное совпадение названия
++        со стоп-листом ИЛИ текстовый материал, у которого всё тело — одно
++        из тестовых слов-заглушек (реальный учебный текст так не выглядит
++        независимо от длины названия).
++        """
++        normalized_title = self.title.strip().casefold()
++        if normalized_title in _JUNK_TITLES:
++            raise ValueError(
++                f"title '{self.title}' совпадает с известным тестовым значением "
++                "публикатора — публикация заблокирована (tsk-467)"
++            )
++        if self.type == "text" and isinstance(self.content, dict):
++            body = self.content.get("text")
++            if isinstance(body, str) and body.strip().casefold() in _JUNK_TEXT_BODIES:
++                raise ValueError(
++                    f"content.text '{body}' — тестовая заглушка-плейсхолдер, "
++                    "публикация заблокирована (tsk-467)"
++                )
++
+ 
+ class MaterialsBulkUpsertRequest(BaseModel):
+     """
+diff --git a/app/services/courses_service.py b/app/services/courses_service.py
+index ae2bc13..06e3710 100644
+--- a/app/services/courses_service.py
++++ b/app/services/courses_service.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++from types import SimpleNamespace
+ from typing import Optional, List, Dict, Any, Sequence, Tuple
+ 
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -149,13 +150,14 @@ class CoursesService(BaseService[Courses]):
+         self,
+         db: AsyncSession,
+         course_id: int,
+-    ) -> Optional[Courses]:
++    ) -> Optional[SimpleNamespace]:
+         """
+         Получить дерево курса с детьми всех уровней (рекурсивная структура).
+ 
+         :param db: асинхронная сессия БД.
+         :param course_id: ID курса.
+-        :return: Курс с загруженными детьми всех уровней или None, если курс не найден.
++        :return: Узел дерева (не ORM `Courses` — см. docstring репозитория) с
++            загруженными детьми всех уровней, или None, если курс не найден.
+         """
+         return await self.repo.get_course_tree(db, course_id)
+ 
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 46a0f0e..1b7dc85 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -1,6 +1,7 @@
+ """Общие фикстуры для тестов Phase Y-1+."""
+ import asyncio
+ import logging
++import os
+ import sys
+ from datetime import datetime
+ from pathlib import Path
+@@ -29,6 +30,48 @@ from app.db.session import get_async_db
+ _settings = Settings()
+ _logger = logging.getLogger(__name__)
+ 
++# tsk-467: разделение окружений — тестовый прогон не должен физически попасть
++# в боевую LMS.
++#
++# Находка при разборе задачи: партии `wp:bulk-*`/`wp:mix-good-*`, которые тикет
++# приписывал отладочным прогонам публикатора ContentBackbone, на деле генерирует
++# ЭТОТ репозиторий — `tests/test_materials_bulk_upsert.py` (см. префиксы `ext =
++# f"wp:bulk-{uuid...}"` / `ext_good = f"wp:mix-good-{uuid...}"`). Grep по
++# ContentBackbone (monolith/, scripts/) этих строк не находит вовсе. Вероятный
++# реальный механизм инцидента: этот и другие `SELF_MANAGED_CONNECTION_MODULES`
++# (реальные коммиты, без отката) были прогнаны в контексте, где `DATABASE_URL`
++# указывал на прод (например, SSH-сессия на /opt/lms, где `.env` — прод по
++# определению) — а не отладка публикатора.
++#
++# `db_write_gate.py` (`~/.claude/hooks`) это не ловит НАМЕРЕННО: `test_*.py`
++# исключены из анализа тела скрипта (тесты по соглашению не пишут в прод), и
++# сам файл документирует эту дыру как «ОСТАЁТСЯ НЕ ПОКРЫТЫМ» — скрипт берёт DSN
++# из `.env`/конфига приложения, в теле нет ни хоста, ни имени прод-переменной.
++# Раз хук статически не отличает прод от dev для этого класса файлов, отличать
++# должен сам тестовый прогон — рантайм-проверка по РЕАЛЬНОМУ DSN, а не по тексту
++# команды. Проверяется до создания любого движка/сессии, отказ — для всей сессии
++# pytest сразу, а не только для тестов, которые эту фикстуру используют явно.
++_PROD_DB_SIGNATURES: tuple[str, ...] = ("5.42.107.253", "lms_prod")
++
++
++def pytest_configure(config: "pytest.Config") -> None:
++    """Отказать всему прогону, если DATABASE_URL похож на боевую БД LMS.
++
++    Override — `ALLOW_PROD_TESTS=1`: используется только read-only живой
++    проверкой на проде через явный отдельный запуск, не для обычных pytest-сессий.
++    """
++    if os.environ.get("ALLOW_PROD_TESTS", "").strip().lower() in {"1", "true", "yes"}:
++        return
++    low = (_settings.database_url or "").lower()
++    if any(sig.lower() in low for sig in _PROD_DB_SIGNATURES):
++        raise pytest.UsageError(
++            "tsk-467: DATABASE_URL похож на БОЕВУЮ БД LMS (host/role совпадает с "
++            f"{_PROD_DB_SIGNATURES}). Тесты пишут напрямую и без отката "
++            "(SELF_MANAGED_CONNECTION_MODULES) — прогон против прода запрещён. "
++            "Осознанно нужно прод — установи ALLOW_PROD_TESTS=1 явно."
++        )
++
++
+ # id «реальных» пользователей dev-БД, которых тестовый sweep не трогает
+ # (см. scripts/cleanup_test_artifacts.py)
+ _REAL_USER_IDS: tuple[int, ...] = (2, 3, 142)
+diff --git a/tests/test_materials_bulk_upsert.py b/tests/test_materials_bulk_upsert.py
+index 772300a..4985c23 100644
+--- a/tests/test_materials_bulk_upsert.py
++++ b/tests/test_materials_bulk_upsert.py
+@@ -86,7 +86,10 @@ async def _run_bulk_upsert_tests() -> bool:
+             "external_uid": ext,
+             "title": title,
+             "type": "text",
+-            "content": {"text": "hello", "format": "markdown"},
++            # tsk-467: НЕ "hello"/"ok"/"test" — с этими значениями тела
++            # gate (см. schemas/materials.py::_JUNK_TEXT_BODIES) теперь
++            # отклоняет запись как тестовую заглушку публикатора.
++            "content": {"text": "Текст материала для интеграционного теста bulk-upsert", "format": "markdown"},
+         }
+         base_item.update(kwargs)
+         return base_item
+@@ -152,8 +155,8 @@ async def _run_bulk_upsert_tests() -> bool:
+             f"/api/v1/materials/bulk-upsert?api_key={api_key}",
+             json={
+                 "items": [
+-                    item_payload("Lose"),
+-                    item_payload("Win"),
++                    item_payload("Losing title"),
++                    item_payload("Winning title"),
+                 ]
+             },
+         )
+@@ -181,8 +184,8 @@ async def _run_bulk_upsert_tests() -> bool:
+             {"mid": material_id},
+         )
+         title_row = r2.first()
+-        if not title_row or title_row[0] != "Win":
+-            print(f"[FAIL] ожидали title Win после dup batch, got {title_row}")
++        if not title_row or title_row[0] != "Winning title":
++            print(f"[FAIL] ожидали title 'Winning title' после dup batch, got {title_row}")
+             return False
+ 
+     # несуществующий курс
+@@ -223,9 +226,9 @@ async def _run_bulk_upsert_tests() -> bool:
+                     {
+                         "course_id": course_id,
+                         "external_uid": ext_good,
+-                        "title": "OK row",
++                        "title": "Good row",
+                         "type": "text",
+-                        "content": {"text": "ok", "format": "plain"},
++                        "content": {"text": "Валидный текст материала", "format": "plain"},
+                     },
+                     {
+                         "course_id": course_id,
+@@ -275,6 +278,76 @@ async def _run_bulk_upsert_tests() -> bool:
+             print(f"[FAIL] mixed DB counts good={c_good} bad={c_bad}")
+             return False
+ 
++    # tsk-467: gate против отладочных прогонов публикатора — точное воспроизведение
++    # прод-инцидента (title="Win"/content.text="hello", title="OK row"/content.text="ok")
++    # должно отклоняться per-item error, а не попадать в БД.
++    async with httpx.AsyncClient(transport=transport, base_url=base) as client:
++        ext_junk_title = f"wp:junk-title-{uuid.uuid4().hex}"
++        ext_junk_body = f"wp:junk-body-{uuid.uuid4().hex}"
++        ext_legit_short = f"wp:legit-short-{uuid.uuid4().hex}"
++        r8 = await client.post(
++            f"/api/v1/materials/bulk-upsert?api_key={api_key}",
++            json={
++                "items": [
++                    {
++                        "course_id": course_id,
++                        "external_uid": ext_junk_title,
++                        "title": "Win",
++                        "type": "text",
++                        "content": {"text": "содержательный текст, не заглушка", "format": "plain"},
++                    },
++                    {
++                        "course_id": course_id,
++                        "external_uid": ext_junk_body,
++                        "title": "Обычное название",
++                        "type": "text",
++                        "content": {"text": "hello", "format": "plain"},
++                    },
++                    {
++                        "course_id": course_id,
++                        "external_uid": ext_legit_short,
++                        # Регресс: короткое, но легитимное название (по образцу
++                        # реальных прод-материалов «Кэш»/«Итог» из tsk-467) не
++                        # должно попадать под gate.
++                        "title": "Кэш",
++                        "type": "text",
++                        "content": {"text": "Разбор темы кэширования на реальном примере", "format": "plain"},
++                    },
++                ]
++            },
++        )
++        if r8.status_code != 200:
++            print(f"[FAIL] tsk-467 gate HTTP: {r8.status_code} {r8.text}")
++            return False
++        d8 = r8.json()
++        items8 = {it["external_uid"]: it for it in d8.get("items", [])}
++        if items8.get(ext_junk_title, {}).get("status") != "error":
++            print(f"[FAIL] tsk-467: title 'Win' должен быть отклонён: {d8}")
++            return False
++        if items8.get(ext_junk_body, {}).get("status") != "error":
++            print(f"[FAIL] tsk-467: content.text 'hello' должен быть отклонён: {d8}")
++            return False
++        if items8.get(ext_legit_short, {}).get("status") != "created":
++            print(f"[FAIL] tsk-467: короткое легитимное название 'Кэш' не должно блокироваться: {d8}")
++            return False
++
++    async with async_session() as session:
++        cnt_junk_title = (
++            await session.execute(
++                text("SELECT COUNT(*) FROM materials WHERE course_id = :cid AND external_uid = :ext"),
++                {"cid": course_id, "ext": ext_junk_title},
++            )
++        ).scalar()
++        cnt_junk_body = (
++            await session.execute(
++                text("SELECT COUNT(*) FROM materials WHERE course_id = :cid AND external_uid = :ext"),
++                {"cid": course_id, "ext": ext_junk_body},
++            )
++        ).scalar()
++        if cnt_junk_title != 0 or cnt_junk_body != 0:
++            print(f"[FAIL] tsk-467: мусорные строки не должны попасть в БД: title={cnt_junk_title} body={cnt_junk_body}")
++            return False
++
+     # атомарность записи: второй create падает — откат всей транзакции
+     from app.repos.materials_repo import MaterialsRepository
+ 
+diff --git a/tests/test_methodist_content_cookie_tsk433.py b/tests/test_methodist_content_cookie_tsk433.py
+index c359b40..a1666f1 100644
+--- a/tests/test_methodist_content_cookie_tsk433.py
++++ b/tests/test_methodist_content_cookie_tsk433.py
+@@ -77,9 +77,9 @@ def _paths(course_id: int, task_id: int = 1) -> list[str]:
+         "/api/v1/courses/roots",
+         f"/api/v1/courses/{course_id}",
+         f"/api/v1/courses/{course_id}/children",
+-        # `/courses/{id}/tree` намеренно НЕ здесь: он отдаёт 500 при любом гейте
+-        # (предсуществующий баг, tsk-463) и в Волну 1 не входит — навигация по
+-        # графу идёт через roots + children.
++        f"/api/v1/courses/{course_id}/tree",
++        # tsk-463: `/tree` отдавал 500 при любом гейте (предсуществующий баг) —
++        # починен и переведён на `_COURSE_TREE_GATE` тем же заходом.
+         #
+         # `/courses/{id}/users` и `/courses/{id}/materials/stats` тоже НЕ здесь:
+         # оставлены на legacy-гейте намеренно (ревью tsk-433). Первый отдаёт

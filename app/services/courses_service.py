@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Optional, List, Dict, Any, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,13 +150,14 @@ class CoursesService(BaseService[Courses]):
         self,
         db: AsyncSession,
         course_id: int,
-    ) -> Optional[Courses]:
+    ) -> Optional[SimpleNamespace]:
         """
         Получить дерево курса с детьми всех уровней (рекурсивная структура).
 
         :param db: асинхронная сессия БД.
         :param course_id: ID курса.
-        :return: Курс с загруженными детьми всех уровней или None, если курс не найден.
+        :return: Узел дерева (не ORM `Courses` — см. docstring репозитория) с
+            загруженными детьми всех уровней, или None, если курс не найден.
         """
         return await self.repo.get_course_tree(db, course_id)
 

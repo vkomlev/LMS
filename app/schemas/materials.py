@@ -169,6 +169,20 @@ class MaterialBulkUpdateResponse(BaseModel):
 
 MaterialsBulkUpsertItemStatus = Literal["created", "updated", "unchanged", "error"]
 
+# tsk-467: отладочные прогоны публикатора ContentBackbone трижды (1, 3 и 6 июня)
+# записали в прод-БД `learn` тестовые материалы «Win»/«OK row» с телом
+# `hello`/`ok`. Порог по длине названия отклонён данными (короткие легитимные
+# названия массово встречаются — «Кэш», «Итог», см. tsk-467) — критерий
+# содержательный, не по длине: стоп-лист заведомо тестовых названий +
+# заведомо тестовое тело текстового материала.
+_JUNK_TITLES: frozenset[str] = frozenset({
+    "win", "ok row", "ok", "test", "hello", "foo", "bar",
+    "lorem", "lorem ipsum", "asdf", "qwerty", "123", "test row", "test title",
+})
+_JUNK_TEXT_BODIES: frozenset[str] = frozenset({
+    "ok", "hello", "test", "foo", "bar", "lorem ipsum", "asdf", "qwerty",
+})
+
 
 class MaterialsBulkUpsertItem(BaseModel):
     """Один элемент пакетного upsert материалов."""
@@ -219,6 +233,13 @@ class MaterialsBulkUpsertItem(BaseModel):
             return v.strip()
         return v
 
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("title не может быть пустым")
+        return v
+
     @model_validator(mode="after")
     def validate_content_by_type(self) -> "MaterialsBulkUpsertItem":
         if self.content is not None:
@@ -227,7 +248,31 @@ class MaterialsBulkUpsertItem(BaseModel):
                 object.__setattr__(self, "content", validated)
             except Exception as e:
                 raise ValueError(f"Некорректная структура content для типа '{self.type}': {e}")
+        self._reject_known_junk()
         return self
+
+    def _reject_known_junk(self) -> None:
+        """tsk-467: заблокировать заведомо отладочные значения публикатора.
+
+        Не порог по длине (отклонён данными — короткие названия массово
+        легитимны), а содержательные признаки: точное совпадение названия
+        со стоп-листом ИЛИ текстовый материал, у которого всё тело — одно
+        из тестовых слов-заглушек (реальный учебный текст так не выглядит
+        независимо от длины названия).
+        """
+        normalized_title = self.title.strip().casefold()
+        if normalized_title in _JUNK_TITLES:
+            raise ValueError(
+                f"title '{self.title}' совпадает с известным тестовым значением "
+                "публикатора — публикация заблокирована (tsk-467)"
+            )
+        if self.type == "text" and isinstance(self.content, dict):
+            body = self.content.get("text")
+            if isinstance(body, str) and body.strip().casefold() in _JUNK_TEXT_BODIES:
+                raise ValueError(
+                    f"content.text '{body}' — тестовая заглушка-плейсхолдер, "
+                    "публикация заблокирована (tsk-467)"
+                )
 
 
 class MaterialsBulkUpsertRequest(BaseModel):
