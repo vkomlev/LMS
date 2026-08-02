@@ -11582,11 +11582,11 @@
                 "optional"
               ],
               "type": "string",
-              "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230).",
+              "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA/SA_COM/TBL_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA/SA_COM/TBL_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230; SA добавлен tsk-372 follow-up).",
               "default": "mandatory",
               "title": "Review Kind"
             },
-            "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230)."
+            "description": "mandatory (default) — очередь обязательной ручной проверки: TA либо SA/SA_COM/TBL_COM с manual_review_required=true (checked_at IS NULL, замок свободен). Тот же предикат, что у claim-next (tsk-247). optional — авто-проверенные SA/SA_COM/TBL_COM (checked_at IS NULL, is_correct задан, manual_review_required=false), доступные для опционального просмотра (tsk-230; SA добавлен tsk-372 follow-up)."
           },
           {
             "name": "limit",
@@ -18243,11 +18243,29 @@
                 "all"
               ],
               "type": "string",
-              "description": "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230). all — объединение обеих очередей.",
+              "description": "mandatory (default) — обязательная очередь: TA либо SA/SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA/SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230; SA добавлен tsk-372 follow-up — раньше был невидим нигде). all — объединение обеих очередей.",
               "default": "mandatory",
               "title": "Review Kind"
             },
-            "description": "mandatory (default) — обязательная очередь: TA либо SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230). all — объединение обеих очередей."
+            "description": "mandatory (default) — обязательная очередь: TA либо SA/SA_COM/TBL_COM с manual_review_required=true (поведение как до tsk-372, без изменений). optional — авто-проверенные SA/SA_COM/TBL_COM (manual_review_required=false, is_correct задан), включая честно-заваленные — та же ось, что у бота (tsk-230; SA добавлен tsk-372 follow-up — раньше был невидим нигде). all — объединение обеих очередей."
+          },
+          {
+            "name": "has_evidence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "tsk-372 follow-up: фильтр по наличию комментария/вложения в ответе (response.comment — там же код, или response.meta.attachments). None (default) — без фильтра.",
+              "title": "Has Evidence"
+            },
+            "description": "tsk-372 follow-up: фильтр по наличию комментария/вложения в ответе (response.comment — там же код, или response.meta.attachments). None (default) — без фильтра."
           },
           {
             "name": "limit",
@@ -41523,6 +41541,12 @@
             "type": "boolean",
             "title": "Is Claimed",
             "description": "Работа уже взята кем-то на проверку (действующий lock)",
+            "default": false
+          },
+          "has_evidence": {
+            "type": "boolean",
+            "title": "Has Evidence",
+            "description": "tsk-372: есть комментарий (response.comment — там же код для программистских заданий) или вложение (response.meta.attachments)",
             "default": false
           }
         },
