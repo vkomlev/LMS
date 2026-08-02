@@ -29,7 +29,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services import payment_service
+from app.services import charge_service, payment_service
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +55,9 @@ async def has_blocking_debt(
             text(
                 """
                 SELECT ch.period,
-                       COALESCE(ch.manual_minor, ch.calculated_minor)
-                           + COALESCE(adj.total, 0) AS total_minor,
+                       ch.calculated_minor,
+                       ch.manual_minor,
+                       COALESCE(adj.total, 0)  AS adjustments_minor,
                        COALESCE(pay.paid, 0)    AS paid_minor,
                        COALESCE(pay.pending, 0) AS pending_minor
                   FROM student_monthly_charge ch
@@ -84,8 +85,13 @@ async def has_blocking_debt(
     ).all()
 
     for row in rows:
+        total_minor = charge_service.charge_total_minor(
+            calculated_minor=row.calculated_minor,
+            manual_minor=row.manual_minor,
+            adjustments_minor=int(row.adjustments_minor),
+        )
         state = payment_service.payment_state(
-            total_minor=int(row.total_minor),
+            total_minor=total_minor,
             paid_minor=int(row.paid_minor),
             pending_minor=int(row.pending_minor),
             period=row.period,

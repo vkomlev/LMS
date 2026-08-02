@@ -40,12 +40,30 @@ __all__ = [
     "set_price_override",
     "clear_price_override",
     "ChargeCounts",
+    "charge_total_minor",
 ]
 
 
 def month_start(day: date) -> date:
     """Первое число месяца — период начисления, а не дата события."""
     return day.replace(day=1)
+
+
+def charge_total_minor(
+    *, calculated_minor: int, manual_minor: Optional[int], adjustments_minor: int
+) -> int:
+    """Итог месяца: ручная сумма побеждает расчётную, поверх — поправки.
+
+    Единственное место этой формулы (tsk-010). Раньше `COALESCE(manual,
+    calculated) + adjustments` дублировалась как raw SQL в `payment_service`,
+    `payment_reminder_service`, `payment_access_service` и как Python-код здесь
+    же и в `payment_service.list_student_charges` — три места денежного контура
+    (список платежей, напоминание о просрочке, проверка блокировки) должны
+    видеть один и тот же приоритет «ручная цена важнее расчётной», а не свою
+    копию правила.
+    """
+    base = manual_minor if manual_minor is not None else calculated_minor
+    return base + adjustments_minor
 
 
 @dataclass
@@ -550,7 +568,11 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
 
     result: list[dict] = []
     for r in rows:
-        base = r.manual_minor if r.manual_minor is not None else r.calculated_minor
+        total = charge_total_minor(
+            calculated_minor=r.calculated_minor,
+            manual_minor=r.manual_minor,
+            adjustments_minor=int(r.adjustments_minor),
+        )
         result.append(
             {
                 "id": r.id,
@@ -563,7 +585,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
                 "manual_minor": r.manual_minor,
                 "adjustments_minor": int(r.adjustments_minor),
                 "adjustment_details": r.adjustment_details,
-                "total_minor": base + int(r.adjustments_minor),
+                "total_minor": total,
                 "expected_lessons": r.expected_lessons,
                 "break_lessons": r.break_lessons,
                 "status": r.status,

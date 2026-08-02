@@ -1,0 +1,189 @@
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index 6aeea69..f5afdcf 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -40,6 +40,7 @@ __all__ = [
+     "set_price_override",
+     "clear_price_override",
+     "ChargeCounts",
++    "charge_total_minor",
+ ]
+ 
+ 
+@@ -48,6 +49,23 @@ def month_start(day: date) -> date:
+     return day.replace(day=1)
+ 
+ 
++def charge_total_minor(
++    *, calculated_minor: int, manual_minor: Optional[int], adjustments_minor: int
++) -> int:
++    """Итог месяца: ручная сумма побеждает расчётную, поверх — поправки.
++
++    Единственное место этой формулы (tsk-010). Раньше `COALESCE(manual,
++    calculated) + adjustments` дублировалась как raw SQL в `payment_service`,
++    `payment_reminder_service`, `payment_access_service` и как Python-код здесь
++    же и в `payment_service.list_student_charges` — три места денежного контура
++    (список платежей, напоминание о просрочке, проверка блокировки) должны
++    видеть один и тот же приоритет «ручная цена важнее расчётной», а не свою
++    копию правила.
++    """
++    base = manual_minor if manual_minor is not None else calculated_minor
++    return base + adjustments_minor
++
++
+ @dataclass
+ class ChargeCounts:
+     """Сколько занятий месяц предполагал и сколько из них съел перерыв."""
+@@ -550,7 +568,11 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+ 
+     result: list[dict] = []
+     for r in rows:
+-        base = r.manual_minor if r.manual_minor is not None else r.calculated_minor
++        total = charge_total_minor(
++            calculated_minor=r.calculated_minor,
++            manual_minor=r.manual_minor,
++            adjustments_minor=int(r.adjustments_minor),
++        )
+         result.append(
+             {
+                 "id": r.id,
+@@ -563,7 +585,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+                 "manual_minor": r.manual_minor,
+                 "adjustments_minor": int(r.adjustments_minor),
+                 "adjustment_details": r.adjustment_details,
+-                "total_minor": base + int(r.adjustments_minor),
++                "total_minor": total,
+                 "expected_lessons": r.expected_lessons,
+                 "break_lessons": r.break_lessons,
+                 "status": r.status,
+diff --git a/app/services/payment_access_service.py b/app/services/payment_access_service.py
+index 676c71d..f64defa 100644
+--- a/app/services/payment_access_service.py
++++ b/app/services/payment_access_service.py
+@@ -29,7 +29,7 @@ from fastapi import HTTPException, status
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.services import payment_service
++from app.services import charge_service, payment_service
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -55,8 +55,9 @@ async def has_blocking_debt(
+             text(
+                 """
+                 SELECT ch.period,
+-                       COALESCE(ch.manual_minor, ch.calculated_minor)
+-                           + COALESCE(adj.total, 0) AS total_minor,
++                       ch.calculated_minor,
++                       ch.manual_minor,
++                       COALESCE(adj.total, 0)  AS adjustments_minor,
+                        COALESCE(pay.paid, 0)    AS paid_minor,
+                        COALESCE(pay.pending, 0) AS pending_minor
+                   FROM student_monthly_charge ch
+@@ -84,8 +85,13 @@ async def has_blocking_debt(
+     ).all()
+ 
+     for row in rows:
++        total_minor = charge_service.charge_total_minor(
++            calculated_minor=row.calculated_minor,
++            manual_minor=row.manual_minor,
++            adjustments_minor=int(row.adjustments_minor),
++        )
+         state = payment_service.payment_state(
+-            total_minor=int(row.total_minor),
++            total_minor=total_minor,
+             paid_minor=int(row.paid_minor),
+             pending_minor=int(row.pending_minor),
+             period=row.period,
+diff --git a/app/services/payment_reminder_service.py b/app/services/payment_reminder_service.py
+index 3c10cb9..9206252 100644
+--- a/app/services/payment_reminder_service.py
++++ b/app/services/payment_reminder_service.py
+@@ -23,7 +23,7 @@ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.core.config import Settings
+-from app.services import inbox_service, notification_email_service, payment_service
++from app.services import charge_service, inbox_service, notification_email_service, payment_service
+ 
+ logger = logging.getLogger(__name__)
+ settings = Settings()
+@@ -87,8 +87,9 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
+                        ch.group_id,
+                        pg.name AS group_name,
+                        ch.period,
+-                       COALESCE(ch.manual_minor, ch.calculated_minor)
+-                           + COALESCE(adj.total, 0) AS total_minor,
++                       ch.calculated_minor,
++                       ch.manual_minor,
++                       COALESCE(adj.total, 0)  AS adjustments_minor,
+                        COALESCE(pay.paid, 0)    AS paid_minor,
+                        COALESCE(pay.pending, 0) AS pending_minor,
+                        EXISTS (
+@@ -138,8 +139,13 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
+ 
+     debtors: list[OverdueDebtor] = []
+     for r in rows:
++        total_minor = charge_service.charge_total_minor(
++            calculated_minor=r.calculated_minor,
++            manual_minor=r.manual_minor,
++            adjustments_minor=int(r.adjustments_minor),
++        )
+         state = payment_service.payment_state(
+-            total_minor=int(r.total_minor),
++            total_minor=total_minor,
+             paid_minor=int(r.paid_minor),
+             pending_minor=int(r.pending_minor),
+             period=r.period,
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index 5bd450d..2a10942 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -240,8 +240,11 @@ async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dic
+ 
+     result: list[dict] = []
+     for r in rows:
+-        base = r.manual_minor if r.manual_minor is not None else r.calculated_minor
+-        total = base + int(r.adjustments_minor)
++        total = charge_service.charge_total_minor(
++            calculated_minor=r.calculated_minor,
++            manual_minor=r.manual_minor,
++            adjustments_minor=int(r.adjustments_minor),
++        )
+         paid, pending = totals.get((student_id, r.group_id, r.period), (0, 0))
+         state = payment_state(
+             total_minor=total,
+@@ -555,9 +558,13 @@ async def list_payments(
+                        reviewer.full_name AS reviewed_by_name,
+                        p.created_at,
+                        -- Сумма месяца и что по нему уже подтверждено: то, без
+-                       -- чего расхождение на экране не увидеть.
+-                       COALESCE(ch.manual_minor, ch.calculated_minor)
+-                           + COALESCE(adj.total, 0) AS charge_total_minor,
++                       -- чего расхождение на экране не увидеть. Итог месяца
++                       -- (COALESCE(manual, calculated) + поправки) считается
++                       -- ниже в Python через charge_service.charge_total_minor
++                       -- — та же формула, что у списка начислений и напоминаний.
++                       ch.calculated_minor,
++                       ch.manual_minor,
++                       COALESCE(adj.total, 0)       AS adjustments_minor,
+                        COALESCE(paid.total, 0)      AS charge_paid_minor
+                   FROM student_payment p
+                   JOIN users u ON u.id = p.student_id
+@@ -597,7 +604,14 @@ async def list_payments(
+     result: list[dict] = []
+     for r in rows:
+         row = dict(r._mapping)
+-        total = int(row.pop("charge_total_minor"))
++        calculated_minor = row.pop("calculated_minor")
++        manual_minor = row.pop("manual_minor")
++        adjustments_minor = int(row.pop("adjustments_minor"))
++        total = charge_service.charge_total_minor(
++            calculated_minor=calculated_minor,
++            manual_minor=manual_minor,
++            adjustments_minor=adjustments_minor,
++        )
+         paid = int(row.pop("charge_paid_minor"))
+         row["charge_total_minor"] = total
+         # Остаток — фактический на сейчас: у ожидающего платежа он ещё не

@@ -240,8 +240,11 @@ async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dic
 
     result: list[dict] = []
     for r in rows:
-        base = r.manual_minor if r.manual_minor is not None else r.calculated_minor
-        total = base + int(r.adjustments_minor)
+        total = charge_service.charge_total_minor(
+            calculated_minor=r.calculated_minor,
+            manual_minor=r.manual_minor,
+            adjustments_minor=int(r.adjustments_minor),
+        )
         paid, pending = totals.get((student_id, r.group_id, r.period), (0, 0))
         state = payment_state(
             total_minor=total,
@@ -555,9 +558,13 @@ async def list_payments(
                        reviewer.full_name AS reviewed_by_name,
                        p.created_at,
                        -- Сумма месяца и что по нему уже подтверждено: то, без
-                       -- чего расхождение на экране не увидеть.
-                       COALESCE(ch.manual_minor, ch.calculated_minor)
-                           + COALESCE(adj.total, 0) AS charge_total_minor,
+                       -- чего расхождение на экране не увидеть. Итог месяца
+                       -- (COALESCE(manual, calculated) + поправки) считается
+                       -- ниже в Python через charge_service.charge_total_minor
+                       -- — та же формула, что у списка начислений и напоминаний.
+                       ch.calculated_minor,
+                       ch.manual_minor,
+                       COALESCE(adj.total, 0)       AS adjustments_minor,
                        COALESCE(paid.total, 0)      AS charge_paid_minor
                   FROM student_payment p
                   JOIN users u ON u.id = p.student_id
@@ -597,7 +604,14 @@ async def list_payments(
     result: list[dict] = []
     for r in rows:
         row = dict(r._mapping)
-        total = int(row.pop("charge_total_minor"))
+        calculated_minor = row.pop("calculated_minor")
+        manual_minor = row.pop("manual_minor")
+        adjustments_minor = int(row.pop("adjustments_minor"))
+        total = charge_service.charge_total_minor(
+            calculated_minor=calculated_minor,
+            manual_minor=manual_minor,
+            adjustments_minor=adjustments_minor,
+        )
         paid = int(row.pop("charge_paid_minor"))
         row["charge_total_minor"] = total
         # Остаток — фактический на сейчас: у ожидающего платежа он ещё не

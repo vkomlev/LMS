@@ -23,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.services import inbox_service, notification_email_service, payment_service
+from app.services import charge_service, inbox_service, notification_email_service, payment_service
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -87,8 +87,9 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                        ch.group_id,
                        pg.name AS group_name,
                        ch.period,
-                       COALESCE(ch.manual_minor, ch.calculated_minor)
-                           + COALESCE(adj.total, 0) AS total_minor,
+                       ch.calculated_minor,
+                       ch.manual_minor,
+                       COALESCE(adj.total, 0)  AS adjustments_minor,
                        COALESCE(pay.paid, 0)    AS paid_minor,
                        COALESCE(pay.pending, 0) AS pending_minor,
                        EXISTS (
@@ -138,8 +139,13 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
 
     debtors: list[OverdueDebtor] = []
     for r in rows:
+        total_minor = charge_service.charge_total_minor(
+            calculated_minor=r.calculated_minor,
+            manual_minor=r.manual_minor,
+            adjustments_minor=int(r.adjustments_minor),
+        )
         state = payment_service.payment_state(
-            total_minor=int(r.total_minor),
+            total_minor=total_minor,
             paid_minor=int(r.paid_minor),
             pending_minor=int(r.pending_minor),
             period=r.period,
