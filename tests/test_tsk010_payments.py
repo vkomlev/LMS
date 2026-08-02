@@ -619,25 +619,53 @@ async def test_cyrillic_receipt_name_survives(db, client):
     assert stored.receipt_file.endswith(".png")
 
 
-def test_overdue_needs_grace_to_pass():
-    """Просрочка наступает не раньше срока с запасом и не при поданном чеке."""
+def test_month_is_paid_until_its_own_end():
+    """Пока месяц идёт, неоплата не делает человека должником.
+
+    Ошибка, пойманная оператором 2026-08-02: раньше срок стоял на 5-м числе
+    ТЕКУЩЕГО месяца, и ученик становился должником в разгар оплаченного месяца.
+    За август платят до 31 августа.
+    """
     period = date(2026, 9, 1)
     due = payment_service.due_date_for(period)
-    grace_end = due + timedelta(days=payment_service.settings.payment_grace_days)
+    assert due == date(2026, 9, 30), "срок оплаты — последний день месяца"
 
-    on_grace = payment_service.payment_state(
-        total_minor=550000, paid_minor=0, pending_minor=0, period=period, today=grace_end
+    mid = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0,
+        period=period, today=date(2026, 9, 12),
     )
-    assert on_grace.is_overdue is False
+    assert mid.is_overdue is False
+    assert mid.is_blocked is False
 
-    after = payment_service.payment_state(
-        total_minor=550000,
-        paid_minor=0,
-        pending_minor=0,
-        period=period,
-        today=grace_end + timedelta(days=1),
+    last_day = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0, period=period, today=due
     )
-    assert after.is_overdue is True
+    assert last_day.is_overdue is False, "в последний день месяца ещё не должник"
+
+    next_day = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0,
+        period=period, today=due + timedelta(days=1),
+    )
+    assert next_day.is_overdue is True, "месяц кончился — уже должник"
+    assert next_day.is_blocked is False, "занятия закрылись в первый же день"
+
+
+def test_block_comes_later_than_the_mark():
+    """Занятия закрываются на несколько дней позже пометки «просрочено»."""
+    period = date(2026, 9, 1)
+    block_day = payment_service.block_date_for(period)
+    assert block_day == date(2026, 10, 5), "блокировка — 5-е число следующего месяца"
+
+    before = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0,
+        period=period, today=block_day - timedelta(days=1),
+    )
+    assert before.is_overdue is True and before.is_blocked is False
+
+    on_day = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0, period=period, today=block_day
+    )
+    assert on_day.is_blocked is True
 
     # Чек приложен и ждёт решения — это не долг ученика, а наша очередь.
     waiting = payment_service.payment_state(
@@ -645,18 +673,16 @@ def test_overdue_needs_grace_to_pass():
         paid_minor=0,
         pending_minor=550000,
         period=period,
-        today=grace_end + timedelta(days=30),
+        today=block_day + timedelta(days=30),
     )
     assert waiting.is_overdue is False
 
 
-def test_due_date_does_not_slip_into_next_month():
-    """Срок оплаты остаётся внутри своего месяца даже при крупном числе."""
-    payment_service.settings.payment_due_day = 31
-    try:
-        assert payment_service.due_date_for(date(2026, 2, 1)) == date(2026, 2, 28)
-    finally:
-        payment_service.settings.payment_due_day = 5
+def test_due_date_is_last_day_of_any_month():
+    """Срок — последний день месяца, включая февраль и переход через год."""
+    assert payment_service.due_date_for(date(2026, 2, 1)) == date(2026, 2, 28)
+    assert payment_service.due_date_for(date(2026, 12, 1)) == date(2026, 12, 31)
+    assert payment_service.block_date_for(date(2026, 12, 1)) == date(2027, 1, 5)
 
 
 async def _login_as(db, user_id: int) -> tuple[int, str]:

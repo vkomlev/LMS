@@ -22,8 +22,13 @@ from tests.test_tsk010_payments import _charge_id, _login_as, _recalc, _submit
 
 pytestmark = pytest.mark.asyncio
 
-#: День, когда просрочка уже наступила (5-е число + 7 дней запаса).
-OVERDUE_DAY = PERIOD + timedelta(days=20)
+#: День, когда занятия уже закрыты: месяц оплачивается до своего конца, потом
+#: несколько дней на оплату «вдогонку». Для сентябрьского PERIOD это 5 октября.
+BLOCK_DAY = payment_service.block_date_for(PERIOD)
+
+#: Первый день просрочки — сразу после конца месяца. Пометка и письмо есть,
+#: занятия ещё открыты.
+FIRST_OVERDUE_DAY = payment_service.due_date_for(PERIOD) + timedelta(days=1)
 
 
 async def _make_debtor(db, tag: str):
@@ -33,20 +38,43 @@ async def _make_debtor(db, tag: str):
     return env
 
 
-async def test_debt_alone_does_not_block(db):
-    """Долг сам по себе не закрывает учёбу — только просроченный."""
+async def test_unpaid_month_in_progress_does_not_block(db):
+    """Пока месяц идёт, неоплата не закрывает учёбу.
+
+    Главная защита от ошибки, которую поймал оператор: за август платят ДО
+    КОНЦА августа, и 12-го числа человек ещё не должник.
+    """
     env = await _make_debtor(db, "blk-fresh")
-    blocked = await payment_access_service.has_overdue_debt(
+    mid_month = PERIOD + timedelta(days=11)
+    assert not await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=mid_month
+    )
+    # И в последний день месяца — тоже ещё не должник.
+    assert not await payment_access_service.has_blocking_debt(
         db, env["student_id"], today=payment_service.due_date_for(PERIOD)
     )
-    assert blocked is False
 
 
-async def test_overdue_blocks_content(db):
-    """После срока с запасом — блокировка."""
+async def test_overdue_marked_but_not_yet_blocked(db):
+    """Между пометкой «просрочено» и закрытием занятий есть несколько дней."""
+    env = await _make_debtor(db, "blk-grace")
+    state = payment_service.payment_state(
+        total_minor=550000, paid_minor=0, pending_minor=0,
+        period=PERIOD, today=FIRST_OVERDUE_DAY,
+    )
+    assert state.is_overdue is True, "месяц кончился — пометка должна быть"
+    assert state.is_blocked is False, "занятия закрылись в первый же день просрочки"
+
+    assert not await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=FIRST_OVERDUE_DAY
+    )
+
+
+async def test_block_starts_on_its_own_day(db):
+    """С назначенного дня следующего месяца — блокировка."""
     env = await _make_debtor(db, "blk-overdue")
-    blocked = await payment_access_service.has_overdue_debt(
-        db, env["student_id"], today=OVERDUE_DAY
+    blocked = await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=BLOCK_DAY
     )
     assert blocked is True
 
@@ -61,8 +89,8 @@ async def test_pending_receipt_holds_the_block(db, client):
     _, token = await _login_as(db, env["student_id"])
     await _submit(client, token, charge_id=charge_id, amount_minor=550000)
 
-    blocked = await payment_access_service.has_overdue_debt(
-        db, env["student_id"], today=OVERDUE_DAY
+    blocked = await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=BLOCK_DAY
     )
     assert blocked is False
 
@@ -73,8 +101,8 @@ async def test_payment_lifts_the_block(db, client):
     charge_id = await _charge_id(db, student_id=env["student_id"])
     _, token = await _login_as(db, env["student_id"])
 
-    assert await payment_access_service.has_overdue_debt(
-        db, env["student_id"], today=OVERDUE_DAY
+    assert await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=BLOCK_DAY
     )
 
     resp = await _submit(client, token, charge_id=charge_id, amount_minor=550000)
@@ -84,8 +112,8 @@ async def test_payment_lifts_the_block(db, client):
         headers=_auth(env["token"]),
     )
 
-    assert not await payment_access_service.has_overdue_debt(
-        db, env["student_id"], today=OVERDUE_DAY
+    assert not await payment_access_service.has_blocking_debt(
+        db, env["student_id"], today=BLOCK_DAY
     )
 
 
@@ -100,7 +128,7 @@ async def test_blocked_student_still_sees_charges_and_can_pay(db, client, monkey
 
     # Двигаем «сегодня» в блокирующий день для самого гейта.
     monkeypatch.setattr(
-        payment_access_service, "has_overdue_debt", _always_blocked
+        payment_access_service, "has_blocking_debt", _always_blocked
     )
 
     charges = await client.get("/api/v1/me/charges", headers=_auth(token))
@@ -119,7 +147,7 @@ async def test_blocked_student_cannot_open_task(db, client, monkeypatch):
     """Задание заблокированному не открывается, и текст объясняет почему."""
     env = await _make_debtor(db, "blk-task")
     _, token = await _login_as(db, env["student_id"])
-    monkeypatch.setattr(payment_access_service, "has_overdue_debt", _always_blocked)
+    monkeypatch.setattr(payment_access_service, "has_blocking_debt", _always_blocked)
 
     task_id = (
         await db.execute(
@@ -141,7 +169,7 @@ async def test_teacher_is_not_affected_by_student_debt(db, client, monkeypatch):
     """Долг ученика не закрывает материалы преподавателю."""
     env = await _make_debtor(db, "blk-teacher")
     _, teacher_token = await _new_user(db, role="teacher", name="blk-teacher-010")
-    monkeypatch.setattr(payment_access_service, "has_overdue_debt", _always_blocked)
+    monkeypatch.setattr(payment_access_service, "has_blocking_debt", _always_blocked)
 
     task_id = (
         await db.execute(
@@ -164,7 +192,7 @@ async def test_block_does_not_erase_the_debt(db):
     Ровно этот сценарий и запрещал делать её через user_courses.is_active.
     """
     env = await _make_debtor(db, "blk-keeps-debt")
-    await payment_access_service.has_overdue_debt(db, env["student_id"], today=OVERDUE_DAY)
+    await payment_access_service.has_blocking_debt(db, env["student_id"], today=BLOCK_DAY)
 
     row = (
         await db.execute(

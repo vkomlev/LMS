@@ -23,8 +23,9 @@ from tests.test_tsk010_payments import _charge_id, _login_as, _recalc, _submit
 
 pytestmark = pytest.mark.asyncio
 
-#: День, когда просрочка по PERIOD уже наступила (5-е + 7 дней запаса).
-OVERDUE_DAY = PERIOD + timedelta(days=20)
+#: Первый день просрочки: месяц оплачивается до своего конца, поэтому письмо
+#: уходит уже со следующего дня.
+OVERDUE_DAY = payment_service.due_date_for(PERIOD) + timedelta(days=1)
 
 
 @pytest.fixture
@@ -145,6 +146,7 @@ async def test_not_overdue_yet_gets_no_letter(db, client, mail_ok):
     await _recalc(db, student_id=env["student_id"])
     await _set_email(db, env["student_id"], "early@example.com")
 
+    # В последний день месяца человек ещё не должник — письма быть не должно.
     run = await payment_reminder_service.send_reminders(
         db, sent_by=env["student_id"], today=payment_service.due_date_for(PERIOD)
     )

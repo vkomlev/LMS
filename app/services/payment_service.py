@@ -31,6 +31,7 @@ __all__ = [
     "DuplicatePaymentError",
     "ChargePaymentState",
     "due_date_for",
+    "block_date_for",
     "payment_state",
     "attach_payment_state",
     "charge_for_student",
@@ -62,18 +63,31 @@ class ChargePaymentState:
     #: одинаково выглядит и при точной оплате, и при переплате — а разница в
     #: деньгах человека.
     overpaid_minor: int
+    #: Месяц закончился, деньги не пришли — пометка в кабинете и письмо.
     is_overdue: bool
+    #: Просрочка затянулась настолько, что закрываются занятия. Отдельно от
+    #: `is_overdue`: между ними несколько дней, за которые человек может успеть
+    #: заплатить, не потеряв доступ.
+    is_blocked: bool
 
 
 def due_date_for(period: date) -> date:
-    """Крайний день оплаты месяца — по настройке оператора (по умолчанию 5-е).
+    """Крайний день оплаты месяца — его последний день.
 
-    День берётся с запасом: если в настройке стоит число, которого в месяце нет
-    (31 в феврале), срок приезжает на последний день месяца, а не в следующий.
+    За август платят до 31 августа: цикл школы такой, что месяц оплачивается до
+    своего конца, а должником человек становится уже в следующем месяце.
     """
-    day = max(1, settings.payment_due_day)
-    last_day = (charge_service.next_month(period) - timedelta(days=1)).day
-    return period.replace(day=min(day, last_day))
+    return charge_service.next_month(period) - timedelta(days=1)
+
+
+def block_date_for(period: date) -> date:
+    """День, с которого неоплата закрывает занятия.
+
+    Отдельно от `due_date_for`: пометка «просрочено» и письмо появляются сразу
+    после конца месяца, а доступ закрывается на несколько дней позже — человеку
+    нужно время заплатить после того, как месяц закончился.
+    """
+    return due_date_for(period) + timedelta(days=settings.payment_block_after_days)
 
 
 def payment_state(
@@ -86,19 +100,20 @@ def payment_state(
     первого числа, оказался бы должником из-за нашей очереди. Но гасит просрочку
     только чек, ПОКРЫВАЮЩИЙ остаток: иначе приложенный рубль снимал бы признак
     просрочки с любого долга.
+
+    Просрочка начинается ПОСЛЕ конца оплачиваемого месяца: пока месяц идёт,
+    человек не должник, даже если ещё не заплатил.
     """
     due = max(total_minor - paid_minor, 0)
-    overdue = (
-        due > 0
-        and pending_minor < due
-        and today > due_date_for(period) + timedelta(days=settings.payment_grace_days)
-    )
+    unpaid = due > 0 and pending_minor < due
+    overdue = unpaid and today > due_date_for(period)
     return ChargePaymentState(
         paid_minor=paid_minor,
         pending_minor=pending_minor,
         due_minor=due,
         overpaid_minor=max(paid_minor - total_minor, 0),
         is_overdue=overdue,
+        is_blocked=unpaid and today >= block_date_for(period),
     )
 
 
