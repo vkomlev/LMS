@@ -515,3 +515,24 @@ async def _stop_lesson_attendance_scheduler() -> None:
         _lesson_attendance_cron_service.stop_scheduler()
     except Exception:
         logger.exception("tsk-429: failed to stop lesson_attendance scheduler")
+
+
+# tsk-521: проверка целостности ссылок на файлы в контенте. Тот же
+# multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+from app.services import link_audit_service as _link_audit_service
+
+
+@app.on_event("startup")
+async def _start_link_audit_scheduler() -> None:
+    try:
+        _link_audit_service.start_scheduler()
+    except Exception:
+        logger.exception("tsk-521: failed to start link_audit scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_link_audit_scheduler() -> None:
+    try:
+        _link_audit_service.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-521: failed to stop link_audit scheduler")

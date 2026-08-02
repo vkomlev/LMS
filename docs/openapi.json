@@ -22406,7 +22406,7 @@
           "methodist_escalations"
         ],
         "summary": "Список эскалаций для методиста (Phase Y-6)",
-        "description": "Возвращает свежие эскалации `review_escalated` и `course_pending_review`\nдля current_user (методиста). Используется TG_LMS methodist-поллером.\n\ntsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в\n`require_role(\"methodist\")` (service-token — bypass, как и раньше);\nповедение эндпоинта не изменилось.",
+        "description": "Возвращает свежее из того, что требует внимания методиста, для\ncurrent_user. Используется кабинетом методиста и TG_LMS methodist-поллером.\n\nВиды: `review_escalated` и `course_pending_review` (обе — про зависшие\nпроверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на\nфайлы, которых нет; ученик видит на их месте пустоту).\n\ntsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в\n`require_role(\"methodist\")` (service-token — bypass, как и раньше);\nповедение эндпоинта не изменилось.",
         "operationId": "list_pending_escalations_api_v1_methodist_escalations_pending_get",
         "security": [
           {

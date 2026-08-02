@@ -223,6 +223,45 @@ def _iter_body(body) -> Iterator[bytes]:
         body.close()
 
 
+def _head_object_sync(key: str) -> bool:
+    """True, если объект есть в бакете. Вызывать через `to_thread` (boto3 блокирующий)."""
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    try:
+        _client().head_object(Bucket=settings.s3_bucket_name, Key=key)
+        return True
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "")
+        if code in ("NoSuchKey", "404", "NotFound", "NoSuchBucket"):
+            return False
+        logger.error("tsk-521: ошибка проверки объекта key=%r err=%s", key, exc)
+        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
+    except BotoCoreError as exc:
+        logger.error("tsk-521: ошибка соединения с S3 key=%r err=%s", key, exc)
+        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
+
+
+async def object_exists(key: str) -> bool:
+    """Есть ли объект с таким ключом в бакете (без скачивания тела).
+
+    Используется проверкой целостности ссылок (tsk-521): ей нужен факт
+    наличия, а не содержимое.
+
+    Raises:
+        DomainError: 503, если хранилище недоступно — «нет ответа» нельзя
+            выдавать за «файла нет», иначе проверка нарисует битыми все ссылки.
+    """
+    return await asyncio.to_thread(_head_object_sync, key)
+
+
+async def material_file_exists(file_id: str) -> bool:
+    """Есть ли файл материала — в бакете (CAS-имя) либо на диске (старые имена)."""
+    if s3_enabled() and _SHA_EXT_RE.match(file_id):
+        if await object_exists(object_key(file_id)):
+            return True
+    return _disk_path(file_id) is not None
+
+
 def _get_object_sync(key: str) -> Optional[dict]:
     """Синхронное чтение объекта; None, если объекта нет. Вызывать через `to_thread`."""
     from botocore.exceptions import BotoCoreError, ClientError

@@ -210,6 +210,10 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         "test_tasks_reorder_api.py",
         "test_tsk345_reorder_by_difficulty.py",
         "test_tsk347_hard_twin_routing.py",
+        # tsk-521: проверка advisory-lock требует двух независимых соединений,
+        # то есть своего engine. Остальные тесты той задачи живут в
+        # `test_tsk521_link_audit.py` под обычной изоляцией.
+        "test_tsk521_link_audit_lock.py",
         "test_teacher_courses_triggers_smoke.py",
         "test_teacher_help_requests_overdue_tsk312.py",
         "test_teacher_help_requests_stage38.py",

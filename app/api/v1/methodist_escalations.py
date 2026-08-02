@@ -60,8 +60,12 @@ async def list_pending_escalations(
     current_user: CurrentUser = Depends(require_role("methodist")),
     db: AsyncSession = Depends(get_async_db),
 ) -> EscalationListResponse:
-    """Возвращает свежие эскалации `review_escalated` и `course_pending_review`
-    для current_user (методиста). Используется TG_LMS methodist-поллером.
+    """Возвращает свежее из того, что требует внимания методиста, для
+    current_user. Используется кабинетом методиста и TG_LMS methodist-поллером.
+
+    Виды: `review_escalated` и `course_pending_review` (обе — про зависшие
+    проверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на
+    файлы, которых нет; ученик видит на их месте пустоту).
 
     tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
     `require_role("methodist")` (service-token — bypass, как и раньше);
@@ -78,7 +82,7 @@ async def list_pending_escalations(
             "SELECT n.id, n.modified_at, n.kind, n.title, n.payload, n.read_at "
             "FROM notifications n "
             "WHERE n.user_id = :uid "
-            "  AND n.kind IN ('review_escalated','course_pending_review') "
+            "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links') "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
             "ORDER BY n.modified_at DESC "
             "LIMIT :limit"

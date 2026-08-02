@@ -120,6 +120,38 @@ class Settings:
             "MATERIAL_FILES_S3_PREFIX", "materials"
         ).strip("/")
 
+        # ✅ Проверка целостности ссылок на файлы (tsk-521). Связи «материал → файл»
+        # в базе нет, поэтому битую ссылку не видно, пока на неё не наткнётся
+        # человек: в tsk-519 такая провисела полгода.
+        self.link_audit_enabled: bool = os.getenv(
+            "LINK_AUDIT_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.link_audit_interval_hours: int = int(
+            os.getenv("LINK_AUDIT_INTERVAL_HOURS", "24")
+        )
+        # Проверяем только своё — то, что сами и чиним. Чужие сайты массово
+        # отвечают 418/429 на автоматические запросы (защита от роботов), и это
+        # не признак битой ссылки.
+        # removeprefix, а не lstrip: lstrip срезает ЛЮБЫЕ символы из набора
+        # {w, .}, и домен вроде `wiki.ru` молча превратился бы в `iki.ru`.
+        self.link_audit_own_hosts: list[str] = [
+            h.strip().lower().removeprefix("www.")
+            for h in os.getenv("LINK_AUDIT_OWN_HOSTS", "victor-komlev.ru").split(",")
+            if h.strip()
+        ]
+        self.link_audit_concurrency: int = int(os.getenv("LINK_AUDIT_CONCURRENCY", "8"))
+        self.link_audit_http_timeout_sec: float = float(
+            os.getenv("LINK_AUDIT_HTTP_TIMEOUT_SEC", "20")
+        )
+        # Молчание при чистом прогоне; при находках — не чаще раза в сутки,
+        # иначе ежедневный тик превратит одну незамеченную ссылку в поток.
+        self.link_audit_notify_cooldown_hours: int = int(
+            os.getenv("LINK_AUDIT_NOTIFY_COOLDOWN_HOURS", "24")
+        )
+        self.link_audit_max_examples: int = int(
+            os.getenv("LINK_AUDIT_MAX_EXAMPLES", "10")
+        )
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )
