@@ -30896,6 +30896,210 @@
         }
       }
     },
+    "/api/v1/public/parent-dashboard/{token}/charges": {
+      "get": {
+        "tags": [
+          "public_parent_payments"
+        ],
+        "summary": "Начисления ученика по гостевой ссылке",
+        "operationId": "charges_by_link_api_v1_public_parent_dashboard__token__charges_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StudentChargeRead"
+                  },
+                  "title": "Response Charges By Link Api V1 Public Parent Dashboard  Token  Charges Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/parent-dashboard/{token}/gateway-status": {
+      "get": {
+        "tags": [
+          "public_parent_payments"
+        ],
+        "summary": "Доступна ли оплата картой",
+        "operationId": "gateway_status_by_link_api_v1_public_parent_dashboard__token__gateway_status_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Gateway Status By Link Api V1 Public Parent Dashboard  Token  Gateway Status Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/parent-dashboard/{token}/payments": {
+      "post": {
+        "tags": [
+          "public_parent_payments"
+        ],
+        "summary": "Приложить чек по гостевой ссылке",
+        "operationId": "submit_receipt_by_link_api_v1_public_parent_dashboard__token__payments_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_submit_receipt_by_link_api_v1_public_parent_dashboard__token__payments_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Submit Receipt By Link Api V1 Public Parent Dashboard  Token  Payments Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/public/parent-dashboard/{token}/payments/gateway": {
+      "post": {
+        "tags": [
+          "public_parent_payments"
+        ],
+        "summary": "Оплатить картой по гостевой ссылке",
+        "operationId": "start_gateway_by_link_api_v1_public_parent_dashboard__token__payments_gateway_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "title": "Token"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayPaymentStart"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/breaks": {
       "get": {
         "tags": [
@@ -33096,6 +33300,55 @@
           "file"
         ],
         "title": "Body_submit_payment_api_v1_me_payments_post"
+      },
+      "Body_submit_receipt_by_link_api_v1_public_parent_dashboard__token__payments_post": {
+        "properties": {
+          "charge_id": {
+            "type": "integer",
+            "title": "Charge Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Amount Minor"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "payer_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Note"
+          },
+          "file": {
+            "type": "string",
+            "format": "binary",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "charge_id",
+          "amount_minor",
+          "file"
+        ],
+        "title": "Body_submit_receipt_by_link_api_v1_public_parent_dashboard__token__payments_post"
       },
       "Body_upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post": {
         "properties": {
