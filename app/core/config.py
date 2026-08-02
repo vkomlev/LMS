@@ -75,6 +75,12 @@ class Settings:
             "YOOKASSA_API_URL", "https://api.yookassa.ru/v3"
         )
 
+        # Реквизиты для перевода — основной способ оплаты (решение оператора
+        # 2026-08-02: привычнее людям и без комиссии). Показываются в кабинете
+        # над кнопкой; пусто — блок не выводится. Не секрет: те же реквизиты
+        # опубликованы на сайте.
+        self.payment_transfer_details: str = os.getenv("PAYMENT_TRANSFER_DETAILS", "")
+
         # ✅ Materials / files upload (для контента материалов: PDF, документы и т.д.)
         self.materials_upload_dir: Path = Path(
             os.getenv("MATERIALS_UPLOAD_DIR", "uploads/materials")

@@ -135,6 +135,8 @@ async def gateway_status_by_link(
     return {
         "enabled": yookassa_service.is_enabled(),
         "test_mode": yookassa_service.is_test_mode(),
+        # Реквизиты перевода — основного способа оплаты.
+        "transfer_details": settings.payment_transfer_details or None,
     }
 
 

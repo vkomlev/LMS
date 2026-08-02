@@ -42,6 +42,8 @@ async def gateway_status(
         # Тестовый режим показываем открыто: платящий должен понимать, что
         # деньги не спишутся, а не гадать, почему карта «не прошла».
         "test_mode": yookassa_service.is_test_mode(),
+        # Реквизиты перевода — основного способа оплаты.
+        "transfer_details": settings.payment_transfer_details or None,
     }
 
 
