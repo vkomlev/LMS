@@ -1,0 +1,198 @@
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index 7ea9392..4e85b12 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -26,7 +26,10 @@ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.repos.courses_repo import CoursesRepository
+ from app.repos.materials_repo import MaterialsRepository
+-from app.services.materials_acl_service import assert_material_access
++from app.services.materials_acl_service import (
++    assert_material_access,
++    assert_material_file_access,
++)
+ from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
+ from app.schemas.material_content import validate_material_content
+ from app.services.courses_acl_service import assert_course_access
+@@ -259,10 +262,15 @@ async def get_course_materials_stats(
+ 
+ @router.post(
+     "/materials/upload",
+-    summary="Загрузить файл для использования в контенте материала",
++    summary="Загрузить файл для использования в контенте материала (tsk-516: auth + роль)",
++    responses={
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет загружать файлы материалов"},
++    },
+ )
+ async def upload_material_file(
+     file: UploadFile = File(..., description="Файл (PDF, документ, изображение и т.д.)"),
++    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
+ ) -> Dict[str, str]:
+     """
+     Загружает файл на сервер. Возвращает url для подстановки в content материала
+@@ -275,6 +283,10 @@ async def upload_material_file(
+ 
+     Лимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).
+     Файлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).
++
++    tsk-516: раньше загрузка была открыта анониму — вторая половина той же
++    дыры, что и скачивание. Сервисный ключ (`?api_key=` / X-API-Key) проходит
++    через `require_role` без проверки роли, поэтому TG_LMS работает как прежде.
+     """
+     settings.materials_upload_dir.mkdir(parents=True, exist_ok=True)
+     original = file.filename or "file"
+@@ -310,20 +322,51 @@ async def upload_material_file(
+ 
+ @router.get(
+     "/materials/files/{file_id}",
+-    summary="Скачать загруженный файл материала",
++    summary="Скачать загруженный файл материала (tsk-516: auth + ACL)",
++    responses={
++        200: {"description": "Файл найден и доступен"},
++        400: {"description": "Недопустимый file_id"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Нет доступа к курсу материала, которому принадлежит файл"},
++        404: {"description": "Файл не найден"},
++    },
+ )
+-async def download_material_file(file_id: str):
++async def download_material_file(
++    file_id: str,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(get_current_user),
++):
+     """
+     Отдаёт файл по идентификатору (имя файла, выданное при upload).
+     Идентификатор не должен содержать / или ..
++
++    tsk-516: раньше эндпоинт не проверял ничего — прямая ссылка открывалась
++    анониму и отчисленному ученику, в отличие от соседнего
++    `GET /materials/{id}`. Доступ считается по курсу материала, в `content`
++    которого вписан url файла (см. `assert_material_file_access`).
++
++    Порядок проверок умышленный: авторизация и ACL идут ДО обращения к диску,
++    иначе разница между 404 и 200 сама по себе выдавала бы анониму, какие
++    файлы существуют.
+     """
+-    if "/" in file_id or ".." in file_id:
++    if "/" in file_id or "\\" in file_id or ".." in file_id:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
++
++    await assert_material_file_access(db, current_user=current_user, file_id=file_id)
++
+     file_path = settings.materials_upload_dir / file_id
+-    if not file_path.exists() or not file_path.is_file():
++    # Root-jail по образцу /api/v1/media: проверка символов выше отсекает
++    # разделители пути, это — страховка на случай экзотического имени
++    # (например, абсолютного пути после декодирования).
++    resolved = file_path.resolve()
++    if not resolved.is_relative_to(settings.materials_upload_dir.resolve()):
++        logger.error("tsk-516: попытка выхода за каталог загрузок file_id=%r", file_id)
++        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
++
++    if not resolved.exists() or not resolved.is_file():
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
+     media_type = mimetypes.guess_type(file_id)[0] or "application/octet-stream"
+-    return FileResponse(path=str(file_path), media_type=media_type, filename=file_id)
++    return FileResponse(path=str(resolved), media_type=media_type, filename=file_id)
+ 
+ 
+ @router.post(
+diff --git a/app/services/materials_acl_service.py b/app/services/materials_acl_service.py
+index 6a8eb36..18fbf5f 100644
+--- a/app/services/materials_acl_service.py
++++ b/app/services/materials_acl_service.py
+@@ -118,3 +118,77 @@ async def assert_material_access(
+     # ПОСЛЕ bypass'ов роли: долг ученика не должен закрывать материал
+     # преподавателю или методисту.
+     await payment_access_service.assert_content_allowed(db, current_user.id)
++
++
++# Префикс url'а, который `POST /materials/upload` кладёт в `content` материала.
++# Единственная нить, связывающая файл на диске с курсом: имени файла
++# (`{uuid4hex}_{оригинал}`) в БД нет, отдельной таблицы вложений тоже.
++_FILE_URL_PREFIX = "/api/v1/materials/files/"
++
++
++async def assert_material_file_access(
++    db: AsyncSession,
++    *,
++    current_user: CurrentUser,
++    file_id: str,
++) -> None:
++    """Проверить доступ к загруженному файлу материала (tsk-516).
++
++    Файл не хранит ссылки на курс: `upload_material_file` кладёт его на диск
++    под именем `{uuid4hex}_{оригинал}` и возвращает url, который клиент сам
++    вписывает в `content` материала отдельным PATCH. Поэтому курс ищется в
++    обратную сторону — по вхождению url в `content` материалов. Один файл
++    может быть вписан в несколько материалов (копирование материала в другой
++    курс), и тогда достаточно доступа к любому из них: содержимое одно и то же.
++
++    Правила совпадают с `assert_material_access` — сервисный ключ и
++    расширенная роль проходят, ученик обязан быть зачислен и не иметь
++    просроченной оплаты.
++
++    Файл, на который не ссылается ни один материал (окно между `upload` и
++    PATCH, либо забытый мусор), закрыт для всех, кроме сервиса и расширенных
++    ролей: привязать его к курсу не по чему, а значит и подтвердить право
++    ученика нечем.
++    """
++    if current_user.is_service:
++        return
++
++    if await _user_has_extended_role(db, current_user.id):
++        return
++
++    # strpos вместо LIKE: имя файла содержит `_`, который в LIKE значит
++    # «любой символ» и расширил бы совпадение на соседние файлы.
++    res = await db.execute(
++        text(
++            "SELECT DISTINCT course_id FROM materials "
++            "WHERE strpos(content::text, :needle) > 0"
++        ),
++        {"needle": f"{_FILE_URL_PREFIX}{file_id}"},
++    )
++    course_ids = [row[0] for row in res.fetchall() if row[0] is not None]
++
++    if not course_ids:
++        logger.info(
++            "tsk-516: файл %r не привязан ни к одному материалу; user_id=%s deny",
++            file_id, current_user.id,
++        )
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "Доступ к файлу запрещён: файл не привязан к материалу курса",
++        )
++
++    for course_id in course_ids:
++        if await _user_has_course_in_tree(db, current_user.id, course_id):
++            from app.services import payment_access_service
++
++            await payment_access_service.assert_content_allowed(db, current_user.id)
++            return
++
++    logger.info(
++        "tsk-516: deny user_id=%s file=%r (курсы %s не в дереве user_courses)",
++        current_user.id, file_id, course_ids,
++    )
++    raise HTTPException(
++        status.HTTP_403_FORBIDDEN,
++        "Доступ к файлу запрещён: вы не зачислены в курс этого материала",
++    )
+diff --git a/docs/api-reference.md b/docs/api-reference.md
+index b3e6483..4dc956d 100644
+--- a/docs/api-reference.md
++++ b/docs/api-reference.md
+@@ -883,8 +883,8 @@ API учебных материалов курса: CRUD, список по ку
+ - **POST** `/courses/{course_id}/materials/bulk-update` — массовое обновление is_active
+ - **POST** `/materials/{material_id}/copy` — копировать материал в другой курс
+ - **GET** `/courses/{course_id}/materials/stats` — статистика по материалам курса
+-- **POST** `/materials/upload` — загрузить файл для контента материала (multipart; возвращает url для content.sources[0].url или content.url)
+-- **GET** `/materials/files/{file_id}` — скачать загруженный файл материала
++- **POST** `/materials/upload` — загрузить файл для контента материала (multipart; возвращает url для content.sources[0].url или content.url). **Требует роль methodist/admin или сервисный ключ** (tsk-516)
++- **GET** `/materials/files/{file_id}` — скачать загруженный файл материала. **Требует авторизации + доступ к курсу** материала, в `content` которого вписан url файла (tsk-516): сервисный ключ и расширенные роли проходят, ученик — только при зачислении и без просроченной оплаты; файл без материала-владельца закрыт
+ - **POST** `/materials/import/google-sheets` — импорт материалов из Google Таблицы (многокурсовой; dry_run поддерживается)
+ - **POST** `/materials/bulk-upsert` — programmatic bulk upsert by `(course_id, external_uid)`; idempotent; for external pipelines (no Google Sheets). Single DB transaction per request (rollback on write failure); per-row validation errors in response body, not whole-request 422.
+ 

@@ -118,3 +118,77 @@ async def assert_material_access(
     # ПОСЛЕ bypass'ов роли: долг ученика не должен закрывать материал
     # преподавателю или методисту.
     await payment_access_service.assert_content_allowed(db, current_user.id)
+
+
+# Префикс url'а, который `POST /materials/upload` кладёт в `content` материала.
+# Единственная нить, связывающая файл на диске с курсом: имени файла
+# (`{uuid4hex}_{оригинал}`) в БД нет, отдельной таблицы вложений тоже.
+_FILE_URL_PREFIX = "/api/v1/materials/files/"
+
+
+async def assert_material_file_access(
+    db: AsyncSession,
+    *,
+    current_user: CurrentUser,
+    file_id: str,
+) -> None:
+    """Проверить доступ к загруженному файлу материала (tsk-516).
+
+    Файл не хранит ссылки на курс: `upload_material_file` кладёт его на диск
+    под именем `{uuid4hex}_{оригинал}` и возвращает url, который клиент сам
+    вписывает в `content` материала отдельным PATCH. Поэтому курс ищется в
+    обратную сторону — по вхождению url в `content` материалов. Один файл
+    может быть вписан в несколько материалов (копирование материала в другой
+    курс), и тогда достаточно доступа к любому из них: содержимое одно и то же.
+
+    Правила совпадают с `assert_material_access` — сервисный ключ и
+    расширенная роль проходят, ученик обязан быть зачислен и не иметь
+    просроченной оплаты.
+
+    Файл, на который не ссылается ни один материал (окно между `upload` и
+    PATCH, либо забытый мусор), закрыт для всех, кроме сервиса и расширенных
+    ролей: привязать его к курсу не по чему, а значит и подтвердить право
+    ученика нечем.
+    """
+    if current_user.is_service:
+        return
+
+    if await _user_has_extended_role(db, current_user.id):
+        return
+
+    # strpos вместо LIKE: имя файла содержит `_`, который в LIKE значит
+    # «любой символ» и расширил бы совпадение на соседние файлы.
+    res = await db.execute(
+        text(
+            "SELECT DISTINCT course_id FROM materials "
+            "WHERE strpos(content::text, :needle) > 0"
+        ),
+        {"needle": f"{_FILE_URL_PREFIX}{file_id}"},
+    )
+    course_ids = [row[0] for row in res.fetchall() if row[0] is not None]
+
+    if not course_ids:
+        logger.info(
+            "tsk-516: файл %r не привязан ни к одному материалу; user_id=%s deny",
+            file_id, current_user.id,
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Доступ к файлу запрещён: файл не привязан к материалу курса",
+        )
+
+    for course_id in course_ids:
+        if await _user_has_course_in_tree(db, current_user.id, course_id):
+            from app.services import payment_access_service
+
+            await payment_access_service.assert_content_allowed(db, current_user.id)
+            return
+
+    logger.info(
+        "tsk-516: deny user_id=%s file=%r (курсы %s не в дереве user_courses)",
+        current_user.id, file_id, course_ids,
+    )
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "Доступ к файлу запрещён: вы не зачислены в курс этого материала",
+    )

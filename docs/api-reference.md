@@ -883,8 +883,8 @@ API учебных материалов курса: CRUD, список по ку
 - **POST** `/courses/{course_id}/materials/bulk-update` — массовое обновление is_active
 - **POST** `/materials/{material_id}/copy` — копировать материал в другой курс
 - **GET** `/courses/{course_id}/materials/stats` — статистика по материалам курса
-- **POST** `/materials/upload` — загрузить файл для контента материала (multipart; возвращает url для content.sources[0].url или content.url)
-- **GET** `/materials/files/{file_id}` — скачать загруженный файл материала
+- **POST** `/materials/upload` — загрузить файл для контента материала (multipart; возвращает url для content.sources[0].url или content.url). **Требует роль methodist/admin или сервисный ключ** (tsk-516)
+- **GET** `/materials/files/{file_id}` — скачать загруженный файл материала. **Требует авторизации + доступ к курсу** материала, в `content` которого вписан url файла (tsk-516): сервисный ключ и расширенные роли проходят, ученик — только при зачислении и без просроченной оплаты; файл без материала-владельца закрыт
 - **POST** `/materials/import/google-sheets` — импорт материалов из Google Таблицы (многокурсовой; dry_run поддерживается)
 - **POST** `/materials/bulk-upsert` — programmatic bulk upsert by `(course_id, external_uid)`; idempotent; for external pipelines (no Google Sheets). Single DB transaction per request (rollback on write failure); per-row validation errors in response body, not whole-request 422.
 

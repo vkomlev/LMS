@@ -26,7 +26,10 @@ from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.repos.courses_repo import CoursesRepository
 from app.repos.materials_repo import MaterialsRepository
-from app.services.materials_acl_service import assert_material_access
+from app.services.materials_acl_service import (
+    assert_material_access,
+    assert_material_file_access,
+)
 from app.services.materials_service import MANUALLY_EDITABLE_FIELDS
 from app.schemas.material_content import validate_material_content
 from app.services.courses_acl_service import assert_course_access
@@ -259,10 +262,15 @@ async def get_course_materials_stats(
 
 @router.post(
     "/materials/upload",
-    summary="Загрузить файл для использования в контенте материала",
+    summary="Загрузить файл для использования в контенте материала (tsk-516: auth + роль)",
+    responses={
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет загружать файлы материалов"},
+    },
 )
 async def upload_material_file(
     file: UploadFile = File(..., description="Файл (PDF, документ, изображение и т.д.)"),
+    current_user: CurrentUser = Depends(require_role("methodist", "admin")),
 ) -> Dict[str, str]:
     """
     Загружает файл на сервер. Возвращает url для подстановки в content материала
@@ -275,6 +283,10 @@ async def upload_material_file(
 
     Лимит размера: MAX_ATTACHMENT_SIZE_BYTES (по умолчанию 10 MB).
     Файлы сохраняются в MATERIALS_UPLOAD_DIR (по умолчанию uploads/materials).
+
+    tsk-516: раньше загрузка была открыта анониму — вторая половина той же
+    дыры, что и скачивание. Сервисный ключ (`?api_key=` / X-API-Key) проходит
+    через `require_role` без проверки роли, поэтому TG_LMS работает как прежде.
     """
     settings.materials_upload_dir.mkdir(parents=True, exist_ok=True)
     original = file.filename or "file"
@@ -310,20 +322,51 @@ async def upload_material_file(
 
 @router.get(
     "/materials/files/{file_id}",
-    summary="Скачать загруженный файл материала",
+    summary="Скачать загруженный файл материала (tsk-516: auth + ACL)",
+    responses={
+        200: {"description": "Файл найден и доступен"},
+        400: {"description": "Недопустимый file_id"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Нет доступа к курсу материала, которому принадлежит файл"},
+        404: {"description": "Файл не найден"},
+    },
 )
-async def download_material_file(file_id: str):
+async def download_material_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
     """
     Отдаёт файл по идентификатору (имя файла, выданное при upload).
     Идентификатор не должен содержать / или ..
+
+    tsk-516: раньше эндпоинт не проверял ничего — прямая ссылка открывалась
+    анониму и отчисленному ученику, в отличие от соседнего
+    `GET /materials/{id}`. Доступ считается по курсу материала, в `content`
+    которого вписан url файла (см. `assert_material_file_access`).
+
+    Порядок проверок умышленный: авторизация и ACL идут ДО обращения к диску,
+    иначе разница между 404 и 200 сама по себе выдавала бы анониму, какие
+    файлы существуют.
     """
-    if "/" in file_id or ".." in file_id:
+    if "/" in file_id or "\\" in file_id or ".." in file_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
+
+    await assert_material_file_access(db, current_user=current_user, file_id=file_id)
+
     file_path = settings.materials_upload_dir / file_id
-    if not file_path.exists() or not file_path.is_file():
+    # Root-jail по образцу /api/v1/media: проверка символов выше отсекает
+    # разделители пути, это — страховка на случай экзотического имени
+    # (например, абсолютного пути после декодирования).
+    resolved = file_path.resolve()
+    if not resolved.is_relative_to(settings.materials_upload_dir.resolve()):
+        logger.error("tsk-516: попытка выхода за каталог загрузок file_id=%r", file_id)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Недопустимый file_id")
+
+    if not resolved.exists() or not resolved.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Файл не найден")
     media_type = mimetypes.guess_type(file_id)[0] or "application/octet-stream"
-    return FileResponse(path=str(file_path), media_type=media_type, filename=file_id)
+    return FileResponse(path=str(resolved), media_type=media_type, filename=file_id)
 
 
 @router.post(
