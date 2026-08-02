@@ -38,6 +38,7 @@ __all__ = [
     "list_student_charges",
     "create_manual_payment",
     "record_gateway_payment",
+    "record_staff_payment",
     "charge_by_id",
     "list_payments",
     "confirm_payment",
@@ -441,6 +442,62 @@ async def record_gateway_payment(
         gateway_payment_id,
     )
     return True
+
+
+async def record_staff_payment(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    group_id: int,
+    period: date,
+    amount_minor: int,
+    paid_on: Optional[date],
+    note: Optional[str],
+    recorded_by: int,
+) -> int:
+    """Отметить оплату руками — сразу подтверждённой, без чека.
+
+    Нужна для двух живых случаев: месяц уже оплатили до того, как система
+    появилась, и человек не разобрался с кабинетом, а деньги прислал.
+
+    Подтверждать нечего — решение принимает тот, кто отмечает, поэтому он же
+    записан в `reviewed_by`. Примечание обязательно осмысленное: платёж без
+    чека нечем подтвердить, кроме этой строки, и через полгода она будет
+    единственным объяснением, откуда взялись деньги.
+    """
+    row = (
+        await db.execute(
+            text(
+                """
+                INSERT INTO student_payment
+                       (student_id, group_id, period, amount_minor, method,
+                        paid_on, status, reviewed_at, reviewed_by, review_note)
+                VALUES (:s, :g, :p, :amt, 'manual',
+                        :paid_on, 'confirmed', now(), :by, :note)
+                RETURNING id
+                """
+            ),
+            {
+                "s": student_id,
+                "g": group_id,
+                "p": period,
+                "amt": amount_minor,
+                "paid_on": paid_on,
+                "by": recorded_by,
+                "note": note,
+            },
+        )
+    ).one()
+    await db.commit()
+    logger.info(
+        "tsk-010: оплата отмечена вручную — платёж %s, ученик %s, %s, %s коп., отметил %s",
+        row.id,
+        student_id,
+        period,
+        amount_minor,
+        recorded_by,
+    )
+    return int(row.id)
 
 
 async def charge_by_id(db: AsyncSession, *, charge_id: int) -> Optional[dict]:

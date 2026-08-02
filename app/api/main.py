@@ -452,6 +452,10 @@ app.include_router(payments_gateway_router, prefix=API_PREFIX)
 from app.api.v1.public_parent_payments import router as public_parent_payments_router
 app.include_router(public_parent_payments_router, prefix=API_PREFIX)
 
+# tsk-010: ручная отметка оплаты в карточке ученика (методист/маркетолог/админ).
+from app.api.v1.staff_payments import router as staff_payments_router
+app.include_router(staff_payments_router, prefix=API_PREFIX)
+
 # tsk-513 (кабинет методиста): перерывы ученика — гасят занятия и влияют на цену
 from app.api.v1.methodist_breaks import router as methodist_breaks_router
 app.include_router(methodist_breaks_router, prefix=API_PREFIX)
