@@ -274,3 +274,61 @@ async def test_student_search_returns_only_students_and_narrow_fields(db, client
     assert teacher_id not in found, "поиск для привязки лида отдаёт только учеников"
     for item in resp.json():
         assert set(item.keys()) == {"id", "full_name"}
+
+
+async def test_lead_all_fields_editable(db, client):
+    """Полная правка лида (tsk-518): ошиблись каналом — исправляем на месте.
+
+    Сценарий оператора: лид заведён с неверным каналом привлечения. Раньше через
+    интерфейс правились только примечание и привязка, и такую ошибку было нечем
+    исправить.
+    """
+    _, token = await _new_user(db, role="marketer", name="full-edit")
+    avito_id = await _source_id(db, "avito")
+    tg_id = await _source_id(db, "telegram")
+    lead = await _create_lead(
+        client,
+        token,
+        source_id=avito_id,
+        contact="@wrong",
+        full_name="Было имя",
+        note="было примечание",
+    )
+
+    resp = await client.patch(
+        f"/api/v1/marketer/leads/{lead['id']}",
+        json={
+            "source_id": tg_id,
+            "full_name": "Стало имя",
+            "contact": "@right",
+            "note": "стало примечание",
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source_id"] == tg_id
+    assert body["full_name"] == "Стало имя"
+    assert body["contact"] == "@right"
+    assert body["note"] == "стало примечание"
+
+    card = await client.get(f"/api/v1/marketer/leads/{lead['id']}", headers=_auth(token))
+    assert card.json()["source_id"] == tg_id, "канал должен смениться насовсем"
+
+
+async def test_lead_contact_cannot_be_emptied(db, client):
+    """Связь — единственное, чем лид опознаётся: стереть её нельзя."""
+    _, token = await _new_user(db, role="marketer", name="empty-contact")
+    avito_id = await _source_id(db, "avito")
+    lead = await _create_lead(client, token, source_id=avito_id, contact="@keeps")
+
+    for bad in (None, "   "):
+        resp = await client.patch(
+            f"/api/v1/marketer/leads/{lead['id']}",
+            json={"contact": bad},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 422, f"пустая связь {bad!r} не должна проходить"
+
+    card = await client.get(f"/api/v1/marketer/leads/{lead['id']}", headers=_auth(token))
+    assert card.json()["contact"] == "@keeps"

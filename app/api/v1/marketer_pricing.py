@@ -21,7 +21,7 @@ from app.schemas.pricing import (
     TariffCreateRequest,
     TariffUpdateRequest,
 )
-from app.services import pricing_service
+from app.services import charge_service, pricing_service
 
 router = APIRouter(prefix="/marketer", tags=["marketer_pricing"])
 
@@ -224,11 +224,28 @@ async def update_tariff(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_PRICING_GATE),
 ) -> list[PricingGroupRead]:
-    ok = await pricing_service.update_tariff(
-        db, tariff_id=tariff_id, patch=body.model_dump(exclude_unset=True)
-    )
+    group_id = await pricing_service.tariff_group_id(db, tariff_id)
+    if group_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Вариант тарифа не найден")
+
+    try:
+        ok = await pricing_service.update_tariff(
+            db, tariff_id=tariff_id, patch=body.model_dump(exclude_unset=True)
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        # Частичный уникальный индекс: две действующие точки одной оси в группе.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "В группе уже есть действующий вариант на эту же точку оси",
+        ) from exc
     if not ok:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Вариант тарифа не найден")
+
+    # Правка тарифа меняет расчёт для всех, кто попадает на эту группу. Без
+    # пересчёта суммы остались бы старыми до следующего ручного нажатия, и экран
+    # начислений показывал бы неправду. Закрытые месяцы не трогаются.
+    await charge_service.recalculate_open_months_for_group(db, group_id=group_id)
     return await pricing_service.list_groups(db)
 
 

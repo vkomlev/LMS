@@ -37255,7 +37255,8 @@
           }
         },
         "type": "object",
-        "title": "LeadUpdateRequest"
+        "title": "LeadUpdateRequest",
+        "description": "Правка лида. Присланное `null` стирает поле — кроме связи (tsk-518).\n\n`contact` — единственное, чем лид опознаётся до регистрации. Прислать его\nпустым или `null` нельзя: раньше такое доезжало до NOT NULL в базе и падало\nошибкой сервера вместо понятного отказа. `min_length` от этого не спасал —\nон не срабатывает на `null` и на строку из пробелов."
       },
       "LearningSkipRequest": {
         "properties": {

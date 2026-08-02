@@ -545,3 +545,125 @@ async def test_clearing_manual_price_removes_ghost_charge(db, client):
     assert await _charge(client, token, student_id) is None, (
         "начисление без основания должно исчезнуть, а не замереть со старой суммой"
     )
+
+
+async def test_tariff_axis_edit_recalculates_open_months(db, client):
+    """Правка оси тарифа пересчитывает открытые месяцы группы (tsk-517).
+
+    Ось меняет СМЫСЛ варианта: был «2 занятия», стал «1 занятие» — ученик
+    переезжает на другую цену. Без пересчёта начисление осталось бы старым до
+    следующего ручного нажатия, и экран показывал бы неправду.
+    """
+    _, token = await _new_user(db, role="marketer", name="m-axis")
+    teacher_id, _ = await _new_user(db, role="teacher", name="t-axis")
+    student_id, _ = await _new_user(db, role="student", name="s-axis")
+    group_id = await _new_group(
+        db,
+        "axis",
+        [("Два раза", 550000, "attendance_frequency", "2"), ("Один раз", 275000, "attendance_frequency", "1")],
+    )
+    course_id = await _new_course(db, "axis")
+    await _price_course(db, course_id=course_id, group_id=group_id)
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    # Два слота — ученик попадает точно на вариант «Два раза».
+    await _slot_on(db, student_id=student_id, teacher_id=teacher_id, weekday=0)
+    await _slot_on(db, student_id=student_id, teacher_id=teacher_id, weekday=2)
+    await charge_service.recalculate_month(db, period=PERIOD)
+    assert (await _charge(client, token, student_id))["calculated_minor"] == 550000
+
+    groups = (await client.get("/api/v1/marketer/pricing/groups", headers=_auth(token))).json()
+    group = next(g for g in groups if g["id"] == group_id)
+    two = next(t for t in group["tariffs"] if t["match_value"] == "2")
+    one = next(t for t in group["tariffs"] if t["match_value"] == "1")
+
+    # Освобождаем точку «1», иначе перенос упрётся в уникальный индекс.
+    await client.patch(
+        f"/api/v1/marketer/pricing/tariffs/{one['id']}",
+        json={"is_active": False},
+        headers=_auth(token),
+    )
+    resp = await client.patch(
+        f"/api/v1/marketer/pricing/tariffs/{two['id']}",
+        json={"match_kind": "attendance_frequency", "match_value": "1"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = await _charge(client, token, student_id)
+    assert after["calculated_minor"] == 550000, (
+        "два занятия против сетки {1} — ближайший меньший, цена того же варианта"
+    )
+    # Главное: пересчёт произошёл сам, без ручного нажатия «Пересчитать».
+    assert after["expected_lessons"] == 9
+
+
+async def test_tariff_axis_duplicate_point_is_409(db, client):
+    """Две действующие точки одной оси в группе — конфликт, а не тихая порча."""
+    _, token = await _new_user(db, role="marketer", name="m-dup")
+    group_id = await _new_group(
+        db,
+        "dup",
+        [("Два раза", 550000, "attendance_frequency", "2"), ("Один раз", 275000, "attendance_frequency", "1")],
+    )
+    groups = (await client.get("/api/v1/marketer/pricing/groups", headers=_auth(token))).json()
+    group = next(g for g in groups if g["id"] == group_id)
+    two = next(t for t in group["tariffs"] if t["match_value"] == "2")
+
+    resp = await client.patch(
+        f"/api/v1/marketer/pricing/tariffs/{two['id']}",
+        json={"match_kind": "attendance_frequency", "match_value": "1"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 409, resp.text
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"match_kind": "attendance_frequency"},          # значение не прислали
+        {"match_value": "2"},                            # ось не прислали
+        {"match_kind": "attendance_frequency", "match_value": "два"},
+        {"match_kind": "segment", "match_value": "   "},
+    ],
+)
+async def test_tariff_axis_edit_validates_pair(db, client, payload):
+    """Ось меняется целиком и осмысленно — половинки не проходят."""
+    _, token = await _new_user(db, role="marketer", name=f"m-val-{abs(hash(str(payload))) % 10000}")
+    group_id = await _new_group(db, f"val{abs(hash(str(payload))) % 10000}", [("Общий", 100000, None, None)])
+    groups = (await client.get("/api/v1/marketer/pricing/groups", headers=_auth(token))).json()
+    tariff = next(g for g in groups if g["id"] == group_id)["tariffs"][0]
+
+    resp = await client.patch(
+        f"/api/v1/marketer/pricing/tariffs/{tariff['id']}",
+        json=payload,
+        headers=_auth(token),
+    )
+    assert resp.status_code == 422, resp.text
+
+
+async def test_tariff_other_fields_editable(db, client):
+    """Имя, период, порядок и «по умолчанию» правятся — не только сумма."""
+    _, token = await _new_user(db, role="marketer", name="m-fields")
+    group_id = await _new_group(db, "fields", [("Старое имя", 100000, None, None)])
+    groups = (await client.get("/api/v1/marketer/pricing/groups", headers=_auth(token))).json()
+    tariff = next(g for g in groups if g["id"] == group_id)["tariffs"][0]
+
+    resp = await client.patch(
+        f"/api/v1/marketer/pricing/tariffs/{tariff['id']}",
+        json={
+            "name": "Новое имя",
+            "price_minor": 123400,
+            "period": "month",
+            "is_default": True,
+            "sort_order": 7,
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    updated = next(
+        t for g in resp.json() if g["id"] == group_id for t in g["tariffs"] if t["id"] == tariff["id"]
+    )
+    assert updated["name"] == "Новое имя"
+    assert updated["price_minor"] == 123400
+    assert updated["is_default"] is True
+    assert updated["sort_order"] == 7

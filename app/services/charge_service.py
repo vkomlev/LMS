@@ -30,6 +30,7 @@ __all__ = [
     "recalculate_month",
     "recalculate_for_student",
     "recalculate_open_months_for_student",
+    "recalculate_open_months_for_group",
     "list_charges",
     "set_manual_amount",
     "clear_manual_amount",
@@ -383,6 +384,41 @@ async def recalculate_open_months_for_student(
     targets.add(month_start(date.today()))
     for target in sorted(targets):
         await recalculate_for_student(db, student_id=student_id, period=target)
+
+
+async def recalculate_open_months_for_group(
+    db: AsyncSession, *, group_id: int
+) -> int:
+    """Пересчитать открытые месяцы всех учеников тарифной группы (tsk-517).
+
+    Зовётся после правки варианта тарифа. Правка цены или оси меняет расчёт для
+    каждого, кто на эту группу попадает, — без пересчёта суммы остались бы
+    старыми до следующего ручного нажатия, и экран показывал бы неправду.
+
+    Возвращает число затронутых учеников.
+    """
+    students = (
+        await db.execute(
+            text(
+                """
+                SELECT DISTINCT uc.user_id AS student_id
+                  FROM user_courses uc
+                  JOIN course_pricing cp ON cp.course_id = uc.course_id
+                                        AND cp.sale_status = 'paid'
+                  JOIN users u ON u.id = uc.user_id AND u.is_active
+                 WHERE uc.is_active AND cp.group_id = :g
+                UNION
+                SELECT DISTINCT ch.student_id
+                  FROM student_monthly_charge ch
+                 WHERE ch.group_id = :g AND ch.status = 'open'
+                """
+            ),
+            {"g": group_id},
+        )
+    ).all()
+    for row in students:
+        await recalculate_open_months_for_student(db, student_id=row.student_id)
+    return len(students)
 
 
 async def recalculate_for_student(

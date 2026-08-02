@@ -28,7 +28,18 @@ logger = logging.getLogger(__name__)
 #: Колонки, которые правка вправе трогать (см. `_build_patch`).
 _GROUP_PATCH_COLUMNS = frozenset({"name", "description", "is_active"})
 _TARIFF_PATCH_COLUMNS = frozenset(
-    {"name", "price_minor", "period", "is_default", "sort_order", "is_active"}
+    {
+        "name",
+        "price_minor",
+        "period",
+        # Ось правится с tsk-517: она меняет смысл варианта, поэтому экран
+        # предупреждает, а открытые месяцы после правки пересчитываются.
+        "match_kind",
+        "match_value",
+        "is_default",
+        "sort_order",
+        "is_active",
+    }
 )
 
 __all__ = [
@@ -37,6 +48,7 @@ __all__ = [
     "update_group",
     "delete_group",
     "create_tariff",
+    "tariff_group_id",
     "update_tariff",
     "delete_tariff",
     "list_course_pricing",
@@ -141,6 +153,17 @@ async def create_tariff(db: AsyncSession, *, payload: dict) -> int:
     ).scalar_one()
     await db.commit()
     return int(tariff_id)
+
+
+async def tariff_group_id(db: AsyncSession, tariff_id: int) -> Optional[int]:
+    """Группа варианта тарифа — нужна, чтобы после правки пересчитать её учеников."""
+    row = (
+        await db.execute(
+            text("SELECT group_id FROM pricing_tariff WHERE id = :id"),
+            {"id": tariff_id},
+        )
+    ).first()
+    return int(row.group_id) if row is not None else None
 
 
 async def update_tariff(db: AsyncSession, *, tariff_id: int, patch: dict) -> bool:
