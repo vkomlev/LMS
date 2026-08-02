@@ -158,18 +158,6 @@ async def submit_payment(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "Дата платежа не может быть в будущем"
         )
-    if amount_minor > MAX_PAYMENT_MINOR:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            f"Сумма платежа больше допустимой ({MAX_PAYMENT_MINOR // 100} ₽)",
-        )
-    extension = _ALLOWED_RECEIPT_TYPES.get(file.content_type or "")
-    if extension is None:
-        raise HTTPException(
-            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            "Чек принимается изображением (JPEG, PNG, HEIC, WebP) или файлом PDF",
-        )
-
     # Начисление ищем от лица платящего: родитель платит за ребёнка, поэтому
     # владельцем начисления должен оказаться ребёнок, а не сам родитель.
     charge = await payment_service.charge_for_student(
@@ -186,6 +174,48 @@ async def submit_payment(
                 break
     if charge is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Начисление не найдено")
+
+    return await store_receipt_payment(
+        db,
+        charge=charge,
+        amount_minor=amount_minor,
+        paid_on=paid_on,
+        payer_note=payer_note,
+        file=file,
+        submitted_by=current_user.id,
+    )
+
+
+async def store_receipt_payment(
+    db: AsyncSession,
+    *,
+    charge: dict,
+    amount_minor: int,
+    paid_on: Optional[date],
+    payer_note: Optional[str],
+    file: UploadFile,
+    submitted_by: Optional[int],
+) -> dict:
+    """Сохранить чек на диск и завести платёж.
+
+    Вынесено из роутера, потому что тем же путём идёт оплата родителя по
+    гостевой ссылке (tsk-010): у него нет учётной записи, и `submitted_by`
+    пустой — но проверки файла, размера и дубля должны быть теми же. Две копии
+    этого кода разъехались бы ровно на той проверке, про которую забыли: при
+    выносе так и вышло — публичный контур остался без проверки типа файла и
+    предела суммы, пока это не поймал тест.
+    """
+    if amount_minor > MAX_PAYMENT_MINOR:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Сумма платежа больше допустимой ({MAX_PAYMENT_MINOR // 100} ₽)",
+        )
+    extension = _ALLOWED_RECEIPT_TYPES.get(file.content_type or "")
+    if extension is None:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            "Чек принимается изображением (JPEG, PNG, HEIC, WebP) или файлом PDF",
+        )
 
     settings.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
     original_name = _safe_name(file.filename)
@@ -225,7 +255,7 @@ async def submit_payment(
             payer_note=(payer_note or "").strip() or None,
             receipt_file=stored_name,
             receipt_name=original_name,
-            submitted_by=current_user.id,
+            submitted_by=submitted_by,
         )
     except payment_service.DuplicatePaymentError:
         file_path.unlink(missing_ok=True)
