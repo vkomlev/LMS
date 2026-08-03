@@ -1,0 +1,784 @@
+diff --git a/app/db/migrations/versions/20260804_010000_tsk314_course_sampling_config.py b/app/db/migrations/versions/20260804_010000_tsk314_course_sampling_config.py
+new file mode 100644
+index 0000000..5f6a036
+--- /dev/null
++++ b/app/db/migrations/versions/20260804_010000_tsk314_course_sampling_config.py
+@@ -0,0 +1,57 @@
++"""tsk-314: конфиг выборки заданий по сложности на подкурс.
++
++Курс ЕГЭ разросся (~3000 заданий), прохождение затягивается. Часть 1 (вынос
++HARD в опциональный подкурс) закрыта отдельной задачей tsk-347. Эта колонка —
++для частей 2/3: если EASY+NORMAL заданий подкурса больше настроенного порога,
++студенту показывается не всё, а случайная часть стабильного размера.
++
++Формат значения (jsonb), см. `app/schemas/course_sampling.py`:
++    {"enabled": true, "threshold": 40, "easy_ratio": 0.5}
++threshold — порог И размер итоговой выборки при превышении (сумма EASY+NORMAL
++заданий курса); easy_ratio — доля EASY в выборке (0..1, NORMAL — остаток).
++THEORY и прочая сложность (HARD/PROJECT) выборке не подлежат — выдаются
++всегда целиком, независимо от этой настройки.
++
++NULL / enabled=false — прежнее поведение (выдаются все задания курса).
++
++Почему поле на courses, а не отдельная таблица правил: решение оператора
++(tsk-314, «Решения оператора» 2026-07-19) — настройка живёт в поле-конфиге
++курса, не в отдельной таблице. Тот же паттерн, что difficulty_provenance
++(tsk-381) на tasks — nullable JSONB, конвейеры импорта его не трогают.
++
++Revision ID: tsk314_course_sampling_config
++Revises: tsk010_student_payment
++Create Date: 2026-08-04
++"""
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++from sqlalchemy.dialects import postgresql
++
++revision: str = "tsk314_course_sampling_config"
++down_revision: Union[str, None] = "tsk010_student_payment"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавляет nullable-колонку конфига выборки заданий по сложности."""
++    op.add_column(
++        "courses",
++        sa.Column(
++            "sampling_config",
++            postgresql.JSONB(astext_type=sa.Text()),
++            nullable=True,
++            comment=(
++                "Выборка заданий по сложности (tsk-314): "
++                "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
++            ),
++        ),
++    )
++
++
++def downgrade() -> None:
++    """Убирает колонку конфига выборки."""
++    op.drop_column("courses", "sampling_config")
+diff --git a/app/models/courses.py b/app/models/courses.py
+index f8ccc0c..c11a1ea 100644
+--- a/app/models/courses.py
++++ b/app/models/courses.py
+@@ -5,6 +5,7 @@ from sqlalchemy import (
+     Integer, String, Text, Boolean, DateTime,
+     Enum, ForeignKeyConstraint, Index, PrimaryKeyConstraint, text
+ )
++from sqlalchemy.dialects.postgresql import JSONB
+ from sqlalchemy.orm import Mapped, mapped_column, relationship
+ 
+ from app.db.base import Base
+@@ -60,6 +61,14 @@ class Courses(Base):
+         nullable=False,
+         comment="Доступен ли курс гостям без регистрации (Phase Y-5)",
+     )
++    sampling_config: Mapped[Optional[dict]] = mapped_column(
++        JSONB,
++        nullable=True,
++        comment=(
++            "Выборка заданий по сложности на подкурс (tsk-314): "
++            "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
++        ),
++    )
+ 
+     # Родители курса (многие-ко-многим через course_parents)
+     parent_courses: Mapped[List["Courses"]] = relationship(
+diff --git a/app/schemas/course_sampling.py b/app/schemas/course_sampling.py
+new file mode 100644
+index 0000000..63e8beb
+--- /dev/null
++++ b/app/schemas/course_sampling.py
+@@ -0,0 +1,42 @@
++"""tsk-314: формат конфига выборки заданий по сложности на подкурс."""
++from __future__ import annotations
++
++from pydantic import BaseModel, ConfigDict, Field
++
++
++class CourseSamplingConfig(BaseModel):
++    """Формат `courses.sampling_config` (JSONB).
++
++    `threshold` — порог И размер итоговой выборки при превышении: если
++    EASY+NORMAL заданий подкурса больше `threshold`, студенту выдаётся ровно
++    `threshold` заданий (случайная стабильная часть), иначе — все.
++    `easy_ratio` — доля EASY в итоговой выборке (0..1), NORMAL — остаток.
++
++    THEORY и любая сложность вне EASY/NORMAL (HARD/PROJECT) выборке не
++    подлежат — выдаются всегда целиком, эта настройка их не касается.
++    """
++
++    enabled: bool = Field(False, description="Включена ли выборка на этом подкурсе")
++    threshold: int = Field(
++        ...,
++        ge=1,
++        description=(
++            "Порог EASY+NORMAL заданий подкурса; выше него выдаётся "
++            "случайная часть размером threshold"
++        ),
++    )
++    easy_ratio: float = Field(
++        0.5,
++        ge=0.0,
++        le=1.0,
++        description="Доля EASY в итоговой выборке (0.5 = поровну EASY/NORMAL)",
++    )
++
++    model_config = ConfigDict(
++        json_schema_extra={
++            "examples": [
++                {"enabled": True, "threshold": 40, "easy_ratio": 0.5},
++                {"enabled": False, "threshold": 40, "easy_ratio": 0.5},
++            ]
++        }
++    )
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 82047fb..3d508f6 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -9,7 +9,7 @@ from __future__ import annotations
+ 
+ import logging
+ from datetime import datetime
+-from typing import Any, List, Optional, Tuple
++from typing import Any, List, Optional, Sequence, Tuple
+ 
+ from sqlalchemy import select, text, func
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -31,7 +31,10 @@ from app.repos.user_courses_repo import UserCoursesRepository
+ from app.repos.courses_repo import CoursesRepository
+ from app.repos.course_dependencies_repository import CourseDependenciesRepository
+ from app.schemas.task_content import QUIZ_TASK_TYPES
++from app.schemas.course_sampling import CourseSamplingConfig
++from app.services.task_sampling import sample_task_ids
+ from app.utils.exceptions import DomainError
++from pydantic import ValidationError
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -631,6 +634,25 @@ class LearningEngineService:
+         r = await db.execute(tasks_count_stmt)
+         total_tasks = r.scalar() or 0
+ 
++        # tsk-314: денаминатор обязан совпадать с тем, что студенту реально
++        # показывает resolve_next_item — иначе подкурс с включённой выборкой
++        # никогда не дошёл бы до COMPLETED (total_tasks считал бы и задания,
++        # которые студенту никогда не предложат), вечно блокируя себя и любую
++        # course_dependencies, ссылающуюся на него как на required_course_id.
++        # Числитель (tasks_with_last_pass ниже) правки не требует: у
++        # вырезанного выборкой задания по определению нет task_result этого
++        # студента, оно и так не попадает в счёт пройденных.
++        sampling_map = await self._sampling_enabled_courses(db, tree_ids)
++        if sampling_map:
++            sampled_out = 0
++            for sampled_course_id, cfg in sampling_map.items():
++                sampled_out += len(
++                    await self._sampled_out_task_ids(
++                        db, sampled_course_id, student_id, cfg
++                    )
++                )
++            total_tasks = max(0, total_tasks - sampled_out)
++
+         materials_count_stmt = select(func.count(Materials.id)).where(
+             Materials.course_id.in_(tree_ids),
+             Materials.is_active.is_(True),
+@@ -957,7 +979,10 @@ class LearningEngineService:
+                         material_ids = []
+                         task_ids = [
+                             i
+-                            for i, op in await self._ordered_task_rows(db, cid)
++                            # tsk-314: тот же список, что видит студент в обходе
++                            # ниже (_first_incomplete_task) — иначе позиция
++                            # могла бы указывать на задание, вырезанное выборкой.
++                            for i, op in await self._effective_task_rows(db, cid, student_id)
+                             if self._order_key(op, i) > pos_key
+                         ]
+ 
+@@ -1079,6 +1104,117 @@ class LearningEngineService:
+         """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
+         return [i for i, _ in await self._ordered_task_rows(db, course_id)]
+ 
++    async def _sampling_enabled_courses(
++        self, db: AsyncSession, course_ids: Sequence[int]
++    ) -> dict[int, dict]:
++        """Курсы из `course_ids` с включённой выборкой по сложности (tsk-314).
++
++        Один лёгкий запрос по PK; в общем (сегодня — единственном на проде)
++        случае «выборка нигде не настроена» это единственная дополнительная
++        цена вызова — тяжёлый путь (JOIN c difficulties, сэмплинг) ниже
++        выполняется только для курсов, реально попавших в результат.
++
++        Фильтрация `enabled` — в Python, не в SQL: `sampling_config` пишется
++        напрямую (нет PATCH-эндпоинта), и SQL-каст `->>'enabled')::boolean`
++        на невалидном значении уронил бы запрос — а с ним весь next-item для
++        ВСЕХ студентов, не только владельца битого конфига.
++        """
++        if not course_ids:
++            return {}
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT id, sampling_config FROM courses "
++                    "WHERE id = ANY(:ids) AND sampling_config IS NOT NULL"
++                ),
++                {"ids": list(course_ids)},
++            )
++        ).fetchall()
++        return {
++            int(cid): cfg
++            for cid, cfg in rows
++            if isinstance(cfg, dict) and cfg.get("enabled")
++        }
++
++    async def _sampled_out_task_ids(
++        self,
++        db: AsyncSession,
++        course_id: int,
++        student_id: int,
++        config: dict,
++    ) -> set[int]:
++        """ID заданий EASY/NORMAL курса, НЕ попавших в выборку студента (tsk-314).
++
++        Пустое множество — выборка не нужна (заданий меньше/равно порога,
++        в курсе нет EASY/NORMAL, либо `config` не прошёл валидацию формата:
++        битый конфиг деградирует в «выборки нет», а не роняет resolve_next_item).
++        """
++        try:
++            cfg = CourseSamplingConfig.model_validate(config)
++        except ValidationError:
++            logger.warning(
++                "tsk-314: невалидный sampling_config на курсе %s: %r", course_id, config
++            )
++            return set()
++        if not cfg.enabled:
++            return set()
++
++        rows = await self._ordered_task_rows(db, course_id)
++        if not rows:
++            return set()
++        task_ids = [i for i, _ in rows]
++
++        diff_rows = (
++            await db.execute(
++                text(
++                    "SELECT t.id, d.code FROM tasks t "
++                    "JOIN difficulties d ON d.id = t.difficulty_id "
++                    "WHERE t.id = ANY(:ids)"
++                ),
++                {"ids": task_ids},
++            )
++        ).fetchall()
++        code_by_id = {int(tid): code for tid, code in diff_rows}
++
++        easy_ids = [i for i in task_ids if code_by_id.get(i) == "EASY"]
++        normal_ids = [i for i in task_ids if code_by_id.get(i) == "NORMAL"]
++        if not easy_ids and not normal_ids:
++            return set()
++
++        kept = sample_task_ids(
++            easy_ids=easy_ids,
++            normal_ids=normal_ids,
++            threshold=cfg.threshold,
++            easy_ratio=cfg.easy_ratio,
++            student_id=student_id,
++            course_id=course_id,
++        )
++        return (set(easy_ids) | set(normal_ids)) - kept
++
++    async def _effective_task_rows(
++        self, db: AsyncSession, course_id: int, student_id: int
++    ) -> List[Tuple[int, Optional[int]]]:
++        """(id, order_position) заданий курса, которые студент реально видит.
++
++        С учётом выборки по сложности (tsk-314): если на курсе включена
++        выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
++        сложность вне EASY/NORMAL (HARD/PROJECT) выборке не подлежат —
++        остаются в списке всегда. Без выборки — то же, что `_ordered_task_rows`.
++        """
++        rows = await self._ordered_task_rows(db, course_id)
++        if not rows:
++            return rows
++
++        cfg_map = await self._sampling_enabled_courses(db, [course_id])
++        config = cfg_map.get(course_id)
++        if not config:
++            return rows
++
++        dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
++        if not dropped:
++            return rows
++        return [(i, op) for i, op in rows if i not in dropped]
++
+     async def _first_incomplete_material(
+         self,
+         db: AsyncSession,
+@@ -1135,7 +1271,12 @@ class LearningEngineService:
+         снят — иначе course не достигнет COMPLETED для курсов с TA.
+         """
+         if task_ids is None:
+-            task_ids = await self._ordered_task_ids(db, course_id)
++            # tsk-314: сужение по выборке — тот же список, что и narrowing
++            # в resolve_next_item (иначе следующим предлагалось бы задание,
++            # которое сама выборка исключила).
++            task_ids = [
++                i for i, _ in await self._effective_task_rows(db, course_id, student_id)
++            ]
+         if task_ids:
+             skipped_rows = await db.execute(
+                 text("""
+diff --git a/app/services/task_sampling.py b/app/services/task_sampling.py
+new file mode 100644
+index 0000000..af0ca8f
+--- /dev/null
++++ b/app/services/task_sampling.py
+@@ -0,0 +1,72 @@
++"""tsk-314: детерминированный сэмплинг заданий EASY/NORMAL по сложности.
++
++Один и тот же (student_id, course_id) обязан давать один и тот же набор при
++повторном заходе (решение оператора). Сид считается хэшем пары через
++hashlib, НЕ Python `hash()` — тот рандомизирован `PYTHONHASHSEED` между
++процессами/рестартами и не даёт стабильности между запросами.
++"""
++from __future__ import annotations
++
++import hashlib
++import random
++from typing import Sequence
++
++
++def deterministic_seed(student_id: int, course_id: int) -> int:
++    """Стабильный (между процессами и рестартами) сид для пары студент+подкурс."""
++    digest = hashlib.sha256(f"{student_id}:{course_id}".encode("utf-8")).hexdigest()
++    return int(digest[:16], 16)
++
++
++def sample_task_ids(
++    *,
++    easy_ids: Sequence[int],
++    normal_ids: Sequence[int],
++    threshold: int,
++    easy_ratio: float,
++    student_id: int,
++    course_id: int,
++) -> set[int]:
++    """Отобрать подмножество EASY/NORMAL заданий детерминированно.
++
++    Возвращает МНОЖЕСТВО id заданий, которые нужно ОСТАВИТЬ в обходе.
++    THEORY и прочая сложность сюда не передаются вовсе — вызывающий код
++    держит их всегда, независимо от результата этой функции.
++
++    Если `easy_ids`+`normal_ids` в сумме не превышает `threshold` — выборка
++    не нужна, возвращаются оба пула целиком.
++
++    `easy_ratio` — доля EASY в итоговой выборке (0..1). Если одного из
++    пулов не хватает на его долю, недостача добирается из другого пула —
++    итоговый размер выборки остаётся равен `threshold`, пока суммарно
++    заданий достаточно (гарантировано вызывающим условием total > threshold).
++    """
++    total = len(easy_ids) + len(normal_ids)
++    if total <= threshold:
++        return set(easy_ids) | set(normal_ids)
++
++    avail_easy = len(easy_ids)
++    avail_normal = len(normal_ids)
++
++    target_easy = round(threshold * easy_ratio)
++    target_normal = threshold - target_easy
++
++    # Недостачу одного пула компенсируем другим, чтобы итог остался = threshold.
++    deficit_easy = max(0, target_easy - avail_easy)
++    deficit_normal = max(0, target_normal - avail_normal)
++    target_easy = min(target_easy, avail_easy) + deficit_normal
++    target_normal = min(target_normal, avail_normal) + deficit_easy
++    # Финальный клэмп — страховка от пограничных случаев округления.
++    target_easy = min(target_easy, avail_easy)
++    target_normal = min(target_normal, avail_normal)
++
++    seed = deterministic_seed(student_id, course_id)
++    rnd = random.Random(seed)
++
++    # sorted(...) — фиксированный порядок пула ДО сэмплинга: без него порядок
++    # id в исходном списке мог бы плавать между вызовами (например, если
++    # вызывающий код когда-нибудь начнёт передавать пулы не по возрастанию
++    # id) и ломать стабильность набора при том же seed.
++    picked_easy = rnd.sample(sorted(easy_ids), target_easy) if target_easy else []
++    picked_normal = rnd.sample(sorted(normal_ids), target_normal) if target_normal else []
++    return set(picked_easy) | set(picked_normal)
+diff --git a/tests/test_task_sampling.py b/tests/test_task_sampling.py
+new file mode 100644
+index 0000000..ddbba90
+--- /dev/null
++++ b/tests/test_task_sampling.py
+@@ -0,0 +1,85 @@
++"""tsk-314: юнит-тесты чистого сэмплера (без БД) — `app/services/task_sampling.py`.
++
++Движок (learning_engine_service._sampled_out_task_ids) отвечает за то, ЧТО
++подаётся на вход (пулы EASY/NORMAL, конфиг курса); эти тесты — за то, что сам
++алгоритм отбора детерминирован и соблюдает соотношение/размер выборки при
++любых пулах, без обращения к БД.
++"""
++from __future__ import annotations
++
++from app.services.task_sampling import deterministic_seed, sample_task_ids
++
++
++def test_deterministic_seed_stable_across_calls():
++    """Тот же (student_id, course_id) -> тот же сид при повторных вызовах."""
++    assert deterministic_seed(142, 138) == deterministic_seed(142, 138)
++
++
++def test_deterministic_seed_differs_by_input():
++    """Разные пары дают разные сиды (иначе разные ученики/курсы делили бы набор)."""
++    assert deterministic_seed(142, 138) != deterministic_seed(143, 138)
++    assert deterministic_seed(142, 138) != deterministic_seed(142, 139)
++
++
++def test_sample_below_threshold_returns_all():
++    """Заданий не больше порога — выборка не нужна, отдаются оба пула целиком."""
++    easy = list(range(1, 6))
++    normal = list(range(101, 104))
++    kept = sample_task_ids(
++        easy_ids=easy, normal_ids=normal, threshold=10, easy_ratio=0.5,
++        student_id=1, course_id=1,
++    )
++    assert kept == set(easy) | set(normal)
++
++
++def test_sample_exceeding_threshold_respects_size_and_ratio():
++    """Превышение порога -> ровно threshold заданий, поровну EASY/NORMAL при ratio=0.5."""
++    easy = list(range(1, 21))  # 20
++    normal = list(range(101, 121))  # 20
++    kept = sample_task_ids(
++        easy_ids=easy, normal_ids=normal, threshold=10, easy_ratio=0.5,
++        student_id=142, course_id=138,
++    )
++    assert len(kept) == 10
++    assert len({i for i in kept if i in easy}) == 5
++    assert len({i for i in kept if i in normal}) == 5
++
++
++def test_sample_respects_custom_ratio():
++    """Настраиваемая доля (не 50/50): easy_ratio=0.3 -> ~30% EASY в выборке."""
++    easy = list(range(1, 21))
++    normal = list(range(101, 121))
++    kept = sample_task_ids(
++        easy_ids=easy, normal_ids=normal, threshold=10, easy_ratio=0.3,
++        student_id=142, course_id=138,
++    )
++    assert len(kept) == 10
++    assert len({i for i in kept if i in easy}) == 3
++    assert len({i for i in kept if i in normal}) == 7
++
++
++def test_sample_is_deterministic_between_calls():
++    """Повторный вызов с теми же (student_id, course_id) и теми же пулами ->
++    ТОТ ЖЕ набор (стабильность за учеником, решение оператора tsk-314)."""
++    easy = list(range(1, 21))
++    normal = list(range(101, 121))
++    kwargs = dict(
++        easy_ids=easy, normal_ids=normal, threshold=8, easy_ratio=0.5,
++        student_id=7, course_id=1379,
++    )
++    first = sample_task_ids(**kwargs)
++    second = sample_task_ids(**kwargs)
++    assert first == second
++
++
++def test_sample_deficit_in_one_pool_borrows_from_the_other():
++    """EASY не хватает на свою долю -> недостача добирается из NORMAL, итог = threshold."""
++    easy = [1, 2]  # только 2 доступно
++    normal = list(range(101, 121))  # 20 доступно
++    kept = sample_task_ids(
++        easy_ids=easy, normal_ids=normal, threshold=10, easy_ratio=0.5,
++        student_id=1, course_id=1,
++    )
++    assert len(kept) == 10
++    assert {i for i in kept if i in easy} == {1, 2}
++    assert len({i for i in kept if i in normal}) == 8
+diff --git a/tests/test_tsk314_engine_sampling.py b/tests/test_tsk314_engine_sampling.py
+new file mode 100644
+index 0000000..270a762
+--- /dev/null
++++ b/tests/test_tsk314_engine_sampling.py
+@@ -0,0 +1,277 @@
++"""tsk-314: движок выборки заданий по сложности на подкурс (части 2/3).
++
++Часть 1 (вынос HARD в опциональный подкурс) закрыта отдельно в tsk-347 —
++здесь не проверяется. Четыре сценария из декомпозиции задачи:
++  1. THEORY выдаются все, независимо от выборки.
++  2. Превышение порога -> ровно доля с нужным соотношением EASY:NORMAL.
++  3. Повторный заход даёт тот же набор (стабильность за учеником).
++  4. Выключенный параметр (или конфиг вовсе не задан) = старое поведение.
++Плюс регрессия на `compute_course_state`: денаминатор total_tasks обязан
++учитывать выборку, иначе подкурс с включённой выборкой никогда не дойдёт
++до COMPLETED (см. правку в learning_engine_service.compute_course_state).
++"""
++from __future__ import annotations
++
++import json
++from uuid import uuid4
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++
++from app.services.learning_engine_service import LearningEngineService
++
++
++async def _new_course(db, title: str) -> int:
++    res = await db.execute(
++        text("INSERT INTO courses (title, access_level) VALUES (:t, 'self_guided') RETURNING id"),
++        {"t": title},
++    )
++    return int(res.scalar_one())
++
++
++async def _set_sampling_config(db, course_id: int, config: dict | None) -> None:
++    await db.execute(
++        text("UPDATE courses SET sampling_config = CAST(:cfg AS jsonb) WHERE id = :id"),
++        {"cfg": json.dumps(config) if config is not None else None, "id": course_id},
++    )
++
++
++async def _new_task(db, *, course_id: int, difficulty_id: int, uid: str) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (task_content, course_id, difficulty_id, external_uid) "
++            "VALUES (CAST(:tc AS jsonb), :cid, :did, :uid) RETURNING id"
++        ),
++        {
++            "tc": '{"type": "SA", "question": "tsk314"}',
++            "cid": course_id,
++            "did": difficulty_id,
++            "uid": uid,
++        },
++    )
++    return int(res.scalar_one())
++
++
++async def _new_student(db, *, prefix: str) -> int:
++    res = await db.execute(
++        text("INSERT INTO users (full_name) VALUES (:n) RETURNING id"),
++        {"n": f"{prefix} tsk314-student"},
++    )
++    return int(res.scalar_one())
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(
++        text("INSERT INTO user_courses (user_id, course_id, is_active) VALUES (:u, :c, true)"),
++        {"u": user_id, "c": course_id},
++    )
++
++
++async def _complete_task(db, *, user_id: int, task_id: int, course_id: int, root_course_id: int) -> None:
++    """Успешное прохождение задания — как реальный сабмит верного ответа."""
++    attempt_id = (
++        await db.execute(
++            text(
++                "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                "VALUES (:u, :c, :r, 'test_tsk314') RETURNING id"
++            ),
++            {"u": user_id, "c": course_id, "r": root_course_id},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO task_results "
++            "(user_id, task_id, attempt_id, score, max_score, is_correct, submitted_at) "
++            "VALUES (:u, :t, :a, 10, 10, true, now())"
++        ),
++        {"u": user_id, "t": task_id, "a": attempt_id},
++    )
++
++
++@pytest_asyncio.fixture
++async def difficulty_ids(db):
++    rows = (await db.execute(text("SELECT id, code FROM difficulties"))).fetchall()
++    by_code = {code: int(did) for did, code in rows}
++    for code in ("THEORY", "EASY", "NORMAL"):
++        if code not in by_code:
++            pytest.skip(f"Нет difficulty с кодом {code} — граф не собрать")
++    return by_code
++
++
++@pytest_asyncio.fixture
++async def sampling_course(db, difficulty_ids):
++    """Подкурс: 2 THEORY + 6 EASY + 6 NORMAL, выборка включена (threshold=4, 50/50).
++
++    threshold=4 < 12 (EASY+NORMAL) -> выборка срабатывает, итог = 2 EASY + 2
++    NORMAL + 2 THEORY (THEORY выборке не подлежит) = 6 заданий на обход.
++    """
++    course_id = await _new_course(db, "tsk314 sampling subcourse")
++    await _set_sampling_config(
++        db, course_id, {"enabled": True, "threshold": 4, "easy_ratio": 0.5}
++    )
++
++    theory_ids = [
++        await _new_task(
++            db, course_id=course_id, difficulty_id=difficulty_ids["THEORY"],
++            uid=f"tsk314-theory-{i}-{uuid4().hex[:8]}",
++        )
++        for i in range(2)
++    ]
++    easy_ids = [
++        await _new_task(
++            db, course_id=course_id, difficulty_id=difficulty_ids["EASY"],
++            uid=f"tsk314-easy-{i}-{uuid4().hex[:8]}",
++        )
++        for i in range(6)
++    ]
++    normal_ids = [
++        await _new_task(
++            db, course_id=course_id, difficulty_id=difficulty_ids["NORMAL"],
++            uid=f"tsk314-normal-{i}-{uuid4().hex[:8]}",
++        )
++        for i in range(6)
++    ]
++    await db.commit()
++    return {
++        "course_id": course_id,
++        "theory": theory_ids,
++        "easy": easy_ids,
++        "normal": normal_ids,
++    }
++
++
++@pytest.mark.asyncio
++async def test_theory_always_included(db, sampling_course):
++    """Сценарий 1: THEORY выдаются все, независимо от выборки EASY/NORMAL."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="theory")
++
++    rows = await engine._effective_task_rows(db, sampling_course["course_id"], student)
++    effective_ids = {i for i, _ in rows}
++
++    assert set(sampling_course["theory"]).issubset(effective_ids), (
++        "THEORY-задания обязаны выдаваться все, выборка их не касается"
++    )
++
++
++@pytest.mark.asyncio
++async def test_threshold_exceeded_gives_share_with_ratio(db, sampling_course):
++    """Сценарий 2: превышение порога -> ровно threshold заданий, доля EASY:NORMAL верна."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="ratio")
++
++    rows = await engine._effective_task_rows(db, sampling_course["course_id"], student)
++    effective_ids = {i for i, _ in rows}
++
++    easy_kept = effective_ids & set(sampling_course["easy"])
++    normal_kept = effective_ids & set(sampling_course["normal"])
++
++    assert len(easy_kept) + len(normal_kept) == 4, (
++        "threshold=4 -> ровно 4 EASY+NORMAL задания в выборке, получено "
++        f"{len(easy_kept) + len(normal_kept)}"
++    )
++    assert len(easy_kept) == 2 and len(normal_kept) == 2, (
++        f"easy_ratio=0.5 при threshold=4 -> поровну (2/2), получено "
++        f"easy={len(easy_kept)} normal={len(normal_kept)}"
++    )
++
++
++@pytest.mark.asyncio
++async def test_repeat_visit_gives_same_set(db, sampling_course):
++    """Сценарий 3: повторный заход того же студента -> тот же набор (стабильность)."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="stable")
++
++    first = {i for i, _ in await engine._effective_task_rows(db, sampling_course["course_id"], student)}
++    second = {i for i, _ in await engine._effective_task_rows(db, sampling_course["course_id"], student)}
++
++    assert first == second, "Повторный вызов для того же студента обязан вернуть тот же набор"
++
++
++@pytest.mark.asyncio
++async def test_disabled_sampling_behaves_like_before(db, sampling_course):
++    """Сценарий 4: enabled=false -> прежнее поведение (все задания, без урезания)."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="disabled")
++
++    await _set_sampling_config(
++        db, sampling_course["course_id"],
++        {"enabled": False, "threshold": 4, "easy_ratio": 0.5},
++    )
++    await db.commit()
++
++    rows = await engine._effective_task_rows(db, sampling_course["course_id"], student)
++    effective_ids = {i for i, _ in rows}
++    all_ids = set(sampling_course["theory"]) | set(sampling_course["easy"]) | set(sampling_course["normal"])
++
++    assert effective_ids == all_ids, "enabled=false обязан отдавать все задания без урезания"
++
++
++@pytest.mark.asyncio
++async def test_missing_config_behaves_like_before(db, sampling_course):
++    """Сценарий 4 (вариант): sampling_config=NULL -> тоже прежнее поведение."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="nullcfg")
++
++    await _set_sampling_config(db, sampling_course["course_id"], None)
++    await db.commit()
++
++    rows = await engine._effective_task_rows(db, sampling_course["course_id"], student)
++    effective_ids = {i for i, _ in rows}
++    all_ids = set(sampling_course["theory"]) | set(sampling_course["easy"]) | set(sampling_course["normal"])
++
++    assert effective_ids == all_ids
++
++
++@pytest.mark.asyncio
++async def test_resolve_next_item_only_offers_effective_set_and_reaches_completed(
++    db, sampling_course
++):
++    """End-to-end: обход resolve_next_item предлагает ровно эффективный набор
++    (никогда не вырезанное выборкой задание), а прохождение только его
++    доводит подкурс до COMPLETED (регрессия denominator в compute_course_state:
++    без правки total_tasks считал бы и вырезанные задания, и курс завис бы
++    в IN_PROGRESS навсегда, хотя студент решил всё, что ему предложили)."""
++    engine = LearningEngineService()
++    student = await _new_student(db, prefix="e2e")
++    course_id = sampling_course["course_id"]
++    await _enroll(db, student, course_id)
++    await db.commit()
++
++    effective_ids = {
++        i for i, _ in await engine._effective_task_rows(db, course_id, student)
++    }
++    assert len(effective_ids) == 6  # 2 THEORY + 2 EASY + 2 NORMAL
++
++    offered: set[int] = set()
++    after_task_id = None
++    for _ in range(len(effective_ids) + 2):  # +2 запас, чтобы поймать зацикливание
++        result = await engine.resolve_next_item(
++            db, student, root_course_id=course_id, after_task_id=after_task_id
++        )
++        if result.type == "none":
++            break
++        assert result.type == "task", result
++        assert result.task_id in effective_ids, (
++            f"resolve_next_item предложил задание {result.task_id}, "
++            f"вырезанное выборкой (не входит в {effective_ids})"
++        )
++        offered.add(result.task_id)
++        await _complete_task(
++            db, user_id=student, task_id=result.task_id,
++            course_id=course_id, root_course_id=course_id,
++        )
++        await db.commit()
++        after_task_id = result.task_id
++
++    assert offered == effective_ids, (
++        "Обход обязан предложить РОВНО эффективный набор, не больше и не меньше: "
++        f"предложено={offered}, ожидалось={effective_ids}"
++    )
++
++    state = await engine.compute_course_state(db, student, course_id)
++    assert state.state == "COMPLETED", (
++        "Подкурс с выборкой обязан доходить до COMPLETED после решения всех "
++        f"предложенных заданий, получено {state.state}"
++    )
