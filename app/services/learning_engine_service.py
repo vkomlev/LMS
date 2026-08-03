@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,10 @@ from app.repos.user_courses_repo import UserCoursesRepository
 from app.repos.courses_repo import CoursesRepository
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
 from app.schemas.task_content import QUIZ_TASK_TYPES
+from app.schemas.course_sampling import CourseSamplingConfig
+from app.services.task_sampling import sample_task_ids
 from app.utils.exceptions import DomainError
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -631,6 +634,25 @@ class LearningEngineService:
         r = await db.execute(tasks_count_stmt)
         total_tasks = r.scalar() or 0
 
+        # tsk-314: денаминатор обязан совпадать с тем, что студенту реально
+        # показывает resolve_next_item — иначе подкурс с включённой выборкой
+        # никогда не дошёл бы до COMPLETED (total_tasks считал бы и задания,
+        # которые студенту никогда не предложат), вечно блокируя себя и любую
+        # course_dependencies, ссылающуюся на него как на required_course_id.
+        # Числитель (tasks_with_last_pass ниже) правки не требует: у
+        # вырезанного выборкой задания по определению нет task_result этого
+        # студента, оно и так не попадает в счёт пройденных.
+        sampling_map = await self._sampling_enabled_courses(db, tree_ids)
+        if sampling_map:
+            sampled_out = 0
+            for sampled_course_id, cfg in sampling_map.items():
+                sampled_out += len(
+                    await self._sampled_out_task_ids(
+                        db, sampled_course_id, student_id, cfg
+                    )
+                )
+            total_tasks = max(0, total_tasks - sampled_out)
+
         materials_count_stmt = select(func.count(Materials.id)).where(
             Materials.course_id.in_(tree_ids),
             Materials.is_active.is_(True),
@@ -957,7 +979,10 @@ class LearningEngineService:
                         material_ids = []
                         task_ids = [
                             i
-                            for i, op in await self._ordered_task_rows(db, cid)
+                            # tsk-314: тот же список, что видит студент в обходе
+                            # ниже (_first_incomplete_task) — иначе позиция
+                            # могла бы указывать на задание, вырезанное выборкой.
+                            for i, op in await self._effective_task_rows(db, cid, student_id)
                             if self._order_key(op, i) > pos_key
                         ]
 
@@ -1079,6 +1104,117 @@ class LearningEngineService:
         """ID заданий курса в порядке обхода (order_position ASC NULLS LAST, id)."""
         return [i for i, _ in await self._ordered_task_rows(db, course_id)]
 
+    async def _sampling_enabled_courses(
+        self, db: AsyncSession, course_ids: Sequence[int]
+    ) -> dict[int, dict]:
+        """Курсы из `course_ids` с включённой выборкой по сложности (tsk-314).
+
+        Один лёгкий запрос по PK; в общем (сегодня — единственном на проде)
+        случае «выборка нигде не настроена» это единственная дополнительная
+        цена вызова — тяжёлый путь (JOIN c difficulties, сэмплинг) ниже
+        выполняется только для курсов, реально попавших в результат.
+
+        Фильтрация `enabled` — в Python, не в SQL: `sampling_config` пишется
+        напрямую (нет PATCH-эндпоинта), и SQL-каст `->>'enabled')::boolean`
+        на невалидном значении уронил бы запрос — а с ним весь next-item для
+        ВСЕХ студентов, не только владельца битого конфига.
+        """
+        if not course_ids:
+            return {}
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT id, sampling_config FROM courses "
+                    "WHERE id = ANY(:ids) AND sampling_config IS NOT NULL"
+                ),
+                {"ids": list(course_ids)},
+            )
+        ).fetchall()
+        return {
+            int(cid): cfg
+            for cid, cfg in rows
+            if isinstance(cfg, dict) and cfg.get("enabled")
+        }
+
+    async def _sampled_out_task_ids(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        student_id: int,
+        config: dict,
+    ) -> set[int]:
+        """ID заданий EASY/NORMAL курса, НЕ попавших в выборку студента (tsk-314).
+
+        Пустое множество — выборка не нужна (заданий меньше/равно порога,
+        в курсе нет EASY/NORMAL, либо `config` не прошёл валидацию формата:
+        битый конфиг деградирует в «выборки нет», а не роняет resolve_next_item).
+        """
+        try:
+            cfg = CourseSamplingConfig.model_validate(config)
+        except ValidationError:
+            logger.warning(
+                "tsk-314: невалидный sampling_config на курсе %s: %r", course_id, config
+            )
+            return set()
+        if not cfg.enabled:
+            return set()
+
+        rows = await self._ordered_task_rows(db, course_id)
+        if not rows:
+            return set()
+        task_ids = [i for i, _ in rows]
+
+        diff_rows = (
+            await db.execute(
+                text(
+                    "SELECT t.id, d.code FROM tasks t "
+                    "JOIN difficulties d ON d.id = t.difficulty_id "
+                    "WHERE t.id = ANY(:ids)"
+                ),
+                {"ids": task_ids},
+            )
+        ).fetchall()
+        code_by_id = {int(tid): code for tid, code in diff_rows}
+
+        easy_ids = [i for i in task_ids if code_by_id.get(i) == "EASY"]
+        normal_ids = [i for i in task_ids if code_by_id.get(i) == "NORMAL"]
+        if not easy_ids and not normal_ids:
+            return set()
+
+        kept = sample_task_ids(
+            easy_ids=easy_ids,
+            normal_ids=normal_ids,
+            threshold=cfg.threshold,
+            easy_ratio=cfg.easy_ratio,
+            student_id=student_id,
+            course_id=course_id,
+        )
+        return (set(easy_ids) | set(normal_ids)) - kept
+
+    async def _effective_task_rows(
+        self, db: AsyncSession, course_id: int, student_id: int
+    ) -> List[Tuple[int, Optional[int]]]:
+        """(id, order_position) заданий курса, которые студент реально видит.
+
+        С учётом выборки по сложности (tsk-314): если на курсе включена
+        выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
+        сложность вне EASY/NORMAL (HARD/PROJECT) выборке не подлежат —
+        остаются в списке всегда. Без выборки — то же, что `_ordered_task_rows`.
+        """
+        rows = await self._ordered_task_rows(db, course_id)
+        if not rows:
+            return rows
+
+        cfg_map = await self._sampling_enabled_courses(db, [course_id])
+        config = cfg_map.get(course_id)
+        if not config:
+            return rows
+
+        dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
+        if not dropped:
+            return rows
+        return [(i, op) for i, op in rows if i not in dropped]
+
     async def _first_incomplete_material(
         self,
         db: AsyncSession,
@@ -1135,7 +1271,12 @@ class LearningEngineService:
         снят — иначе course не достигнет COMPLETED для курсов с TA.
         """
         if task_ids is None:
-            task_ids = await self._ordered_task_ids(db, course_id)
+            # tsk-314: сужение по выборке — тот же список, что и narrowing
+            # в resolve_next_item (иначе следующим предлагалось бы задание,
+            # которое сама выборка исключила).
+            task_ids = [
+                i for i, _ in await self._effective_task_rows(db, course_id, student_id)
+            ]
         if task_ids:
             skipped_rows = await db.execute(
                 text("""

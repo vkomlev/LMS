@@ -5,6 +5,7 @@ from sqlalchemy import (
     Integer, String, Text, Boolean, DateTime,
     Enum, ForeignKeyConstraint, Index, PrimaryKeyConstraint, text
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -59,6 +60,14 @@ class Courses(Base):
         server_default=text("false"),
         nullable=False,
         comment="Доступен ли курс гостям без регистрации (Phase Y-5)",
+    )
+    sampling_config: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "Выборка заданий по сложности на подкурс (tsk-314): "
+            "{enabled, threshold, easy_ratio}. NULL/enabled=false = все задания."
+        ),
     )
 
     # Родители курса (многие-ко-многим через course_parents)
