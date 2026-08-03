@@ -75,3 +75,8 @@ reviews/tsk350-dedup/tasks_dump.json
 # tsk-392: то же для партии ОГЭ. Архивы каталогов ОГЭ-11/12 крупные (DEMO-12.rar — 33 МБ,
 # и он один на десятки заданий), суммарно ~1 ГБ.
 reviews/tsk392-oge/files/
+
+# tsk-384: сгенерированные SVG/PNG схем шахматных фигур — детерминированно
+# восстанавливаются scripts/tsk384_build_visuals.py, источник истины по
+# опубликованным файлам — CAS/прод-S3 (sha256 в reviews/2026-08-03-tsk384-*.md).
+reviews/tsk384-chess-visuals/
