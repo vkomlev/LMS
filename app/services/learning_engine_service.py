@@ -730,7 +730,27 @@ class LearningEngineService:
                         WHERE tr.user_id = :sid
                           AND t.course_id = ANY(:cids)
                           AND tr.checked_at IS NULL
-                          AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+                          AND (
+                              t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+                              -- tsk-438: SA (не входит в COMMENT_TASK_TYPES/optimistic-
+                              -- pass, attempts.py) обычно не даёт course дойти до
+                              -- COMPLETED, пока required-элемент pending (score=0 держит
+                              -- done_items < total_tasks, compute_course_state выше). Но
+                              -- total_tasks считает только is_active=true задания —
+                              -- деактивация задания уже ПОСЛЕ pending-ответа убирает его
+                              -- из знаменателя и снимает блокировку COMPLETED, а
+                              -- checked_at здесь всё ещё NULL. Гейт по
+                              -- manual_review_required — тот же паттерн, что и в
+                              -- escalation_service.py, иначе обычный авто-проверяемый SA
+                              -- (checked_at не проставляется никогда) ложно попал бы сюда.
+                              OR (
+                                  t.task_content->>'type' = 'SA'
+                                  AND COALESCE(
+                                      (t.solution_rules->>'manual_review_required')::boolean,
+                                      false
+                                  )
+                              )
+                          )
                         """
                     ),
                     {"sid": student_id, "cids": tree_ids},

@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 import random
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,78 @@ async def _pick_root_task(db) -> tuple[int, int, str]:
     if row is None:
         pytest.skip("Нет TA/SA_COM задач в root-курсе для Y-6 теста")
     return int(row[0]), int(row[1]), str(row[2])
+
+
+async def _create_course(db, *, title_prefix: str = "y6-course") -> int:
+    """Создать standalone-курс (без course_parents) для изолированного дерева.
+
+    tsk-438: тесты completion-эскалации считают total_items дерева курса —
+    переиспользование существующего root-курса (course_id=1) исказило бы
+    счётчик уже имеющимся контентом. Отдельный курс без children даёт
+    предсказуемое tree_ids=[course_id].
+    """
+    res = await db.execute(
+        text(
+            "INSERT INTO courses (title, access_level, is_required) "
+            "VALUES (:title, 'self_guided', false) RETURNING id"
+        ),
+        {"title": f"{title_prefix}-{random.randint(10**8, 10**10)}"},
+    )
+    cid = res.scalar_one()
+    await db.commit()
+    return cid
+
+
+async def _create_task(
+    db, *, course_id: int, type_: str,
+    manual: bool | None = None,
+    requirement_level: str = "required",
+) -> int:
+    """Создать synthetic task с нужным task_content->>'type' (паттерн test_claim_next_pending_filter_y42.py).
+
+    :param manual: solution_rules.manual_review_required. None — флаг не задан.
+    :param requirement_level: 'required'/'skippable' (учитывается в total_tasks
+        compute_course_state) или 'recommended' (НЕ учитывается — tsk-438
+        сценарий «pending review не блокирует COMPLETED»).
+    """
+    rules: dict = {"max_score": 10}
+    if manual is not None:
+        rules["manual_review_required"] = manual
+    res = await db.execute(
+        text(
+            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
+            "                   course_id, difficulty_id, requirement_level, is_active) "
+            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), "
+            "        :cid, 1, :rl, true) RETURNING id"
+        ),
+        {
+            "ext": f"y6-test-{random.randint(10**8, 10**10)}",
+            "content": json.dumps({"type": type_, "stem": "test"}),
+            "rules": json.dumps(rules),
+            "cid": course_id,
+            "rl": requirement_level,
+        },
+    )
+    tid = res.scalar_one()
+    await db.commit()
+    return tid
+
+
+async def _cleanup_tasks_and_course(
+    db, *, task_ids: list[int], course_id: int | None, result_ids: list[int]
+):
+    """Убрать synthetic tasks/course, созданные хелперами выше (не покрыты автосвипом)."""
+    if result_ids:
+        await db.execute(
+            text("DELETE FROM notifications WHERE (payload->>'result_id')::int = ANY(:ids)"),
+            {"ids": result_ids},
+        )
+        await db.execute(text("DELETE FROM task_results WHERE id = ANY(:ids)"), {"ids": result_ids})
+    if task_ids:
+        await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
+    if course_id is not None:
+        await db.execute(text("DELETE FROM courses WHERE id = :c"), {"c": course_id})
+    await db.commit()
 
 
 async def _create_pending_tr(
@@ -469,3 +542,179 @@ async def test_y6_methodist_escalations_endpoint_acl(db, client):
         assert isinstance(body["items"], list)
     finally:
         await _cleanup(db, user_ids=[methodist_id, other_id], result_ids=[])
+
+
+# ============================== tsk-438: SA-manual в escalation ==============================
+# SA НЕ входит в COMMENT_TASK_TYPES → не получает optimistic-pass (attempts.py
+# 661-663): при manual_review_required=true is_correct остаётся NULL до
+# вердикта учителя (не TRUE, как у SA_COM/TA). Старый фильтр `is_correct IS
+# TRUE` эту ветку никогда не ловил — залежавшийся SA-manual не эскалировался
+# НИКОГДА. Гейт по manual_review_required (не blanket по типу) обязателен:
+# обычный авто-проверяемый SA (checked_at не проставляется в принципе) не
+# должен эскалироваться методисту по любому таймауту.
+
+
+@pytest.mark.asyncio
+async def test_y6_escalation_cron_tick_sa_manual_review(db, db_session_factory):
+    """Stage 4 + tsk-438: pending SA-manual (is_correct=NULL) эскалируется по timeout,
+    обычный авто-проверенный SA (is_correct=TRUE, manual_review_required=false) — нет."""
+    from app.services import escalation_service
+
+    tick_factory = db_session_factory
+
+    course_manual = await _create_course(db, title_prefix="y6-esc-manual")
+    course_auto = await _create_course(db, title_prefix="y6-esc-auto")
+    task_manual = await _create_task(db, course_id=course_manual, type_="SA", manual=True)
+    task_auto = await _create_task(db, course_id=course_auto, type_="SA", manual=False)
+
+    student_id = await _create_user(db, prefix="y6-stud-sa")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-sa")
+
+    old_ts = datetime.now(timezone.utc) - timedelta(hours=72)
+    rid_manual, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_manual,
+        is_correct=None, score=0, max_score=10,
+        submitted_at=old_ts,
+    )
+    rid_auto, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_auto,
+        is_correct=True, score=10, max_score=10,
+        submitted_at=old_ts,
+    )
+
+    try:
+        summary = await escalation_service.escalation_cron_tick(tick_factory)
+        assert summary["locked"] is True
+
+        m_manual = (await db.execute(
+            text("SELECT metrics ? 'escalated_at' FROM task_results WHERE id=:r"),
+            {"r": rid_manual},
+        )).scalar()
+        assert m_manual is True, "SA-manual (is_correct=NULL) должен эскалироваться по timeout"
+
+        m_auto = (await db.execute(
+            text("SELECT metrics ? 'escalated_at' FROM task_results WHERE id=:r"),
+            {"r": rid_auto},
+        )).scalar()
+        assert not m_auto, "Обычный авто-проверенный SA НЕ должен эскалироваться"
+
+        n_manual = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE user_id=:m AND kind='review_escalated' "
+                "  AND (payload->>'result_id')::int = :r"
+            ),
+            {"m": methodist_id, "r": rid_manual},
+        )).scalar()
+        assert int(n_manual or 0) == 1, f"Expected 1 notification for SA-manual, got {n_manual}"
+
+        n_auto = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE kind='review_escalated' AND (payload->>'result_id')::int = :r"
+            ),
+            {"r": rid_auto},
+        )).scalar()
+        assert int(n_auto or 0) == 0, "Авто-SA не должен создавать notification"
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid_manual, rid_auto])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_manual], course_id=course_manual, result_ids=[]
+        )
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_auto], course_id=course_auto, result_ids=[]
+        )
+
+
+# ============================== tsk-438: SA-manual в completion-escalation =================
+
+
+@pytest.mark.asyncio
+async def test_y6_course_completion_escalation_sa_manual_review(db):
+    """Y-6 Stage 4.3 + tsk-438: курс достигает COMPLETED (recommended-задание не
+    учитывается в total_items), но pending SA-manual (`checked_at IS NULL`,
+    `manual_review_required=true`) должен эскалироваться методисту по
+    completion-триггеру, а не тихо потеряться."""
+    from app.services.learning_engine_service import LearningEngineService
+
+    svc = LearningEngineService()
+
+    course_id = await _create_course(db, title_prefix="y6-complete-manual")
+    task_id = await _create_task(
+        db, course_id=course_id, type_="SA", manual=True, requirement_level="recommended"
+    )
+    student_id = await _create_user(db, prefix="y6-stud-compl")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-compl")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=None, score=0, max_score=10,
+    )
+
+    try:
+        cs = await svc.compute_course_state(db, student_id, course_id, update_state_table=False)
+        assert cs.state == "COMPLETED", (
+            "recommended-задание не входит в total_items — курс должен "
+            "завершаться, даже пока SA-manual pending"
+        )
+
+        # escalate_course_completion пишет payload.pending_result_ids (массив),
+        # не payload.result_id (тот формат — у escalate_pending_timeout/cron).
+        n = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE user_id=:m AND kind='course_pending_review' "
+                "  AND payload->'pending_result_ids' @> CAST(:rid_json AS jsonb)"
+            ),
+            {"m": methodist_id, "rid_json": json.dumps([rid])},
+        )).scalar()
+        assert int(n or 0) == 1, (
+            f"Pending SA-manual должен попасть в completion-escalation, got {n}"
+        )
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
+
+
+@pytest.mark.asyncio
+async def test_y6_course_completion_escalation_skips_auto_sa(db):
+    """tsk-438 negative control: авто-проверяемый SA (manual_review_required=false,
+    checked_at IS NULL — типичное состояние для самого массового типа задания)
+    НЕ должен триггерить completion-escalation, иначе методист был бы завален
+    ложными уведомлениями на каждом завершённом курсе."""
+    from app.services.learning_engine_service import LearningEngineService
+
+    svc = LearningEngineService()
+
+    course_id = await _create_course(db, title_prefix="y6-complete-auto")
+    task_id = await _create_task(
+        db, course_id=course_id, type_="SA", manual=False, requirement_level="recommended"
+    )
+    student_id = await _create_user(db, prefix="y6-stud-compl-auto")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-compl-auto")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=True, score=10, max_score=10,
+    )
+
+    try:
+        cs = await svc.compute_course_state(db, student_id, course_id, update_state_table=False)
+        assert cs.state == "COMPLETED"
+
+        n = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE kind='course_pending_review' "
+                "  AND payload->'pending_result_ids' @> CAST(:rid_json AS jsonb)"
+            ),
+            {"rid_json": json.dumps([rid])},
+        )).scalar()
+        assert int(n or 0) == 0, "Авто-SA не должен триггерить completion-escalation"
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )

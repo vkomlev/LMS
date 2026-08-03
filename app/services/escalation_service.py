@@ -86,11 +86,32 @@ async def escalation_cron_tick(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
-                  AND t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
-                  -- tsk-210: эскалируем только первично-верные pending (ждут
-                  -- вторичной проверки учителя). SA_COM с is_correct=FALSE —
-                  -- честный FAILED, не pending. TA всегда is_correct=TRUE.
-                  AND tr.is_correct IS TRUE
+                  AND (
+                      -- tsk-210: SA_COM/TBL_COM/TA — эскалируем только первично-
+                      -- верные pending (ждут вторичной проверки учителя).
+                      -- is_correct=FALSE — честный FAILED, не pending. TA/SA_COM
+                      -- получают optimistic-PASSED (is_correct=TRUE) на submit
+                      -- (attempts.py optimistic_manual).
+                      (
+                          t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+                          AND tr.is_correct IS TRUE
+                      )
+                      -- tsk-438: SA НЕ входит в COMMENT_TASK_TYPES → не получает
+                      -- optimistic-pass (attempts.py:661-663). При
+                      -- manual_review_required=true checking_service держит
+                      -- is_correct=NULL до вердикта учителя (не TRUE, как у
+                      -- SA_COM) — ветка выше такой SA никогда не поймает, и
+                      -- залежавшийся SA-manual тихо не эскалировался НИКОГДА.
+                      -- Гейт по manual_review_required (а не blanket по типу) —
+                      -- иначе обычный авто-проверяемый SA (checked_at не
+                      -- проставляется в принципе, самый массовый тип задания)
+                      -- эскалировался бы методисту по любому таймауту.
+                      OR (
+                          t.task_content->>'type' = 'SA'
+                          AND COALESCE((t.solution_rules->>'manual_review_required')::boolean, false)
+                          AND tr.is_correct IS NULL
+                      )
+                  )
                   AND tr.submitted_at < (now() - (:h || ' hours')::interval)
                   AND (
                       tr.metrics IS NULL
