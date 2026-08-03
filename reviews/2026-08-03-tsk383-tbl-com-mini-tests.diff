@@ -1,0 +1,535 @@
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index ec20010..d8f0083 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -736,7 +736,7 @@ class CheckingService:
+         order_matters = (
+             solution_rules.table.row_order_matters if solution_rules.table else True
+         )
+-        cells = self._table_cells(value_raw, rules.normalization)
++        cells = self._table_cells(value_raw, rules.normalization, columns)
+ 
+         base_score = 0
+         matched_value: Optional[str] = None
+@@ -753,7 +753,7 @@ class CheckingService:
+ 
+         if base_score < solution_rules.max_score:
+             for accepted in rules.accepted_answers:
+-                expected = self._table_cells(accepted.value, rules.normalization)
++                expected = self._table_cells(accepted.value, rules.normalization, columns)
+                 score = self._score_table(
+                     cells=cells,
+                     expected=expected,
+@@ -762,6 +762,18 @@ class CheckingService:
+                     order_matters=order_matters,
+                     partial=solution_rules.scoring_mode == "partial",
+                 )
++                # tsk-383: TBL_COM не строже SA_COM на том же правиле — тот же
++                # инвариант, что зафиксирован в tsk-366
++                # (test_инвариант_tbl_com_засчитывает_всё_что_засчитывал_sa_com).
++                # Ответ, набранный ОДНОЙ строкой (старая привычка ученика,
++                # копипаст, отправка через TG-бота без сетки полей), не разберётся
++                # на правильные ряды/фразы построчным разбором — сверяем его ещё
++                # и как SA_COM: весь ответ целиком против всего эталона целиком, с
++                # той же нормализацией (она схлопывает переводы строк в пробелы).
++                if score < accepted.score and self._matches_short_answer(
++                    value_raw, accepted.value, rules.normalization
++                ):
++                    score = accepted.score
+                 if score > base_score:
+                     base_score = score
+                     matched_value = accepted.value
+@@ -795,20 +807,38 @@ class CheckingService:
+         return 2
+ 
+     @classmethod
+-    def _table_cells(cls, value: str, steps: List[str]) -> List[str]:
++    def _table_cells(cls, value: str, steps: List[str], columns: int = 2) -> List[str]:
+         """
+         Разбирает табличный ответ на нормализованные ячейки.
+ 
+-        Разделитель — ЛЮБАЯ последовательность пробельных символов, поэтому
+-        пробел, несколько пробелов, табуляция и перевод строки равнозначны.
+-        Шаги нормализации применяются к каждой ячейке отдельно.
++        Разделитель по умолчанию — ЛЮБАЯ последовательность пробельных
++        символов, поэтому пробел, несколько пробелов, табуляция и перевод
++        строки равнозначны. Шаги нормализации применяются к каждой ячейке
++        отдельно.
+ 
+         Пустые после нормализации ячейки отбрасываются. Это не косметика: при
+         `strip_punctuation` одиноко стоящая запятая («1 , 2») превращается в
+         пустую ячейку и сдвинула бы всю таблицу — ответ, который SA_COM засчитал
+         бы, стал бы неверным. Отбрасывание держит обещание «проверка TBL_COM не
+         строже проверки SA_COM на тех же правилах».
++
++        tsk-383: при `columns=1` и МНОГОСТРОЧНОМ ответе строка не режется по
++        пробелу — каждая непустая строка становится ОДНОЙ ячейкой целиком, с
++        сохранением внутренних пробелов. Это нужно мини-тестам Python вида
++        «Запустите программу 3 раза... вывод каждого запуска с новой строки»:
++        один запуск может выводить фразу («Первое число больше»), и порезка по
++        пробелу вместо переноса строки раздробила бы её на отдельные слова.
++        Однострочный ответ (в т.ч. уже мигрированные tsk-366 задания, где
++        значения разделены только пробелом) режется по-старому — иначе
++        перестанут засчитываться существующие ответы.
+         """
++        if columns == 1:
++            lines = [ln.strip() for ln in re.split(r"\r?\n", value)]
++            lines = [ln for ln in lines if ln]
++            if len(lines) > 1:
++                cells = [cls._normalize_text(ln, steps) for ln in lines]
++                return [cell for cell in cells if cell != ""]
++
+         cells = [cls._normalize_text(cell, steps) for cell in value.split()]
+         return [cell for cell in cells if cell != ""]
+ 
+diff --git a/docs/ai/glossary.md b/docs/ai/glossary.md
+index 6ad3fe9..962251f 100644
+--- a/docs/ai/glossary.md
++++ b/docs/ai/glossary.md
+@@ -58,7 +58,7 @@
+ - **SC** (Single Choice) — один правильный вариант; автопроверка.
+ - **MC** (Multiple Choice) — несколько правильных вариантов; автопроверка.
+ - **SA_COM** (Short Answer with Code/Comment) — короткий ответ с полем-комментарием. **По умолчанию — автопроверка** по `accepted_answers`/regex (как SA); задание считается выполненным без участия преподавателя. Преподаватель может опционально пересмотреть результат (regrade). Уходит на **обязательную** ручную проверку, только если задание помечено `solution_rules.manual_review_required=true` (tsk-230) — тогда авто-вердикта нет, и вступает оптимистичный зачёт (см. ниже). **Комментарий ИЛИ файл обязателен** (tsk-419). Контракт: [docs/frontend-contract-sa-com.md](../frontend-contract-sa-com.md). FSM: [docs/ai/design/teacher-queue-states.md](design/teacher-queue-states.md).
+-- **TBL_COM** (Table with Comment, tsk-366) — табличный ответ: `value` одной строкой, ячейки ряда через пробел, ряды через перевод строки; сравнение поячеечное, правила — тот же блок `short_answer`, что у SA/SA_COM. Во всём остальном ведёт себя как SA_COM, включая обязательность комментария-или-файла.
++- **TBL_COM** (Table with Comment, tsk-366) — табличный ответ: `value` одной строкой, ячейки ряда через пробел, ряды через перевод строки; сравнение поячеечное, правила — тот же блок `short_answer`, что у SA/SA_COM. Во всём остальном ведёт себя как SA_COM, включая обязательность комментария-или-файла. `table.columns=1` + мини-тесты Python (tsk-383): при многострочном ответе строка не режется по пробелу — целая строка (с внутренними пробелами) = одна ячейка, чтобы фраза «Первое число больше» (вывод одного запуска программы) не дробилась на слова; однострочный ответ по-прежнему режется по словам. Плюс fallback: если построчное сравнение не даёт балл, ответ сверяется ещё и целиком против эталона целиком (как SA_COM) — инвариант «TBL_COM не строже SA_COM на том же правиле».
+ - **TA** (Text Answer) — развёрнутый ответ (эссе). **По умолчанию — ручная проверка** (`is_correct=NULL` до grade). Автопроверка (regex/ИИ) — на будущее.
+ - **`manual_review_required`** (флаг `SolutionRules`, tsk-230) — единый переключатель обязательной ручной проверки. При `true` авто-вердикт не выставляется, и работа попадает в обязательную очередь преподавателя, даже если тип авто-проверяем. Ось обязательности — **этот флаг, а не тип задания** (tsk-420): предикат очереди (`teacher_queue_service.mandatory_review_sql`, общий для бота и портала) берёт `TA` безусловно, а `SA`/`SA_COM`/`TBL_COM` — только с флагом. Default `false`. Читается в `checking_service` для SA/SA_COM/TBL_COM; TA манулен по умолчанию независимо от флага.
+ - **Оптимистичный зачёт** (optimistic-pass, tsk-210) — для `TA` и для `SA_COM`/`TBL_COM` без авто-вердикта (`is_correct=None`, в т.ч. при `manual_review_required=true`) на приёме ответа ставится `score=max_score, is_correct=true`, чтобы учебный поток не блокировался; `checked_at` при этом остаётся пустым — работа висит в очереди, преподаватель может зачёт снять через `/regrade`. У плоского `SA` этого нет (tsk-438). Перекрывается гейтами вложения и доказательства, если те не выполнены.
+diff --git a/docs/frontend-contract-sa-com.md b/docs/frontend-contract-sa-com.md
+index 3fac3b6..54ffbd1 100644
+--- a/docs/frontend-contract-sa-com.md
++++ b/docs/frontend-contract-sa-com.md
+@@ -16,7 +16,13 @@
+ Формат `value`:
+ - `SA_COM` — строка (для многострочного эталона допустимы переводы строки);
+ - `TBL_COM` — таблица одной строкой: ячейки ряда через пробел, ряды через перевод строки
+-  (`"10 2786\n12 3140"`); сравнение поячеечное.
++  (`"10 2786\n12 3140"`); сравнение поячеечное. **Исключение (tsk-383):** при
++  `table.columns=1` и МНОГОСТРОЧНОМ ответе строка не режется по пробелу — целая
++  строка (с внутренними пробелами) становится одной ячейкой. Так хранятся
++  мини-тесты Python, где вывод одного запуска программы — фраза
++  (`"Первое число больше\nВторое число больше"`, 2 ячейки, не 6 слов).
++  Однострочный ответ при `columns=1` (например `"True False True"`) по-прежнему
++  режется по словам.
+ 
+ ## Гейт доказательства: комментарий ИЛИ файл (tsk-419)
+ 
+diff --git a/scripts/tsk383_migrate_to_tbl_com.py b/scripts/tsk383_migrate_to_tbl_com.py
+new file mode 100644
+index 0000000..c9426ec
+--- /dev/null
++++ b/scripts/tsk383_migrate_to_tbl_com.py
+@@ -0,0 +1,324 @@
++# -*- coding: utf-8 -*-
++"""tsk-383: мини-тесты Python (SA_COM) -> TBL_COM — один вывод программы на поле.
++
++ЗАЧЕМ
++Мини-тесты вида «Запустите программу 3 раза со значениями X, Y, Z. Поместите
++вывод всех 3 запусков в поле "Ответ" через пробел/перевод строки» жили как
++SA_COM — ОДНО поле, а ответ мог быть длинной строкой из нескольких смысловых
++фрагментов («Первое число больше Второе число больше Числа равны»). Тип
++TBL_COM (tsk-366) даёт по полю на каждый вывод программы. Форма ответа здесь —
++ОДИН СТОЛБЕЦ (table.columns=1), а не сетка N x M: решение оператора 2026-07-23
++зафиксировано в tsk-383.
++
++ОТБОР КАНДИДАТОВ
++139 совпадений по маркерам «Запустите программу»/«через пробел»/«Вывод[ы]
++программы» — НЕ критерий отбора сам по себе (проверено вручную по 2026-08-03,
++tsk-383 п.1). Реальный критерий: ответ состоит из N НЕЗАВИСИМЫХ выводов (N
++разных запусков с разными входными данными, либо N явно перечисленных в
++условии значений), а не один вычисленный результат, который просто печатается
++через пробел (список/фильтр/сумма) -- такие остаются SA_COM без изменений.
++Вручную прочитано ~80 заданий по всем 9 курсам; итоговый список — 53 задания
++ниже (CANDIDATES), явно перечисленные, как и в tsk-366 (NE_TABLICA/YAVNYE_STOLBCY).
++
++ЧТО ДЕЛАЕТ
++1. task_content.type -> TBL_COM, task_content.table = {"columns": 1}.
++   Правила проверки (solution_rules) НЕ переписываются: эталон уже лежит в
++   short_answer.accepted_answers, а движок TBL_COM columns=1 читает тот же
++   блок (различие только в разборе ответа на ячейки, см. tsk-383 фикс
++   checking_service._table_cells — целая строка = одна ячейка при >1 строк).
++2. ИСКЛЮЧЕНИЕ (REWRITE, 4 задания): у части заданий несколько запусков
++   склеены в ОДНУ строку без переноса ("Hello, Alice! ... Hello, Bob! ...").
++   Для них solution_rules.short_answer.accepted_answers[0].value переписывается
++   на "\n".join(rows) — граница расставлена вручную по смыслу и проверена
++   реверсивностью: " ".join(rows) обязан посимвольно совпасть с исходным
++   значением (ассерт в скрипте, до записи).
++
++ВЕРИФИКАЦИЯ (два независимых слоя, оба поштучно — не агрегатом, урок tsk-317)
++1. Самосогласованность: эталон (после миграции) прогоняется через настоящий
++   CheckingService и обязан давать is_correct=True; плюс мутации (хвостовые
++   пробелы/пустые строки/регистр) — ради этого миграция и делается.
++2. Историческая регрессия (урок tsk-325/tsk-383 п.4): для КАЖДОГО task_results
++   с этим task_id пересчитывается вердикт под НОВЫМ TBL_COM-правилом и
++   сравнивается со старым (SA_COM) is_correct. Ученик, которого раньше
++   засчитали (is_correct=True), обязан остаться засчитанным.
++
++Запуск: dry-run по умолчанию;
++  python scripts/tsk383_migrate_to_tbl_com.py
++  DBCHECK_OK=1 python scripts/tsk383_migrate_to_tbl_com.py --apply
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import json
++import os
++import sys
++from pathlib import Path
++
++import asyncpg
++
++if sys.platform == "win32":
++    os.system("chcp 65001 >nul 2>&1")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.schemas.checking import StudentAnswer, StudentResponse  # noqa: E402
++from app.schemas.solution_rules import SolutionRules  # noqa: E402
++from app.schemas.task_content import TaskContent  # noqa: E402
++from app.services.checking_service import CheckingService  # noqa: E402
++
++checking = CheckingService()
++
++# ─── Кандидаты (ручной отбор, 2026-08-03) ───────────────────────────────────
++
++# Явные "N раз" / "N значений" мини-тесты с single-token или уже многострочным
++# (с реальным \n в accepted_answers) ответом -- перенос БЕЗ правки value.
++CANDIDATES: list[int] = [
++    # 103 (числа, 1 явный кандидат из 18: остальные -- один запуск/одно значение)
++    67,
++    # 104 (функции)
++    42, 89,
++    # 105 (условные, 1 из 2)
++    306,
++    # 106 (первая программа)
++    111, 113, 115,
++    # 107 (словари)
++    340, 349, 360, 362, 363, 366, 368, 369,
++    # 108 (строки, 3 из 20)
++    146, 147, 148,
++    # 109 (списки, 1 из 5)
++    277,
++    # 110 (циклы). 223 ИСКЛЮЧЕНО: ответ — треугольник из "*", normalization
++    # включает strip_punctuation, который стирает "*" как пунктуацию с ОБЕИХ
++    # сторон сравнения. Это латентный дефект уже у SA_COM (совпадение по
++    # схлопнутой в пустую строку записи), не специфичный для TBL_COM — чинить
++    # отдельной задачей (снять strip_punctuation с этого правила), не здесь.
++    217, 220, 221, 222, 224, 225, 231,
++    # 111 (условные, 20 из 22 -- шахматы/booly/if-elif семейства)
++    171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185,
++    186, 187, 188, 189, 190, 204, 205,
++    # 108 (строки) -- отдельно: только эти явные "N раз"
++    145,
++]
++
++# Несколько запусков склеены в ОДНУ строку без \n -- граница расставлена
++# вручную. Реверсивность (" ".join(rows) == исходное value) проверяется в
++# коде перед записью, а не только на бумаге.
++REWRITE: dict[int, list[str]] = {
++    75: ["Hello, Alice! You are 18 years old.", "Hello, Bob! You are 25 years old."],
++    77: ["Имя студента: Иван", "возраст: 20", "факультет: Информатика"],
++    80: ["Привет, Андрей!", "Привет, Мария!"],
++    94: ["Hello from plugin1", "Hello from plugin2"],
++}
++CANDIDATES = sorted(set(CANDIDATES) | set(REWRITE))
++
++SELECT_TARGETS = """
++SELECT id, course_id, max_score, task_content, solution_rules
++FROM tasks
++WHERE id = ANY($1::int[]) AND is_active
++ORDER BY id
++"""
++
++UPDATE_TASK = """
++UPDATE tasks
++SET task_content = $2::jsonb, solution_rules = $3::jsonb
++WHERE id = $1
++"""
++
++SELECT_HISTORY = """
++SELECT task_id, id AS result_id, answer_json, is_correct
++FROM task_results
++WHERE task_id = ANY($1::int[])
++"""
++
++
++def _dsn() -> str:
++    """Прод-DSN learn: из окружения либо из .mcp.json (как в tsk-366)."""
++    env = os.environ.get("LEARN_PROD_DSN") or os.environ.get("DATABASE_URL", "")
++    dsn = env.replace("postgresql+asyncpg://", "postgresql://")
++    if "5.42.107.253" not in dsn:
++        for candidate in (project_root / ".mcp.json", Path(r"D:\Work\LMS\.mcp.json")):
++            if not candidate.exists():
++                continue
++            cfg = json.loads(candidate.read_text(encoding="utf-8"))
++            servers = cfg.get("mcpServers", cfg)
++            for arg in servers["learn_prod_db"]["args"]:
++                if isinstance(arg, str) and arg.startswith("postgresql://") and "5.42.107.253" in arg:
++                    dsn = arg
++                    break
++    if "5.42.107.253" not in dsn or "/learn" not in dsn:
++        raise RuntimeError("Не нашёл прод-DSN learn (5.42.107.253/learn).")
++    return dsn
++
++
++def _proverit(content: dict, rules: dict, task_type: str, otvet: str) -> bool | None:
++    result = checking.check_task(
++        TaskContent.model_validate(content),
++        SolutionRules.model_validate(rules),
++        StudentAnswer(type=task_type, response=StudentResponse(value=otvet)),
++    )
++    return result.is_correct
++
++
++async def main(apply: bool) -> None:
++    conn = await asyncpg.connect(_dsn())
++    try:
++        async with conn.transaction():
++            rows = await conn.fetch(SELECT_TARGETS, CANDIDATES)
++            print(f"Кандидатов в списке: {len(CANDIDATES)}, найдено активных: {len(rows)}")
++            missing = sorted(set(CANDIDATES) - {int(r["id"]) for r in rows})
++            if missing:
++                raise AssertionError(f"не найдены/не активны: {missing}")
++
++            plan: list[tuple[int, dict, dict, str, dict, dict]] = []
++            for r in rows:
++                task_id = int(r["id"])
++                content = json.loads(r["task_content"])
++                rules = json.loads(r["solution_rules"]) if r["solution_rules"] else {}
++                if not isinstance(rules, dict):
++                    rules = {}
++
++                if content.get("type") != "SA_COM":
++                    raise AssertionError(f"id={task_id}: ожидали SA_COM, а тип {content.get('type')!r}")
++
++                accepted = (rules.get("short_answer") or {}).get("accepted_answers") or []
++                if not accepted or not isinstance(accepted[0], dict) or not accepted[0].get("value"):
++                    raise AssertionError(f"id={task_id}: нет accepted_answers[0].value — не ожидали")
++                old_value = accepted[0]["value"]
++                content_before = json.loads(json.dumps(content))
++                rules_before = json.loads(json.dumps(rules))
++
++                content["type"] = "TBL_COM"
++                content["table"] = {"columns": 1}
++
++                if task_id in REWRITE:
++                    rows_ = REWRITE[task_id]
++                    if " ".join(rows_) != old_value:
++                        raise AssertionError(
++                            f"id={task_id}: реверсивность REWRITE не сходится — "
++                            f"{' '.join(rows_)!r} != {old_value!r}"
++                        )
++                    new_value = "\n".join(rows_)
++                    rules["short_answer"]["accepted_answers"][0]["value"] = new_value
++                    etalon = new_value
++                else:
++                    etalon = old_value
++
++                plan.append((task_id, content, rules, etalon, content_before, rules_before))
++
++            print("\nПримеры перевода:")
++            for task_id, content, _, etalon, _, _ in plan[:5]:
++                print(f"  id={task_id} columns=1 эталон={etalon[:60]!r}")
++
++            # ─── Запись ─────────────────────────────────────────────────────
++            for task_id, content, rules, _, _, _ in plan:
++                await conn.execute(
++                    UPDATE_TASK, task_id,
++                    json.dumps(content, ensure_ascii=False),
++                    json.dumps(rules, ensure_ascii=False),
++                )
++            print(f"\nЗаписано: {len(plan)} заданий переведено в TBL_COM (columns=1).")
++
++            # ─── Верификация 1: самосогласованность (поштучно) ──────────────
++            ids = [p[0] for p in plan]
++            posle = {
++                int(row["id"]): row
++                for row in await conn.fetch(
++                    "SELECT id, task_content, solution_rules FROM tasks WHERE id = ANY($1::int[])",
++                    ids,
++                )
++            }
++
++            oshibki: list[str] = []
++            for task_id, _, _, etalon, _, _ in plan:
++                row = posle[task_id]
++                content = json.loads(row["task_content"])
++                rules = json.loads(row["solution_rules"]) if row["solution_rules"] else {}
++
++                if content.get("type") != "TBL_COM":
++                    oshibki.append(f"id={task_id}: тип не TBL_COM после записи")
++                    continue
++                if (content.get("table") or {}).get("columns") != 1:
++                    oshibki.append(f"id={task_id}: table.columns не 1 после записи")
++                    continue
++
++                if _proverit(content, rules, "TBL_COM", etalon) is not True:
++                    oshibki.append(f"id={task_id}: эталон НЕ засчитывается после перевода")
++                    continue
++
++                мутации = [f"  {etalon}  ", etalon.upper()]
++                if "\n" in etalon:
++                    мутации.append(etalon.replace("\n", "\n\n") + "\n")
++                else:
++                    мутации.append(etalon.replace(" ", "  "))
++                for мутация in мутации:
++                    if _proverit(content, rules, "TBL_COM", мутация) is not True:
++                        oshibki.append(f"id={task_id}: мутация {мутация[:40]!r} не засчитана")
++                        break
++
++            # ─── Верификация 2: историческая регрессия (поштучно) ───────────
++            #
++            # Сверяем НЕ с застывшим task_results.is_correct (он мог быть
++            # вычислен по ПРОШЛОЙ версии solution_rules — правило могли
++            # отредактировать уже после того, как ученика проверили, и тогда
++            # расхождение — дрейф правила, а не эффект миграции). Сверяем с
++            # вердиктом SA_COM «сейчас», на ТЕКУЩЕМ правиле (до перевода в
++            # TBL_COM) — так изолируется именно эффект смены типа.
++            history = await conn.fetch(SELECT_HISTORY, ids)
++            print(f"\nИсторических task_results на выборке: {len(history)}")
++            regressii: list[str] = []
++            проверено_историй = 0
++            content_new_by_id = {tid: c for tid, c, _, _, _, _ in plan}
++            rules_new_by_id = {int(r["id"]): json.loads(posle[int(r["id"])]["solution_rules"]) for r in rows}
++            content_before_by_id = {tid: cb for tid, _, _, _, cb, _ in plan}
++            rules_before_by_id = {tid: rb for tid, _, _, _, _, rb in plan}
++            for h in history:
++                task_id = int(h["task_id"])
++                answer_json = json.loads(h["answer_json"]) if h["answer_json"] else {}
++                response = answer_json.get("response") or {}
++                value = response.get("value")
++                if value is None or not isinstance(value, str) or not value.strip():
++                    continue
++                проверено_историй += 1
++                sa_com_now = _proverit(
++                    content_before_by_id[task_id], rules_before_by_id[task_id], "SA_COM", value
++                )
++                tbl_com_new = _proverit(content_new_by_id[task_id], rules_new_by_id[task_id], "TBL_COM", value)
++                if sa_com_now is True and tbl_com_new is not True:
++                    regressii.append(
++                        f"task_id={task_id} result_id={h['result_id']}: "
++                        f"SA_COM сейчас=True, TBL_COM после перевода={tbl_com_new} "
++                        f"(ответ {value[:60]!r})"
++                    )
++
++            print(f"Историй с непустым value проверено: {проверено_историй}")
++            if regressii:
++                oshibki.extend(regressii[:30])
++
++            if oshibki:
++                for e in oshibki[:40]:
++                    print(f"  ОШИБКА: {e}")
++                raise AssertionError(f"верификация не пройдена: {len(oshibki)} проблем")
++
++            print(f"OK: проверено поштучно {len(plan)} заданий + {проверено_историй} исторических "
++                  f"ответов, регрессий нет.")
++
++            if not apply:
++                raise RuntimeError("DRY-RUN: откатываю (запусти с --apply при DBCHECK_OK=1)")
++        print("\nЗАПИСАНО И ЗАКОММИЧЕНО.")
++    finally:
++        await conn.close()
++
++
++if __name__ == "__main__":
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--apply", action="store_true")
++    args = ap.parse_args()
++    try:
++        asyncio.run(main(args.apply))
++    except RuntimeError as exc:
++        print(f"\n{exc}")
++        sys.exit(0 if "DRY-RUN" in str(exc) else 1)
+diff --git a/tests/test_checking_table_tbl_com_tsk366.py b/tests/test_checking_table_tbl_com_tsk366.py
+index 80d7a28..af9a1f7 100644
+--- a/tests/test_checking_table_tbl_com_tsk366.py
++++ b/tests/test_checking_table_tbl_com_tsk366.py
+@@ -361,3 +361,84 @@ def test_схема_подписи_столбцов_валидны_при_сов
+     })
+     assert content.table is not None
+     assert content.table.column_titles == ["число", "частное"]
++
++
++# ─── 5. tsk-383: columns=1 сохраняет фразу-в-строке ──────────────────────────
++#
++# Мини-тесты Python «Запустите программу N раз... вывод каждого запуска с
++# новой строки» — каждый запуск может выводить ФРАЗУ («Первое число больше»),
++# а не одно слово. columns=1 обязан различать границу МЕЖДУ запусками (перевод
++# строки) от пробела ВНУТРИ фразы одного запуска.
++
++
++def _tbl1(columns: int | None = 1) -> TaskContent:
++    return _content("TBL_COM", columns=columns)
++
++
++def test_многострочный_ответ_с_фразами_columns_1_не_дробится_по_словам():
++    эталон = "Первое число больше\nВторое число больше\nЧисла равны"
++    rules = _rules([эталон])
++    result = _check(эталон, rules, content=_tbl1())
++    assert result.is_correct is True
++
++
++def test_фраза_в_строке_неверный_порядок_отклоняется():
++    эталон = "Первое число больше\nВторое число больше\nЧисла равны"
++    rules = _rules([эталон])
++    испорченный = "Второе число больше\nПервое число больше\nЧисла равны"
++    assert _check(испорченный, rules, content=_tbl1()).is_correct is False
++
++
++def test_фраза_в_строке_неверное_значение_отклоняется():
++    эталон = "Первое число больше\nВторое число больше\nЧисла равны"
++    rules = _rules([эталон])
++    испорченный = "Первое число больше\nВторое число больше\nЧисла НЕ равны"
++    assert _check(испорченный, rules, content=_tbl1()).is_correct is False
++
++
++def test_фраза_в_строке_хвостовые_пробелы_и_пустые_строки_не_мешают():
++    эталон = "Первое число больше\nВторое число больше\nЧисла равны"
++    rules = _rules([эталон])
++    мутация = "  Первое число больше  \n\nВторое число больше\nЧисла равны\n"
++    assert _check(мутация, rules, content=_tbl1()).is_correct is True
++
++
++def test_однострочный_ответ_columns_1_режется_по_прежнему_по_словам():
++    """Обратная совместимость: 200+ уже мигрированных tsk-366 заданий с
++    columns=1 хранят ответ ОДНОЙ строкой через пробел (без \\n) — эта ветка
++    не должна была сдвинуться ни на шаг."""
++    эталон = "True False True False True"
++    rules = _rules([эталон])
++    for mutated in (
++        эталон,
++        эталон.replace(" ", "  "),
++        f"  {эталон}  ",
++    ):
++        assert _check(mutated, rules, content=_tbl1()).is_correct is True
++
++
++def test_однострочный_ответ_columns_1_с_переводом_строки_тоже_режется_по_словам():
++    """Один запуск, одна строка вывода из нескольких токенов (например,
++    результат одного print с несколькими числами) — перевод строки в конце
++    ответа не должен переключать в фразовый режим (после trim остаётся ОДНА
++    строка)."""
++    эталон = "True False True False True"
++    rules = _rules([эталон])
++    assert _check(f"{эталон}\n", rules, content=_tbl1()).is_correct is True
++
++
++def test_много_строк_но_каждая_один_токен_работает_как_раньше():
++    """Числа/слова без внутренних пробелов — фразовый режим просто выдаёт те
++    же ячейки, что и старый пословный разбор."""
++    эталон = "1\n12\n123\n1234"
++    rules = _rules([эталон])
++    assert _check("1 12 123 1234", rules, content=_tbl1()).is_correct is True
++    assert _check(эталон, rules, content=_tbl1()).is_correct is True
++
++
++def test_фразовый_режим_не_влияет_на_columns_больше_1():
++    """Регрессия: columns>1 (существующие таблицы ЕГЭ №25/26) продолжают резать
++    ЛЮБОЙ пробельный символ как границу ячейки, перевод строки в фразовом
++    режиме не участвует."""
++    rules = _rules(["10 2786\n12 3140"])
++    assert _check("10\n2786\n12\n3140", rules, content=_content(columns=2)).is_correct is True
