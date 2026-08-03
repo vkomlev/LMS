@@ -1,0 +1,926 @@
+[
+ {
+  "id": 5831,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-eho#q2",
+  "course_id": 927,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 5832,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-molchit-chinim#q1",
+  "course_id": 928,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 5839,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-zapominaet#q2",
+  "course_id": 935,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6153,
+  "external_uid": "authored:chat-boty-tg-vk-max:pervyy-bot-botfather\r#q2",
+  "course_id": 918,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6155,
+  "external_uid": "authored:chat-boty-tg-vk-max:stavim-telebot\r#q2",
+  "course_id": 924,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6157,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-zdorovaetsya\r#q2",
+  "course_id": 924,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6159,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-eho\r#q2",
+  "course_id": 924,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6160,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-molchit-chinim\r#q1",
+  "course_id": 924,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6162,
+  "external_uid": "authored:chat-boty-tg-vk-max:pervyy-bot-botfather#q2",
+  "course_id": 921,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6164,
+  "external_uid": "authored:chat-boty-tg-vk-max:knopki-snizu-reply\r#q2",
+  "course_id": 929,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6166,
+  "external_uid": "authored:chat-boty-tg-vk-max:knopki-inline\r#q2",
+  "course_id": 929,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6167,
+  "external_uid": "authored:chat-boty-tg-vk-max:stavim-telebot#q2",
+  "course_id": 925,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6169,
+  "external_uid": "authored:chat-boty-tg-vk-max:sluchaynoe-chislo\r#q2",
+  "course_id": 933,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6170,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-zdorovaetsya#q2",
+  "course_id": 926,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6172,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-zapominaet\r#q2",
+  "course_id": 933,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6173,
+  "external_uid": "authored:chat-boty-tg-vk-max:pridumay-svoego-bota#q2",
+  "course_id": 961,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6175,
+  "external_uid": "authored:chat-boty-tg-vk-max:hranim-voprosy\r#q2",
+  "course_id": 937,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6177,
+  "external_uid": "authored:chat-boty-tg-vk-max:proveryaem-otvet\r#q2",
+  "course_id": 937,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6178,
+  "external_uid": "authored:chat-boty-tg-vk-max:soberi-i-prover#q2",
+  "course_id": 962,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6179,
+  "external_uid": "authored:chat-boty-tg-vk-max:vylozhi-na-github#q2",
+  "course_id": 963,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6181,
+  "external_uid": "authored:chat-boty-tg-vk-max:sohranyaem-v-fayl\r#q2",
+  "course_id": 941,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6183,
+  "external_uid": "authored:chat-boty-tg-vk-max:znakomstvo-s-sqlite\r#q2",
+  "course_id": 941,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6184,
+  "external_uid": "authored:chat-boty-tg-vk-max:knopki-snizu-reply#q2",
+  "course_id": 930,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6186,
+  "external_uid": "authored:chat-boty-tg-vk-max:chto-takoe-api\r#q2",
+  "course_id": 945,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6187,
+  "external_uid": "authored:chat-boty-tg-vk-max:knopki-inline#q2",
+  "course_id": 931,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6189,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-pogoda-knopki\r#q2",
+  "course_id": 945,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6190,
+  "external_uid": "authored:chat-boty-tg-vk-max:sobiraem-bot-menyu#q2",
+  "course_id": 932,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6192,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-pishet-pervym\r#q2",
+  "course_id": 949,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6194,
+  "external_uid": "authored:chat-boty-tg-vk-max:cherez-skolko-i-o-chyom\r#q2",
+  "course_id": 949,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6195,
+  "external_uid": "authored:chat-boty-tg-vk-max:sluchaynoe-chislo#q2",
+  "course_id": 934,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6197,
+  "external_uid": "authored:chat-boty-tg-vk-max:vk-soobshchestvo-token\r#q2",
+  "course_id": 953,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6198,
+  "external_uid": "authored:chat-boty-tg-vk-max:sobiraem-ugadayku#q2",
+  "course_id": 936,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6200,
+  "external_uid": "authored:chat-boty-tg-vk-max:vk-eho-bot\r#q2",
+  "course_id": 953,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6201,
+  "external_uid": "authored:chat-boty-tg-vk-max:hranim-voprosy#q2",
+  "course_id": 938,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6203,
+  "external_uid": "authored:chat-boty-tg-vk-max:max-zavodim-bota\r#q2",
+  "course_id": 957,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6205,
+  "external_uid": "authored:chat-boty-tg-vk-max:pridumay-svoego-bota\r#q2",
+  "course_id": 960,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6206,
+  "external_uid": "authored:chat-boty-tg-vk-max:proveryaem-otvet#q2",
+  "course_id": 939,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6207,
+  "external_uid": "authored:chat-boty-tg-vk-max:sobiraem-bot-kviz#q2",
+  "course_id": 940,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6208,
+  "external_uid": "authored:chat-boty-tg-vk-max:sohranyaem-v-fayl#q2",
+  "course_id": 942,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6209,
+  "external_uid": "authored:chat-boty-tg-vk-max:sobiraem-bot-pamyatku#q2",
+  "course_id": 943,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6210,
+  "external_uid": "authored:chat-boty-tg-vk-max:znakomstvo-s-sqlite#q2",
+  "course_id": 944,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6211,
+  "external_uid": "authored:chat-boty-tg-vk-max:chto-takoe-api#q2",
+  "course_id": 946,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6212,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-pogoda-knopki#q2",
+  "course_id": 947,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6213,
+  "external_uid": "authored:chat-boty-tg-vk-max:chto-esli-interneta-net#q2",
+  "course_id": 948,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6214,
+  "external_uid": "authored:chat-boty-tg-vk-max:bot-pishet-pervym#q2",
+  "course_id": 950,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6215,
+  "external_uid": "authored:chat-boty-tg-vk-max:cherez-skolko-i-o-chyom#q2",
+  "course_id": 951,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6216,
+  "external_uid": "authored:chat-boty-tg-vk-max:sobiraem-napominalku#q2",
+  "course_id": 952,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6217,
+  "external_uid": "authored:chat-boty-tg-vk-max:vk-soobshchestvo-token#q2",
+  "course_id": 954,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6218,
+  "external_uid": "authored:chat-boty-tg-vk-max:vk-eho-bot#q2",
+  "course_id": 955,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6219,
+  "external_uid": "authored:chat-boty-tg-vk-max:vk-perenosim-logiku#q2",
+  "course_id": 956,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 6220,
+  "external_uid": "authored:chat-boty-tg-vk-max:max-zavodim-bota#q2",
+  "course_id": 958,
+  "type": "SA",
+  "requires_attachment": true
+ },
+ {
+  "id": 6221,
+  "external_uid": "authored:chat-boty-tg-vk-max:max-eho-bot#q2",
+  "course_id": 959,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7152,
+  "external_uid": "sdamgia:oge:13:10593",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7177,
+  "external_uid": "sdamgia:oge:13:10581",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7178,
+  "external_uid": "sdamgia:oge:13:10582",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7179,
+  "external_uid": "sdamgia:oge:13:10583",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7180,
+  "external_uid": "sdamgia:oge:13:10584",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7181,
+  "external_uid": "sdamgia:oge:13:10585",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7182,
+  "external_uid": "sdamgia:oge:13:10586",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7183,
+  "external_uid": "sdamgia:oge:13:10587",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7184,
+  "external_uid": "sdamgia:oge:13:10588",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7185,
+  "external_uid": "sdamgia:oge:13:10589",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7186,
+  "external_uid": "sdamgia:oge:13:10590",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7187,
+  "external_uid": "sdamgia:oge:13:10591",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7188,
+  "external_uid": "sdamgia:oge:13:10592",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7189,
+  "external_uid": "sdamgia:oge:13:10594",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7190,
+  "external_uid": "sdamgia:oge:13:10595",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7191,
+  "external_uid": "sdamgia:oge:13:11076",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7192,
+  "external_uid": "sdamgia:oge:13:11077",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7193,
+  "external_uid": "sdamgia:oge:13:11078",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7194,
+  "external_uid": "sdamgia:oge:13:11079",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7195,
+  "external_uid": "sdamgia:oge:13:11239",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7196,
+  "external_uid": "sdamgia:oge:13:11241",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7197,
+  "external_uid": "sdamgia:oge:13:11244",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7198,
+  "external_uid": "sdamgia:oge:13:11248",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7199,
+  "external_uid": "sdamgia:oge:13:11250",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7200,
+  "external_uid": "sdamgia:oge:13:11252",
+  "course_id": 1178,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7201,
+  "external_uid": "sdamgia:oge:15:37703",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7202,
+  "external_uid": "sdamgia:oge:15:37704",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7203,
+  "external_uid": "sdamgia:oge:15:37705",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7204,
+  "external_uid": "sdamgia:oge:15:37706",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7205,
+  "external_uid": "sdamgia:oge:15:37707",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7206,
+  "external_uid": "sdamgia:oge:15:37708",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7207,
+  "external_uid": "sdamgia:oge:15:37709",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7208,
+  "external_uid": "sdamgia:oge:15:37710",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7209,
+  "external_uid": "sdamgia:oge:15:37711",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7210,
+  "external_uid": "sdamgia:oge:15:37712",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7211,
+  "external_uid": "sdamgia:oge:15:37713",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7212,
+  "external_uid": "sdamgia:oge:15:37714",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7213,
+  "external_uid": "sdamgia:oge:15:37715",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7214,
+  "external_uid": "sdamgia:oge:15:37716",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7215,
+  "external_uid": "sdamgia:oge:15:37717",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7216,
+  "external_uid": "sdamgia:oge:15:37718",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7217,
+  "external_uid": "sdamgia:oge:15:37719",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7218,
+  "external_uid": "sdamgia:oge:15:37720",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7219,
+  "external_uid": "sdamgia:oge:15:37721",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7220,
+  "external_uid": "sdamgia:oge:15:37722",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7221,
+  "external_uid": "sdamgia:oge:15:37723",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7222,
+  "external_uid": "sdamgia:oge:15:37724",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7223,
+  "external_uid": "sdamgia:oge:15:37725",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7224,
+  "external_uid": "sdamgia:oge:15:37726",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7225,
+  "external_uid": "sdamgia:oge:15:37727",
+  "course_id": 1180,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7226,
+  "external_uid": "sdamgia:oge:16:37830",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7227,
+  "external_uid": "sdamgia:oge:16:37831",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7228,
+  "external_uid": "sdamgia:oge:16:37832",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7229,
+  "external_uid": "sdamgia:oge:16:37833",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7230,
+  "external_uid": "sdamgia:oge:16:37834",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7231,
+  "external_uid": "sdamgia:oge:16:37835",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7232,
+  "external_uid": "sdamgia:oge:16:37836",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7233,
+  "external_uid": "sdamgia:oge:16:37837",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7234,
+  "external_uid": "sdamgia:oge:16:37838",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7235,
+  "external_uid": "sdamgia:oge:16:37839",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7236,
+  "external_uid": "sdamgia:oge:16:37840",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7237,
+  "external_uid": "sdamgia:oge:16:37841",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7238,
+  "external_uid": "sdamgia:oge:16:37842",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7239,
+  "external_uid": "sdamgia:oge:16:37844",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7240,
+  "external_uid": "sdamgia:oge:16:37845",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7241,
+  "external_uid": "sdamgia:oge:16:37846",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7242,
+  "external_uid": "sdamgia:oge:16:37847",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7243,
+  "external_uid": "sdamgia:oge:16:37848",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7244,
+  "external_uid": "sdamgia:oge:16:37849",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7245,
+  "external_uid": "sdamgia:oge:16:37850",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7246,
+  "external_uid": "sdamgia:oge:16:37861",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7247,
+  "external_uid": "sdamgia:oge:16:37868",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7248,
+  "external_uid": "sdamgia:oge:16:37869",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7249,
+  "external_uid": "sdamgia:oge:16:37872",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7250,
+  "external_uid": "sdamgia:oge:16:37878",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7251,
+  "external_uid": "sdamgia:oge:16:37879",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7252,
+  "external_uid": "sdamgia:oge:16:37897",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7253,
+  "external_uid": "sdamgia:oge:16:37898",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7254,
+  "external_uid": "sdamgia:oge:16:37905",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ },
+ {
+  "id": 7255,
+  "external_uid": "sdamgia:oge:16:42063",
+  "course_id": 1181,
+  "type": "SA",
+  "requires_attachment": false
+ }
+]
