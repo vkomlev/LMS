@@ -65,6 +65,9 @@ CONFLICT_MOVES = [
     ("student_task_progress", "student_id", ["task_id"]),
     ("lesson_slot_student", "student_id", ["slot_id"]),
     ("lesson_occurrence_participant", "student_id", ["occurrence_id"]),
+    # tsk-548: ручная цена — договорённость с человеком, а не свойство строки в
+    # таблице. Не переехав, она молча превратилась бы в тариф по прайсу.
+    ("student_price_override", "student_id", ["group_id"]),
 ]
 
 # Не переносится — удаляется у source (форсированный логаут деактивируемой учётки).
@@ -132,6 +135,33 @@ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
             text(f"DELETE FROM {table} WHERE {column} = :source"),
             {"source": source_id},
         )
+
+    # tsk-548: начисления. Расписание уже переехало к target, поэтому суммы
+    # source посчитаны по расписанию, которого у него больше нет — переносить
+    # их значило бы принести чужую цифру. Открытые месяцы source убираем и
+    # пересчитываем target заново; закрытые не трогаем — это история, и по ним
+    # человеку уже называли сумму.
+    #
+    # Платежей у source здесь заведомо нет: слияние с деньгами останавливается
+    # выше и уходит на ручной разбор.
+    await db.execute(
+        text(
+            "DELETE FROM charge_adjustment a WHERE a.student_id = :source "
+            "  AND EXISTS (SELECT 1 FROM student_monthly_charge ch "
+            "               WHERE ch.student_id = a.student_id "
+            "                 AND ch.group_id = a.group_id "
+            "                 AND ch.period = a.period "
+            "                 AND ch.status = 'open')"
+        ),
+        {"source": source_id},
+    )
+    await db.execute(
+        text(
+            "DELETE FROM student_monthly_charge "
+            " WHERE student_id = :source AND status = 'open'"
+        ),
+        {"source": source_id},
+    )
 
     # Карточные поля: почта и ФИО переезжают, если у target их нет (tsk-433,
     # 2026-07-30). Раньше слияние переносило только связанные строки, а
@@ -240,6 +270,14 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
         await apply_merge(db, source_id, target_id)
         await db.flush()
         await verify_merge(db, source_id, target_id)
+
+    # tsk-548: расписание переехало — значит сумма месяца у target изменилась.
+    # Без этого шага живая учётка остаётся вообще без начисления (на проде так
+    # и вышло: у слитого «Лазаря» висели 5 500 ₽, а у настоящего ученика с
+    # двумя занятиями в неделю долга не было вовсе).
+    from app.services import charge_service
+
+    await charge_service.recalculate_open_months_for_student(db, student_id=target_id)
     return True
 
 

@@ -425,6 +425,24 @@ async def _detach_student_from_slot(
     return row
 
 
+async def _recalculate_money_for(db: AsyncSession, *student_ids: int) -> None:
+    """Пересчитать открытые начисления учеников после смены расписания.
+
+    tsk-548: сумма месяца считается по ПОСТОЯННОМУ расписанию, но пересчёт
+    никто не звал при его изменении — только при смене тарифа, ручной цены и
+    перерыва. На проде это дало три завышенных счёта: ученик перешёл с двух
+    занятий в неделю на одно, а сумма осталась прежней. Деньги, названные
+    человеку неверно, дороже лишнего запроса.
+
+    Импорт локальный: `charge_service` тянет за собой прайс, а расписание
+    грузится раньше него.
+    """
+    from app.services import charge_service
+
+    for student_id in dict.fromkeys(student_ids):
+        await charge_service.recalculate_open_months_for_student(db, student_id=student_id)
+
+
 async def add_slot_participant(
     db: AsyncSession, slot_id: int, student_id: int, *, added_by: Optional[int]
 ) -> LessonSlotStudent:
@@ -432,6 +450,7 @@ async def add_slot_participant(
     await get_lesson_slot(db, slot_id)
     row = await _attach_student_to_slot(db, slot_id, student_id, added_by=added_by)
     await db.commit()
+    await _recalculate_money_for(db, student_id)
     await db.refresh(row)
     return row
 
@@ -441,6 +460,7 @@ async def remove_slot_participant(db: AsyncSession, slot_id: int, student_id: in
     await get_lesson_slot(db, slot_id)
     await _detach_student_from_slot(db, slot_id, student_id)
     await db.commit()
+    await _recalculate_money_for(db, student_id)
 
 
 async def transfer_slot_participant(
