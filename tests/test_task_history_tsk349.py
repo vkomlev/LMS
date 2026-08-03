@@ -110,8 +110,10 @@ async def hgraph(db):
             await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
         ).scalar()
 
-        async def new_task(course_id: int, uid: str, rules: dict) -> int:
-            content = {"type": "SA_COM", "stem": f"{_TAG} условие задания", "title": f"{_TAG} задание"}
+        async def new_task(course_id: int, uid: str, rules: dict, content: dict | None = None) -> int:
+            content = content or {
+                "type": "SA_COM", "stem": f"{_TAG} условие задания", "title": f"{_TAG} задание",
+            }
             return (
                 await db.execute(
                     text(
@@ -144,6 +146,21 @@ async def hgraph(db):
             },
         )
         ids["task_foreign"] = await new_task(ids["foreign"], "foreign", {"max_score": 10})
+        # MC с одним неактивным вариантом — options ученику/учителю должны прийти текстом (tsk-543).
+        ids["task_mc"] = await new_task(
+            ids["root"], "mc",
+            {"max_score": 10, "correct_options": ["A"]},
+            content={
+                "type": "MC",
+                "stem": f"{_TAG} MC условие",
+                "title": f"{_TAG} MC задание",
+                "options": [
+                    {"id": "A", "text": f"{_TAG} вариант A", "is_active": True},
+                    {"id": "B", "text": f"{_TAG} вариант B", "is_active": True},
+                    {"id": "C", "text": f"{_TAG} скрытый вариант", "is_active": False},
+                ],
+            },
+        )
 
         student1, tok_s1 = await _new_user(db, "student", "stud1")
         student2, tok_s2 = await _new_user(db, "student", "stud2")
@@ -225,7 +242,7 @@ async def hgraph(db):
     finally:
         await db.rollback()
         user_ids = [ids.get(k) for k in ("student1", "student2", "teacher", "other", "methodist") if k in ids]
-        task_ids = [ids[k] for k in ("task_sa", "task_foreign") if k in ids]
+        task_ids = [ids[k] for k in ("task_sa", "task_foreign", "task_mc") if k in ids]
         course_ids = [ids[k] for k in ("root", "foreign") if k in ids]
         if user_ids:
             await db.execute(
@@ -288,6 +305,8 @@ async def test_teacher_sees_full_history_and_solution(hgraph, client):
 
     # Условие задания.
     assert body["task"]["stem"] == f"{_TAG} условие задания"
+    # SA_COM без вариантов ответа — options не собираются вовсе (tsk-543).
+    assert body["task"]["options"] is None
 
     # Эталон — учителю виден.
     assert body["solution"] is not None
@@ -368,6 +387,37 @@ async def test_student_cannot_read_task_outside_courses(hgraph, client):
 
 
 # ─── Сервис: структурное разграничение видимости эталона ────────────────────
+
+
+async def test_teacher_sees_mc_option_text(hgraph, client):
+    """MC: карточка отдаёт текст вариантов, не только ID — активные, без скрытого (tsk-543)."""
+    ids = hgraph["ids"]
+    resp = await client.get(
+        _teacher_url(ids, task_key="task_mc"),
+        headers={"Authorization": f"Bearer {hgraph['tokens']['teacher']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    options = resp.json()["task"]["options"]
+    assert options == [
+        {"id": "A", "text": f"{_TAG} вариант A"},
+        {"id": "B", "text": f"{_TAG} вариант B"},
+    ]
+
+
+async def test_student_sees_mc_option_text_without_solution(hgraph, client):
+    """Ученик тоже получает текст вариантов (без solution) — расшифровка своего выбора (tsk-543)."""
+    ids = hgraph["ids"]
+    resp = await client.get(
+        f"/api/v1/me/tasks/{ids['task_mc']}/history",
+        headers={"Authorization": f"Bearer {hgraph['tokens']['student1']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["task"]["options"] == [
+        {"id": "A", "text": f"{_TAG} вариант A"},
+        {"id": "B", "text": f"{_TAG} вариант B"},
+    ]
+    assert body["solution"] is None
 
 
 async def test_service_gates_solution_by_flag(hgraph):

@@ -1,0 +1,168 @@
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+index 9d6198d..79398b5 100644
+--- a/app/schemas/task_history.py
++++ b/app/schemas/task_history.py
+@@ -88,6 +88,13 @@ class TaskHistoryHints(BaseModel):
+     video: int
+ 
+ 
++class TaskHistoryOption(BaseModel):
++    """Один вариант ответа SC/MC — только то, что видит ученик (без ``explanation``)."""
++
++    id: str
++    text: str
++
++
+ class TaskHistoryTaskInfo(BaseModel):
+     """Мета-информация о задании (не содержит правила проверки/эталона)."""
+ 
+@@ -106,6 +113,15 @@ class TaskHistoryTaskInfo(BaseModel):
+             "Нужно для рендера ответа/эталона таблицей, а не строкой (tsk-366)."
+         ),
+     )
++    options: Optional[List[TaskHistoryOption]] = Field(
++        default=None,
++        description=(
++            "SC/MC: активные варианты ответа {id, text} из task_content.options — "
++            "чтобы расшифровать выбор ученика/эталон текстом, а не голым ID. "
++            "Без explanation (это уже почти answer leak на ученической ветке). "
++            "None для остальных типов заданий."
++        ),
++    )
+ 
+ 
+ class TaskHistoryAcceptedAnswer(BaseModel):
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index ea506e0..6c8efad 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -67,6 +67,26 @@ def _table_columns(task_content: Any) -> Optional[int]:
+     return int(cols) if isinstance(cols, int) else None
+ 
+ 
++def _task_options(task_content: Any, task_type: Optional[str]) -> Optional[List[Dict[str, Any]]]:
++    """Варианты ответа {id, text} для SC/MC — расшифровать ID в карточке истории.
++
++    Только активные (``is_active``, паттерн ``embed_api.py``), без ``explanation``
++    (эталонная подсказка методиста — почти answer leak на ученической ветке).
++    """
++    if task_type not in ("SC", "MC"):
++        return None
++    if not isinstance(task_content, dict):
++        return None
++    options = task_content.get("options")
++    if not isinstance(options, list):
++        return None
++    return [
++        {"id": opt.get("id"), "text": opt.get("text")}
++        for opt in options
++        if isinstance(opt, dict) and opt.get("is_active", True)
++    ]
++
++
+ async def _load_task_meta(db: AsyncSession, task_id: int) -> Optional[Dict[str, Any]]:
+     """Мета задания + курс + сырые solution_rules (для ветки эталона). None — нет задания."""
+     row = (
+@@ -258,6 +278,7 @@ async def build_task_history(
+             "course_id": task_meta.get("course_id"),
+             "course_title": task_meta.get("course_title"),
+             "table_columns": _table_columns(task_content),
++            "options": _task_options(task_content, task_type),
+         },
+         "attempts": attempts,
+         "help_requests": help_requests,
+diff --git a/tests/test_task_history_tsk349.py b/tests/test_task_history_tsk349.py
+index 7361d49..feb2206 100644
+--- a/tests/test_task_history_tsk349.py
++++ b/tests/test_task_history_tsk349.py
+@@ -110,8 +110,10 @@ async def hgraph(db):
+             await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
+         ).scalar()
+ 
+-        async def new_task(course_id: int, uid: str, rules: dict) -> int:
+-            content = {"type": "SA_COM", "stem": f"{_TAG} условие задания", "title": f"{_TAG} задание"}
++        async def new_task(course_id: int, uid: str, rules: dict, content: dict | None = None) -> int:
++            content = content or {
++                "type": "SA_COM", "stem": f"{_TAG} условие задания", "title": f"{_TAG} задание",
++            }
+             return (
+                 await db.execute(
+                     text(
+@@ -144,6 +146,21 @@ async def hgraph(db):
+             },
+         )
+         ids["task_foreign"] = await new_task(ids["foreign"], "foreign", {"max_score": 10})
++        # MC с одним неактивным вариантом — options ученику/учителю должны прийти текстом (tsk-543).
++        ids["task_mc"] = await new_task(
++            ids["root"], "mc",
++            {"max_score": 10, "correct_options": ["A"]},
++            content={
++                "type": "MC",
++                "stem": f"{_TAG} MC условие",
++                "title": f"{_TAG} MC задание",
++                "options": [
++                    {"id": "A", "text": f"{_TAG} вариант A", "is_active": True},
++                    {"id": "B", "text": f"{_TAG} вариант B", "is_active": True},
++                    {"id": "C", "text": f"{_TAG} скрытый вариант", "is_active": False},
++                ],
++            },
++        )
+ 
+         student1, tok_s1 = await _new_user(db, "student", "stud1")
+         student2, tok_s2 = await _new_user(db, "student", "stud2")
+@@ -225,7 +242,7 @@ async def hgraph(db):
+     finally:
+         await db.rollback()
+         user_ids = [ids.get(k) for k in ("student1", "student2", "teacher", "other", "methodist") if k in ids]
+-        task_ids = [ids[k] for k in ("task_sa", "task_foreign") if k in ids]
++        task_ids = [ids[k] for k in ("task_sa", "task_foreign", "task_mc") if k in ids]
+         course_ids = [ids[k] for k in ("root", "foreign") if k in ids]
+         if user_ids:
+             await db.execute(
+@@ -288,6 +305,8 @@ async def test_teacher_sees_full_history_and_solution(hgraph, client):
+ 
+     # Условие задания.
+     assert body["task"]["stem"] == f"{_TAG} условие задания"
++    # SA_COM без вариантов ответа — options не собираются вовсе (tsk-543).
++    assert body["task"]["options"] is None
+ 
+     # Эталон — учителю виден.
+     assert body["solution"] is not None
+@@ -370,6 +389,37 @@ async def test_student_cannot_read_task_outside_courses(hgraph, client):
+ # ─── Сервис: структурное разграничение видимости эталона ────────────────────
+ 
+ 
++async def test_teacher_sees_mc_option_text(hgraph, client):
++    """MC: карточка отдаёт текст вариантов, не только ID — активные, без скрытого (tsk-543)."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        _teacher_url(ids, task_key="task_mc"),
++        headers={"Authorization": f"Bearer {hgraph['tokens']['teacher']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    options = resp.json()["task"]["options"]
++    assert options == [
++        {"id": "A", "text": f"{_TAG} вариант A"},
++        {"id": "B", "text": f"{_TAG} вариант B"},
++    ]
++
++
++async def test_student_sees_mc_option_text_without_solution(hgraph, client):
++    """Ученик тоже получает текст вариантов (без solution) — расшифровка своего выбора (tsk-543)."""
++    ids = hgraph["ids"]
++    resp = await client.get(
++        f"/api/v1/me/tasks/{ids['task_mc']}/history",
++        headers={"Authorization": f"Bearer {hgraph['tokens']['student1']}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["task"]["options"] == [
++        {"id": "A", "text": f"{_TAG} вариант A"},
++        {"id": "B", "text": f"{_TAG} вариант B"},
++    ]
++    assert body["solution"] is None
++
++
+ async def test_service_gates_solution_by_flag(hgraph):
+     """build_task_history собирает solution ТОЛЬКО при include_solution=True."""
+     ids, db = hgraph["ids"], hgraph["db"]

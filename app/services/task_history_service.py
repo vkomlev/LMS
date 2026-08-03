@@ -67,6 +67,26 @@ def _table_columns(task_content: Any) -> Optional[int]:
     return int(cols) if isinstance(cols, int) else None
 
 
+def _task_options(task_content: Any, task_type: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    """Варианты ответа {id, text} для SC/MC — расшифровать ID в карточке истории.
+
+    Только активные (``is_active``, паттерн ``embed_api.py``), без ``explanation``
+    (эталонная подсказка методиста — почти answer leak на ученической ветке).
+    """
+    if task_type not in ("SC", "MC"):
+        return None
+    if not isinstance(task_content, dict):
+        return None
+    options = task_content.get("options")
+    if not isinstance(options, list):
+        return None
+    return [
+        {"id": opt.get("id"), "text": opt.get("text")}
+        for opt in options
+        if isinstance(opt, dict) and opt.get("is_active", True)
+    ]
+
+
 async def _load_task_meta(db: AsyncSession, task_id: int) -> Optional[Dict[str, Any]]:
     """Мета задания + курс + сырые solution_rules (для ветки эталона). None — нет задания."""
     row = (
@@ -258,6 +278,7 @@ async def build_task_history(
             "course_id": task_meta.get("course_id"),
             "course_title": task_meta.get("course_title"),
             "table_columns": _table_columns(task_content),
+            "options": _task_options(task_content, task_type),
         },
         "attempts": attempts,
         "help_requests": help_requests,

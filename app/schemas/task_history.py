@@ -88,6 +88,13 @@ class TaskHistoryHints(BaseModel):
     video: int
 
 
+class TaskHistoryOption(BaseModel):
+    """Один вариант ответа SC/MC — только то, что видит ученик (без ``explanation``)."""
+
+    id: str
+    text: str
+
+
 class TaskHistoryTaskInfo(BaseModel):
     """Мета-информация о задании (не содержит правила проверки/эталона)."""
 
@@ -104,6 +111,15 @@ class TaskHistoryTaskInfo(BaseModel):
         description=(
             "TBL_COM: число столбцов таблицы ответа (из task_content.table.columns). "
             "Нужно для рендера ответа/эталона таблицей, а не строкой (tsk-366)."
+        ),
+    )
+    options: Optional[List[TaskHistoryOption]] = Field(
+        default=None,
+        description=(
+            "SC/MC: активные варианты ответа {id, text} из task_content.options — "
+            "чтобы расшифровать выбор ученика/эталон текстом, а не голым ID. "
+            "Без explanation (это уже почти answer leak на ученической ветке). "
+            "None для остальных типов заданий."
         ),
     )
 
