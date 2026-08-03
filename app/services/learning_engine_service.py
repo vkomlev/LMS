@@ -881,6 +881,20 @@ class LearningEngineService:
             db, after_material_id=after_material_id, after_task_id=after_task_id
         )
 
+        # tsk-545: цикл ниже пересчитывает student_course_state только для
+        # зависимостей КОРНЯ (course_dependencies.course_id = current_root_id).
+        # Если пройденный узел сам выступает required_course_id для другой
+        # ПОДКУРСОВОЙ зависимости (обе стороны не корень — тот же класс, что
+        # tsk-541), синхронного пересчёта не было вовсе: кеш обновлял только
+        # фоновый тик раз в 15 минут. Освежаем кеш узла здесь же, сразу после
+        # того, как студент его прошёл.
+        if located is not None:
+            node_course_id = located[0]
+            if await self._deps_repo.is_required_elsewhere(db, node_course_id):
+                await self.compute_course_state(
+                    db, student_id, node_course_id, update_state_table=True
+                )
+
         for uc in active:
             current_root_id = uc.course_id
 

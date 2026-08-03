@@ -35,6 +35,22 @@ class CourseDependenciesRepository:
         res = await db.execute(stmt)
         return res.scalars().all()
 
+    async def is_required_elsewhere(
+        self, db: AsyncSession, course_id: int
+    ) -> bool:
+        """
+        Выступает ли course_id обязательным условием (required_course_id)
+        хотя бы для одной другой зависимости — независимо от глубины: и
+        course_id, и зависимый курс могут быть подкурсами, не только корнями.
+        """
+        stmt = (
+            select(t_course_dependencies.c.course_id)
+            .where(t_course_dependencies.c.required_course_id == course_id)
+            .limit(1)
+        )
+        res = await db.execute(stmt)
+        return res.first() is not None
+
     async def add_dependency(
         self, db: AsyncSession, course_id: int, required_course_id: int
     ) -> None:
