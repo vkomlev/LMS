@@ -702,8 +702,11 @@ class CheckingService:
 
         rules: Optional[ShortAnswerRules] = solution_rules.short_answer
 
-        if not rules or (not rules.accepted_answers and not (rules.use_regex and rules.regex)):
+        if not solution_rules.has_reference_answer():
             # Эталона нет — сверять нечем, ведём себя как SA_COM без правил.
+            # Предикат вынесен в SolutionRules (tsk-547): тем же вопросом
+            # «эталон есть?» отвечает UX-сигнал клиенту, и разъехаться они
+            # не должны.
             penalty = solution_rules.penalties.missing_answer if missing_answer else 0
             return CheckResult(
                 is_correct=None,

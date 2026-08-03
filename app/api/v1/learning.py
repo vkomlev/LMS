@@ -13,6 +13,7 @@ from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.tasks import Tasks
 from app.schemas.solution_rules import SolutionRules
+from app.schemas.task_content import SHORT_ANSWER_TASK_TYPES
 from app.schemas.learning_api import (
     NextItemResponse,
     MaterialCompleteRequest,
@@ -464,13 +465,23 @@ async def get_task_state(
         db, student_id, task_id, root_course_id=effective_root_id
     )
     # tsk-227: проброс флага обязательного вложения клиенту (UX-сигнал; форс — на сервере).
+    # tsk-547: рядом — есть ли эталон для сверки `value`. Считается ТИПО-ЗАВИСИМО:
+    # у SC/MC/TA/квизов блок `short_answer` не заполняется в принципе, и «эталона
+    # нет» там значило бы не то же самое, что у короткого ответа, — клиент принял бы
+    # это за «поле ответа не нужно». Для них флаг всегда true.
     try:
-        requires_attachment = bool(
-            SolutionRules.model_validate(task.solution_rules or {}).requires_attachment
+        rules = SolutionRules.model_validate(task.solution_rules or {})
+        requires_attachment = bool(rules.requires_attachment)
+        task_type = (task.task_content or {}).get("type") if isinstance(task.task_content, dict) else None
+        has_reference_answer = (
+            rules.has_reference_answer()
+            if task_type in SHORT_ANSWER_TASK_TYPES
+            else True
         )
     except Exception:
         # Некорректные solution_rules не должны ломать выдачу состояния задания.
         requires_attachment = False
+        has_reference_answer = True
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
             db,
@@ -497,6 +508,7 @@ async def get_task_state(
         last_is_correct=state.last_is_correct,
         last_checked_at=state.last_checked_at,
         requires_attachment=requires_attachment,
+        has_reference_answer=has_reference_answer,
     )
 
 

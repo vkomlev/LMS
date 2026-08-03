@@ -355,6 +355,33 @@ class SolutionRules(BaseModel):
             raise ValueError("max_score должен быть положительным числом")
         return self
 
+    def has_reference_answer(self) -> bool:
+        """Есть ли эталон для авто-сверки `response.value` (SA/SA_COM/TBL_COM).
+
+        «Эталона нет» — это НЕ только `short_answer is None`: блок правил может
+        существовать, но быть пустым (ни одного `accepted_answers`, regex не
+        задан или выключен). Пустое правило вообще живёт в трёх формах (SQL NULL,
+        JSON-null, объект-но-пустой), и наивная проверка ловит только первую —
+        см. плейбук ЕГЭ §6.1 (дважды давал ложное «всё чисто»).
+
+        Единая точка этого предиката: используется и в `_check_table_answer`
+        (там он и появился), и при выдаче UX-сигнала клиенту
+        (`TaskStateResponse.has_reference_answer`, tsk-547) — чтобы «сверять
+        нечем» на проверке и «поле ответа бессмысленно» в форме не разъехались.
+
+        Для типов без короткого ответа (SC/MC/TA/квизы) `short_answer` не
+        заполняется, и метод вернёт False — вызывающий обязан учитывать тип
+        задания сам (см. `learning.py`).
+
+        :returns: True — эталон задан (списком принимаемых ответов либо regex).
+        """
+        rules = self.short_answer
+        if rules is None:
+            return False
+        if rules.accepted_answers:
+            return True
+        return bool(rules.use_regex and rules.regex)
+
     def validate_with_task_content(self, task_content: "TaskContent") -> None:
         """
         Валидирует соответствие correct_options и options[].id из task_content.
