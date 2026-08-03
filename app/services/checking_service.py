@@ -736,7 +736,7 @@ class CheckingService:
         order_matters = (
             solution_rules.table.row_order_matters if solution_rules.table else True
         )
-        cells = self._table_cells(value_raw, rules.normalization)
+        cells = self._table_cells(value_raw, rules.normalization, columns)
 
         base_score = 0
         matched_value: Optional[str] = None
@@ -753,7 +753,7 @@ class CheckingService:
 
         if base_score < solution_rules.max_score:
             for accepted in rules.accepted_answers:
-                expected = self._table_cells(accepted.value, rules.normalization)
+                expected = self._table_cells(accepted.value, rules.normalization, columns)
                 score = self._score_table(
                     cells=cells,
                     expected=expected,
@@ -762,6 +762,18 @@ class CheckingService:
                     order_matters=order_matters,
                     partial=solution_rules.scoring_mode == "partial",
                 )
+                # tsk-383: TBL_COM не строже SA_COM на том же правиле — тот же
+                # инвариант, что зафиксирован в tsk-366
+                # (test_инвариант_tbl_com_засчитывает_всё_что_засчитывал_sa_com).
+                # Ответ, набранный ОДНОЙ строкой (старая привычка ученика,
+                # копипаст, отправка через TG-бота без сетки полей), не разберётся
+                # на правильные ряды/фразы построчным разбором — сверяем его ещё
+                # и как SA_COM: весь ответ целиком против всего эталона целиком, с
+                # той же нормализацией (она схлопывает переводы строк в пробелы).
+                if score < accepted.score and self._matches_short_answer(
+                    value_raw, accepted.value, rules.normalization
+                ):
+                    score = accepted.score
                 if score > base_score:
                     base_score = score
                     matched_value = accepted.value
@@ -795,20 +807,38 @@ class CheckingService:
         return 2
 
     @classmethod
-    def _table_cells(cls, value: str, steps: List[str]) -> List[str]:
+    def _table_cells(cls, value: str, steps: List[str], columns: int = 2) -> List[str]:
         """
         Разбирает табличный ответ на нормализованные ячейки.
 
-        Разделитель — ЛЮБАЯ последовательность пробельных символов, поэтому
-        пробел, несколько пробелов, табуляция и перевод строки равнозначны.
-        Шаги нормализации применяются к каждой ячейке отдельно.
+        Разделитель по умолчанию — ЛЮБАЯ последовательность пробельных
+        символов, поэтому пробел, несколько пробелов, табуляция и перевод
+        строки равнозначны. Шаги нормализации применяются к каждой ячейке
+        отдельно.
 
         Пустые после нормализации ячейки отбрасываются. Это не косметика: при
         `strip_punctuation` одиноко стоящая запятая («1 , 2») превращается в
         пустую ячейку и сдвинула бы всю таблицу — ответ, который SA_COM засчитал
         бы, стал бы неверным. Отбрасывание держит обещание «проверка TBL_COM не
         строже проверки SA_COM на тех же правилах».
+
+        tsk-383: при `columns=1` и МНОГОСТРОЧНОМ ответе строка не режется по
+        пробелу — каждая непустая строка становится ОДНОЙ ячейкой целиком, с
+        сохранением внутренних пробелов. Это нужно мини-тестам Python вида
+        «Запустите программу 3 раза... вывод каждого запуска с новой строки»:
+        один запуск может выводить фразу («Первое число больше»), и порезка по
+        пробелу вместо переноса строки раздробила бы её на отдельные слова.
+        Однострочный ответ (в т.ч. уже мигрированные tsk-366 задания, где
+        значения разделены только пробелом) режется по-старому — иначе
+        перестанут засчитываться существующие ответы.
         """
+        if columns == 1:
+            lines = [ln.strip() for ln in re.split(r"\r?\n", value)]
+            lines = [ln for ln in lines if ln]
+            if len(lines) > 1:
+                cells = [cls._normalize_text(ln, steps) for ln in lines]
+                return [cell for cell in cells if cell != ""]
+
         cells = [cls._normalize_text(cell, steps) for cell in value.split()]
         return [cell for cell in cells if cell != ""]
 
