@@ -35,9 +35,11 @@ class StudentResponse(BaseModel):
 
     Для разных типов задач используются разные поля:
     - SC/MC: selected_option_ids;
-    - SA/SA_COM: value; для типов с комментарием (SA_COM и т.п.) — опционально comment;
+    - SA: value;
+    - SA_COM: value + comment (comment обязателен, если не приложен файл — tsk-419);
     - TBL_COM: value — таблица одной строкой: ячейки ряда через пробел, ряды через
       перевод строки (любые пробельные символы допустимы, сравнение поячеечное);
+      comment — то же правило, что у SA_COM;
     - TA: text.
     """
 
@@ -61,7 +63,15 @@ class StudentResponse(BaseModel):
     )
     comment: Optional[str] = Field(
         default=None,
-        description="Комментарий ученика (SA_COM и др. типы с комментарием). Только хранение и выдача, на проверку/баллы не влияет.",
+        description=(
+            "Комментарий ученика — ход решения или код (SA_COM/TBL_COM). В расчёте баллов "
+            "не участвует (сверяется только value), но с tsk-419 ОБЯЗАТЕЛЕН для этих типов, "
+            "если к попытке не приложен файл: без комментария и без вложения ответ "
+            "не засчитывается (score=0, is_correct=false). Пробельная строка не считается "
+            "заполненной. Файл засчитывается только реально загруженный через "
+            "POST /attempts/{attempt_id}/attachments — meta.attachments в теле не подходит. "
+            "См. docs/frontend-contract-sa-com.md."
+        ),
         examples=["Мой комментарий к ответу", "", None],
     )
     meta: Optional[Dict[str, Any]] = Field(
