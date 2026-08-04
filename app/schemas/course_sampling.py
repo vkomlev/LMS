@@ -1,5 +1,8 @@
-"""tsk-314: формат конфига выборки заданий по сложности на подкурс."""
+"""tsk-314/tsk-553: формат конфига выборки заданий по сложности на подкурс
+и контракт эндпоинта кабинета методиста, читающего/пишущего это поле."""
 from __future__ import annotations
+
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,4 +42,37 @@ class CourseSamplingConfig(BaseModel):
                 {"enabled": False, "threshold": 40, "easy_ratio": 0.5},
             ]
         }
+    )
+
+
+class CourseSamplingSettingsRequest(BaseModel):
+    """Тело `PATCH /courses/{id}/sampling` (tsk-553).
+
+    `sampling_config = null` сбрасывает поле (прежнее поведение движка —
+    все задания, без выборки); иначе — полная замена конфига (не partial-
+    merge: методист правит все три поля разом через одну форму настроек,
+    частичное обновление тут только добавило бы риск забытого старого
+    `threshold` при переключении `enabled`).
+    """
+
+    sampling_config: Optional[CourseSamplingConfig] = Field(
+        None,
+        description="Новый конфиг целиком, либо null — сбросить (прежнее поведение)",
+    )
+
+
+class CourseSamplingSettingsResponse(BaseModel):
+    """Ответ `GET`/`PATCH /courses/{id}/sampling` (tsk-553)."""
+
+    sampling_config: Optional[CourseSamplingConfig] = Field(
+        None, description="Текущий конфиг; null — выборка никогда не настраивалась"
+    )
+    easy_normal_count: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Сколько сейчас в подкурсе активных EASY+NORMAL заданий — "
+            "подсказка методисту при выборе порога (сам порог система не "
+            "предлагает и не хардкодит)"
+        ),
     )

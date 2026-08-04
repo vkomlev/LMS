@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any, Sequence, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError, DBAPIError
 from sqlalchemy.orm import selectinload
-from sqlalchemy import select, delete, update, func
+from sqlalchemy import select, delete, update, func, text
 
 from app.models.courses import Courses
 from app.repos.courses_repo import CoursesRepository
@@ -613,3 +613,56 @@ class CoursesService(BaseService[Courses]):
                         continue
 
         return results, errors
+
+    async def get_sampling_settings(
+        self, db: AsyncSession, course_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Текущий конфиг выборки по сложности + число EASY+NORMAL заданий (tsk-553).
+
+        Число заданий — подсказка методисту для выбора порога в UI (тот же
+        предикат, что использует движок при обходе — is_active + required/
+        skippable + difficulty EASY/NORMAL, см. `learning_engine_service.
+        _sampled_out_task_ids`). Не считает сами настройки — движок и
+        `courses.sampling_config` заведены в tsk-314, здесь только read/write
+        поверх готового поля.
+
+        Returns:
+            `None`, если курса нет. Иначе `{"sampling_config": dict|None,
+            "easy_normal_count": int}`.
+        """
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        count = (
+            await db.execute(
+                text(
+                    "SELECT count(*) FROM tasks t "
+                    "JOIN difficulties d ON d.id = t.difficulty_id "
+                    "WHERE t.course_id = :cid AND t.is_active = true "
+                    "AND t.requirement_level IN ('required', 'skippable') "
+                    "AND d.code IN ('EASY', 'NORMAL')"
+                ),
+                {"cid": course_id},
+            )
+        ).scalar() or 0
+        return {"sampling_config": course.sampling_config, "easy_normal_count": int(count)}
+
+    async def set_sampling_config(
+        self, db: AsyncSession, course_id: int, config: Optional[Dict[str, Any]]
+    ) -> Optional[Courses]:
+        """Записать `courses.sampling_config` (tsk-553).
+
+        `config=None` сбрасывает поле в NULL — прежнее поведение движка (все
+        задания, без выборки), тот же смысл, что `enabled=false`, но явно
+        освобождает место под будущий дефолт.
+
+        Returns:
+            Обновлённый курс либо `None`, если курса нет.
+        """
+        course = await self.get_by_id(db, course_id)
+        if course is None:
+            return None
+        course.sampling_config = config
+        await db.commit()
+        await db.refresh(course)
+        return course

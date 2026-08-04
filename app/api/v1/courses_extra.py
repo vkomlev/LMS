@@ -22,6 +22,10 @@ from app.schemas.courses import (
     GoogleSheetsImportError,
 )
 from app.schemas.course_parents import CourseParentOrderUpdate
+from app.schemas.course_sampling import (
+    CourseSamplingSettingsRequest,
+    CourseSamplingSettingsResponse,
+)
 from app.schemas.user_courses import CourseUsersResponse, UserCourseWithUser
 from app.services.courses_service import CoursesService
 from app.services.user_courses_service import UserCoursesService
@@ -1267,3 +1271,95 @@ async def patch_course_card(
         sorted(data),
     )
     return updated
+
+
+# ---------------------------------------------------------------------------
+# tsk-553: настройки выборки заданий по сложности из кабинета методиста
+# (движок и формат tsk-314 — здесь только read/write поверх courses.sampling_config)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/courses/{course_id}/sampling",
+    response_model=CourseSamplingSettingsResponse,
+    summary="Настройки выборки заданий по сложности на подкурсе (tsk-553)",
+    description=(
+        "Текущий `sampling_config` подкурса (`enabled`/`threshold`/`easy_ratio`, "
+        "см. tsk-314) + текущее число активных EASY+NORMAL заданий — подсказка "
+        "методисту при выборе порога. Порог система не предлагает и не хардкодит."
+    ),
+    responses={
+        200: {"description": "Настройки отданы"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def get_course_sampling_endpoint(
+    course_id: int,
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Прочитать настройки выборки подкурса.
+
+    :param course_id: идентификатор подкурса.
+    :returns: `{sampling_config, easy_normal_count}`.
+    :raises HTTPException: 404 — курса нет.
+    """
+    service = CoursesService()
+    result = await service.get_sampling_settings(db, course_id)
+    if result is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+    return result
+
+
+@router.patch(
+    "/courses/{course_id}/sampling",
+    response_model=CourseSamplingSettingsResponse,
+    summary="Задать настройки выборки заданий по сложности на подкурсе (tsk-553)",
+    description=(
+        "Полная замена `sampling_config` (не partial-merge — методист правит "
+        "все поля разом через форму настроек). `sampling_config: null` сбрасывает "
+        "выборку (прежнее поведение движка: все задания). Активация выборки на "
+        "реальном подкурсе — продуктовое решение методиста, система его не "
+        "форсит и не подсказывает конкретное значение порога."
+    ),
+    responses={
+        200: {"description": "Настройки обновлены"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет менять настройки курса"},
+        404: {"description": "Курс не найден"},
+    },
+)
+async def patch_course_sampling_endpoint(
+    course_id: int,
+    payload: CourseSamplingSettingsRequest = Body(...),
+    db: AsyncSession = Depends(get_bare_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> Any:
+    """Записать настройки выборки подкурса.
+
+    :param course_id: идентификатор подкурса.
+    :param payload: новый конфиг целиком либо `null`.
+    :returns: `{sampling_config, easy_normal_count}` после записи.
+    :raises HTTPException: 404 — курса нет.
+    """
+    logger = logging.getLogger("api.courses_extra")
+    service = CoursesService()
+    config = (
+        payload.sampling_config.model_dump()
+        if payload.sampling_config is not None
+        else None
+    )
+    course = await service.set_sampling_config(db, course_id, config)
+    if course is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Курс не найден")
+
+    logger.info(
+        "tsk-553: sampling_config курса %s изменён пользователем %s -> %r",
+        course_id,
+        current_user.id,
+        config,
+    )
+    result = await service.get_sampling_settings(db, course_id)
+    return result

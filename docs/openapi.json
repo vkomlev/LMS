@@ -3365,6 +3365,230 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}/sampling": {
+      "get": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Настройки выборки заданий по сложности на подкурсе (tsk-553)",
+        "description": "Текущий `sampling_config` подкурса (`enabled`/`threshold`/`easy_ratio`, см. tsk-314) + текущее число активных EASY+NORMAL заданий — подсказка методисту при выборе порога. Порог система не предлагает и не хардкодит.",
+        "operationId": "get_course_sampling_endpoint_api_v1_courses__course_id__sampling_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Настройки отданы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseSamplingSettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "courses"
+        ],
+        "summary": "Задать настройки выборки заданий по сложности на подкурсе (tsk-553)",
+        "description": "Полная замена `sampling_config` (не partial-merge — методист правит все поля разом через форму настроек). `sampling_config: null` сбрасывает выборку (прежнее поведение движка: все задания). Активация выборки на реальном подкурсе — продуктовое решение методиста, система его не форсит и не подсказывает конкретное значение порога.",
+        "operationId": "patch_course_sampling_endpoint_api_v1_courses__course_id__sampling_patch",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseSamplingSettingsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Настройки обновлены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseSamplingSettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет менять настройки курса"
+          },
+          "404": {
+            "description": "Курс не найден"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/courses/": {
       "post": {
         "tags": [
@@ -35033,6 +35257,93 @@
           "is_required"
         ],
         "title": "CourseRead"
+      },
+      "CourseSamplingConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "description": "Включена ли выборка на этом подкурсе",
+            "default": false
+          },
+          "threshold": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Threshold",
+            "description": "Порог EASY+NORMAL заданий подкурса; выше него выдаётся случайная часть размером threshold"
+          },
+          "easy_ratio": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Easy Ratio",
+            "description": "Доля EASY в итоговой выборке (0.5 = поровну EASY/NORMAL)",
+            "default": 0.5
+          }
+        },
+        "type": "object",
+        "required": [
+          "threshold"
+        ],
+        "title": "CourseSamplingConfig",
+        "description": "Формат `courses.sampling_config` (JSONB).\n\n`threshold` — порог И размер итоговой выборки при превышении: если\nEASY+NORMAL заданий подкурса больше `threshold`, студенту выдаётся ровно\n`threshold` заданий (случайная стабильная часть), иначе — все.\n`easy_ratio` — доля EASY в итоговой выборке (0..1), NORMAL — остаток.\n\nTHEORY и любая сложность вне EASY/NORMAL (HARD/PROJECT) выборке не\nподлежат — выдаются всегда целиком, эта настройка их не касается.",
+        "examples": [
+          {
+            "easy_ratio": 0.5,
+            "enabled": true,
+            "threshold": 40
+          },
+          {
+            "easy_ratio": 0.5,
+            "enabled": false,
+            "threshold": 40
+          }
+        ]
+      },
+      "CourseSamplingSettingsRequest": {
+        "properties": {
+          "sampling_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseSamplingConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Новый конфиг целиком, либо null — сбросить (прежнее поведение)"
+          }
+        },
+        "type": "object",
+        "title": "CourseSamplingSettingsRequest",
+        "description": "Тело `PATCH /courses/{id}/sampling` (tsk-553).\n\n`sampling_config = null` сбрасывает поле (прежнее поведение движка —\nвсе задания, без выборки); иначе — полная замена конфига (не partial-\nmerge: методист правит все три поля разом через одну форму настроек,\nчастичное обновление тут только добавило бы риск забытого старого\n`threshold` при переключении `enabled`)."
+      },
+      "CourseSamplingSettingsResponse": {
+        "properties": {
+          "sampling_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseSamplingConfig"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Текущий конфиг; null — выборка никогда не настраивалась"
+          },
+          "easy_normal_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Easy Normal Count",
+            "description": "Сколько сейчас в подкурсе активных EASY+NORMAL заданий — подсказка методисту при выборе порога (сам порог система не предлагает и не хардкодит)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "easy_normal_count"
+        ],
+        "title": "CourseSamplingSettingsResponse",
+        "description": "Ответ `GET`/`PATCH /courses/{id}/sampling` (tsk-553)."
       },
       "CourseStructurePatch": {
         "properties": {
