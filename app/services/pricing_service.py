@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import text
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.pricing import (
     CoursePricingRead,
+    FrequencySource,
     PricingGroupRead,
     StudentGroupPricing,
     StudentPricingRead,
@@ -55,6 +57,8 @@ __all__ = [
     "is_root_course",
     "set_course_pricing",
     "list_student_pricing",
+    "resolve_attendance_frequency",
+    "AttendanceFrequencyResolution",
 ]
 
 
@@ -465,6 +469,140 @@ def _as_int(value: Optional[str]) -> Optional[int]:
     except ValueError:
         logger.warning("Нечисловое значение частоты в тарифе: %r", value)
         return None
+
+
+# ---------------------------------------------------------------- норматив из цены (tsk-557)
+
+
+@dataclass
+class AttendanceFrequencyResolution:
+    """Норматив занятий в неделю для дашборда посещения (tsk-557)."""
+
+    source: FrequencySource
+    #: Частота, которую нужно использовать как норматив. `None`, когда
+    #: определить нечем (`source == "unknown"`).
+    weekly_lessons: Optional[int]
+    #: Активных слотов расписания — раздельно от `weekly_lessons`, чтобы
+    #: расхождение с ценой было видно, даже когда побеждает расписание.
+    schedule_weekly_lessons: int
+    #: Частота, выведенная из ручной цены — раздельно, по той же причине.
+    price_weekly_lessons: Optional[int]
+    #: Расписание и цена разрешились, но НЕ СОВПАЛИ (прод, Юлия Сесюк 4521:
+    #: 1 активный слот, а цена соответствует ступени «2 раза в неделю»).
+    #: Норматив всё равно считается по расписанию — оно проверяемый факт;
+    #: расхождение только помечается для методиста, не арбитруется здесь.
+    discrepancy: bool
+
+
+async def resolve_attendance_frequency(
+    db: AsyncSession, *, student_id: int
+) -> AttendanceFrequencyResolution:
+    """Норматив занятий в неделю обратным выводом из цены (tsk-557).
+
+    Расписание первично: если у ученика есть активные слоты, частота берётся
+    из НИХ независимо от того, что говорит цена — расписание проверяемый
+    факт, цена лишь подсказка на случай, когда расписания вовсе нет. Обратный
+    проход — по ТОЙ ЖЕ тарифной сетке (`match_kind='attendance_frequency'`),
+    которой `_resolve_group_price` пользуется в прямую сторону, и ТОЛЬКО при
+    точном совпадении цены со ступенью. Ближайшая ступень («примерно похоже»,
+    аналог `fallback_lower` в прямую сторону) здесь не годится вовсе: ученик,
+    который ходит 2 раза в неделю и получил скидку, молча превратился бы в
+    «1 раз в неделю» без следа. Не совпало точно — исход `unknown`: скидка/
+    наценка мимо сетки, две ступени с одинаковой ценой (сама сетка
+    неоднозначна) или конфликт МЕЖДУ тарифными группами одного ученика
+    (у календаря нет понятия курса/группы — частота одна на всего ученика,
+    выбирать между несогласными группами значило бы гадать).
+
+    ``student_monthly_charge.manual_minor`` в вывод не участвует: это разовая
+    правка суммы ОДНОГО месяца (могла отражать перерыв, частичный период —
+    что угодно), а не бессрочная договорённость о частоте. Участвует только
+    ``student_price_override.price_minor`` — она UNIQUE на (student, group) и
+    именно она матчится с сеткой в прямую сторону (`charge_service.
+    _base_price_minor`).
+    """
+    schedule_weekly = await _count_active_weekly_slots(db, student_id)
+    price_weekly = await _infer_weekly_lessons_from_price(db, student_id)
+
+    if schedule_weekly > 0:
+        return AttendanceFrequencyResolution(
+            source="schedule",
+            weekly_lessons=schedule_weekly,
+            schedule_weekly_lessons=schedule_weekly,
+            price_weekly_lessons=price_weekly,
+            discrepancy=price_weekly is not None and price_weekly != schedule_weekly,
+        )
+
+    if price_weekly is not None:
+        return AttendanceFrequencyResolution(
+            source="inferred_from_price",
+            weekly_lessons=price_weekly,
+            schedule_weekly_lessons=0,
+            price_weekly_lessons=price_weekly,
+            discrepancy=False,
+        )
+
+    return AttendanceFrequencyResolution(
+        source="unknown",
+        weekly_lessons=None,
+        schedule_weekly_lessons=0,
+        price_weekly_lessons=None,
+        discrepancy=False,
+    )
+
+
+async def _count_active_weekly_slots(db: AsyncSession, student_id: int) -> int:
+    row = (
+        await db.execute(
+            text(
+                "SELECT count(*) FROM lesson_slot_student lss "
+                "JOIN lesson_slot ls ON ls.id = lss.slot_id "
+                "WHERE lss.student_id = :s AND lss.is_active AND ls.is_active"
+            ),
+            {"s": student_id},
+        )
+    ).scalar()
+    return int(row or 0)
+
+
+async def _infer_weekly_lessons_from_price(
+    db: AsyncSession, student_id: int
+) -> Optional[int]:
+    """Обратный проход по тарифной сетке: цена → частота.
+
+    Несколько тарифных групп у ученика — у каждой своя ручная цена и своя
+    сетка. Если они выводят РАЗНЫЕ частоты — конфликт, не «выбрать одну почти
+    наугад» (см. docstring `resolve_attendance_frequency`).
+    """
+    overrides = (
+        await db.execute(
+            text(
+                "SELECT group_id, price_minor FROM student_price_override "
+                "WHERE student_id = :s"
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    if not overrides:
+        return None
+
+    tariffs_by_group = await _load_tariffs(db, only_active=True)
+    resolved: set[int] = set()
+    for override in overrides:
+        by_frequency: list[tuple[int, int]] = []
+        for t in tariffs_by_group.get(override.group_id, []):
+            freq = _as_int(t.match_value) if t.match_kind == "attendance_frequency" else None
+            if freq is not None:
+                by_frequency.append((t.price_minor, freq))
+        # Ровно ОДНО совпадение цены со ступенью сетки этой группы. Ноль —
+        # скидка/наценка, цена мимо сетки. Больше одного — сама сетка
+        # неоднозначна (две ступени с одинаковой ценой): угадывать нельзя.
+        matches = [freq for price, freq in by_frequency if price == override.price_minor]
+        if len(matches) == 1:
+            resolved.add(matches[0])
+
+    if len(resolved) == 1:
+        return resolved.pop()
+    return None
 
 
 # ---------------------------------------------------------------- вспомогательное

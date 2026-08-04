@@ -311,6 +311,7 @@ async def test_dashboard_empty_period_all_metrics_zero(db, client):
         }, bucket
     assert body["attendance"] == {
         "planned": 0, "attended": 0, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
     }
     assert body["courses"] == []
 
@@ -494,7 +495,10 @@ async def test_attendance_normative_counts_and_invariant(db, client):
     )
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
-    assert a == {"planned": 5, "attended": 2, "missed": 2, "upcoming": 1}
+    assert a == {
+        "planned": 5, "attended": 2, "missed": 2, "upcoming": 1,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
     assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
 
 
@@ -530,7 +534,10 @@ async def test_attendance_teacher_marked_absent_then_present(db, client):
     )
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
-    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -562,7 +569,10 @@ async def test_attendance_break_excluded_from_norm(db, client):
     )
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
-    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -593,7 +603,12 @@ async def test_attendance_future_tail_from_permanent_schedule(db, client):
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
     # 1 фактическое (посещено) + 1 обещанное расписанием на 3-й день вперёд.
-    assert a == {"planned": 2, "attended": 1, "missed": 0, "upcoming": 1}
+    assert a == {
+        "planned": 2, "attended": 1, "missed": 0, "upcoming": 1,
+        # Активный слот есть — норматив из цены не нужен (tsk-557): источник
+        # "schedule", ручной цены у ученика нет, расхождения нет.
+        "norm_source": "schedule", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -633,7 +648,10 @@ async def test_attendance_past_norm_survives_schedule_change(db, client):
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
     # Ровно 2 занятия по факту, ни одного пропуска — новый слот прошлое не задевает.
-    assert a == {"planned": 2, "attended": 2, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 2, "attended": 2, "missed": 0, "upcoming": 0,
+        "norm_source": "schedule", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -689,7 +707,10 @@ async def test_attendance_reschedule_inside_period_attended(db, client):
     # Норматив: completed + confirmed + scheduled(прошедшее, никто не отметил)
     # + no_show + declined + целевая строка переноса = 6. Исходная строка
     # переноса (`rescheduled`) не считается.
-    assert a == {"planned": 6, "attended": 3, "missed": 3, "upcoming": 0}
+    assert a == {
+        "planned": 6, "attended": 3, "missed": 3, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
     assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
 
 
@@ -726,7 +747,10 @@ async def test_attendance_reschedule_to_missed_target_still_unresolved(db, clien
     a = resp.json()["attendance"]
     # Одно занятие, перенесённое на дату, где ученик снова не пришёл: норматив 1
     # (исходная строка не в счёт), пропуск 1 — и ровно один, а не два.
-    assert a == {"planned": 1, "attended": 0, "missed": 1, "upcoming": 0}
+    assert a == {
+        "planned": 1, "attended": 0, "missed": 1, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -767,7 +791,10 @@ async def test_attendance_reschedule_chain_of_two_resolved(db, client):
     a = resp.json()["attendance"]
     # Цепочка из двух переносов, итог — явка. Обходить цепочку не нужно:
     # обе промежуточные строки `rescheduled` в норматив не входят.
-    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -807,7 +834,10 @@ async def test_attendance_reschedule_chain_of_two_still_unresolved(db, client):
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
     # Та же цепочка, но итог — отказ: ровно один пропуск, а не три.
-    assert a == {"planned": 1, "attended": 0, "missed": 1, "upcoming": 0}
+    assert a == {
+        "planned": 1, "attended": 0, "missed": 1, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -845,7 +875,10 @@ async def test_attendance_no_double_count_within_period(db, client):
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
     # 1 обычная запись + 1 перенесённая пара (считается один раз, не два)
-    assert a == {"planned": 2, "attended": 2, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 2, "attended": 2, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -880,7 +913,10 @@ async def test_attendance_reschedule_out_of_period_is_not_a_miss(db, client):
     )
     assert resp.status_code == 200, resp.text
     a = resp.json()["attendance"]
-    assert a == {"planned": 0, "attended": 0, "missed": 0, "upcoming": 0}
+    assert a == {
+        "planned": 0, "attended": 0, "missed": 0, "upcoming": 0,
+        "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+    }
 
 
 # ============================== Forecast ==============================

@@ -44224,6 +44224,44 @@
           "upcoming": {
             "type": "integer",
             "title": "Upcoming"
+          },
+          "norm_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "schedule",
+                  "inferred_from_price",
+                  "unknown"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Norm Source"
+          },
+          "not_conducted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Conducted"
+          },
+          "discrepancy": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discrepancy"
           }
         },
         "type": "object",

@@ -45,7 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.services import charge_service, manual_progress_service
+from app.services import charge_service, manual_progress_service, pricing_service
 from app.services.teacher_lesson_summary_service import (
     DONE_STATUSES,
     MANUAL_SOURCE,
@@ -193,8 +193,8 @@ async def _list_active_student_courses(db: AsyncSession, student_id: int) -> lis
 
 async def _load_attendance(
     db: AsyncSession, *, student_id: int, period_from: datetime, period_to: datetime,
-    now: datetime,
-) -> dict[str, int]:
+    now: datetime, include_norm_diagnostics: bool,
+) -> dict[str, Any]:
     """Посещение за период по НОРМАТИВУ (tsk-556, решение оператора 2026-08-04):
     «должен был посетить N, посетил M — значит пропусков N−M».
 
@@ -220,7 +220,10 @@ async def _load_attendance(
 
     :returns: ``planned`` (норматив за период), ``attended`` (посетил),
         ``missed`` (пропустил — из уже прошедших), ``upcoming`` (ещё впереди).
-        Инвариант: ``planned == attended + missed + upcoming``.
+        Инвариант: ``planned == attended + missed + upcoming``. Плюс
+        ``norm_source``/``not_conducted``/``discrepancy`` (tsk-557,
+        `include_norm_diagnostics=False` держит их `None` — для
+        родителя/гостевой ссылки).
     """
     elapsed_to = min(period_to, now)
     row = (
@@ -265,11 +268,32 @@ async def _load_attendance(
         )
         planned += counts.expected - counts.on_break
 
+    norm_source: Optional[str] = None
+    not_conducted: Optional[int] = None
+    discrepancy: Optional[bool] = None
+    if include_norm_diagnostics:
+        resolution = await pricing_service.resolve_attendance_frequency(
+            db, student_id=student_id,
+        )
+        norm_source = resolution.source
+        discrepancy = resolution.discrepancy
+        if resolution.source == "inferred_from_price" and resolution.weekly_lessons is not None:
+            # При активном расписании разница уже отражена в `planned` по
+            # построению (гибридный источник считает прошлое по факту); при
+            # `unknown` считать нечем. Сигнал есть только здесь — расписания
+            # нет вовсе, а генератор занятий никогда не заполнит его сам.
+            elapsed_days = max((elapsed_to - period_from).days, 0)
+            expected_from_price = resolution.weekly_lessons * elapsed_days // 7
+            not_conducted = max(0, expected_from_price - elapsed)
+
     return {
         "planned": planned,
         "attended": attended,
         "missed": max(0, elapsed - attended),
         "upcoming": max(0, planned - elapsed),
+        "norm_source": norm_source,
+        "not_conducted": not_conducted,
+        "discrepancy": discrepancy,
     }
 
 
@@ -364,6 +388,7 @@ async def get_student_dashboard(
     student_id: int,
     period_from: datetime,
     period_to: datetime,
+    viewer_is_staff: bool = False,
 ) -> dict[str, Any]:
     """Собрать периодный дашборд ученика (tsk-494) — состав из 5 пунктов
     задачи: курсы+прогресс+прогноз, итог за период, посещение, ДЗ между
@@ -374,6 +399,9 @@ async def get_student_dashboard(
     `list_accessible_student_courses`, но та внутренняя ACL-проверка
     ломала courses[] для роли `parent` — см. `_list_active_student_courses`).
 
+    :param viewer_is_staff: персонал (`can_edit_progress` — сервис/admin/
+        methodist/teacher) видит норматив из цены в `attendance` (tsk-557);
+        родитель/гостевая ссылка — `False` по умолчанию, поля остаются `None`.
     :raises ValueError: ``period_from``/``period_to`` naive (без timezone) —
         CLAUDE.md Date/Time Safety, тут не reject-им молча подменой на
         локальное "сейчас"."""
@@ -391,6 +419,7 @@ async def get_student_dashboard(
     between_lessons = _subtract_metrics(period_total, in_class_hours)
     attendance = await _load_attendance(
         db, student_id=student_id, period_from=period_from, period_to=period_to, now=now,
+        include_norm_diagnostics=viewer_is_staff,
     )
 
     accessible = await _list_active_student_courses(db, student_id)

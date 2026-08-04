@@ -162,6 +162,8 @@ async def get_dashboard_by_token(
             status.HTTP_422_UNPROCESSABLE_ENTITY, detail="to должен быть позже from"
         )
 
+    # `viewer_is_staff` не передаём — гостевая ссылка всегда родительская
+    # (tsk-557): норматив из цены останется `None`.
     data = await student_dashboard_service.get_student_dashboard(
         db,
         student_id=link.student_id,

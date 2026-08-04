@@ -20,6 +20,13 @@ PricingStatus = Literal[
     "no_tariff",
 ]
 
+#: Источник норматива занятий для дашборда посещения (tsk-557). Расписание —
+#: проверяемый факт и первично; цена подключается обратным выводом ТОЛЬКО
+#: когда расписания нет вовсе, и то лишь при точном совпадении со ступенью
+#: сетки. `unknown` — ни расписания, ни точного совпадения цены нет: норматив
+#: не выводится, догадка не должна выглядеть фактом.
+FrequencySource = Literal["schedule", "inferred_from_price", "unknown"]
+
 
 class TariffRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

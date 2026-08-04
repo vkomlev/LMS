@@ -33,17 +33,21 @@ _parent_links_service = ParentStudentLinksService()
 
 async def _ensure_dashboard_access(
     db: AsyncSession, current_user: CurrentUser, student_id: int,
-) -> None:
+) -> bool:
     """Сервис/admin/methodist/teacher (через `can_edit_progress`) ИЛИ
     родитель, привязанный именно к этому ученику (`parent_student_links`).
     403 с общим текстом — не раскрывать вызывающему, какая из двух ветвей
-    сработала бы при других правах."""
+    сработала бы при других правах.
+
+    :returns: `True`, если доступ дан как персонал (первая ветка) — от этого
+        зависит, увидит ли вызывающий норматив из цены (tsk-557, см.
+        `viewer_is_staff` у `student_dashboard_service.get_student_dashboard`)."""
     if await manual_progress_service.can_edit_progress(db, current_user, student_id):
-        return
+        return True
     if not current_user.is_service:
         roles = {r.lower().strip() for r in await roles_service.get_user_role_names(db, current_user.id)}
         if "parent" in roles and await _parent_links_service.is_linked(db, current_user.id, student_id):
-            return
+            return False
     raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Доступ к дашборду этого ученика запрещён")
 
 
@@ -66,12 +70,13 @@ async def get_student_dashboard(
     if to_dt <= from_dt:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="to должен быть позже from")
 
-    await _ensure_dashboard_access(db, current_user, student_id)
+    viewer_is_staff = await _ensure_dashboard_access(db, current_user, student_id)
 
     data = await student_dashboard_service.get_student_dashboard(
         db,
         student_id=student_id,
         period_from=from_dt,
         period_to=to_dt,
+        viewer_is_staff=viewer_is_staff,
     )
     return StudentDashboardRead(**data)

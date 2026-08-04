@@ -14,6 +14,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.schemas.pricing import FrequencySource
+
 
 class StudentDashboardCourseRead(BaseModel):
     course_id: int
@@ -49,6 +51,23 @@ class StudentDashboardAttendanceRead(BaseModel):
     missed: int
     #: Ещё впереди: время занятия в периоде не наступило.
     upcoming: int
+    #: Источник норматива из цены для ученика без расписания (tsk-557) —
+    #: ``schedule``/``inferred_from_price``/``unknown``. Виден только
+    #: персоналу (``can_edit_progress``: сервис/admin/methodist/teacher);
+    #: `None` для родителя и гостевой ссылки — это не про ребёнка, а про то,
+    #: что школа не поставила занятия (решение оператора, tsk-556).
+    norm_source: Optional[FrequencySource] = None
+    #: Норматив за прошедшую часть периода, выведенный из цены, минус
+    #: фактически заведённые занятия. Заполняется ТОЛЬКО при
+    #: ``norm_source == "inferred_from_price"`` — при активном расписании
+    #: разница уже отражена в `planned` по построению, а при `unknown`
+    #: считать нечем. `None` для родителя.
+    not_conducted: Optional[int] = None
+    #: Расписание и цена разрешились, но частоты не совпали (прод, Юлия
+    #: Сесюк 4521: 1 слот в расписании, цена — по ступени «2 раза в неделю»).
+    #: Норматив всё равно считается по расписанию — это только сигнал
+    #: методисту сверить расписание и цену. `None` для родителя.
+    discrepancy: Optional[bool] = None
 
 
 class StudentDashboardRead(BaseModel):
