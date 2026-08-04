@@ -82,6 +82,28 @@
             "description": "Фильтр по роли по имени. Примеры: `teacher`, `student`, `methodist`.\nСравнение выполняется без учета регистра."
           },
           {
+            "name": "blocked",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные (`blocked_at IS NOT NULL`), `false` — только с открытым входом, не передан — без фильтра (как было). НЕ путать с `is_active` — тот у слитых учёток.",
+              "examples": [
+                true,
+                false
+              ],
+              "title": "Blocked"
+            },
+            "description": "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные (`blocked_at IS NOT NULL`), `false` — только с открытым входом, не передан — без фильтра (как было). НЕ путать с `is_active` — тот у слитых учёток."
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -9195,7 +9217,7 @@
           "tasks"
         ],
         "summary": "Получить задачи курса",
-        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\ntsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —\nиначе один запрос списка выдавал верные ответы по всему курсу сразу.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
+        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\ntsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —\nиначе один запрос списка выдавал верные ответы по всему курсу сразу.\n\ntsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    is_active: Опциональный фильтр по активности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
         "operationId": "get_tasks_by_course_api_v1_tasks_by_course__course_id__get",
         "security": [
           {
@@ -9232,6 +9254,24 @@
               "title": "Difficulty Id"
             },
             "description": "Фильтр по уровню сложности"
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные).",
+              "title": "Is Active"
+            },
+            "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные)."
           },
           {
             "name": "limit",

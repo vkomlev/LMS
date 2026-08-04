@@ -1,0 +1,342 @@
+warning: in the working copy of 'app/api/v1/tasks_extra.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/api/v1/users.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/repos/users_repo.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'app/services/tasks_service.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index 7f1992b..2d36215 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -580,6 +580,10 @@ async def get_tasks_by_course(
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(get_current_user),
+     difficulty_id: Optional[int] = Query(None, description="Фильтр по уровню сложности"),
++    is_active: Optional[bool] = Query(
++        None,
++        description="Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные).",
++    ),
+     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
+     offset: int = Query(0, ge=0, description="Смещение"),
+ ) -> List[TaskRead]:
+@@ -593,9 +597,12 @@ async def get_tasks_by_course(
+     tsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —
+     иначе один запрос списка выдавал верные ответы по всему курсу сразу.
+ 
++    tsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.
++
+     Args:
+         course_id: ID курса.
+         difficulty_id: Опциональный фильтр по уровню сложности.
++        is_active: Опциональный фильтр по активности.
+         limit: Максимум записей на странице (1-1000).
+         offset: Смещение для пагинации.
+ 
+@@ -609,6 +616,7 @@ async def get_tasks_by_course(
+         db,
+         course_id=course_id,
+         difficulty_id=difficulty_id,
++        is_active=is_active,
+         limit=limit,
+         offset=offset,
+     )
+diff --git a/app/api/v1/users.py b/app/api/v1/users.py
+index 4c21c9f..2f1f894 100644
+--- a/app/api/v1/users.py
++++ b/app/api/v1/users.py
+@@ -117,15 +117,25 @@ async def search_users_by_name(
+         ),
+         examples=["teacher", "student", "methodist"],
+     ),
++    blocked: Optional[bool] = Query(
++        None,
++        description=(
++            "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные "
++            "(`blocked_at IS NOT NULL`), `false` — только с открытым входом, "
++            "не передан — без фильтра (как было). НЕ путать с `is_active` — "
++            "тот у слитых учёток."
++        ),
++        examples=[True, False],
++    ),
+     limit: int = Query(
+-        20, 
+-        ge=1, 
++        20,
++        ge=1,
+         le=200,
+         description="Максимум результатов (от 1 до 200)",
+         examples=[10, 20, 50]
+     ),
+     offset: int = Query(
+-        0, 
++        0,
+         ge=0,
+         description="Смещение для пагинации",
+         examples=[0, 10, 20]
+@@ -135,26 +145,31 @@ async def search_users_by_name(
+ ) -> List[UserRead]:
+     """
+     Ищет пользователей по фрагменту имени в поле `full_name`.
+-    
++
+     **Параметры запроса:**
+     - `q` (string, обязательный): Фрагмент имени для поиска. Минимум 2 символа
++    - `blocked` (bool, опционально): Фильтр по блокировке входа
+     - `limit` (int, опционально): Максимум результатов. По умолчанию: 20, максимум: 200
+     - `offset` (int, опционально): Смещение для пагинации. По умолчанию: 0
+-    
++
+     **Ответ:**
+     Возвращает массив объектов `UserRead`, отсортированных по `full_name` ASC.
+-    
++
+     **Коды ответов:**
+     - `200` - Поиск выполнен успешно
+     - `400` - Запрос слишком короткий (менее 2 символов)
+     - `403` - Неверный или отсутствующий API ключ
+     - `422` - Ошибка валидации параметров
+     """
+-    logger.info("users.search q=%r role=%r limit=%s offset=%s", q, role, limit, offset)
++    logger.info(
++        "users.search q=%r role=%r blocked=%s limit=%s offset=%s",
++        q, role, blocked, limit, offset,
++    )
+     items = await service.search_by_full_name_with_role(
+         db,
+         q=q,
+         role_name=role,
++        blocked=blocked,
+         limit=limit,
+         offset=offset,
+     )
+@@ -242,12 +257,22 @@ async def list_users(
+         ),
+         examples=["teacher", "student", "methodist"]
+     ),
++    blocked: Optional[bool] = Query(
++        None,
++        description=(
++            "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные "
++            "(`blocked_at IS NOT NULL`), `false` — только с открытым входом, "
++            "не передан — без фильтра (как было). НЕ путать с `is_active` — "
++            "тот означает «слитая учётка», а не блокировку."
++        ),
++        examples=[True, False],
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
+ ) -> Page[UserRead]:
+     """
+     Получить список пользователей с пагинацией, сортировкой и фильтрацией по роли.
+-    
++
+     **Параметры запроса:**
+     - `skip` (int, опционально): Смещение для пагинации. По умолчанию: 0
+     - `limit` (int, опционально): Максимум результатов на странице. По умолчанию: 100, максимум: 1000
+@@ -259,7 +284,8 @@ async def list_users(
+       - `asc` - по возрастанию
+       - `desc` - по убыванию
+     - `role` (string, опционально): Фильтр по роли по имени. Примеры: 'student', 'teacher'
+-    
++    - `blocked` (bool, опционально): Фильтр по блокировке входа
++
+     **Ответ:**
+     Возвращает объект `Page[UserRead]` с полями:
+     - `items` - массив пользователей
+@@ -267,26 +293,28 @@ async def list_users(
+       - `total` - общее количество записей (без учета limit/offset)
+       - `limit` - лимит на страницу
+       - `offset` - смещение
+-    
++
+     **Примеры запросов:**
+     - Получить всех студентов, отсортированных по ФИО: `GET /api/v1/users/?role=student&sort_by=full_name&order=asc`
+     - Получить последних зарегистрированных пользователей: `GET /api/v1/users/?sort_by=created_at&order=desc&limit=10`
+     - Получить вторую страницу (по 50 записей): `GET /api/v1/users/?skip=50&limit=50`
++    - Получить заблокированных студентов: `GET /api/v1/users/?role=student&blocked=true`
+     """
+     logger.info(
+-        "users.list skip=%s limit=%s sort_by=%s order=%s role=%s",
+-        skip, limit, sort_by, order, role
++        "users.list skip=%s limit=%s sort_by=%s order=%s role=%s blocked=%s",
++        skip, limit, sort_by, order, role, blocked,
+     )
+-    
++
+     # Определяем поле для сортировки
+     sort_field = getattr(Users, sort_by.value)
+     order_func = asc if order == SortOrder.asc else desc
+     order_by = [order_func(sort_field)]
+-    
++
+     # Получаем данные через сервис
+     items, total = await service.list_with_role_filter(
+         db,
+         role_name=role,
++        blocked=blocked,
+         limit=limit,
+         offset=skip,
+         order_by=order_by,
+diff --git a/app/repos/users_repo.py b/app/repos/users_repo.py
+index 26fb2b0..370da88 100644
+--- a/app/repos/users_repo.py
++++ b/app/repos/users_repo.py
+@@ -19,19 +19,24 @@ class UsersRepository(BaseRepository[Users]):
+         db: AsyncSession,
+         *,
+         role_name: Optional[str] = None,
++        blocked: Optional[bool] = None,
+         limit: int = 50,
+         offset: int = 0,
+         order_by: Optional[Sequence[ColumnElement]] = None,
+     ) -> Tuple[List[Users], int]:
+         """
+         Получить список пользователей с фильтрацией по роли.
+-        
++
+         Args:
+             role_name: Имя роли для фильтрации (например, "student")
++            blocked: Фильтр по блокировке входа (tsk-559). `True` —
++                `blocked_at IS NOT NULL`, `False` — `blocked_at IS NULL`,
++                `None` (по умолчанию) — без фильтра, как было. НЕ путать с
++                `is_active` выше — та означает «слитая учётка», а не блокировку.
+             limit: Максимум записей
+             offset: Смещение
+             order_by: Поля сортировки
+-            
++
+         Returns:
+             (items, total): список пользователей и общее количество
+         """
+@@ -75,7 +80,11 @@ class UsersRepository(BaseRepository[Users]):
+         # (`is_active IS TRUE`): раньше поиск фильтровал, а список — нет, и один
+         # и тот же человек то был дублем, то не был, смотря как его открыть.
+         stmt = stmt.where(Users.is_active.is_(True))
+-        
++
++        # tsk-559: ось «вход открыт / закрыт», независимая от is_active выше.
++        if blocked is not None:
++            stmt = stmt.where(Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None))
++
+         # Фильтр по роли через JOIN
+         if role_name:
+             role_names = _role_aliases(role_name)
+@@ -86,7 +95,7 @@ class UsersRepository(BaseRepository[Users]):
+                 # case-insensitive сравнение имени роли (+ поддержка алиасов teacher/student/methodist vs русские названия)
+                 .where(func.lower(Roles.name).in_(role_names))
+             )
+-        
++
+         # Сортировка
+         if order_by:
+             # Добавляем NULLS LAST для всех полей сортировки, чтобы NULL значения шли в конец
+@@ -109,6 +118,10 @@ class UsersRepository(BaseRepository[Users]):
+         
+         # Подсчет общего количества с теми же фильтрами
+         count_stmt = select(func.count(Users.id)).where(Users.is_active.is_(True))
++        if blocked is not None:
++            count_stmt = count_stmt.where(
++                Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None)
++            )
+         if role_name:
+             role_names = _role_aliases(role_name)
+             count_stmt = (
+@@ -128,6 +141,7 @@ class UsersRepository(BaseRepository[Users]):
+         *,
+         q: str,
+         role_name: Optional[str] = None,
++        blocked: Optional[bool] = None,
+         limit: int = 20,
+         offset: int = 0,
+     ) -> List[Users]:
+@@ -137,6 +151,7 @@ class UsersRepository(BaseRepository[Users]):
+         - Поиск: ILIKE %q% (case-insensitive)
+         - Сортировка: full_name ASC
+         - role_name: сравнение имени роли case-insensitive
++        - blocked: та же ось блокировки, что в `list_with_role_filter` (tsk-559)
+         """
+         from app.models.association_tables import t_user_roles
+         from app.models.roles import Roles
+@@ -169,6 +184,9 @@ class UsersRepository(BaseRepository[Users]):
+             .order_by(Users.full_name.asc())
+         )
+ 
++        if blocked is not None:
++            stmt = stmt.where(Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None))
++
+         if role_name:
+             role_names = _role_aliases(role_name)
+             stmt = (
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 8ff497d..e4f7c2f 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -719,6 +719,7 @@ class TasksService(BaseService[Tasks]):
+         db: AsyncSession,
+         course_id: int,
+         difficulty_id: int | None = None,
++        is_active: bool | None = None,
+         limit: int = 100,
+         offset: int = 0,
+     ) -> Tuple[List[Tasks], int]:
+@@ -736,6 +737,8 @@ class TasksService(BaseService[Tasks]):
+             db: Асинхронная сессия БД.
+             course_id: ID курса.
+             difficulty_id: Опциональный фильтр по уровню сложности.
++            is_active: Фильтр по активности. None (по умолчанию) — без фильтра
++                (и активные, и неактивные), как materials-эндпоинт (tsk-559).
+             limit: Максимум записей на странице.
+             offset: Смещение.
+ 
+@@ -747,6 +750,8 @@ class TasksService(BaseService[Tasks]):
+         filters = [self.repo.model.course_id == course_id]
+         if difficulty_id is not None:
+             filters.append(self.repo.model.difficulty_id == difficulty_id)
++        if is_active is not None:
++            filters.append(self.repo.model.is_active.is_(is_active))
+ 
+         list_stmt = (
+             select(self.repo.model)
+diff --git a/app/services/users_service.py b/app/services/users_service.py
+index e6512af..868d6c9 100644
+--- a/app/services/users_service.py
++++ b/app/services/users_service.py
+@@ -59,16 +59,18 @@ class UsersService(BaseService[Users]):
+         db: AsyncSession,
+         *,
+         role_name: Optional[str] = None,
++        blocked: Optional[bool] = None,
+         limit: int = 50,
+         offset: int = 0,
+         order_by: Optional[Sequence[ColumnElement]] = None,
+     ) -> Tuple[List[Users], int]:
+         """
+-        Получить список пользователей с фильтрацией по роли.
++        Получить список пользователей с фильтрацией по роли и блокировке (tsk-559).
+         """
+         return await self.repo.list_with_role_filter(
+             db,
+             role_name=role_name,
++            blocked=blocked,
+             limit=limit,
+             offset=offset,
+             order_by=order_by,
+@@ -80,17 +82,19 @@ class UsersService(BaseService[Users]):
+         *,
+         q: str,
+         role_name: Optional[str] = None,
++        blocked: Optional[bool] = None,
+         limit: int = 20,
+         offset: int = 0,
+     ) -> List[Users]:
+         """
+-        Поиск пользователей по full_name с опциональной фильтрацией по роли.
++        Поиск пользователей по full_name с опциональной фильтрацией по роли и блокировке.
+         Используется для эндпойнта `GET /api/v1/users/search`.
+         """
+         return await self.repo.search_by_full_name_with_role(
+             db,
+             q=q,
+             role_name=role_name,
++            blocked=blocked,
+             limit=limit,
+             offset=offset,
+         )

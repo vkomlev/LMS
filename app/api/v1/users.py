@@ -117,15 +117,25 @@ async def search_users_by_name(
         ),
         examples=["teacher", "student", "methodist"],
     ),
+    blocked: Optional[bool] = Query(
+        None,
+        description=(
+            "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные "
+            "(`blocked_at IS NOT NULL`), `false` — только с открытым входом, "
+            "не передан — без фильтра (как было). НЕ путать с `is_active` — "
+            "тот у слитых учёток."
+        ),
+        examples=[True, False],
+    ),
     limit: int = Query(
-        20, 
-        ge=1, 
+        20,
+        ge=1,
         le=200,
         description="Максимум результатов (от 1 до 200)",
         examples=[10, 20, 50]
     ),
     offset: int = Query(
-        0, 
+        0,
         ge=0,
         description="Смещение для пагинации",
         examples=[0, 10, 20]
@@ -135,26 +145,31 @@ async def search_users_by_name(
 ) -> List[UserRead]:
     """
     Ищет пользователей по фрагменту имени в поле `full_name`.
-    
+
     **Параметры запроса:**
     - `q` (string, обязательный): Фрагмент имени для поиска. Минимум 2 символа
+    - `blocked` (bool, опционально): Фильтр по блокировке входа
     - `limit` (int, опционально): Максимум результатов. По умолчанию: 20, максимум: 200
     - `offset` (int, опционально): Смещение для пагинации. По умолчанию: 0
-    
+
     **Ответ:**
     Возвращает массив объектов `UserRead`, отсортированных по `full_name` ASC.
-    
+
     **Коды ответов:**
     - `200` - Поиск выполнен успешно
     - `400` - Запрос слишком короткий (менее 2 символов)
     - `403` - Неверный или отсутствующий API ключ
     - `422` - Ошибка валидации параметров
     """
-    logger.info("users.search q=%r role=%r limit=%s offset=%s", q, role, limit, offset)
+    logger.info(
+        "users.search q=%r role=%r blocked=%s limit=%s offset=%s",
+        q, role, blocked, limit, offset,
+    )
     items = await service.search_by_full_name_with_role(
         db,
         q=q,
         role_name=role,
+        blocked=blocked,
         limit=limit,
         offset=offset,
     )
@@ -242,12 +257,22 @@ async def list_users(
         ),
         examples=["teacher", "student", "methodist"]
     ),
+    blocked: Optional[bool] = Query(
+        None,
+        description=(
+            "Фильтр по блокировке входа (tsk-559): `true` — только заблокированные "
+            "(`blocked_at IS NOT NULL`), `false` — только с открытым входом, "
+            "не передан — без фильтра (как было). НЕ путать с `is_active` — "
+            "тот означает «слитая учётка», а не блокировку."
+        ),
+        examples=[True, False],
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_PEOPLE_READ_GATE),
 ) -> Page[UserRead]:
     """
     Получить список пользователей с пагинацией, сортировкой и фильтрацией по роли.
-    
+
     **Параметры запроса:**
     - `skip` (int, опционально): Смещение для пагинации. По умолчанию: 0
     - `limit` (int, опционально): Максимум результатов на странице. По умолчанию: 100, максимум: 1000
@@ -259,7 +284,8 @@ async def list_users(
       - `asc` - по возрастанию
       - `desc` - по убыванию
     - `role` (string, опционально): Фильтр по роли по имени. Примеры: 'student', 'teacher'
-    
+    - `blocked` (bool, опционально): Фильтр по блокировке входа
+
     **Ответ:**
     Возвращает объект `Page[UserRead]` с полями:
     - `items` - массив пользователей
@@ -267,26 +293,28 @@ async def list_users(
       - `total` - общее количество записей (без учета limit/offset)
       - `limit` - лимит на страницу
       - `offset` - смещение
-    
+
     **Примеры запросов:**
     - Получить всех студентов, отсортированных по ФИО: `GET /api/v1/users/?role=student&sort_by=full_name&order=asc`
     - Получить последних зарегистрированных пользователей: `GET /api/v1/users/?sort_by=created_at&order=desc&limit=10`
     - Получить вторую страницу (по 50 записей): `GET /api/v1/users/?skip=50&limit=50`
+    - Получить заблокированных студентов: `GET /api/v1/users/?role=student&blocked=true`
     """
     logger.info(
-        "users.list skip=%s limit=%s sort_by=%s order=%s role=%s",
-        skip, limit, sort_by, order, role
+        "users.list skip=%s limit=%s sort_by=%s order=%s role=%s blocked=%s",
+        skip, limit, sort_by, order, role, blocked,
     )
-    
+
     # Определяем поле для сортировки
     sort_field = getattr(Users, sort_by.value)
     order_func = asc if order == SortOrder.asc else desc
     order_by = [order_func(sort_field)]
-    
+
     # Получаем данные через сервис
     items, total = await service.list_with_role_filter(
         db,
         role_name=role,
+        blocked=blocked,
         limit=limit,
         offset=skip,
         order_by=order_by,

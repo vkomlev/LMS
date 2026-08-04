@@ -719,6 +719,7 @@ class TasksService(BaseService[Tasks]):
         db: AsyncSession,
         course_id: int,
         difficulty_id: int | None = None,
+        is_active: bool | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> Tuple[List[Tasks], int]:
@@ -736,6 +737,8 @@ class TasksService(BaseService[Tasks]):
             db: Асинхронная сессия БД.
             course_id: ID курса.
             difficulty_id: Опциональный фильтр по уровню сложности.
+            is_active: Фильтр по активности. None (по умолчанию) — без фильтра
+                (и активные, и неактивные), как materials-эндпоинт (tsk-559).
             limit: Максимум записей на странице.
             offset: Смещение.
 
@@ -747,6 +750,8 @@ class TasksService(BaseService[Tasks]):
         filters = [self.repo.model.course_id == course_id]
         if difficulty_id is not None:
             filters.append(self.repo.model.difficulty_id == difficulty_id)
+        if is_active is not None:
+            filters.append(self.repo.model.is_active.is_(is_active))
 
         list_stmt = (
             select(self.repo.model)

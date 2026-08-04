@@ -580,6 +580,10 @@ async def get_tasks_by_course(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
     difficulty_id: Optional[int] = Query(None, description="Фильтр по уровню сложности"),
+    is_active: Optional[bool] = Query(
+        None,
+        description="Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные).",
+    ),
     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
 ) -> List[TaskRead]:
@@ -593,9 +597,12 @@ async def get_tasks_by_course(
     tsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —
     иначе один запрос списка выдавал верные ответы по всему курсу сразу.
 
+    tsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.
+
     Args:
         course_id: ID курса.
         difficulty_id: Опциональный фильтр по уровню сложности.
+        is_active: Опциональный фильтр по активности.
         limit: Максимум записей на странице (1-1000).
         offset: Смещение для пагинации.
 
@@ -609,6 +616,7 @@ async def get_tasks_by_course(
         db,
         course_id=course_id,
         difficulty_id=difficulty_id,
+        is_active=is_active,
         limit=limit,
         offset=offset,
     )

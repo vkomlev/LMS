@@ -19,19 +19,24 @@ class UsersRepository(BaseRepository[Users]):
         db: AsyncSession,
         *,
         role_name: Optional[str] = None,
+        blocked: Optional[bool] = None,
         limit: int = 50,
         offset: int = 0,
         order_by: Optional[Sequence[ColumnElement]] = None,
     ) -> Tuple[List[Users], int]:
         """
         Получить список пользователей с фильтрацией по роли.
-        
+
         Args:
             role_name: Имя роли для фильтрации (например, "student")
+            blocked: Фильтр по блокировке входа (tsk-559). `True` —
+                `blocked_at IS NOT NULL`, `False` — `blocked_at IS NULL`,
+                `None` (по умолчанию) — без фильтра, как было. НЕ путать с
+                `is_active` выше — та означает «слитая учётка», а не блокировку.
             limit: Максимум записей
             offset: Смещение
             order_by: Поля сортировки
-            
+
         Returns:
             (items, total): список пользователей и общее количество
         """
@@ -75,7 +80,11 @@ class UsersRepository(BaseRepository[Users]):
         # (`is_active IS TRUE`): раньше поиск фильтровал, а список — нет, и один
         # и тот же человек то был дублем, то не был, смотря как его открыть.
         stmt = stmt.where(Users.is_active.is_(True))
-        
+
+        # tsk-559: ось «вход открыт / закрыт», независимая от is_active выше.
+        if blocked is not None:
+            stmt = stmt.where(Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None))
+
         # Фильтр по роли через JOIN
         if role_name:
             role_names = _role_aliases(role_name)
@@ -86,7 +95,7 @@ class UsersRepository(BaseRepository[Users]):
                 # case-insensitive сравнение имени роли (+ поддержка алиасов teacher/student/methodist vs русские названия)
                 .where(func.lower(Roles.name).in_(role_names))
             )
-        
+
         # Сортировка
         if order_by:
             # Добавляем NULLS LAST для всех полей сортировки, чтобы NULL значения шли в конец
@@ -109,6 +118,10 @@ class UsersRepository(BaseRepository[Users]):
         
         # Подсчет общего количества с теми же фильтрами
         count_stmt = select(func.count(Users.id)).where(Users.is_active.is_(True))
+        if blocked is not None:
+            count_stmt = count_stmt.where(
+                Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None)
+            )
         if role_name:
             role_names = _role_aliases(role_name)
             count_stmt = (
@@ -128,6 +141,7 @@ class UsersRepository(BaseRepository[Users]):
         *,
         q: str,
         role_name: Optional[str] = None,
+        blocked: Optional[bool] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> List[Users]:
@@ -137,6 +151,7 @@ class UsersRepository(BaseRepository[Users]):
         - Поиск: ILIKE %q% (case-insensitive)
         - Сортировка: full_name ASC
         - role_name: сравнение имени роли case-insensitive
+        - blocked: та же ось блокировки, что в `list_with_role_filter` (tsk-559)
         """
         from app.models.association_tables import t_user_roles
         from app.models.roles import Roles
@@ -168,6 +183,9 @@ class UsersRepository(BaseRepository[Users]):
             .where(Users.full_name.ilike(f"%{q}%", escape="\\"), Users.is_active.is_(True))
             .order_by(Users.full_name.asc())
         )
+
+        if blocked is not None:
+            stmt = stmt.where(Users.blocked_at.isnot(None) if blocked else Users.blocked_at.is_(None))
 
         if role_name:
             role_names = _role_aliases(role_name)

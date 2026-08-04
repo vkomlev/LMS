@@ -59,16 +59,18 @@ class UsersService(BaseService[Users]):
         db: AsyncSession,
         *,
         role_name: Optional[str] = None,
+        blocked: Optional[bool] = None,
         limit: int = 50,
         offset: int = 0,
         order_by: Optional[Sequence[ColumnElement]] = None,
     ) -> Tuple[List[Users], int]:
         """
-        Получить список пользователей с фильтрацией по роли.
+        Получить список пользователей с фильтрацией по роли и блокировке (tsk-559).
         """
         return await self.repo.list_with_role_filter(
             db,
             role_name=role_name,
+            blocked=blocked,
             limit=limit,
             offset=offset,
             order_by=order_by,
@@ -80,17 +82,19 @@ class UsersService(BaseService[Users]):
         *,
         q: str,
         role_name: Optional[str] = None,
+        blocked: Optional[bool] = None,
         limit: int = 20,
         offset: int = 0,
     ) -> List[Users]:
         """
-        Поиск пользователей по full_name с опциональной фильтрацией по роли.
+        Поиск пользователей по full_name с опциональной фильтрацией по роли и блокировке.
         Используется для эндпойнта `GET /api/v1/users/search`.
         """
         return await self.repo.search_by_full_name_with_role(
             db,
             q=q,
             role_name=role_name,
+            blocked=blocked,
             limit=limit,
             offset=offset,
         )
