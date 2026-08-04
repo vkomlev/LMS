@@ -90,6 +90,38 @@ async def _create_occurrence(
     return occ_id
 
 
+async def _reschedule(
+    db, *, student_id: int, teacher_id: int, origin_occurrence_id: int,
+    new_scheduled_at: datetime, new_status: str = "scheduled", duration_minutes: int = 60,
+) -> int:
+    """tsk-503: имитация реального `reschedule_occurrence` напрямую через
+    БД (без вызова сервиса) — старая запись участника получает
+    `status='rescheduled'` + `rescheduled_to_occurrence_id`, создаётся НОВЫЙ
+    occurrence с новой строкой участника в статусе ``new_status``."""
+    new_occ = LessonOccurrence(
+        slot_id=None, teacher_id=teacher_id, scheduled_at=new_scheduled_at,
+        duration_minutes=duration_minutes,
+    )
+    db.add(new_occ)
+    await db.flush()
+    db.add(
+        LessonOccurrenceParticipant(
+            occurrence_id=new_occ.id, student_id=student_id, status=new_status,
+        )
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant "
+            "SET status = 'rescheduled', rescheduled_to_occurrence_id = :new_occ_id "
+            "WHERE occurrence_id = :origin_occ_id AND student_id = :student_id"
+        ),
+        {"new_occ_id": new_occ.id, "origin_occ_id": origin_occurrence_id, "student_id": student_id},
+    )
+    new_occ_id = new_occ.id
+    await db.commit()
+    return new_occ_id
+
+
 async def _new_course(db, title: str) -> int:
     return (
         await db.execute(
@@ -393,6 +425,9 @@ async def test_occurrence_boundary_is_inclusive(db, client):
 
 @pytest.mark.asyncio
 async def test_attendance_missed_total_and_unresolved(db, client):
+    """Базовые статусы + один перенос, РЕАЛЬНО закрытый явкой (`confirmed` на
+    целевом occurrence) — не голый статус `rescheduled` без цепочки (tsk-503:
+    сам факт переноса больше не значит "закрыто")."""
     teacher_id, token = await _new_user(db, role="teacher", name="teach")
     student_id, _ = await _new_user(db, role="student", name="stud")
     await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
@@ -421,9 +456,15 @@ async def test_attendance_missed_total_and_unresolved(db, client):
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=now - timedelta(days=5), status="declined",
     )
-    await _create_occurrence(
+    origin_id = await _create_occurrence(
         db, student_id=student_id, teacher_id=teacher_id,
-        scheduled_at=now - timedelta(days=4), status="rescheduled",
+        scheduled_at=now - timedelta(days=4), status="scheduled",
+    )
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=3),
+        new_status="confirmed",
     )
 
     resp = await client.get(
@@ -433,9 +474,204 @@ async def test_attendance_missed_total_and_unresolved(db, client):
     )
     assert resp.status_code == 200, resp.text
     attendance = resp.json()["attendance"]
+    # origin переноса не считается отдельно (её "закрывает" целевая запись,
+    # тоже в периоде) — total: completed+confirmed+scheduled+no_show+declined+target = 6
     assert attendance["total_occurrences"] == 6
-    assert attendance["missed_total"] == 3  # no_show + declined + rescheduled
-    assert attendance["missed_unresolved"] == 2  # no_show + declined
+    assert attendance["missed_total"] == 3  # no_show + declined + rescheduled(origin)
+    assert attendance["missed_unresolved"] == 2  # no_show + declined (перенос закрыт явкой)
+
+
+@pytest.mark.asyncio
+async def test_attendance_reschedule_to_missed_target_still_unresolved(db, client):
+    """tsk-503, ключевой сценарий регрессии: перенос на дату, где ученик СНОВА
+    не пришёл (`no_show`) — пропуск должен остаться НЕзакрытым, а не
+    закрыться самим фактом переноса."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now
+
+    origin_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=6), status="scheduled",
+    )
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=5),
+        new_status="no_show",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attendance = resp.json()["attendance"]
+    assert attendance["missed_total"] == 2  # origin(rescheduled) + target(no_show)
+    assert attendance["missed_unresolved"] == 2  # оба всё ещё открыты
+
+
+@pytest.mark.asyncio
+async def test_attendance_reschedule_chain_of_two_resolved(db, client):
+    """Перенос переноса (цепочка из 2 шагов), итог — фактическая явка:
+    пропуск закрыт, обход не должен останавливаться на первом шаге."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now
+
+    origin_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=9), status="scheduled",
+    )
+    hop1_id = await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=7),
+        new_status="scheduled",
+    )
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=hop1_id,
+        new_scheduled_at=now - timedelta(days=5),
+        new_status="confirmed",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attendance = resp.json()["attendance"]
+    assert attendance["missed_total"] == 2  # origin + hop1, оба status='rescheduled'
+    assert attendance["missed_unresolved"] == 0  # цепочка дошла до confirmed
+
+
+@pytest.mark.asyncio
+async def test_attendance_reschedule_chain_of_two_still_unresolved(db, client):
+    """Цепочка из 2 переносов, на втором шаге снова пропуск (`declined`) —
+    итог всё ещё открыт, обход правильно доходит до конца цепочки."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now
+
+    origin_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=9), status="scheduled",
+    )
+    hop1_id = await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=7),
+        new_status="scheduled",
+    )
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=hop1_id,
+        new_scheduled_at=now - timedelta(days=5),
+        new_status="declined",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attendance = resp.json()["attendance"]
+    # origin('rescheduled') + hop1('rescheduled') + hop2('declined') — финальный
+    # declined сам по себе тоже пропуск, в отличие от resolved-случая (там
+    # финал confirmed пропуском не является).
+    assert attendance["missed_total"] == 3
+    assert attendance["missed_unresolved"] == 3  # все три всё ещё открыты
+
+
+@pytest.mark.asyncio
+async def test_attendance_total_occurrences_no_double_count_within_period(db, client):
+    """tsk-503, вторая находка: перенос ВНУТРИ одного периода не должен
+    задваивать `total_occurrences` — это одно занятие, просто на другую дату."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now
+
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=8), status="confirmed",
+    )
+    origin_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=6), status="scheduled",
+    )
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=5),  # тот же период
+        new_status="confirmed",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attendance = resp.json()["attendance"]
+    # 1 обычная запись + 1 перенесённая пара (считается один раз, не два)
+    assert attendance["total_occurrences"] == 2
+
+
+@pytest.mark.asyncio
+async def test_attendance_total_occurrences_counts_separately_across_period_boundary(db, client):
+    """Перенос ЗА границу периода (целевая дата вне окна) — исходная запись
+    по-прежнему единственный факт "занятие было запланировано в этом
+    периоде" и считается как обычно (без задвоения, но и без потери)."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now - timedelta(days=2)
+
+    origin_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=6), status="scheduled",
+    )
+    # Целевая дата ЗА пределами периода [period_from, period_to].
+    await _reschedule(
+        db, student_id=student_id, teacher_id=teacher_id,
+        origin_occurrence_id=origin_id,
+        new_scheduled_at=now - timedelta(days=1),
+        new_status="confirmed",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attendance = resp.json()["attendance"]
+    assert attendance["total_occurrences"] == 1  # только исходная запись в периоде
+    assert attendance["missed_total"] == 1  # rescheduled засчитан как пропуск исходного времени
+    assert attendance["missed_unresolved"] == 0  # но цепочка дошла до confirmed — закрыт
 
 
 # ============================== Forecast ==============================

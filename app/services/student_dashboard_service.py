@@ -28,10 +28,13 @@ tsk-460, reviews/2026-07-29-tsk460-solution-rules-leak.md): контракт Н�
   ``Settings.student_forecast_pace_weeks`` недель по ЭТОМУ курсу →
   экстраполяция на оставшиеся элементы дерева).
 - Посещение за период (пропуски/незакрытые) — ``lesson_occurrence_participant.status``
-  за окно occurrence. ``status='rescheduled'`` уже означает "перенесено" по
-  построению (CHECK-constraint, взаимоисключающие статусы — проверено в
-  ``lesson_occurrence_service.reschedule_occurrence``): дополнительная
-  проверка цепочки ``rescheduled_to_occurrence_id`` не нужна.
+  за окно occurrence. tsk-503 (решение оператора 2026-08-04): "закрыт" пропуск
+  означает ФАКТИЧЕСКУЮ явку, не просто выбор новой даты. ``status='rescheduled'``
+  сам по себе НЕ значит "закрыто" — нужно пройти цепочку
+  ``rescheduled_to_occurrence_id`` до финального статуса участника (если
+  очередной перенос снова ``no_show``/``declined``/``rescheduled`` — пропуск
+  всё ещё открыт, идём по цепочке дальше). Прежняя версия останавливалась на
+  первом ``rescheduled`` — это и было дефектом tsk-503.
 """
 from __future__ import annotations
 
@@ -51,11 +54,17 @@ from app.services.teacher_lesson_summary_service import (
 
 _METRIC_KEYS = ("tasks_completed", "theory_completed", "first_try", "help_requested")
 
-#: Статусы occurrence-участия, которые считаются "пропуском" за период —
-#: `rescheduled` тоже пропуск исходного времени, но УЖЕ закрыт переносом.
+#: Статусы occurrence-участия, которые считаются "пропуском" исходного
+#: времени за период — `rescheduled` тоже пропуск исходного времени, сам
+#: факт переноса здесь не означает, что пропуск уже закрыт (tsk-503).
 _MISSED_STATUSES = ("no_show", "declined", "rescheduled")
-#: Подмножество пропусков, ещё не закрытых переносом на другую дату.
-_UNRESOLVED_MISSED_STATUSES = ("no_show", "declined")
+#: Финальные статусы цепочки переносов, которые означают ФАКТИЧЕСКУЮ явку —
+#: только они закрывают пропуск (tsk-503, решение оператора 2026-08-04).
+_ATTENDED_STATUSES = ("confirmed", "completed")
+#: Максимальная глубина цепочки `rescheduled_to_occurrence_id` — защита от
+#: зацикливания при аномальных данных (по инварианту модели цикла быть не
+#: может, это просто предохранитель, не ожидаемый предел).
+_MAX_RESCHEDULE_CHAIN_DEPTH = 50
 
 
 def _subtract_metrics(total: dict[str, int], subset: dict[str, int]) -> dict[str, int]:
@@ -191,25 +200,80 @@ async def _load_attendance(
     db: AsyncSession, *, student_id: int, period_from: datetime, period_to: datetime,
 ) -> dict[str, int]:
     """Посещение за период: всего occurrence, пропуски (в т.ч. уже
-    перенесённые), из них НЕзакрытые (не перенесённые на другую дату)."""
+    перенесённые), из них НЕзакрытые.
+
+    tsk-503: "закрыт" пропуск = ФАКТИЧЕСКАЯ явка на перенесённое занятие, не
+    просто выбор новой даты. Для каждого occurrence-участия этого ученика в
+    периоде рекурсивно проходим цепочку `rescheduled_to_occurrence_id` до
+    финального статуса (перенос переноса — обычная ситуация, цепочка может
+    быть длиннее одного шага); ``missed_unresolved`` считается по финальному
+    статусу цепочки, а не по статусу самой записи в периоде.
+
+    Заодно закрывает вторую находку tsk-503: если перенос (исходная запись +
+    целевой occurrence) целиком попадает в один и тот же период, это ОДНО
+    занятие с точки зрения "сколько занятий было запланировано" — исходная
+    запись в `total_occurrences` не считается (её "закрывает" собой целевая
+    запись, которая тоже попадает в выборку периода и обсчитана как обычная
+    запись). Если перенос ушёл за границу периода — переносимая запись
+    по-прежнему единственный факт "занятие было запланировано в этом
+    периоде" и считается как обычно.
+    """
     rows = (
         await db.execute(
             text(
-                "SELECT lop.status, COUNT(*) AS cnt "
-                "FROM lesson_occurrence_participant lop "
-                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
-                "WHERE lop.student_id = :student_id "
-                "  AND lo.scheduled_at >= :period_from AND lo.scheduled_at <= :period_to "
-                "GROUP BY lop.status"
+                "WITH RECURSIVE period_participants AS ( "
+                "    SELECT lop.id, lop.status, lop.rescheduled_to_occurrence_id, "
+                "           target_lo.scheduled_at AS target_scheduled_at "
+                "    FROM lesson_occurrence_participant lop "
+                "    JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "    LEFT JOIN lesson_occurrence target_lo "
+                "        ON target_lo.id = lop.rescheduled_to_occurrence_id "
+                "    WHERE lop.student_id = :student_id "
+                "      AND lo.scheduled_at >= :period_from AND lo.scheduled_at <= :period_to "
+                "), "
+                "chain AS ( "
+                "    SELECT pp.id AS origin_id, pp.status, pp.rescheduled_to_occurrence_id, "
+                "           1 AS depth "
+                "    FROM period_participants pp "
+                "    UNION ALL "
+                "    SELECT c.origin_id, next_lop.status, next_lop.rescheduled_to_occurrence_id, "
+                "           c.depth + 1 "
+                "    FROM chain c "
+                "    JOIN lesson_occurrence_participant next_lop "
+                "        ON next_lop.occurrence_id = c.rescheduled_to_occurrence_id "
+                "       AND next_lop.student_id = :student_id "
+                "    WHERE c.status = 'rescheduled' AND c.rescheduled_to_occurrence_id IS NOT NULL "
+                "      AND c.depth < :max_depth "
+                "), "
+                "final_status AS ( "
+                "    SELECT DISTINCT ON (origin_id) origin_id, status AS final_status "
+                "    FROM chain "
+                "    ORDER BY origin_id, depth DESC "
+                ") "
+                "SELECT pp.id, pp.status AS origin_status, fs.final_status, "
+                "       (pp.status = 'rescheduled' AND pp.target_scheduled_at IS NOT NULL "
+                "        AND pp.target_scheduled_at >= :period_from "
+                "        AND pp.target_scheduled_at <= :period_to) AS target_in_same_period "
+                "FROM period_participants pp "
+                "JOIN final_status fs ON fs.origin_id = pp.id"
             ),
-            {"student_id": student_id, "period_from": period_from, "period_to": period_to},
+            {
+                "student_id": student_id,
+                "period_from": period_from,
+                "period_to": period_to,
+                "max_depth": _MAX_RESCHEDULE_CHAIN_DEPTH,
+            },
         )
     ).mappings().fetchall()
 
-    by_status = {row["status"]: int(row["cnt"]) for row in rows}
-    total = sum(by_status.values())
-    missed_total = sum(by_status.get(s, 0) for s in _MISSED_STATUSES)
-    missed_unresolved = sum(by_status.get(s, 0) for s in _UNRESOLVED_MISSED_STATUSES)
+    total = sum(1 for row in rows if not row["target_in_same_period"])
+    missed_total = sum(1 for row in rows if row["origin_status"] in _MISSED_STATUSES)
+    missed_unresolved = sum(
+        1
+        for row in rows
+        if row["origin_status"] in _MISSED_STATUSES
+        and row["final_status"] not in _ATTENDED_STATUSES
+    )
     return {
         "total_occurrences": total,
         "missed_total": missed_total,
