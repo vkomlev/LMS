@@ -45,7 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.services import manual_progress_service
+from app.services import charge_service, manual_progress_service
 from app.services.teacher_lesson_summary_service import (
     DONE_STATUSES,
     MANUAL_SOURCE,
@@ -54,17 +54,12 @@ from app.services.teacher_lesson_summary_service import (
 
 _METRIC_KEYS = ("tasks_completed", "theory_completed", "first_try", "help_requested")
 
-#: Статусы occurrence-участия, которые считаются "пропуском" исходного
-#: времени за период — `rescheduled` тоже пропуск исходного времени, сам
-#: факт переноса здесь не означает, что пропуск уже закрыт (tsk-503).
-_MISSED_STATUSES = ("no_show", "declined", "rescheduled")
-#: Финальные статусы цепочки переносов, которые означают ФАКТИЧЕСКУЮ явку —
-#: только они закрывают пропуск (tsk-503, решение оператора 2026-08-04).
+#: Статусы участия, означающие ФАКТИЧЕСКУЮ явку.
 _ATTENDED_STATUSES = ("confirmed", "completed")
-#: Максимальная глубина цепочки `rescheduled_to_occurrence_id` — защита от
-#: зацикливания при аномальных данных (по инварианту модели цикла быть не
-#: может, это просто предохранитель, не ожидаемый предел).
-_MAX_RESCHEDULE_CHAIN_DEPTH = 50
+#: Статусы, при которых занятие не входит в норматив вовсе:
+#: `rescheduled` — участие заменено другим (его место занимает целевая строка,
+#: где бы она ни оказалась), `on_break` — ученик в перерыве.
+_NOT_COUNTED_STATUSES = ("rescheduled", "on_break")
 
 
 def _subtract_metrics(total: dict[str, int], subset: dict[str, int]) -> dict[str, int]:
@@ -198,87 +193,108 @@ async def _list_active_student_courses(db: AsyncSession, student_id: int) -> lis
 
 async def _load_attendance(
     db: AsyncSession, *, student_id: int, period_from: datetime, period_to: datetime,
+    now: datetime,
 ) -> dict[str, int]:
-    """Посещение за период: всего occurrence, пропуски (в т.ч. уже
-    перенесённые), из них НЕзакрытые.
+    """Посещение за период по НОРМАТИВУ (tsk-556, решение оператора 2026-08-04):
+    «должен был посетить N, посетил M — значит пропусков N−M».
 
-    tsk-503: "закрыт" пропуск = ФАКТИЧЕСКАЯ явка на перенесённое занятие, не
-    просто выбор новой даты. Для каждого occurrence-участия этого ученика в
-    периоде рекурсивно проходим цепочку `rescheduled_to_occurrence_id` до
-    финального статуса (перенос переноса — обычная ситуация, цепочка может
-    быть длиннее одного шага); ``missed_unresolved`` считается по финальному
-    статусу цепочки, а не по статусу самой записи в периоде.
+    Прежняя (статусная) модель считала пропуски по статусу каждой записи и
+    ломалась на порядке и авторстве отметок: преподаватель ставит пропуск, потом
+    сам же исправляет на явку; ученик не отменил занятие, отменил преподаватель,
+    а ученик записался на другой день. Нормативная модель к этому безразлична —
+    важен только итог.
 
-    Заодно закрывает вторую находку tsk-503: если перенос (исходная запись +
-    целевой occurrence) целиком попадает в один и тот же период, это ОДНО
-    занятие с точки зрения "сколько занятий было запланировано" — исходная
-    запись в `total_occurrences` не считается (её "закрывает" собой целевая
-    запись, которая тоже попадает в выборку периода и обсчитана как обычная
-    запись). Если перенос ушёл за границу периода — переносимая запись
-    по-прежнему единственный факт "занятие было запланировано в этом
-    периоде" и считается как обычно.
+    **Источник норматива — гибрид.** За часть периода, до которой генератор
+    занятий уже дошёл, норматив берётся из ФАКТИЧЕСКИ заведённых занятий: это
+    исторически верно и невосприимчиво к смене расписания среди периода (при
+    откреплении ученика удаляются только БУДУЩИЕ `scheduled`-участия, прошлое
+    остаётся; самих занятий система не удаляет нигде). За хвост периода за
+    горизонтом генератора — из постоянного расписания за вычетом перерывов,
+    тем же счётом, что и деньги (``charge_service.lesson_counts_for_period``).
+
+    Переносы в норматив не входят вовсе: строка `rescheduled` заменена другой
+    строкой, и та посчитается там, куда переехала. Поэтому перенос не может
+    стать пропуском ни сам по себе, ни задвоением — обход цепочки
+    `rescheduled_to_occurrence_id` (tsk-503) здесь не нужен, инвариант держится
+    по построению.
+
+    :returns: ``planned`` (норматив за период), ``attended`` (посетил),
+        ``missed`` (пропустил — из уже прошедших), ``upcoming`` (ещё впереди).
+        Инвариант: ``planned == attended + missed + upcoming``.
     """
-    rows = (
+    elapsed_to = min(period_to, now)
+    row = (
         await db.execute(
             text(
-                "WITH RECURSIVE period_participants AS ( "
-                "    SELECT lop.id, lop.status, lop.rescheduled_to_occurrence_id, "
-                "           target_lo.scheduled_at AS target_scheduled_at "
-                "    FROM lesson_occurrence_participant lop "
-                "    JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
-                "    LEFT JOIN lesson_occurrence target_lo "
-                "        ON target_lo.id = lop.rescheduled_to_occurrence_id "
-                "    WHERE lop.student_id = :student_id "
-                "      AND lo.scheduled_at >= :period_from AND lo.scheduled_at <= :period_to "
-                "), "
-                "chain AS ( "
-                "    SELECT pp.id AS origin_id, pp.status, pp.rescheduled_to_occurrence_id, "
-                "           1 AS depth "
-                "    FROM period_participants pp "
-                "    UNION ALL "
-                "    SELECT c.origin_id, next_lop.status, next_lop.rescheduled_to_occurrence_id, "
-                "           c.depth + 1 "
-                "    FROM chain c "
-                "    JOIN lesson_occurrence_participant next_lop "
-                "        ON next_lop.occurrence_id = c.rescheduled_to_occurrence_id "
-                "       AND next_lop.student_id = :student_id "
-                "    WHERE c.status = 'rescheduled' AND c.rescheduled_to_occurrence_id IS NOT NULL "
-                "      AND c.depth < :max_depth "
-                "), "
-                "final_status AS ( "
-                "    SELECT DISTINCT ON (origin_id) origin_id, status AS final_status "
-                "    FROM chain "
-                "    ORDER BY origin_id, depth DESC "
-                ") "
-                "SELECT pp.id, pp.status AS origin_status, fs.final_status, "
-                "       (pp.status = 'rescheduled' AND pp.target_scheduled_at IS NOT NULL "
-                "        AND pp.target_scheduled_at >= :period_from "
-                "        AND pp.target_scheduled_at <= :period_to) AS target_in_same_period "
-                "FROM period_participants pp "
-                "JOIN final_status fs ON fs.origin_id = pp.id"
+                "SELECT "
+                "  count(*) FILTER (WHERE lo.scheduled_at <= :elapsed_to) AS elapsed, "
+                "  count(*) FILTER (WHERE lo.scheduled_at <= :elapsed_to "
+                "                     AND lop.status = ANY(:attended)) AS attended, "
+                "  count(*) AS generated, "
+                "  max(lo.scheduled_at) AS last_generated "
+                "FROM lesson_occurrence_participant lop "
+                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "WHERE lop.student_id = :student_id "
+                "  AND lo.scheduled_at >= :period_from AND lo.scheduled_at <= :period_to "
+                "  AND NOT (lop.status = ANY(:not_counted))"
             ),
             {
                 "student_id": student_id,
                 "period_from": period_from,
                 "period_to": period_to,
-                "max_depth": _MAX_RESCHEDULE_CHAIN_DEPTH,
+                "elapsed_to": elapsed_to,
+                "attended": list(_ATTENDED_STATUSES),
+                "not_counted": list(_NOT_COUNTED_STATUSES),
             },
         )
-    ).mappings().fetchall()
+    ).mappings().fetchone()
 
-    total = sum(1 for row in rows if not row["target_in_same_period"])
-    missed_total = sum(1 for row in rows if row["origin_status"] in _MISSED_STATUSES)
-    missed_unresolved = sum(
-        1
-        for row in rows
-        if row["origin_status"] in _MISSED_STATUSES
-        and row["final_status"] not in _ATTENDED_STATUSES
-    )
+    elapsed = int(row["elapsed"] or 0)
+    attended = int(row["attended"] or 0)
+    planned = int(row["generated"] or 0)
+
+    # Хвост периода за горизонтом генератора — по постоянному расписанию.
+    # Горизонт берём по ЭТОМУ ученику: у прикреплённого позже занятий может
+    # быть сгенерировано меньше, чем у остальных.
+    horizon = await _generator_horizon(db, student_id=student_id, fallback=now)
+    tail_from = max(horizon.date() + timedelta(days=1), period_from.date())
+    tail_to = period_to.date()
+    if tail_from <= tail_to:
+        counts = await charge_service.lesson_counts_for_period(
+            db, student_id=student_id, period_from=tail_from, period_to=tail_to,
+        )
+        planned += counts.expected - counts.on_break
+
     return {
-        "total_occurrences": total,
-        "missed_total": missed_total,
-        "missed_unresolved": missed_unresolved,
+        "planned": planned,
+        "attended": attended,
+        "missed": max(0, elapsed - attended),
+        "upcoming": max(0, planned - elapsed),
     }
+
+
+async def _generator_horizon(
+    db: AsyncSession, *, student_id: int, fallback: datetime
+) -> datetime:
+    """До какой даты занятия этому ученику уже сгенерированы.
+
+    Считается по ВСЕМ его занятиям, не только попавшим в период: период может
+    целиком лежать в прошлом, а горизонт — далеко впереди, и тогда хвоста по
+    расписанию быть не должно вовсе. Занятий нет совсем (только что прикреплён
+    или их и не будет) — горизонт «сейчас», весь будущий хвост считается по
+    расписанию.
+    """
+    last = (
+        await db.execute(
+            text(
+                "SELECT max(lo.scheduled_at) FROM lesson_occurrence_participant lop "
+                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "WHERE lop.student_id = :student_id"
+            ),
+            {"student_id": student_id},
+        )
+    ).scalar()
+    return max(last, fallback) if last is not None else fallback
 
 
 async def _load_course_pace_and_forecast(
@@ -374,7 +390,7 @@ async def get_student_dashboard(
     )
     between_lessons = _subtract_metrics(period_total, in_class_hours)
     attendance = await _load_attendance(
-        db, student_id=student_id, period_from=period_from, period_to=period_to,
+        db, student_id=student_id, period_from=period_from, period_to=period_to, now=now,
     )
 
     accessible = await _list_active_student_courses(db, student_id)

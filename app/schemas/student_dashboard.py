@@ -33,9 +33,22 @@ class StudentDashboardMetricsRead(BaseModel):
 
 
 class StudentDashboardAttendanceRead(BaseModel):
-    total_occurrences: int
-    missed_total: int
-    missed_unresolved: int
+    """Посещение за период по нормативу (tsk-556).
+
+    Инвариант, на который опирается вывод: ``planned == attended + missed +
+    upcoming``. Показывать `planned` без остальных трёх нельзя — цифра
+    «пропущено» без нормы рядом не читается.
+    """
+
+    #: Сколько занятий период предполагал (прошедшее — по факту заведённых,
+    #: хвост за горизонтом генератора — по расписанию за вычетом перерывов).
+    planned: int
+    #: Фактически посетил (`confirmed`/`completed`).
+    attended: int
+    #: Пропустил — из уже прошедших занятий периода.
+    missed: int
+    #: Ещё впереди: время занятия в периоде не наступило.
+    upcoming: int
 
 
 class StudentDashboardRead(BaseModel):

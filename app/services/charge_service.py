@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy import text
@@ -26,6 +26,7 @@ __all__ = [
     "month_start",
     "next_month",
     "lesson_counts_for_month",
+    "lesson_counts_for_period",
     "recalculate_student_group",
     "recalculate_month",
     "recalculate_for_student",
@@ -79,21 +80,41 @@ async def lesson_counts_for_month(
 ) -> ChargeCounts:
     """Занятий в месяце по постоянному расписанию и сколько попало в перерыв.
 
+    Тонкая обёртка над :func:`lesson_counts_for_period` с границами
+    календарного месяца — денежный контур работает только помесячно
+    (CHECK `date_trunc('month', period) = period` на `student_monthly_charge`).
+    """
+    last_day = next_month(period) - timedelta(days=1)
+    return await lesson_counts_for_period(
+        db, student_id=student_id, period_from=period, period_to=last_day
+    )
+
+
+async def lesson_counts_for_period(
+    db: AsyncSession, *, student_id: int, period_from: date, period_to: date
+) -> ChargeCounts:
+    """Занятий за ПРОИЗВОЛЬНЫЙ период по постоянному расписанию и сколько из
+    них попало в перерыв (границы включительные с обеих сторон).
+
     В слоте `weekday` считает от нуля-понедельника (проверено на живых данных:
     слот 0 → ISODOW 1). Считается пара «день × слот», поэтому два слота в один
     день дают два занятия, а не одно.
+
+    tsk-556: вынесено из `lesson_counts_for_month` без изменения логики —
+    дашборду нужен тот же счёт за хвост периода, до которого генератор занятий
+    ещё не дошёл. Деньги по-прежнему зовут только помесячную обёртку.
     """
     row = (
         await db.execute(
             text(
                 """
                 WITH days AS (
-                    -- CAST(...), а не :period::date — постфиксное приведение
+                    -- CAST(...), а не :period_from::date — постфиксное приведение
                     -- на параметре asyncpg не разбирает («ошибка синтаксиса»).
                     SELECT d::date AS day
                       FROM generate_series(
-                               CAST(:period AS date),
-                               CAST(:period AS date) + INTERVAL '1 month' - INTERVAL '1 day',
+                               CAST(:period_from AS date),
+                               CAST(:period_to AS date),
                                INTERVAL '1 day'
                            ) AS d
                 ),
@@ -117,7 +138,11 @@ async def lesson_counts_for_month(
                   JOIN slots ON (EXTRACT(ISODOW FROM days.day)::int - 1) = slots.weekday
                 """
             ),
-            {"student_id": student_id, "period": period},
+            {
+                "student_id": student_id,
+                "period_from": period_from,
+                "period_to": period_to,
+            },
         )
     ).one()
     return ChargeCounts(expected=int(row.expected), on_break=int(row.on_break))

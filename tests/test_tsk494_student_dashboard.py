@@ -13,8 +13,10 @@ test_teacher_lesson_summary_tsk022_410.py.
 - `first_try` не портится при разнесении на "в часы"/"между занятиями".
 - Прогноз окончания курса: pace=0 → None; remaining=0 → is_completed=True,
   forecast_date=None; нормальный случай — конкретная дата.
-- Посещение за период: missed_total/missed_unresolved по всем статусам
-  участия, `rescheduled` уже закрыт по построению.
+- Посещение за период по НОРМАТИВУ (tsk-556): planned/attended/missed/upcoming,
+  инвариант `planned == attended + missed + upcoming`; прошедшее по факту
+  заведённых занятий, хвост за горизонтом генератора — по расписанию;
+  переносы и перерывы в норматив не входят.
 - Минимизация данных: сырой JSON не содержит `solution_rules`/`message`/
   `resolution_comment`.
 """
@@ -22,7 +24,7 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -307,7 +309,9 @@ async def test_dashboard_empty_period_all_metrics_zero(db, client):
         assert body[bucket] == {
             "tasks_completed": 0, "theory_completed": 0, "first_try": 0, "help_requested_count": 0,
         }, bucket
-    assert body["attendance"] == {"total_occurrences": 0, "missed_total": 0, "missed_unresolved": 0}
+    assert body["attendance"] == {
+        "planned": 0, "attended": 0, "missed": 0, "upcoming": 0,
+    }
     assert body["courses"] == []
 
 
@@ -423,11 +427,219 @@ async def test_occurrence_boundary_is_inclusive(db, client):
 # ============================== Attendance ==============================
 
 
+async def _create_slot(
+    db, *, teacher_id: int, student_id: int, weekday: int, start_hour: int = 10,
+) -> int:
+    """tsk-556: постоянный слот расписания — источник норматива за хвост
+    периода, до которого генератор занятий ещё не дошёл."""
+    slot_id = (
+        await db.execute(
+            text(
+                "INSERT INTO lesson_slot (teacher_id, weekday, start_time, duration_minutes) "
+                "VALUES (:t, :wd, :st, 60) RETURNING id"
+            ),
+            {"t": teacher_id, "wd": weekday, "st": time(hour=start_hour)},
+        )
+    ).scalar()
+    await db.execute(
+        text(
+            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active) "
+            "VALUES (:s, :u, true)"
+        ),
+        {"s": slot_id, "u": student_id},
+    )
+    await db.commit()
+    return int(slot_id)
+
+
 @pytest.mark.asyncio
-async def test_attendance_missed_total_and_unresolved(db, client):
-    """Базовые статусы + один перенос, РЕАЛЬНО закрытый явкой (`confirmed` на
-    целевом occurrence) — не голый статус `rescheduled` без цепочки (tsk-503:
-    сам факт переноса больше не значит "закрыто")."""
+async def test_attendance_normative_counts_and_invariant(db, client):
+    """tsk-556: норматив/посетил/пропустил/впереди + инвариант
+    `planned == attended + missed + upcoming`."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    period_from = now - timedelta(days=10)
+    period_to = now + timedelta(days=3)
+
+    # Прошедшие: 2 посещения + 2 пропуска.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=9), status="completed",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=8), status="confirmed",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=6), status="no_show",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=5), status="declined",
+    )
+    # Ещё впереди.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now + timedelta(days=1), status="scheduled",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(period_from, period_to),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    assert a == {"planned": 5, "attended": 2, "missed": 2, "upcoming": 1}
+    assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
+
+
+@pytest.mark.asyncio
+async def test_attendance_teacher_marked_absent_then_present(db, client):
+    """Сценарий оператора: ученик сам ничего не проставил, преподаватель
+    поставил пропуск, а потом сам же исправил на явку. Считается итог, не
+    история отметок."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    occ_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=2), status="no_show",
+    )
+    # Преподаватель исправляет вручную (тот же переход, что
+    # `record_teacher_attendance` с action='manual_present').
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant SET status = 'confirmed' "
+            "WHERE occurrence_id = :o AND student_id = :s"
+        ),
+        {"o": occ_id, "s": student_id},
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(now - timedelta(days=5), now),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
+
+
+@pytest.mark.asyncio
+async def test_attendance_break_excluded_from_norm(db, client):
+    """Перерыв не должен превращаться в пропуски: занятия со статусом
+    `on_break` в норматив не входят."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=4), status="confirmed",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=3), status="on_break",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=2), status="on_break",
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(now - timedelta(days=6), now),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
+
+
+@pytest.mark.asyncio
+async def test_attendance_future_tail_from_permanent_schedule(db, client):
+    """Хвост периода за горизонтом генератора считается по ПОСТОЯННОМУ
+    расписанию: занятий там ещё нет, но они уже обещаны ученику."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    # Занятие сгенерировано только одно, вчера; горизонт генератора — «сейчас».
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=1), status="confirmed",
+    )
+    # Слот на день недели, который придётся ровно на 3 и 10 день вперёд.
+    target = now + timedelta(days=3)
+    await _create_slot(
+        db, teacher_id=teacher_id, student_id=student_id, weekday=target.weekday(),
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(now - timedelta(days=2), now + timedelta(days=9)),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    # 1 фактическое (посещено) + 1 обещанное расписанием на 3-й день вперёд.
+    assert a == {"planned": 2, "attended": 1, "missed": 0, "upcoming": 1}
+
+
+@pytest.mark.asyncio
+async def test_attendance_past_norm_survives_schedule_change(db, client):
+    """Вопрос оператора: преподаватель среди периода добавил занятие в слот
+    (было 1 в неделю, стало 2). Прошедшая часть обязана считаться по ФАКТУ,
+    а не по новому расписанию — иначе появятся пропуски, которых не было."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    now = datetime.now(UTC)
+    # Прошедшие две недели ученик ходил РАЗ в неделю, оба занятия посетил.
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=13), status="confirmed",
+    )
+    await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=now - timedelta(days=6), status="confirmed",
+    )
+    # А сейчас в расписании УЖЕ два слота в неделю (второй добавлен только что).
+    await _create_slot(
+        db, teacher_id=teacher_id, student_id=student_id,
+        weekday=(now - timedelta(days=6)).weekday(), start_hour=10,
+    )
+    await _create_slot(
+        db, teacher_id=teacher_id, student_id=student_id,
+        weekday=(now - timedelta(days=4)).weekday(), start_hour=14,
+    )
+
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/dashboard",
+        params=_dt_params(now - timedelta(days=14), now),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    a = resp.json()["attendance"]
+    # Ровно 2 занятия по факту, ни одного пропуска — новый слот прошлое не задевает.
+    assert a == {"planned": 2, "attended": 2, "missed": 0, "upcoming": 0}
+
+
+@pytest.mark.asyncio
+async def test_attendance_reschedule_inside_period_attended(db, client):
+    """Перенос внутри периода, закрытый явкой: исходная строка в норматив не
+    входит вовсе (её место заняла целевая), задвоения нет, пропуска нет."""
     teacher_id, token = await _new_user(db, role="teacher", name="teach")
     student_id, _ = await _new_user(db, role="student", name="stud")
     await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
@@ -473,12 +685,12 @@ async def test_attendance_missed_total_and_unresolved(db, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
-    # origin переноса не считается отдельно (её "закрывает" целевая запись,
-    # тоже в периоде) — total: completed+confirmed+scheduled+no_show+declined+target = 6
-    assert attendance["total_occurrences"] == 6
-    assert attendance["missed_total"] == 3  # no_show + declined + rescheduled(origin)
-    assert attendance["missed_unresolved"] == 2  # no_show + declined (перенос закрыт явкой)
+    a = resp.json()["attendance"]
+    # Норматив: completed + confirmed + scheduled(прошедшее, никто не отметил)
+    # + no_show + declined + целевая строка переноса = 6. Исходная строка
+    # переноса (`rescheduled`) не считается.
+    assert a == {"planned": 6, "attended": 3, "missed": 3, "upcoming": 0}
+    assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
 
 
 @pytest.mark.asyncio
@@ -511,9 +723,10 @@ async def test_attendance_reschedule_to_missed_target_still_unresolved(db, clien
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
-    assert attendance["missed_total"] == 2  # origin(rescheduled) + target(no_show)
-    assert attendance["missed_unresolved"] == 2  # оба всё ещё открыты
+    a = resp.json()["attendance"]
+    # Одно занятие, перенесённое на дату, где ученик снова не пришёл: норматив 1
+    # (исходная строка не в счёт), пропуск 1 — и ровно один, а не два.
+    assert a == {"planned": 1, "attended": 0, "missed": 1, "upcoming": 0}
 
 
 @pytest.mark.asyncio
@@ -551,9 +764,10 @@ async def test_attendance_reschedule_chain_of_two_resolved(db, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
-    assert attendance["missed_total"] == 2  # origin + hop1, оба status='rescheduled'
-    assert attendance["missed_unresolved"] == 0  # цепочка дошла до confirmed
+    a = resp.json()["attendance"]
+    # Цепочка из двух переносов, итог — явка. Обходить цепочку не нужно:
+    # обе промежуточные строки `rescheduled` в норматив не входят.
+    assert a == {"planned": 1, "attended": 1, "missed": 0, "upcoming": 0}
 
 
 @pytest.mark.asyncio
@@ -591,18 +805,15 @@ async def test_attendance_reschedule_chain_of_two_still_unresolved(db, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
-    # origin('rescheduled') + hop1('rescheduled') + hop2('declined') — финальный
-    # declined сам по себе тоже пропуск, в отличие от resolved-случая (там
-    # финал confirmed пропуском не является).
-    assert attendance["missed_total"] == 3
-    assert attendance["missed_unresolved"] == 3  # все три всё ещё открыты
+    a = resp.json()["attendance"]
+    # Та же цепочка, но итог — отказ: ровно один пропуск, а не три.
+    assert a == {"planned": 1, "attended": 0, "missed": 1, "upcoming": 0}
 
 
 @pytest.mark.asyncio
-async def test_attendance_total_occurrences_no_double_count_within_period(db, client):
-    """tsk-503, вторая находка: перенос ВНУТРИ одного периода не должен
-    задваивать `total_occurrences` — это одно занятие, просто на другую дату."""
+async def test_attendance_no_double_count_within_period(db, client):
+    """Перенос ВНУТРИ одного периода не задваивает норматив — это одно
+    занятие, просто на другую дату."""
     teacher_id, token = await _new_user(db, role="teacher", name="teach")
     student_id, _ = await _new_user(db, role="student", name="stud")
     await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
@@ -632,16 +843,16 @@ async def test_attendance_total_occurrences_no_double_count_within_period(db, cl
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
+    a = resp.json()["attendance"]
     # 1 обычная запись + 1 перенесённая пара (считается один раз, не два)
-    assert attendance["total_occurrences"] == 2
+    assert a == {"planned": 2, "attended": 2, "missed": 0, "upcoming": 0}
 
 
 @pytest.mark.asyncio
-async def test_attendance_total_occurrences_counts_separately_across_period_boundary(db, client):
-    """Перенос ЗА границу периода (целевая дата вне окна) — исходная запись
-    по-прежнему единственный факт "занятие было запланировано в этом
-    периоде" и считается как обычно (без задвоения, но и без потери)."""
+async def test_attendance_reschedule_out_of_period_is_not_a_miss(db, client):
+    """Перенос ЗА границу периода: занятие уехало из окна вместе со своим
+    нормативом и пропуском в этом периоде не становится. Оно посчитается там,
+    куда переехало."""
     teacher_id, token = await _new_user(db, role="teacher", name="teach")
     student_id, _ = await _new_user(db, role="student", name="stud")
     await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
@@ -668,10 +879,8 @@ async def test_attendance_total_occurrences_counts_separately_across_period_boun
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 200, resp.text
-    attendance = resp.json()["attendance"]
-    assert attendance["total_occurrences"] == 1  # только исходная запись в периоде
-    assert attendance["missed_total"] == 1  # rescheduled засчитан как пропуск исходного времени
-    assert attendance["missed_unresolved"] == 0  # но цепочка дошла до confirmed — закрыт
+    a = resp.json()["attendance"]
+    assert a == {"planned": 0, "attended": 0, "missed": 0, "upcoming": 0}
 
 
 # ============================== Forecast ==============================

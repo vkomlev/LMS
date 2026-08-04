@@ -110,7 +110,21 @@ EXISTS (
 
 ### Незакрытые пропуски за период (п.3)
 
+> **Пересмотрено (tsk-503 → tsk-556, 2026-08-04).** Описанный ниже статусный
+> подсчёт больше НЕ действует. Сначала tsk-503 показал, что `rescheduled` сам
+> по себе не означает закрытого пропуска (перенос ≠ отработка), а затем
+> оператор сменил саму модель на нормативную: «должен был посетить N, посетил
+> M — значит пропусков N−M». Актуальный контракт — `planned`/`attended`/
+> `missed`/`upcoming` с инвариантом `planned == attended + missed + upcoming`,
+> реализация в `student_dashboard_service._load_attendance`. Источник
+> норматива гибридный: прошедшее — по фактически заведённым занятиям
+> (устойчиво к смене расписания среди периода), хвост за горизонтом
+> генератора — по постоянному расписанию за вычетом перерывов
+> (`charge_service.lesson_counts_for_period`). Строки `rescheduled` и
+> `on_break` в норматив не входят. Раздел оставлен как история решения.
+
 ```sql
+-- УСТАРЕЛО, см. врезку выше
 SELECT lop.status, COUNT(*) FROM lesson_occurrence_participant lop
 JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
 WHERE lop.student_id = :student_id
@@ -151,9 +165,12 @@ class StudentDashboardMetricsRead(BaseModel):
     help_requested_count: int  # ТОЛЬКО счётчик, без текста
 
 class StudentDashboardAttendanceRead(BaseModel):
-    total_occurrences: int
-    missed_total: int
-    missed_unresolved: int
+    # tsk-556: нормативная модель, инвариант
+    # planned == attended + missed + upcoming
+    planned: int     # сколько занятий период предполагал
+    attended: int    # посетил (confirmed/completed)
+    missed: int      # пропустил — из уже прошедших
+    upcoming: int    # ещё впереди
 
 class StudentDashboardRead(BaseModel):
     student_id: int

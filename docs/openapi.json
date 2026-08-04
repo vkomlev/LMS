@@ -44209,26 +44209,32 @@
       },
       "StudentDashboardAttendanceRead": {
         "properties": {
-          "total_occurrences": {
+          "planned": {
             "type": "integer",
-            "title": "Total Occurrences"
+            "title": "Planned"
           },
-          "missed_total": {
+          "attended": {
             "type": "integer",
-            "title": "Missed Total"
+            "title": "Attended"
           },
-          "missed_unresolved": {
+          "missed": {
             "type": "integer",
-            "title": "Missed Unresolved"
+            "title": "Missed"
+          },
+          "upcoming": {
+            "type": "integer",
+            "title": "Upcoming"
           }
         },
         "type": "object",
         "required": [
-          "total_occurrences",
-          "missed_total",
-          "missed_unresolved"
+          "planned",
+          "attended",
+          "missed",
+          "upcoming"
         ],
-        "title": "StudentDashboardAttendanceRead"
+        "title": "StudentDashboardAttendanceRead",
+        "description": "Посещение за период по нормативу (tsk-556).\n\nИнвариант, на который опирается вывод: ``planned == attended + missed +\nupcoming``. Показывать `planned` без остальных трёх нельзя — цифра\n«пропущено» без нормы рядом не читается."
       },
       "StudentDashboardCourseRead": {
         "properties": {
