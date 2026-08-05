@@ -196,12 +196,15 @@ async def search_tasks(
     current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> List[TaskRead]:
     """
-    Поиск заданий по содержимому (tsk-564: cookie auth + роль методист/админ).
+    Поиск заданий по ID или содержимому (tsk-564: cookie auth + роль методист/админ).
 
-    Поиск выполняется по:
-    - task_content.stem (формулировка вопроса)
-    - task_content.title (название задания, если указано)
-    - external_uid (внешний идентификатор)
+    Два режима одного параметра `q` (tsk-567, тот же приём, что в
+    `task_search_service.py` для tsk-353):
+    - число или `id-<N>` — точный поиск по `tasks.id`;
+    - иначе — полнотекстовый ILIKE по:
+      - task_content.stem (формулировка вопроса)
+      - task_content.title (название задания, если указано)
+      - external_uid (внешний идентификатор)
 
     Поиск регистронезависимый (case-insensitive).
 
@@ -224,7 +227,21 @@ async def search_tasks(
     прошёл гейт.
     """
     from app.models.tasks import Tasks
+    from app.utils.id_query import parse_id_query
     from app.utils.ilike import escape_ilike
+
+    # tsk-567: «110» / «id-110» / «ID-110» — точный поиск по PK, а не по
+    # тексту. Задание с таким ID может не содержать этот номер нигде в
+    # stem/title/external_uid (внешние коды вроде «tg:ege:960» не связаны с
+    # видимым ID) — текстовый ILIKE его в принципе не найдёт.
+    id_query = parse_id_query(q)
+    if id_query is not None:
+        query = select(Tasks).where(Tasks.id == id_query)
+        if course_id is not None:
+            query = query.where(Tasks.course_id == course_id)
+        result = await db.execute(query)
+        tasks = result.scalars().all()
+        return [_task_read_for(task, privileged=True) for task in tasks]
 
     # Поиск по JSONB полям task_content
     # Используем JSONB операторы PostgreSQL для поиска в task_content.stem и task_content.title
@@ -236,12 +253,12 @@ async def search_tasks(
         Tasks.task_content['title'].astext.ilike(pattern, escape='\\'),
         Tasks.external_uid.ilike(pattern, escape='\\'),
     ]
-    
+
     query = select(Tasks).where(or_(*search_conditions))
-    
+
     if course_id is not None:
         query = query.where(Tasks.course_id == course_id)
-    
+
     query = query.limit(limit).offset(offset).order_by(Tasks.id)
     
     result = await db.execute(query)

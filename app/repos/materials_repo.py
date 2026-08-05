@@ -17,6 +17,7 @@ from sqlalchemy.sql import text
 
 from app.models.materials import Materials
 from app.repos.base import BaseRepository
+from app.utils.id_query import parse_id_query
 from app.utils.ilike import escape_ilike
 
 
@@ -88,7 +89,10 @@ class MaterialsRepository(BaseRepository[Materials]):
         limit: int = 100,
     ) -> Tuple[List[Materials], int]:
         """
-        Поиск материалов по title и external_uid (ILIKE).
+        Поиск материалов по ID, title и external_uid.
+
+        Число или `id-<N>` (tsk-567) — точный поиск по `materials.id`, иначе
+        ILIKE по title/external_uid.
         course_id: опционально; при отсутствии — поиск по всем курсам.
 
         Returns:
@@ -96,6 +100,19 @@ class MaterialsRepository(BaseRepository[Materials]):
         """
         if not q or not q.strip():
             return [], 0
+
+        # tsk-567: «110» / «id-110» / «ID-110» — точный поиск по PK, а не по
+        # тексту (external_uid материала не связан с видимым ID, ILIKE его в
+        # принципе не найдёт).
+        id_query = parse_id_query(q)
+        if id_query is not None:
+            id_stmt = select(Materials).where(Materials.id == id_query)
+            if course_id is not None:
+                id_stmt = id_stmt.where(Materials.course_id == course_id)
+            id_result = await db.execute(id_stmt)
+            items = list(id_result.scalars().all())
+            return items, len(items)
+
         # tsk-565: буквальный % / _ в запросе экранируется — иначе сработал
         # бы как wildcard ILIKE, а не как искомый текст.
         pattern = f"%{escape_ilike(q.strip())}%"
