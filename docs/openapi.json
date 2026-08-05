@@ -4576,9 +4576,12 @@
           "materials"
         ],
         "summary": "Поиск материалов по title и external_uid",
-        "description": "Глобальный поиск материалов по заголовку и external_uid. course_id опционально.",
+        "description": "Глобальный поиск материалов по заголовку и external_uid. course_id опционально.\n\ntsk-564: переведён с legacy `get_db` (любой валидный API-ключ) на\n`_STRUCTURE_GATE` для единообразия с `/tasks/search` и остальными\nструктурными операциями этого файла (tsk-433 Волна 2.3). Материалы не\nнесут секрета уровня `solution_rules` — здесь это архитектурная\nнестыковка (сирота вне паттерна авторизации файла), не утечка данных.",
         "operationId": "search_materials_api_v1_materials_search_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -4635,6 +4638,54 @@
               "minimum": 1,
               "default": 100,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
             }
           }
         ],
@@ -8523,9 +8574,12 @@
           "tasks"
         ],
         "summary": "Поиск заданий по содержимому",
-        "description": "Поиск заданий по содержимому.\n\nПоиск выполняется по:\n- task_content.stem (формулировка вопроса)\n- task_content.title (название задания, если указано)\n- external_uid (внешний идентификатор)\n\nПоиск регистронезависимый (case-insensitive).\n\nArgs:\n    q: Поисковый запрос (минимум 2 символа)\n    course_id: Опциональный фильтр по курсу\n    limit: Максимум результатов (1-200)\n    offset: Смещение для пагинации\n\nReturns:\n    Список найденных заданий",
+        "description": "Поиск заданий по содержимому (tsk-564: cookie auth + роль методист/админ).\n\nПоиск выполняется по:\n- task_content.stem (формулировка вопроса)\n- task_content.title (название задания, если указано)\n- external_uid (внешний идентификатор)\n\nПоиск регистронезависимый (case-insensitive).\n\nArgs:\n    q: Поисковый запрос (минимум 2 символа)\n    course_id: Опциональный фильтр по курсу\n    limit: Максимум результатов (1-200)\n    offset: Смещение для пагинации\n\nReturns:\n    Список найденных заданий\n\ntsk-564: раньше сидел на legacy `get_db` (любой валидный API-ключ, без\nразбора роли) и звал `TaskRead.model_validate(task)` напрямую — держатель\nЛЮБОГО сервисного ключа мог вытащить `solution_rules` (верные ответы)\nпоиском по тексту, тот же класс утечки, что tsk-460 закрыл для трёх\nдругих эндпоинтов. `_STRUCTURE_GATE` пропускает сервисный ключ bypass'ом\nи роли methodist/admin — оба случая по семантике `_task_read_for`\nпривилегированы, поэтому `privileged=True` фиксирован для всех, кто\nпрошёл гейт.",
         "operationId": "search_tasks_api_v1_tasks_search_get",
         "security": [
+          {
+            "APIKeyHeader": []
+          },
           {
             "APIKeyQuery": []
           }
@@ -8587,6 +8641,54 @@
               "title": "Offset"
             },
             "description": "Смещение"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
           }
         ],
         "responses": {
