@@ -1,0 +1,21 @@
+warning: in the working copy of 'app/repos/materials_repo.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/repos/materials_repo.py b/app/repos/materials_repo.py
+index d2a1908..3e82ef3 100644
+--- a/app/repos/materials_repo.py
++++ b/app/repos/materials_repo.py
+@@ -47,8 +47,13 @@ class MaterialsRepository(BaseRepository[Materials]):
+         count_stmt = select(func.count()).select_from(Materials).where(Materials.course_id == course_id)
+ 
+         if q and q.strip():
+-            pattern = f"%{q.strip()}%"
+-            cond = (Materials.title.ilike(pattern)) | (Materials.external_uid.ilike(pattern))
++            # tsk-566: буквальный % / _ в запросе экранируется — иначе сработал
++            # бы как wildcard ILIKE, а не как искомый текст (та же находка, что tsk-565).
++            pattern = f"%{escape_ilike(q.strip())}%"
++            cond = (
++                Materials.title.ilike(pattern, escape='\\')
++                | Materials.external_uid.ilike(pattern, escape='\\')
++            )
+             stmt = stmt.where(cond)
+             count_stmt = count_stmt.where(cond)
+         if is_active is not None:
