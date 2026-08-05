@@ -80,6 +80,7 @@
 | `20260627_020000_tsk122_trigger_quiz_scale` | tsk-122 Stage 2: значение `quiz_scale` в CHECK `assignment_rule_trigger_event_check` |
 | `20260717_010000_tsk264_attempts_root_course` | tsk-264: `attempts.root_course_id` — контекст навигации, попытки по паре «курс + задание» |
 | `20260726_010000_tsk428_lesson_calendar_stage1` | tsk-428 (Календарь LMS Фаза 1): `operating_hours` + `lesson_slot` + `lesson_occurrence` + `attendance_event` — 4 новые таблицы, ноль изменений в существующих |
+| `20260805_100000_tsk114_task_audit` | tsk-114: `task_audit` (append-only) + AFTER-триггеры на `tasks` — аудит `course_id`/`is_active`, профилактика повтора tsk-113 |
 
 ## Date/Time safety (критично)
 
@@ -110,6 +111,7 @@
 | `user_session` | UUID PK, `token_hash BYTEA UNIQUE`, TTL 15 мин access / 30 дней refresh, `revoked_at`. Partial index `WHERE revoked_at IS NULL`. |
 | `magic_link` | Email magic-link: `token_hash BYTEA UNIQUE`, `expires_at`, `consumed_at`. TTL 15 мин, одноразовый. |
 | `audit_event` | Append-only (trigger `audit_event_immutable`). `BigSerial PK`, `event_type`, `ip INET`, `details JSONB`. |
+| `task_audit` | Append-only (trigger `task_audit_immutable`, tsk-114). `BigSerial PK`, старое/новое `tasks.course_id`/`is_active`, `changed_by`/`db_role`. Наполняется AFTER-триггером на `tasks`, не приложением — см. [task-audit.md](task-audit.md). |
 | `product_event` | RANGE partitioned by month (`ts`), 6 партиций вперёд. Funnel-аналитика. |
 | `guest_session` | UUID PK, анонимный пользователь; `attributed_user_id` при регистрации. |
 | `guest_attempt` | Попытки гостя; `attributed_user_id` + `attributed_at` при атрибуции. |

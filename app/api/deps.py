@@ -9,6 +9,7 @@ from sqlalchemy import select
 from app.auth.current_user import CurrentUser
 from app.auth.service_api_key import is_valid_service_key
 from app.core.config import Settings
+from app.db.audit_context import set_audit_actor
 from app.db.session import get_async_db
 from app.services.auth import session_service
 from app.services import user_block_service
@@ -38,6 +39,12 @@ async def get_db(
     api_key: str = Depends(get_api_key),
 ) -> AsyncSession:
     """Legacy dependency: DB + service API key для TG_LMS ботов."""
+    # tsk-114: единственный auth-путь generic CRUD-роутера tasks (см.
+    # app/api/main.py) — проставляем источник для audit-триггера на
+    # tasks.course_id/is_active (app/db/migrations/versions/
+    # 20260805_100000_tsk114_task_audit.py). TasksService.bulk_upsert
+    # перекрывает более специфичной меткой.
+    await set_audit_actor(db, "service:api_key")
     return db
 
 

@@ -1,0 +1,323 @@
+"""tsk-114: интеграционные тесты audit-триггера tasks.course_id/is_active.
+
+Покрывает: UPDATE course_id/is_active пишет task_audit (старое/новое +
+источник), UPDATE прочих полей — не пишет (WHEN-условие), DELETE
+аудируется, append-only enforcement (UPDATE/DELETE task_audit запрещены),
+и TasksService.bulk_upsert проставляет changed_by='bulk_upsert'.
+
+Стратегия — как в test_tasks_order_position.py: временный курс + задачи в
+транзакции фикстуры `db` (rollback после теста, в БД ничего не остаётся).
+"""
+from __future__ import annotations
+
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+
+from app.services.tasks_service import TasksService
+
+_TASK_CONTENT = '{"type": "SC", "stem": "x", "options": [{"id": "a", "label": "1"}]}'
+_SOLUTION_RULES = '{"type": "SC", "correct_options": ["a"], "max_score": 1}'
+
+
+async def _new_course(db, title: str = "test_task_audit") -> int:
+    row = (
+        await db.execute(
+            text(
+                """
+                INSERT INTO courses (title, description, access_level, is_required)
+                VALUES (:title, 'test', 'self_guided', false)
+                RETURNING id
+                """
+            ),
+            {"title": title},
+        )
+    ).first()
+    await db.flush()
+    return int(row.id)
+
+
+async def _insert_task(
+    db, course_id: int, *, is_active: bool = True, external_uid: str | None = None
+) -> int:
+    row = (
+        await db.execute(
+            text(
+                """
+                INSERT INTO tasks (task_content, course_id, difficulty_id, solution_rules,
+                                   max_score, is_active, external_uid)
+                VALUES (CAST(:tc AS jsonb), :cid, 1, CAST(:sr AS jsonb), 1, :active, :uid)
+                RETURNING id
+                """
+            ),
+            {
+                "tc": _TASK_CONTENT,
+                "cid": course_id,
+                "sr": _SOLUTION_RULES,
+                "active": is_active,
+                "uid": external_uid,
+            },
+        )
+    ).first()
+    await db.flush()
+    return int(row.id)
+
+
+async def _audit_rows(db, task_id: int):
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT action, old_course_id, new_course_id,
+                       old_is_active, new_is_active, changed_by, db_role
+                FROM task_audit
+                WHERE task_id = :tid
+                ORDER BY id
+                """
+            ),
+            {"tid": task_id},
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+@pytest.mark.asyncio
+async def test_update_course_id_is_audited(db):
+    """A1. UPDATE course_id пишет строку с старым/новым значением."""
+    course_a = await _new_course(db, "task_audit_a1_a")
+    course_b = await _new_course(db, "task_audit_a1_b")
+    task_id = await _insert_task(db, course_a)
+
+    await db.execute(text("SELECT set_config('app.audit_actor', 'test_actor', true)"))
+    await db.execute(
+        text("UPDATE tasks SET course_id = :cid WHERE id = :tid"),
+        {"cid": course_b, "tid": task_id},
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "UPDATE"
+    assert rows[0]["old_course_id"] == course_a
+    assert rows[0]["new_course_id"] == course_b
+    # Строка — полный снимок обоих полей на момент изменения (не только
+    # того, что сработало условием WHEN), is_active тут не менялся.
+    assert rows[0]["old_is_active"] is True
+    assert rows[0]["new_is_active"] is True
+    assert rows[0]["changed_by"] == "test_actor"
+    assert rows[0]["db_role"]
+
+
+@pytest.mark.asyncio
+async def test_update_is_active_is_audited(db):
+    """A2. UPDATE is_active пишет строку независимо от course_id."""
+    course_a = await _new_course(db, "task_audit_a2")
+    task_id = await _insert_task(db, course_a, is_active=True)
+
+    await db.execute(
+        text("UPDATE tasks SET is_active = false WHERE id = :tid"), {"tid": task_id}
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    assert rows[0]["old_is_active"] is True
+    assert rows[0]["new_is_active"] is False
+    # course_id не менялся — снимок остаётся тем же значением до/после.
+    assert rows[0]["old_course_id"] == course_a
+    assert rows[0]["new_course_id"] == course_a
+
+
+@pytest.mark.asyncio
+async def test_update_other_field_not_audited(db):
+    """A3. UPDATE task_content/order_position — НЕ пишет строку (WHEN)."""
+    course_a = await _new_course(db, "task_audit_a3")
+    task_id = await _insert_task(db, course_a)
+
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = CAST(:tc AS jsonb) WHERE id = :tid"
+        ),
+        {"tc": '{"type": "SC", "stem": "y", "options": [{"id": "a", "label": "1"}]}', "tid": task_id},
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_update_same_value_not_audited(db):
+    """A4. UPDATE course_id на то же самое значение — не считается изменением."""
+    course_a = await _new_course(db, "task_audit_a4")
+    task_id = await _insert_task(db, course_a)
+
+    await db.execute(
+        text("UPDATE tasks SET course_id = :cid WHERE id = :tid"),
+        {"cid": course_a, "tid": task_id},
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_delete_is_audited(db):
+    """A5. DELETE пишет строку action='DELETE' со старыми значениями."""
+    course_a = await _new_course(db, "task_audit_a5")
+    task_id = await _insert_task(db, course_a, is_active=True, external_uid="a5-uid")
+
+    await db.execute(text("DELETE FROM tasks WHERE id = :tid"), {"tid": task_id})
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    assert rows[0]["action"] == "DELETE"
+    assert rows[0]["old_course_id"] == course_a
+    assert rows[0]["old_is_active"] is True
+    assert rows[0]["new_course_id"] is None
+    assert rows[0]["new_is_active"] is None
+
+
+@pytest.mark.asyncio
+async def test_no_actor_set_gives_null_changed_by_but_db_role_present(db):
+    """A6. Без app.audit_actor — changed_by=NULL, но db_role всё равно есть
+    (независимый от кооперации приложения след — как у ad-hoc SQL-скрипта)."""
+    course_a = await _new_course(db, "task_audit_a6")
+    task_id = await _insert_task(db, course_a)
+
+    # Явно НЕ ставим app.audit_actor.
+    await db.execute(
+        text("UPDATE tasks SET is_active = false WHERE id = :tid"), {"tid": task_id}
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    assert rows[0]["changed_by"] is None
+    assert rows[0]["db_role"]
+
+
+@pytest.mark.asyncio
+async def test_append_only_blocks_update(db):
+    """A7. UPDATE строки task_audit запрещён (append-only)."""
+    course_a = await _new_course(db, "task_audit_a7")
+    task_id = await _insert_task(db, course_a)
+    await db.execute(
+        text("UPDATE tasks SET is_active = false WHERE id = :tid"), {"tid": task_id}
+    )
+    await db.flush()
+
+    audit_id = (
+        await db.execute(
+            text("SELECT id FROM task_audit WHERE task_id = :tid"), {"tid": task_id}
+        )
+    ).scalar_one()
+
+    with pytest.raises(DBAPIError, match="append-only"):
+        await db.execute(
+            text("UPDATE task_audit SET changed_by = 'hacked' WHERE id = :aid"),
+            {"aid": audit_id},
+        )
+        await db.flush()
+
+
+@pytest.mark.asyncio
+async def test_append_only_blocks_delete(db):
+    """A8. DELETE строки task_audit запрещён (append-only)."""
+    course_a = await _new_course(db, "task_audit_a8")
+    task_id = await _insert_task(db, course_a)
+    await db.execute(
+        text("UPDATE tasks SET is_active = false WHERE id = :tid"), {"tid": task_id}
+    )
+    await db.flush()
+
+    audit_id = (
+        await db.execute(
+            text("SELECT id FROM task_audit WHERE task_id = :tid"), {"tid": task_id}
+        )
+    ).scalar_one()
+
+    with pytest.raises(DBAPIError, match="append-only"):
+        await db.execute(
+            text("DELETE FROM task_audit WHERE id = :aid"), {"aid": audit_id}
+        )
+        await db.flush()
+
+
+@pytest.mark.asyncio
+async def test_skip_flag_suppresses_audit(db):
+    """A9. app.skip_task_audit_trigger='true' — safety-valve, ничего не пишет."""
+    course_a = await _new_course(db, "task_audit_a9")
+    task_id = await _insert_task(db, course_a)
+
+    await db.execute(
+        text("SELECT set_config('app.skip_task_audit_trigger', 'true', true)")
+    )
+    await db.execute(
+        text("UPDATE tasks SET is_active = false WHERE id = :tid"), {"tid": task_id}
+    )
+    await db.flush()
+
+    rows = await _audit_rows(db, task_id)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_bulk_upsert_labels_actor(db):
+    """A10. TasksService.bulk_upsert проставляет changed_by='bulk_upsert' при
+    смене course_id существующего задания через импорт."""
+    course_a = await _new_course(db, "task_audit_a10_a")
+    course_b = await _new_course(db, "task_audit_a10_b")
+    difficulty_id = (
+        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
+    ).scalar_one()
+
+    service = TasksService()
+    external_uid = "tsk114-bulk-a10"
+    await service.bulk_upsert(
+        db,
+        [
+            {
+                "external_uid": external_uid,
+                "course_id": course_a,
+                "difficulty_id": int(difficulty_id),
+                "task_content": {
+                    "type": "SC",
+                    "stem": "bulk a10",
+                    "options": [{"id": "a", "text": "1"}, {"id": "b", "text": "2"}],
+                },
+                "solution_rules": {"type": "SC", "correct_options": ["a"], "max_score": 1},
+            }
+        ],
+    )
+    task_id = (
+        await db.execute(
+            text("SELECT id FROM tasks WHERE external_uid = :uid"), {"uid": external_uid}
+        )
+    ).scalar_one()
+
+    # Реиздание с другим course_id — та самая «незаметная перевозка» tsk-113.
+    await service.bulk_upsert(
+        db,
+        [
+            {
+                "external_uid": external_uid,
+                "course_id": course_b,
+                "difficulty_id": int(difficulty_id),
+                "task_content": {
+                    "type": "SC",
+                    "stem": "bulk a10",
+                    "options": [{"id": "a", "text": "1"}, {"id": "b", "text": "2"}],
+                },
+                "solution_rules": {"type": "SC", "correct_options": ["a"], "max_score": 1},
+            }
+        ],
+    )
+
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    assert rows[0]["old_course_id"] == course_a
+    assert rows[0]["new_course_id"] == course_b
+    assert rows[0]["changed_by"] == "bulk_upsert"

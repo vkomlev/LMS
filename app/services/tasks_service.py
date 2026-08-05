@@ -5,6 +5,7 @@ from typing import Optional, Any, Dict, List, Sequence, Set, Tuple
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.audit_context import set_audit_actor
 from app.models.tasks import Tasks
 from app.repos.tasks_repo import TasksRepository
 from app.services.base import BaseService
@@ -346,6 +347,9 @@ class TasksService(BaseService[Tasks]):
                     "difficulty_provenance": data.get("difficulty_provenance"),
                 }
                 # используем наш переопределенный create для валидации
+                # (tsk-114: INSERT не аудируется — task_audit фиксирует ИЗМЕНЕНИЯ
+                # course_id/is_active у существующей строки, у новой строки нет
+                # "было", сравнивать не с чем)
                 task = await self.create(db, obj_in)
                 results.append((external_uid, "created", task.id))
                 if data.get("order_position") is None:
@@ -427,6 +431,12 @@ class TasksService(BaseService[Tasks]):
                 explicit_order_position = data.get("order_position") is not None
                 if explicit_order_position:
                     obj_in["order_position"] = data["order_position"]
+                # tsk-114: update() коммитит построчно (repo.update commit=True
+                # по умолчанию) — метка session-var транзакционна (is_local=true,
+                # см. app/db/audit_context.py), ставим заново перед КАЖДЫМ
+                # вызовом: иначе после первого commit audit-триггер увидит
+                # changed_by=NULL для остальных строк батча.
+                await set_audit_actor(db, "bulk_upsert")
                 # используем наш переопределенный update для валидации
                 task = await self.update(db, existing, obj_in)
                 results.append((external_uid, "updated", task.id))
