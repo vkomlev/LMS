@@ -86,6 +86,92 @@ async def update_full_name(db: AsyncSession, user_id: int, full_name: str) -> st
     return full_name
 
 
+# ── /me профиль: доп. поля — категория/класс/город/tz (tsk-427) ─────────────
+
+async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
+    """Профильные поля пользователя одним запросом: ФИО + доп. поля tsk-427.
+
+    Возвращает None, если пользователь не найден (для `/me` такого не
+    бывает — `current_user` уже аутентифицирован; сигнатура симметрична
+    остальным read-функциям сервиса).
+    """
+    result = await db.execute(
+        select(
+            Users.full_name,
+            Users.category,
+            Users.school_grade,
+            Users.city,
+            Users.timezone,
+        ).where(Users.id == user_id)
+    )
+    row = result.one_or_none()
+    if row is None:
+        return None
+    return {
+        "full_name": row.full_name,
+        "category": row.category,
+        "school_grade": row.school_grade,
+        "city": row.city,
+        "timezone": row.timezone,
+    }
+
+
+async def update_profile_extra(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    category: str | None = None,
+    school_grade: int | None = None,
+    city: str | None = None,
+    timezone_value: str | None = None,
+) -> None:
+    """Записать доп. поля профиля: категория/класс/город/tz (tsk-427).
+
+    Каждый параметр — «обновить, если передан» (None = не трогать), кроме
+    одного случая: смена `category` на не-«школьник» сбрасывает
+    `school_grade` в NULL, даже если явно не передан — иначе запись отклонит
+    `ck_users_school_grade_only_for_school_student`, а хранить устаревший
+    класс от прежней категории («студент вуза», class=9) вводит в
+    заблуждение.
+
+    Args:
+        db: async session.
+        user_id: ID пользователя.
+        category: новая категория или None (не менять).
+        school_grade: новый класс (1-11, диапазон уже проверен схемой) или
+            None (не менять).
+        city: новый город или None (не менять).
+        timezone_value: новый часовой пояс (IANA id, уже проверен схемой)
+            или None (не менять).
+
+    Raises:
+        ValueError: пользователь не найден, либо `school_grade` передан для
+            эффективной категории, отличной от `school_student` (эффективная
+            категория — переданная в этом же вызове, иначе текущая в БД).
+    """
+    user = await db.get(Users, user_id)
+    if user is None:
+        raise ValueError(f"Пользователь id={user_id} не найден.")
+
+    effective_category = category if category is not None else user.category
+    if school_grade is not None and effective_category != "school_student":
+        raise ValueError("«Класс» можно указать только для категории «школьник».")
+
+    if category is not None:
+        user.category = category
+        if category != "school_student":
+            user.school_grade = None
+    if school_grade is not None:
+        user.school_grade = school_grade
+    if city is not None:
+        user.city = city
+    if timezone_value is not None:
+        user.timezone = timezone_value
+
+    await db.flush()
+    logger.info("Доп. поля профиля обновлены для user_id=%s", user_id)
+
+
 # ── /me/identities ──────────────────────────────────────────────────────────
 
 async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:

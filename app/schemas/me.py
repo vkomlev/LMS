@@ -1,8 +1,20 @@
-"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2)."""
+"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2 + tsk-427)."""
 from datetime import date, datetime
 from typing import Literal, Union
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+# tsk-427: категория ученика. Значения — латинские snake_case-коды (та же
+# конвенция, что sale_status/match_kind в pricing, tsk-505); тексты для UI
+# переводятся на стороне клиента (SPW).
+ProfileCategory = Literal[
+    "school_student",
+    "university_student",
+    "college_student",
+    "applicant",
+    "adult",
+]
 
 
 class MeResponse(BaseModel):
@@ -13,6 +25,12 @@ class MeResponse(BaseModel):
     # tsk-223: реальное ФИО из users.full_name. Может быть null (email/legacy
     # пользователи без заполненного ФИО) — обратная совместимость.
     full_name: str | None = None
+    # tsk-427: доп. поля профиля — все опциональны, заполняются позже в
+    # кабинете, не при регистрации.
+    category: ProfileCategory | None = None
+    school_grade: int | None = None
+    city: str | None = None
+    timezone: str | None = None
     # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
     # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
     # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
@@ -22,16 +40,68 @@ class MeResponse(BaseModel):
 
 
 class MeUpdateRequest(BaseModel):
-    """Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).
+    """Тело PATCH /me — self-service обновление профиля.
 
-    Валидация формата выполняется в эндпоинте через `validate_full_name`
-    (единое серверное правило), чтобы вернуть чистое русское 422-сообщение.
+    Partial update: каждое поле независимо и необязательно — передано
+    (не None) → обновляется, не передано → не трогается. ФИО (tsk-223)
+    по-прежнему проверяется `validate_full_name` в самом эндпоинте (единое
+    серверное правило формата, чистое русское 422-сообщение) — этот класс
+    только требует непустую строку, если она вообще передана.
+
+    tsk-427: category/school_grade/city/timezone — доп. поля профиля,
+    заполняются позже в кабинете ученика, не при регистрации. Кросс-
+    валидация «class только у школьника» — в сервисе (зависит от текущего
+    значения category в БД, если оно не передано этим же запросом).
     """
 
-    full_name: str = Field(
-        ...,
+    full_name: str | None = Field(
+        default=None,
+        min_length=1,
         description="Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами.",
     )
+    category: ProfileCategory | None = Field(
+        default=None,
+        description=(
+            "Категория: school_student (школьник), university_student "
+            "(студент вуза), college_student (студент суза), applicant "
+            "(абитуриент), adult (взрослый)."
+        ),
+    )
+    school_grade: int | None = Field(
+        default=None,
+        ge=1,
+        le=11,
+        description="Класс (1-11) — только для category=school_student.",
+    )
+    city: str | None = Field(
+        default=None, max_length=255, description="Город, свободный текст."
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="Часовой пояс, IANA-идентификатор (напр. Europe/Moscow). Вводится вручную.",
+    )
+
+    @field_validator("city")
+    @classmethod
+    def _strip_city(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        stripped = v.strip()
+        return stripped or None
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        try:
+            ZoneInfo(v)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(
+                f"Некорректный часовой пояс: «{v}». Ожидается IANA-идентификатор, "
+                "например Europe/Moscow."
+            ) from exc
+        return v
 
 
 # ── Phase Y-3: /me/identities ────────────────────────────────────────────────

@@ -1,0 +1,804 @@
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index ef9686d..e4c6027 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -91,20 +91,26 @@ async def get_me(
+     `CurrentUser` — dataclass CurrentUser имя не несёт.
+     tsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним
+     teacher-зону портала.
++    tsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся
++    вместе с full_name одним запросом (`me_service.get_profile`).
+     """
+-    full_name = await me_service.get_full_name(db, current_user.id)
++    profile = await me_service.get_profile(db, current_user.id)
+     roles = await roles_service.get_user_role_names(db, current_user.id)
+     return MeResponse(
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+         is_service=current_user.is_service,
+-        full_name=full_name,
++        full_name=profile["full_name"] if profile else None,
++        category=profile["category"] if profile else None,
++        school_grade=profile["school_grade"] if profile else None,
++        city=profile["city"] if profile else None,
++        timezone=profile["timezone"] if profile else None,
+         roles=roles,
+     )
+ 
+ 
+-# ── PATCH /me — self-service обновление ФИО (tsk-223) ────────────────────────
++# ── PATCH /me — self-service обновление профиля (tsk-223 + tsk-427) ──────────
+ 
+ @router.patch("", response_model=MeResponse)
+ async def update_me(
+@@ -113,57 +119,89 @@ async def update_me(
+     current_user: CurrentUser = Depends(require_authenticated),
+     db: AsyncSession = Depends(get_async_db),
+ ) -> MeResponse:
+-    """Обновить собственное ФИО (`users.full_name`) с валидацией формата.
++    """Обновить собственный профиль — partial update, каждое поле независимо.
+ 
+-    Формат проверяется единым серверным правилом `validate_full_name`
+-    («Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с
+-    русским сообщением. 401 (без auth) и 403 (сервисный токен) даёт
+-    `require_authenticated`.
++    ФИО (tsk-223, `full_name`): формат проверяется единым серверным правилом
++    `validate_full_name` («Фамилия Имя [Отчество]» русскими буквами). При
++    нарушении — 422 с русским сообщением. Пишет audit-событие
++    `user.profile.full_name_updated` перед commit и запускает дедуп-хук
++    (как раньше). Поле необязательно — если не передано, ФИО не трогается.
+ 
+-    Пишет audit-событие `user.profile.full_name_updated` перед commit.
++    Доп. поля (tsk-427, `category`/`school_grade`/`city`/`timezone`):
++    формат (enum/диапазон/IANA id) проверен в самой Pydantic-схеме;
++    кросс-валидация «класс только у школьника» — в `me_service.
++    update_profile_extra` (нужен доступ к текущей category в БД, если она не
++    передана этим же запросом) — при нарушении тоже 422.
++
++    401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.
+     """
+-    try:
+-        normalized = validate_full_name(body.full_name)
+-    except ValueError as exc:
+-        raise HTTPException(
+-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+-        ) from exc
++    if body.full_name is not None:
++        try:
++            normalized = validate_full_name(body.full_name)
++        except ValueError as exc:
++            raise HTTPException(
++                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
++            ) from exc
+ 
+-    previous_full_name = await me_service.get_full_name(db, current_user.id)
+-    await me_service.update_full_name(db, current_user.id, normalized)
++        previous_full_name = await me_service.get_full_name(db, current_user.id)
++        await me_service.update_full_name(db, current_user.id, normalized)
+ 
+-    ip = request.client.host if request.client else "unknown"
+-    await log_event(
+-        db,
+-        "user.profile.full_name_updated",
+-        user_id=current_user.id,
+-        ip=ip,
+-        details={"full_name": normalized},
+-    )
+-    if previous_full_name != normalized:
+-        # tsk-464: full_name часто становится "настоящим" не в момент
+-        # регистрации (magic-link создаёт юзера с дефолтным именем, реальное
+-        # ФИО приходит позже через этот эндпоинт) — дедуп-хук из tsk-455
+-        # срабатывает только на регистрации и пропускает такие случаи.
+-        # Только при РЕАЛЬНОМ изменении имени — эндпоинт без rate-limit,
+-        # полный скан кандидатов на каждый no-op PATCH был бы лишней
+-        # нагрузкой. Soft-fail — не должно ломать обновление профиля.
++        ip = request.client.host if request.client else "unknown"
++        await log_event(
++            db,
++            "user.profile.full_name_updated",
++            user_id=current_user.id,
++            ip=ip,
++            details={"full_name": normalized},
++        )
++        if previous_full_name != normalized:
++            # tsk-464: full_name часто становится "настоящим" не в момент
++            # регистрации (magic-link создаёт юзера с дефолтным именем, реальное
++            # ФИО приходит позже через этот эндпоинт) — дедуп-хук из tsk-455
++            # срабатывает только на регистрации и пропускает такие случаи.
++            # Только при РЕАЛЬНОМ изменении имени — эндпоинт без rate-limit,
++            # полный скан кандидатов на каждый no-op PATCH был бы лишней
++            # нагрузкой. Soft-fail — не должно ломать обновление профиля.
++            try:
++                await check_and_merge_duplicate_on_registration(db, new_user_id=current_user.id)
++            except Exception:
++                logger.exception(
++                    "tsk-464 check_and_merge_duplicate_on_registration failed user_id=%s",
++                    current_user.id,
++                )
++
++    if any(
++        v is not None
++        for v in (body.category, body.school_grade, body.city, body.timezone)
++    ):
+         try:
+-            await check_and_merge_duplicate_on_registration(db, new_user_id=current_user.id)
+-        except Exception:
+-            logger.exception(
+-                "tsk-464 check_and_merge_duplicate_on_registration failed user_id=%s",
++            await me_service.update_profile_extra(
++                db,
+                 current_user.id,
++                category=body.category,
++                school_grade=body.school_grade,
++                city=body.city,
++                timezone_value=body.timezone,
+             )
++        except ValueError as exc:
++            raise HTTPException(
++                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
++            ) from exc
++
+     await db.commit()
+ 
++    profile = await me_service.get_profile(db, current_user.id)
+     roles = await roles_service.get_user_role_names(db, current_user.id)
+     return MeResponse(
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+         is_service=current_user.is_service,
+-        full_name=normalized,
++        full_name=profile["full_name"] if profile else None,
++        category=profile["category"] if profile else None,
++        school_grade=profile["school_grade"] if profile else None,
++        city=profile["city"] if profile else None,
++        timezone=profile["timezone"] if profile else None,
+         roles=roles,
+     )
+ 
+diff --git a/app/db/migrations/versions/20260805_140000_tsk427_profile_extra_fields.py b/app/db/migrations/versions/20260805_140000_tsk427_profile_extra_fields.py
+new file mode 100644
+index 0000000..8f88757
+--- /dev/null
++++ b/app/db/migrations/versions/20260805_140000_tsk427_profile_extra_fields.py
+@@ -0,0 +1,126 @@
++"""tsk-427: доп. поля профиля ученика — категория, класс, город, часовой пояс.
++
++Запрос оператора: профиль ученика должен нести категорию (школьник + класс,
++студент вуза, студент суза, абитуриент, взрослый), город и часовой пояс —
++всё заполняется позже в кабинете, не при регистрации (все поля nullable).
++
++Решения оператора (см. tsk-427 «История движения» 2026-08-05):
++- «Класс» — отдельное nullable-поле `school_grade` (число 1-11), НЕ часть
++  строки категории. NULL для не-школьников.
++- «Город» — свободный текст, без справочника/автокомплита.
++- «Часовой пояс» — вводится вручную (IANA-идентификатор), не выводится из
++  города автоматически.
++
++Пересечение с tsk-021 (Календарь LMS) проверено и отсутствует: таймзона
++календаря — глобальное значение школы (`operating_hours.timezone`,
++Europe/Moscow), не поле пользователя. `users.timezone` здесь — независимый
++источник истины с нуля.
++
++`category` — String + CHECK (не native Postgres ENUM): актуальный паттерн
++проекта после baseline-миграции, см. `tsk505_pricing_and_leads`
++(sale_status/match_kind). Значения — латинские snake_case-коды, тексты для
++UI переводятся на стороне клиента (SPW).
++
++Revision ID: tsk427_profile_extra_fields
++Revises: tsk423_demo_task_limit
++Create Date: 2026-08-05
++"""
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk427_profile_extra_fields"
++down_revision: Union[str, None] = "tsk423_demo_task_limit"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++_CATEGORY_VALUES = (
++    "school_student",
++    "university_student",
++    "college_student",
++    "applicant",
++    "adult",
++)
++
++
++def upgrade() -> None:
++    """Добавляет nullable-колонки category/school_grade/city/timezone в users."""
++    op.add_column(
++        "users",
++        sa.Column(
++            "category",
++            sa.String(32),
++            nullable=True,
++            comment=(
++                "tsk-427: категория ученика — school_student/"
++                "university_student/college_student/applicant/adult. "
++                "NULL = не заполнено."
++            ),
++        ),
++    )
++    op.add_column(
++        "users",
++        sa.Column(
++            "school_grade",
++            sa.Integer(),
++            nullable=True,
++            comment="tsk-427: класс (1-11), только для category=school_student.",
++        ),
++    )
++    op.add_column(
++        "users",
++        sa.Column(
++            "city",
++            sa.String(255),
++            nullable=True,
++            comment="tsk-427: город, свободный текст без справочника.",
++        ),
++    )
++    op.add_column(
++        "users",
++        sa.Column(
++            "timezone",
++            sa.String(64),
++            nullable=True,
++            comment="tsk-427: часовой пояс, IANA-идентификатор (напр. Europe/Moscow). Вводится вручную.",
++        ),
++    )
++
++    category_list = ", ".join(f"'{v}'" for v in _CATEGORY_VALUES)
++    op.create_check_constraint(
++        "ck_users_category",
++        "users",
++        f"category IS NULL OR category IN ({category_list})",
++    )
++    op.create_check_constraint(
++        "ck_users_school_grade_range",
++        "users",
++        "school_grade IS NULL OR (school_grade BETWEEN 1 AND 11)",
++    )
++    # Класс имеет смысл только у школьника — некорректная связка (студент
++    # вуза с проставленным классом) должна быть невозможна на уровне БД, а
++    # не только валидацией в API.
++    op.create_check_constraint(
++        "ck_users_school_grade_only_for_school_student",
++        "users",
++        "category = 'school_student' OR school_grade IS NULL",
++    )
++
++
++def downgrade() -> None:
++    """Убирает constraints и колонки category/school_grade/city/timezone.
++
++    Rollback-note: чисто аддитивная миграция без backfill и без данных,
++    затрагивающих другие таблицы — откат безопасен на любом объёме, теряются
++    только значения этих 4 колонок (nullable, заполнялись пользователями
++    самостоятельно в профиле).
++    """
++    op.drop_constraint("ck_users_school_grade_only_for_school_student", "users", type_="check")
++    op.drop_constraint("ck_users_school_grade_range", "users", type_="check")
++    op.drop_constraint("ck_users_category", "users", type_="check")
++    op.drop_column("users", "timezone")
++    op.drop_column("users", "city")
++    op.drop_column("users", "school_grade")
++    op.drop_column("users", "category")
+diff --git a/app/models/users.py b/app/models/users.py
+index 64d63df..7ee0a85 100644
+--- a/app/models/users.py
++++ b/app/models/users.py
+@@ -70,6 +70,24 @@ class Users(Base):
+     blocked_by_user_id: Mapped[Optional[int]] = mapped_column(
+         Integer, ForeignKey("users.id"), nullable=True, comment="Кто закрыл вход",
+     )
++    # tsk-427. Доп. поля профиля ученика — все nullable, заполняются позже в
++    # кабинете (не при регистрации). category — String+CHECK, не native ENUM
++    # (актуальный паттерн проекта, см. миграцию tsk427_profile_extra_fields).
++    category: Mapped[Optional[str]] = mapped_column(
++        String(32), nullable=True,
++        comment="Категория: school_student/university_student/college_student/applicant/adult",
++    )
++    school_grade: Mapped[Optional[int]] = mapped_column(
++        Integer, nullable=True,
++        comment="Класс (1-11), только для category=school_student",
++    )
++    city: Mapped[Optional[str]] = mapped_column(
++        String(255), nullable=True, comment="Город, свободный текст",
++    )
++    timezone: Mapped[Optional[str]] = mapped_column(
++        String(64), nullable=True,
++        comment="Часовой пояс, IANA-идентификатор (вводится вручную)",
++    )
+ 
+     role: Mapped[List["Roles"]] = relationship(
+         "Roles", secondary=t_user_roles, back_populates="user"
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index c472037..ac09431 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -1,8 +1,20 @@
+-"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2)."""
++"""Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2 + tsk-427)."""
+ from datetime import date, datetime
+ from typing import Literal, Union
+-
+-from pydantic import BaseModel, Field
++from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
++
++from pydantic import BaseModel, Field, field_validator
++
++# tsk-427: категория ученика. Значения — латинские snake_case-коды (та же
++# конвенция, что sale_status/match_kind в pricing, tsk-505); тексты для UI
++# переводятся на стороне клиента (SPW).
++ProfileCategory = Literal[
++    "school_student",
++    "university_student",
++    "college_student",
++    "applicant",
++    "adult",
++]
+ 
+ 
+ class MeResponse(BaseModel):
+@@ -13,6 +25,12 @@ class MeResponse(BaseModel):
+     # tsk-223: реальное ФИО из users.full_name. Может быть null (email/legacy
+     # пользователи без заполненного ФИО) — обратная совместимость.
+     full_name: str | None = None
++    # tsk-427: доп. поля профиля — все опциональны, заполняются позже в
++    # кабинете, не при регистрации.
++    category: ProfileCategory | None = None
++    school_grade: int | None = None
++    city: str | None = None
++    timezone: str | None = None
+     # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
+     # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
+     # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
+@@ -22,16 +40,68 @@ class MeResponse(BaseModel):
+ 
+ 
+ class MeUpdateRequest(BaseModel):
+-    """Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).
+-
+-    Валидация формата выполняется в эндпоинте через `validate_full_name`
+-    (единое серверное правило), чтобы вернуть чистое русское 422-сообщение.
++    """Тело PATCH /me — self-service обновление профиля.
++
++    Partial update: каждое поле независимо и необязательно — передано
++    (не None) → обновляется, не передано → не трогается. ФИО (tsk-223)
++    по-прежнему проверяется `validate_full_name` в самом эндпоинте (единое
++    серверное правило формата, чистое русское 422-сообщение) — этот класс
++    только требует непустую строку, если она вообще передана.
++
++    tsk-427: category/school_grade/city/timezone — доп. поля профиля,
++    заполняются позже в кабинете ученика, не при регистрации. Кросс-
++    валидация «class только у школьника» — в сервисе (зависит от текущего
++    значения category в БД, если оно не передано этим же запросом).
+     """
+ 
+-    full_name: str = Field(
+-        ...,
++    full_name: str | None = Field(
++        default=None,
++        min_length=1,
+         description="Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами.",
+     )
++    category: ProfileCategory | None = Field(
++        default=None,
++        description=(
++            "Категория: school_student (школьник), university_student "
++            "(студент вуза), college_student (студент суза), applicant "
++            "(абитуриент), adult (взрослый)."
++        ),
++    )
++    school_grade: int | None = Field(
++        default=None,
++        ge=1,
++        le=11,
++        description="Класс (1-11) — только для category=school_student.",
++    )
++    city: str | None = Field(
++        default=None, max_length=255, description="Город, свободный текст."
++    )
++    timezone: str | None = Field(
++        default=None,
++        description="Часовой пояс, IANA-идентификатор (напр. Europe/Moscow). Вводится вручную.",
++    )
++
++    @field_validator("city")
++    @classmethod
++    def _strip_city(cls, v: str | None) -> str | None:
++        if v is None:
++            return v
++        stripped = v.strip()
++        return stripped or None
++
++    @field_validator("timezone")
++    @classmethod
++    def _validate_timezone(cls, v: str | None) -> str | None:
++        if v is None:
++            return v
++        try:
++            ZoneInfo(v)
++        except ZoneInfoNotFoundError as exc:
++            raise ValueError(
++                f"Некорректный часовой пояс: «{v}». Ожидается IANA-идентификатор, "
++                "например Europe/Moscow."
++            ) from exc
++        return v
+ 
+ 
+ # ── Phase Y-3: /me/identities ────────────────────────────────────────────────
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index cfababb..e91fc54 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -86,6 +86,92 @@ async def update_full_name(db: AsyncSession, user_id: int, full_name: str) -> st
+     return full_name
+ 
+ 
++# ── /me профиль: доп. поля — категория/класс/город/tz (tsk-427) ─────────────
++
++async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
++    """Профильные поля пользователя одним запросом: ФИО + доп. поля tsk-427.
++
++    Возвращает None, если пользователь не найден (для `/me` такого не
++    бывает — `current_user` уже аутентифицирован; сигнатура симметрична
++    остальным read-функциям сервиса).
++    """
++    result = await db.execute(
++        select(
++            Users.full_name,
++            Users.category,
++            Users.school_grade,
++            Users.city,
++            Users.timezone,
++        ).where(Users.id == user_id)
++    )
++    row = result.one_or_none()
++    if row is None:
++        return None
++    return {
++        "full_name": row.full_name,
++        "category": row.category,
++        "school_grade": row.school_grade,
++        "city": row.city,
++        "timezone": row.timezone,
++    }
++
++
++async def update_profile_extra(
++    db: AsyncSession,
++    user_id: int,
++    *,
++    category: str | None = None,
++    school_grade: int | None = None,
++    city: str | None = None,
++    timezone_value: str | None = None,
++) -> None:
++    """Записать доп. поля профиля: категория/класс/город/tz (tsk-427).
++
++    Каждый параметр — «обновить, если передан» (None = не трогать), кроме
++    одного случая: смена `category` на не-«школьник» сбрасывает
++    `school_grade` в NULL, даже если явно не передан — иначе запись отклонит
++    `ck_users_school_grade_only_for_school_student`, а хранить устаревший
++    класс от прежней категории («студент вуза», class=9) вводит в
++    заблуждение.
++
++    Args:
++        db: async session.
++        user_id: ID пользователя.
++        category: новая категория или None (не менять).
++        school_grade: новый класс (1-11, диапазон уже проверен схемой) или
++            None (не менять).
++        city: новый город или None (не менять).
++        timezone_value: новый часовой пояс (IANA id, уже проверен схемой)
++            или None (не менять).
++
++    Raises:
++        ValueError: пользователь не найден, либо `school_grade` передан для
++            эффективной категории, отличной от `school_student` (эффективная
++            категория — переданная в этом же вызове, иначе текущая в БД).
++    """
++    user = await db.get(Users, user_id)
++    if user is None:
++        raise ValueError(f"Пользователь id={user_id} не найден.")
++
++    effective_category = category if category is not None else user.category
++    if school_grade is not None and effective_category != "school_student":
++        raise ValueError("«Класс» можно указать только для категории «школьник».")
++
++    if category is not None:
++        user.category = category
++        if category != "school_student":
++            user.school_grade = None
++    if school_grade is not None:
++        user.school_grade = school_grade
++    if city is not None:
++        user.city = city
++    if timezone_value is not None:
++        user.timezone = timezone_value
++
++    await db.flush()
++    logger.info("Доп. поля профиля обновлены для user_id=%s", user_id)
++
++
+ # ── /me/identities ──────────────────────────────────────────────────────────
+ 
+ async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
+diff --git a/tests/test_tsk427_profile_extra_fields.py b/tests/test_tsk427_profile_extra_fields.py
+new file mode 100644
+index 0000000..9ed0601
+--- /dev/null
++++ b/tests/test_tsk427_profile_extra_fields.py
+@@ -0,0 +1,265 @@
++"""Integration HTTP-тесты PATCH /api/v1/me — доп. поля профиля (tsk-427).
++
++Покрывает:
++- happy path: category+school_grade, city (с обрезкой пробелов), timezone;
++- partial update: full_name не передан — не трогается;
++- кросс-валидация "класс только у школьника" — и когда category передана в
++  этом же запросе, и когда берётся текущая из БД;
++- каскадный сброс school_grade при смене category на не-школьника;
++- 422 на некорректных category/school_grade/timezone.
++
++Образец подъёма user+session — как в test_me_profile_update.py.
++"""
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++async def _setup_user_with_session(db):
++    email = f"tsk427_{random.randint(10**8, 10**10)}@example.com"
++    user = Users(email=email, password_hash=None, full_name="Иванов Иван", tg_id=None)
++    db.add(user)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, user.id, "email", email)
++    access_token, _, _ = await create_session(db, user_id=user.id)
++    await db.commit()
++    return user.id, access_token
++
++
++async def _cleanup(db, user_id: int) -> None:
++    await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.commit()
++
++
++# ── happy path ───────────────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_patch_me_sets_school_student_with_grade(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "school_student", "school_grade": 9},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["category"] == "school_student"
++        assert body["school_grade"] == 9
++        # full_name не передавался — не тронут.
++        assert body["full_name"] == "Иванов Иван"
++
++        me_resp = await client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
++        assert me_resp.json()["school_grade"] == 9
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_city_is_trimmed(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"city": "  Москва  "},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["city"] == "Москва"
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_valid_timezone(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"timezone": "Asia/Yekaterinburg"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["timezone"] == "Asia/Yekaterinburg"
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_non_school_categories_without_grade(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        for category in ("university_student", "college_student", "applicant", "adult"):
++            resp = await client.patch(
++                "/api/v1/me",
++                json={"category": category},
++                headers={"Authorization": f"Bearer {token}"},
++            )
++            assert resp.status_code == 200, resp.text
++            assert resp.json()["category"] == category
++            assert resp.json()["school_grade"] is None
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── каскадный сброс school_grade ────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_patch_me_grade_reset_when_category_changes_away_from_school(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp1 = await client.patch(
++            "/api/v1/me",
++            json={"category": "school_student", "school_grade": 11},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp1.status_code == 200, resp1.text
++        assert resp1.json()["school_grade"] == 11
++
++        resp2 = await client.patch(
++            "/api/v1/me",
++            json={"category": "adult"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp2.status_code == 200, resp2.text
++        assert resp2.json()["category"] == "adult"
++        assert resp2.json()["school_grade"] is None
++
++        row = (
++            await db.execute(
++                text("SELECT school_grade FROM users WHERE id = :id"), {"id": user_id}
++            )
++        ).scalar_one()
++        assert row is None
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── кросс-валидация «класс только у школьника» ──────────────────────────────
++
++@pytest.mark.asyncio
++async def test_patch_me_grade_rejected_with_non_school_category_in_same_request(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "adult", "school_grade": 5},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_grade_rejected_when_existing_category_is_not_school(db, client):
++    """category не передана этим запросом — сервис берёт эффективную из БД (adult по умолчанию не задана, но тест явно ставит adult первым PATCH)."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        setup_resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "adult"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert setup_resp.status_code == 200, setup_resp.text
++
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"school_grade": 5},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_grade_accepted_when_existing_category_is_school(db, client):
++    """category уже school_student в БД (предыдущий PATCH) — новый запрос шлёт только school_grade."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        setup_resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "school_student", "school_grade": 5},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert setup_resp.status_code == 200, setup_resp.text
++
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"school_grade": 6},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["school_grade"] == 6
++        assert resp.json()["category"] == "school_student"
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── 422 на некорректных значениях ───────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_patch_me_rejects_unknown_category(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "astronaut"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++@pytest.mark.parametrize("bad_grade", [0, 12, -1])
++async def test_patch_me_rejects_out_of_range_grade(db, client, bad_grade):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"category": "school_student", "school_grade": bad_grade},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_patch_me_rejects_invalid_timezone(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"timezone": "Not/AZone"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── partial update: full_name не передан ────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_patch_me_without_full_name_leaves_it_untouched(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.patch(
++            "/api/v1/me",
++            json={"city": "Казань"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["full_name"] == "Иванов Иван"
++    finally:
++        await _cleanup(db, user_id)

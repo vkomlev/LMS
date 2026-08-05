@@ -20610,7 +20610,7 @@
           "me"
         ],
         "summary": "Get Me",
-        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.",
+        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).",
         "operationId": "get_me_api_v1_me_get",
         "security": [
           {
@@ -20698,7 +20698,7 @@
           "me"
         ],
         "summary": "Update Me",
-        "description": "Обновить собственное ФИО (`users.full_name`) с валидацией формата.\n\nФормат проверяется единым серверным правилом `validate_full_name`\n(«Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с\nрусским сообщением. 401 (без auth) и 403 (сервисный токен) даёт\n`require_authenticated`.\n\nПишет audit-событие `user.profile.full_name_updated` перед commit.",
+        "description": "Обновить собственный профиль — partial update, каждое поле независимо.\n\nФИО (tsk-223, `full_name`): формат проверяется единым серверным правилом\n`validate_full_name` («Фамилия Имя [Отчество]» русскими буквами). При\nнарушении — 422 с русским сообщением. Пишет audit-событие\n`user.profile.full_name_updated` перед commit и запускает дедуп-хук\n(как раньше). Поле необязательно — если не передано, ФИО не трогается.\n\nДоп. поля (tsk-427, `category`/`school_grade`/`city`/`timezone`):\nформат (enum/диапазон/IANA id) проверен в самой Pydantic-схеме;\nкросс-валидация «класс только у школьника» — в `me_service.\nupdate_profile_extra` (нужен доступ к текущей category в БД, если она не\nпередана этим же запросом) — при нарушении тоже 422.\n\n401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.",
         "operationId": "update_me_api_v1_me_patch",
         "security": [
           {
@@ -39882,6 +39882,57 @@
             ],
             "title": "Full Name"
           },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "school_student",
+                  "university_student",
+                  "college_student",
+                  "applicant",
+                  "adult"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "school_grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Grade"
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
           "roles": {
             "items": {
               "type": "string"
@@ -39902,17 +39953,80 @@
       "MeUpdateRequest": {
         "properties": {
           "full_name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Full Name",
             "description": "Реальное ФИО «Фамилия Имя [Отчество]» русскими буквами."
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "school_student",
+                  "university_student",
+                  "college_student",
+                  "applicant",
+                  "adult"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "description": "Категория: school_student (школьник), university_student (студент вуза), college_student (студент суза), applicant (абитуриент), adult (взрослый)."
+          },
+          "school_grade": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 11.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Grade",
+            "description": "Класс (1-11) — только для category=school_student."
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City",
+            "description": "Город, свободный текст."
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "Часовой пояс, IANA-идентификатор (напр. Europe/Moscow). Вводится вручную."
           }
         },
         "type": "object",
-        "required": [
-          "full_name"
-        ],
         "title": "MeUpdateRequest",
-        "description": "Тело PATCH /me — self-service обновление собственного ФИО (tsk-223).\n\nВалидация формата выполняется в эндпоинте через `validate_full_name`\n(единое серверное правило), чтобы вернуть чистое русское 422-сообщение."
+        "description": "Тело PATCH /me — self-service обновление профиля.\n\nPartial update: каждое поле независимо и необязательно — передано\n(не None) → обновляется, не передано → не трогается. ФИО (tsk-223)\nпо-прежнему проверяется `validate_full_name` в самом эндпоинте (единое\nсерверное правило формата, чистое русское 422-сообщение) — этот класс\nтолько требует непустую строку, если она вообще передана.\n\ntsk-427: category/school_grade/city/timezone — доп. поля профиля,\nзаполняются позже в кабинете ученика, не при регистрации. Кросс-\nвалидация «class только у школьника» — в сервисе (зависит от текущего\nзначения category в БД, если оно не передано этим же запросом)."
       },
       "MergeLineRead": {
         "properties": {
@@ -43753,6 +43867,17 @@
               }
             ],
             "description": "Правила проверки короткого ответа (SA/SA_COM)."
+          },
+          "turtle_sim": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TurtleSimRules"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Правила проверки через безопасное исполнение кода ученика (tsk-412, курс 165). Тип задачи остаётся SA (эталон — response.value = полная программа), но при заполненном turtle_sim CheckingService НЕ делает code_ast/текстовое сравнение — вместо этого исполняет код в песочнице и сравнивает получившуюся трассу с эталонной."
           },
           "table": {
             "anyOf": [
@@ -48965,6 +49090,193 @@
         ],
         "title": "TransferSlotParticipantRequest",
         "description": "Куда переводим ученика."
+      },
+      "TurtleFinalState": {
+        "properties": {
+          "position": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Position",
+            "description": "Финальные координаты [x, y] ПЕРВОЙ созданной черепахи."
+          },
+          "heading": {
+            "type": "number",
+            "title": "Heading",
+            "description": "Финальный угол поворота в градусах [0, 360)."
+          },
+          "pen_down": {
+            "type": "boolean",
+            "title": "Pen Down",
+            "description": "Опущено ли перо в конце."
+          }
+        },
+        "type": "object",
+        "required": [
+          "position",
+          "heading",
+          "pen_down"
+        ],
+        "title": "TurtleFinalState",
+        "description": "Конечное состояние черепахи(-ах) после исполнения программы (tsk-412)."
+      },
+      "TurtleSegment": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "line",
+              "circle"
+            ],
+            "title": "Kind",
+            "description": "line — прямой отрезок (forward/backward/goto/setpos), circle — дуга circle()."
+          },
+          "start": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "Start",
+            "description": "Координаты начала [x, y]."
+          },
+          "end": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 2,
+            "minItems": 2,
+            "title": "End",
+            "description": "Координаты конца [x, y]."
+          },
+          "color_rgb": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 3,
+            "title": "Color Rgb",
+            "description": "Цвет пера в момент отрисовки, нормализованный к RGB [0..1]."
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Radius",
+            "description": "Радиус дуги (только kind='circle')."
+          },
+          "extent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extent",
+            "description": "Угол дуги в градусах (только kind='circle')."
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "start",
+          "end",
+          "color_rgb"
+        ],
+        "title": "TurtleSegment",
+        "description": "Один примитив трассы черепахи (tsk-412): отрезок линии или дуга circle().\n\nЗаписывается стабом `app/services/turtle_sandbox/stub_turtle.py` только при\nопущенном пере (pen down) — движение с поднятым пером на трассу не влияет,\nно всё равно расходует `max_steps` (см. TurtleSimRules)."
+      },
+      "TurtleSimRules": {
+        "properties": {
+          "expected_trace": {
+            "$ref": "#/components/schemas/TurtleTrace",
+            "description": "Эталонная трасса, вычисленная офлайн прогоном решения через стаб."
+          },
+          "random_seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Random Seed",
+            "description": "Если задание использует random — сид, который ставится ПЕРЕД исполнением кода ученика (и ставился перед вычислением эталонной трассы). Без сида ответы со случайностью невоспроизводимы и не могут сравниваться."
+          },
+          "synthetic_clicks": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array",
+            "title": "Synthetic Clicks",
+            "description": "Синтетические клики [[x,y], ...], поданные по очереди в обработчик onscreenclick при вызове done()/mainloop() — для заданий с интерактивом мыши."
+          },
+          "tolerance_px": {
+            "type": "number",
+            "exclusiveMinimum": 0.0,
+            "title": "Tolerance Px",
+            "description": "Допустимое отклонение координат/радиуса в пикселях (накопление float).",
+            "default": 0.75
+          },
+          "max_steps": {
+            "type": "integer",
+            "exclusiveMinimum": 0.0,
+            "title": "Max Steps",
+            "description": "Предел числа примитивов движения (forward/circle/goto/...) — защита от программ с бесконечным рисованием (`while True` без верного условия выхода).",
+            "default": 5000
+          },
+          "timeout_sec": {
+            "type": "number",
+            "maximum": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Sec",
+            "description": "Жёсткий лимит времени исполнения в песочнице (wall-clock).",
+            "default": 5.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "expected_trace"
+        ],
+        "title": "TurtleSimRules",
+        "description": "Правила проверки задания «нарисуй фигуру черепахой» (tsk-412, курс 165).\n\nВ отличие от `short_answer.normalization=code_ast` (сравнение ИСХОДНОГО КОДА\nкак программы), здесь сравнивается РЕЗУЛЬТАТ исполнения: ответ ученика —\nполная Python-программа в `response.value` (тип задачи `SA`, без comment —\nдоказательством служит сам факт совпадения рисунка). Код исполняется в\nпесочнице (`app/services/turtle_sandbox/`), полученная трасса сравнивается\nс `expected_trace`, вычисленной ОДИН РАЗ офлайн прогоном эталонного решения\nчерез тот же стаб (не хранится сам эталонный код — только трасса, чтобы не\nисполнять «доверенный» код на каждой проверке и не хранить решение в\nоткрытом виде рядом с заданием)."
+      },
+      "TurtleTrace": {
+        "properties": {
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TurtleSegment"
+            },
+            "type": "array",
+            "title": "Segments"
+          },
+          "final_state": {
+            "$ref": "#/components/schemas/TurtleFinalState"
+          }
+        },
+        "type": "object",
+        "required": [
+          "final_state"
+        ],
+        "title": "TurtleTrace",
+        "description": "Полная трасса исполнения программы в песочнице turtle (tsk-412)."
       },
       "UnreadBySenderItem": {
         "properties": {

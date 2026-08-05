@@ -91,20 +91,26 @@ async def get_me(
     `CurrentUser` — dataclass CurrentUser имя не несёт.
     tsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним
     teacher-зону портала.
+    tsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся
+    вместе с full_name одним запросом (`me_service.get_profile`).
     """
-    full_name = await me_service.get_full_name(db, current_user.id)
+    profile = await me_service.get_profile(db, current_user.id)
     roles = await roles_service.get_user_role_names(db, current_user.id)
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
         is_service=current_user.is_service,
-        full_name=full_name,
+        full_name=profile["full_name"] if profile else None,
+        category=profile["category"] if profile else None,
+        school_grade=profile["school_grade"] if profile else None,
+        city=profile["city"] if profile else None,
+        timezone=profile["timezone"] if profile else None,
         roles=roles,
     )
 
 
-# ── PATCH /me — self-service обновление ФИО (tsk-223) ────────────────────────
+# ── PATCH /me — self-service обновление профиля (tsk-223 + tsk-427) ──────────
 
 @router.patch("", response_model=MeResponse)
 async def update_me(
@@ -113,57 +119,89 @@ async def update_me(
     current_user: CurrentUser = Depends(require_authenticated),
     db: AsyncSession = Depends(get_async_db),
 ) -> MeResponse:
-    """Обновить собственное ФИО (`users.full_name`) с валидацией формата.
+    """Обновить собственный профиль — partial update, каждое поле независимо.
 
-    Формат проверяется единым серверным правилом `validate_full_name`
-    («Фамилия Имя [Отчество]» русскими буквами). При нарушении — 422 с
-    русским сообщением. 401 (без auth) и 403 (сервисный токен) даёт
-    `require_authenticated`.
+    ФИО (tsk-223, `full_name`): формат проверяется единым серверным правилом
+    `validate_full_name` («Фамилия Имя [Отчество]» русскими буквами). При
+    нарушении — 422 с русским сообщением. Пишет audit-событие
+    `user.profile.full_name_updated` перед commit и запускает дедуп-хук
+    (как раньше). Поле необязательно — если не передано, ФИО не трогается.
 
-    Пишет audit-событие `user.profile.full_name_updated` перед commit.
+    Доп. поля (tsk-427, `category`/`school_grade`/`city`/`timezone`):
+    формат (enum/диапазон/IANA id) проверен в самой Pydantic-схеме;
+    кросс-валидация «класс только у школьника» — в `me_service.
+    update_profile_extra` (нужен доступ к текущей category в БД, если она не
+    передана этим же запросом) — при нарушении тоже 422.
+
+    401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.
     """
-    try:
-        normalized = validate_full_name(body.full_name)
-    except ValueError as exc:
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
-
-    previous_full_name = await me_service.get_full_name(db, current_user.id)
-    await me_service.update_full_name(db, current_user.id, normalized)
-
-    ip = request.client.host if request.client else "unknown"
-    await log_event(
-        db,
-        "user.profile.full_name_updated",
-        user_id=current_user.id,
-        ip=ip,
-        details={"full_name": normalized},
-    )
-    if previous_full_name != normalized:
-        # tsk-464: full_name часто становится "настоящим" не в момент
-        # регистрации (magic-link создаёт юзера с дефолтным именем, реальное
-        # ФИО приходит позже через этот эндпоинт) — дедуп-хук из tsk-455
-        # срабатывает только на регистрации и пропускает такие случаи.
-        # Только при РЕАЛЬНОМ изменении имени — эндпоинт без rate-limit,
-        # полный скан кандидатов на каждый no-op PATCH был бы лишней
-        # нагрузкой. Soft-fail — не должно ломать обновление профиля.
+    if body.full_name is not None:
         try:
-            await check_and_merge_duplicate_on_registration(db, new_user_id=current_user.id)
-        except Exception:
-            logger.exception(
-                "tsk-464 check_and_merge_duplicate_on_registration failed user_id=%s",
+            normalized = validate_full_name(body.full_name)
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
+        previous_full_name = await me_service.get_full_name(db, current_user.id)
+        await me_service.update_full_name(db, current_user.id, normalized)
+
+        ip = request.client.host if request.client else "unknown"
+        await log_event(
+            db,
+            "user.profile.full_name_updated",
+            user_id=current_user.id,
+            ip=ip,
+            details={"full_name": normalized},
+        )
+        if previous_full_name != normalized:
+            # tsk-464: full_name часто становится "настоящим" не в момент
+            # регистрации (magic-link создаёт юзера с дефолтным именем, реальное
+            # ФИО приходит позже через этот эндпоинт) — дедуп-хук из tsk-455
+            # срабатывает только на регистрации и пропускает такие случаи.
+            # Только при РЕАЛЬНОМ изменении имени — эндпоинт без rate-limit,
+            # полный скан кандидатов на каждый no-op PATCH был бы лишней
+            # нагрузкой. Soft-fail — не должно ломать обновление профиля.
+            try:
+                await check_and_merge_duplicate_on_registration(db, new_user_id=current_user.id)
+            except Exception:
+                logger.exception(
+                    "tsk-464 check_and_merge_duplicate_on_registration failed user_id=%s",
+                    current_user.id,
+                )
+
+    if any(
+        v is not None
+        for v in (body.category, body.school_grade, body.city, body.timezone)
+    ):
+        try:
+            await me_service.update_profile_extra(
+                db,
                 current_user.id,
+                category=body.category,
+                school_grade=body.school_grade,
+                city=body.city,
+                timezone_value=body.timezone,
             )
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
     await db.commit()
 
+    profile = await me_service.get_profile(db, current_user.id)
     roles = await roles_service.get_user_role_names(db, current_user.id)
     return MeResponse(
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
         is_service=current_user.is_service,
-        full_name=normalized,
+        full_name=profile["full_name"] if profile else None,
+        category=profile["category"] if profile else None,
+        school_grade=profile["school_grade"] if profile else None,
+        city=profile["city"] if profile else None,
+        timezone=profile["timezone"] if profile else None,
         roles=roles,
     )
 

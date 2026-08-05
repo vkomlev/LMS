@@ -70,6 +70,24 @@ class Users(Base):
     blocked_by_user_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("users.id"), nullable=True, comment="Кто закрыл вход",
     )
+    # tsk-427. Доп. поля профиля ученика — все nullable, заполняются позже в
+    # кабинете (не при регистрации). category — String+CHECK, не native ENUM
+    # (актуальный паттерн проекта, см. миграцию tsk427_profile_extra_fields).
+    category: Mapped[Optional[str]] = mapped_column(
+        String(32), nullable=True,
+        comment="Категория: school_student/university_student/college_student/applicant/adult",
+    )
+    school_grade: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+        comment="Класс (1-11), только для category=school_student",
+    )
+    city: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, comment="Город, свободный текст",
+    )
+    timezone: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True,
+        comment="Часовой пояс, IANA-идентификатор (вводится вручную)",
+    )
 
     role: Mapped[List["Roles"]] = relationship(
         "Roles", secondary=t_user_roles, back_populates="user"
