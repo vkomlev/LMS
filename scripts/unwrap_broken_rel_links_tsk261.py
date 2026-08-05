@@ -27,11 +27,26 @@ import asyncpg
 from dotenv import load_dotenv
 
 # <a ... href="/что-то" ...>текст</a> → текст. Только относительный WP-путь (/буква).
-REL_LINK_RE = re.compile(r'<a\b[^>]*\bhref="/[a-z][^"]*"[^>]*>(.*?)</a>', re.S | re.I)
+REL_LINK_RE = re.compile(r'<a\b[^>]*\bhref="(/[a-z][^"]*)"[^>]*>(.*?)</a>', re.S | re.I)
+
+# tsk-537: относительные пути LMS/SPW-фронта — НЕ "битые WP-ссылки", это рабочая
+# внутренняя навигация приложения (deep-link на узел графа курсов, /api/v1/media и
+# т.п.). У них тот же поверхностный вид (href="/буква..."), что и у настоящих
+# битых WP-путей, но unwrap() их убил бы вместе с настоящими битыми — ровно то
+# случилось бы повторно с материалами, которые tsk-537 (2026-08-05) вручную
+# починил на /courses/{course_uid} (см. scripts/tsk537_oge_informatika511_links.py).
+# При повторном запуске этого скрипта на новой партии материалов такие префиксы
+# обязаны остаться нетронутыми.
+SAFE_INTERNAL_PREFIXES = ("/courses/", "/api/")
 
 
 def unwrap(html: str) -> str:
-    return REL_LINK_RE.sub(r"\1", html)
+    def _sub(m: "re.Match[str]") -> str:
+        href, text = m.group(1), m.group(2)
+        if href.startswith(SAFE_INTERNAL_PREFIXES):
+            return m.group(0)
+        return text
+    return REL_LINK_RE.sub(_sub, html)
 
 
 def _dsn() -> str:
