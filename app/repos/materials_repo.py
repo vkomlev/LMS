@@ -17,6 +17,7 @@ from sqlalchemy.sql import text
 
 from app.models.materials import Materials
 from app.repos.base import BaseRepository
+from app.utils.ilike import escape_ilike
 
 
 class MaterialsRepository(BaseRepository[Materials]):
@@ -90,8 +91,13 @@ class MaterialsRepository(BaseRepository[Materials]):
         """
         if not q or not q.strip():
             return [], 0
-        pattern = f"%{q.strip()}%"
-        cond = (Materials.title.ilike(pattern)) | (Materials.external_uid.ilike(pattern))
+        # tsk-565: буквальный % / _ в запросе экранируется — иначе сработал
+        # бы как wildcard ILIKE, а не как искомый текст.
+        pattern = f"%{escape_ilike(q.strip())}%"
+        cond = (
+            Materials.title.ilike(pattern, escape='\\')
+            | Materials.external_uid.ilike(pattern, escape='\\')
+        )
 
         stmt = select(Materials).where(cond)
         count_stmt = select(func.count()).select_from(Materials).where(cond)

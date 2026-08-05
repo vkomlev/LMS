@@ -224,13 +224,17 @@ async def search_tasks(
     прошёл гейт.
     """
     from app.models.tasks import Tasks
-    
+    from app.utils.ilike import escape_ilike
+
     # Поиск по JSONB полям task_content
     # Используем JSONB операторы PostgreSQL для поиска в task_content.stem и task_content.title
+    # tsk-565: буквальный % / _ в запросе экранируется — иначе сработал бы как
+    # wildcard ILIKE, а не как искомый текст.
+    pattern = f'%{escape_ilike(q)}%'
     search_conditions = [
-        Tasks.task_content['stem'].astext.ilike(f'%{q}%'),
-        Tasks.task_content['title'].astext.ilike(f'%{q}%'),
-        Tasks.external_uid.ilike(f'%{q}%'),
+        Tasks.task_content['stem'].astext.ilike(pattern, escape='\\'),
+        Tasks.task_content['title'].astext.ilike(pattern, escape='\\'),
+        Tasks.external_uid.ilike(pattern, escape='\\'),
     ]
     
     query = select(Tasks).where(or_(*search_conditions))
