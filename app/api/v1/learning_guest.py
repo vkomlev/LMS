@@ -124,7 +124,16 @@ async def get_guest_task(
         if await is_rate_limited(redis, f"guest_read:{ip}", max_requests=600, window_seconds=60):
             raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Слишком много запросов")
 
-    payload = await learning_guest_service.get_demo_task(db, task_id)
+    # tsk-423: без cookie/невалидный UUID — историю проверять не по чему,
+    # get_demo_task трактует None как «использовано 0», не блокирует.
+    gs_uuid_for_limit: UUID | None = None
+    if guest_session:
+        try:
+            gs_uuid_for_limit = UUID(guest_session)
+        except ValueError:
+            pass
+
+    payload = await learning_guest_service.get_demo_task(db, task_id, gs_uuid_for_limit)
     if payload is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,

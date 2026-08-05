@@ -34,6 +34,54 @@ _GUEST_ALLOWED_TYPES: tuple[str, ...] = ("SA", "SC", "MC")
 _checking_service = CheckingService()
 
 
+async def _enforce_demo_task_limit(
+    db: AsyncSession,
+    guest_session_id: Optional[UUID],
+    course_id: int,
+    task_id: int,
+    limit: Optional[int],
+) -> None:
+    """Проверить лимит "сколько РАЗНЫХ заданий этого курса гость уже проверял" (tsk-423).
+
+    NULL `limit` (по умолчанию) — без лимита, ничего не проверяем (курс 651
+    «Пробное занятие» и любой другой курс без настроенного лимита не затронуты).
+    Без `guest_session_id` (гость ещё не создал сессию — например, первый GET
+    задания до POST /learning/guest/session) считать историю не по чему —
+    трактуем как «использовано 0», не блокируем.
+
+    Повторная проверка УЖЕ использованного `task_id` в лимит не считается —
+    иначе гость терял бы доступ к своей же задаче после ошибочного первого
+    ответа.
+
+    Raises:
+        DomainError 403 (payload.code=demo_limit_reached): лимит исчерпан для
+            НОВОГО (ранее не встречавшегося) задания.
+    """
+    if limit is None or guest_session_id is None:
+        return
+
+    from app.models.guest_attempt import GuestAttempt  # noqa: PLC0415
+
+    result = await db.execute(
+        select(GuestAttempt.task_id)
+        .join(Tasks, Tasks.id == GuestAttempt.task_id)
+        .where(
+            GuestAttempt.guest_session_id == guest_session_id,
+            Tasks.course_id == course_id,
+        )
+        .distinct()
+    )
+    used_ids = {row[0] for row in result if row[0] is not None}
+    if task_id in used_ids:
+        return
+    if len(used_ids) >= limit:
+        raise DomainError(
+            detail="Демо-лимит заданий исчерпан. Зарегистрируйтесь или купите курс целиком.",
+            status_code=403,
+            payload={"code": "demo_limit_reached", "limit": limit, "used": len(used_ids)},
+        )
+
+
 async def get_demo_course_info(
     db: AsyncSession, course_uid: str
 ) -> Optional[GuestCourseInfoResponse]:
@@ -54,11 +102,17 @@ async def get_demo_course_info(
     )
 
 
-async def get_demo_task(db: AsyncSession, task_id: int) -> Optional[GuestTaskResponse]:
+async def get_demo_task(
+    db: AsyncSession, task_id: int, guest_session_id: Optional[UUID] = None
+) -> Optional[GuestTaskResponse]:
     """Загрузить задачу из public-demo курса; вернуть None если task не в demo.
 
     Sanitizes payload: возвращает только whitelist полей (без correct_answer,
     solution_rules, options[].is_correct, options[].explanation).
+
+    Raises:
+        DomainError 403 (tsk-423): курс настроен с `demo_task_limit`, гость его
+            исчерпал, и запрошенное задание — новое (не из уже использованных).
     """
     result = await db.execute(
         select(Tasks, Courses)
@@ -72,6 +126,8 @@ async def get_demo_task(db: AsyncSession, task_id: int) -> Optional[GuestTaskRes
     if row is None:
         return None
     task, course = row
+
+    await _enforce_demo_task_limit(db, guest_session_id, course.id, task.id, course.demo_task_limit)
 
     try:
         content = TaskContent.model_validate(task.task_content)
@@ -120,6 +176,8 @@ async def submit_guest_attempt(
 
     Raises:
         DomainError 400: task не в public-demo / SA_COM / type mismatch.
+        DomainError 403 (tsk-423): `demo_task_limit` курса исчерпан для нового
+            задания (payload.code=demo_limit_reached).
     """
     # 1. Проверить ACL: task ∈ public-demo course
     result = await db.execute(
@@ -137,7 +195,11 @@ async def submit_guest_attempt(
             status_code=404,
             payload={"task_id": task_id},
         )
-    task, _course = row
+    task, course = row
+
+    # 1b. Лимит гостевых заданий на курс (tsk-423) — до проверки ответа,
+    # чтобы не тратить checking_service на заведомо заблокированную попытку.
+    await _enforce_demo_task_limit(db, guest_session_id, course.id, task.id, course.demo_task_limit)
 
     # 2. Валидировать тип задачи (SA/SC/MC only)
     try:

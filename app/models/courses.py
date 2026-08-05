@@ -61,6 +61,14 @@ class Courses(Base):
         nullable=False,
         comment="Доступен ли курс гостям без регистрации (Phase Y-5)",
     )
+    demo_task_limit: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment=(
+            "tsk-423: макс. число разных заданий, которые гость может "
+            "проверить в этом is_public_demo-курсе. NULL = без лимита."
+        ),
+    )
     sampling_config: Mapped[Optional[dict]] = mapped_column(
         JSONB,
         nullable=True,
