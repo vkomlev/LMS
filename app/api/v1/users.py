@@ -1,7 +1,7 @@
 # app/api/v1/users.py
 from typing import List, Optional
 from enum import Enum
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status, Query, Body
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import asc, desc
@@ -15,7 +15,8 @@ from app.api.deps import get_async_db, get_db, require_role
 from app.auth.current_user import CurrentUser
 from app.api.v1.crud import create_crud_router
 from app.services.users_service import UsersService
-from app.services import user_block_service, user_merge_api_service, users_dedup_service
+from app.services import me_service, user_block_service, user_merge_api_service, users_dedup_service
+from app.services.audit_service import ADMIN_PROFILE_EXTRA_UPDATED, log_event
 from app.schemas.users import UserID, UserRead, UserCreate, UserUpdate
 from app.models.users import Users
 from app.utils.pagination import Page, build_page
@@ -442,40 +443,56 @@ async def get_user_id_by_tg(
 )
 async def patch_user(
     id: int,
+    request: Request,
     obj_in: UserUpdate = Body(..., description="Данные для обновления пользователя (все поля опциональны)"),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_PEOPLE_WRITE_GATE),
 ) -> UserRead:
     """
     Частично обновить данные пользователя.
-    
+
     **Параметры пути:**
     - `id` (int, обязательный): ID пользователя
-    
+
     **Тело запроса:**
     Все поля опциональны. Обновляются только переданные поля:
     - `email` (string, опционально): Email пользователя (валидный email)
     - `full_name` (string, опционально): Полное имя пользователя
     - `tg_id` (int, опционально): Telegram ID пользователя
-    
+    - `category`/`school_grade`/`city`/`timezone` (опционально, tsk-563): доп.
+      поля профиля — те же, что ученик редактирует сам в `PATCH /me`
+
     **Ответ:**
     Возвращает объект `UserRead` с обновленными данными.
-    
+
     **Коды ответов:**
     - `200` - Пользователь успешно обновлен
     - `404` - Пользователь с указанным ID не найден
     - `403` - Неверный или отсутствующий API ключ
-    - `422` - Ошибка валидации данных (неверный формат email и т.д.)
-    
+    - `422` - Ошибка валидации данных (неверный формат email, некорректная
+      связка category/school_grade и т.д.)
+
     **Примеры:**
     - Обновить только имя: `{"full_name": "Новое Имя"}`
     - Обновить email и имя: `{"email": "new@example.com", "full_name": "Обновленное Имя"}`
     - Обновить только Telegram ID: `{"tg_id": 987654321}` — только сервисным ключом
+    - Обновить доп. поля профиля: `{"category": "school_student", "school_grade": 9}`
 
     tsk-433 Волна 3.2: человеку из кабинета (методисту) разрешены имя и почта.
     `tg_id` остаётся за сервисными потребителями: это идентификатор входа через
     бота, и смена его из кабинета означала бы передачу доступа к чужому
     аккаунту. Решение оператора 2026-07-30.
+
+    tsk-563: `category`/`school_grade`/`city`/`timezone` — те же доп. поля
+    профиля, что ученик правит сам в `PATCH /me` (tsk-427). Кросс-валидация
+    "класс только у школьника" и каскадный сброс `school_grade` при смене
+    категории переиспользуют `me_service.update_profile_extra` напрямую —
+    без дублирования правил в generic `UsersService.update`. Доступ методисту
+    и админу дан тем же гейтом `_PEOPLE_WRITE_GATE`, что и ФИО/почте (решение
+    оператора: расширить существующий общий PATCH, не заводить отдельный
+    admin-only эндпоинт). Изменение доп. полей пишет audit-событие
+    `admin.profile_extra.updated` с `user_id` = актёр (методист/админ),
+    `details.target_user_id` = редактируемый ученик.
     """
     db_obj = await service.get_by_id(db, id)
     if not db_obj:
@@ -490,6 +507,32 @@ async def patch_user(
                 "Идентификатор Telegram из кабинета не меняется: это ключ входа "
                 "через бота. Привязку меняет сам пользователь в своём профиле."
             ),
+        )
+
+    profile_extra_keys = ("category", "school_grade", "city", "timezone")
+    profile_extra = {k: payload.pop(k) for k in profile_extra_keys if k in payload}
+    if profile_extra:
+        try:
+            await me_service.update_profile_extra(
+                db,
+                id,
+                category=profile_extra.get("category"),
+                school_grade=profile_extra.get("school_grade"),
+                city=profile_extra.get("city"),
+                timezone_value=profile_extra.get("timezone"),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
+        ip = request.client.host if request.client else "unknown"
+        await log_event(
+            db,
+            ADMIN_PROFILE_EXTRA_UPDATED,
+            user_id=current_user.id,
+            ip=ip,
+            details={"target_user_id": id, **profile_extra},
         )
 
     try:

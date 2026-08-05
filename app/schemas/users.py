@@ -3,6 +3,8 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
+from app.schemas.me import ProfileCategory, normalize_city, validate_timezone
+
 
 class UserCreate(BaseModel):
     """Схема для создания пользователя.
@@ -38,13 +40,41 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = Field(None, description="Email пользователя", examples=["newemail@example.com", None])
     full_name: Optional[str] = Field(None, description="Полное имя пользователя", examples=["Новое Имя", None])
     tg_id: Optional[int] = Field(None, description="Telegram ID пользователя", examples=[987654321, None])
-    
+    # tsk-563: доп. поля профиля — те же, что ученик сам редактирует в
+    # PATCH /me (tsk-427). Кросс-валидация "класс только у школьника" и
+    # каскадный сброс school_grade — не здесь (формат/диапазон), а в
+    # me_service.update_profile_extra, который переиспользует обработчик
+    # PATCH /users/{id} (app/api/v1/users.py) вместо дублирования правил.
+    category: Optional[ProfileCategory] = Field(
+        None, description="Категория ученика", examples=["school_student", None]
+    )
+    school_grade: Optional[int] = Field(
+        None, ge=1, le=11,
+        description="Класс (1-11) — только для category=school_student",
+        examples=[9, None],
+    )
+    city: Optional[str] = Field(None, max_length=255, description="Город", examples=["Москва", None])
+    timezone: Optional[str] = Field(
+        None, description="Часовой пояс, IANA-идентификатор", examples=["Europe/Moscow", None]
+    )
+
+    @field_validator("city")
+    @classmethod
+    def _strip_city(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_city(v)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: Optional[str]) -> Optional[str]:
+        return validate_timezone(v)
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
                 {"full_name": "Новое Имя"},
                 {"email": "newemail@example.com", "full_name": "Обновленное Имя"},
-                {"tg_id": 987654321}
+                {"tg_id": 987654321},
+                {"category": "school_student", "school_grade": 9, "city": "Москва", "timezone": "Europe/Moscow"},
             ]
         }
     )
@@ -69,6 +99,18 @@ class UserRead(BaseModel):
         None,
         description="Когда закрыт вход. NULL — доступ открыт",
         examples=["2026-07-31T12:00:00Z", None],
+    )
+    # tsk-563: доп. поля профиля — видны в карточке методисту/админу так же,
+    # как самому ученику в MeResponse (tsk-427).
+    category: Optional[ProfileCategory] = Field(
+        None, description="Категория ученика", examples=["school_student", None]
+    )
+    school_grade: Optional[int] = Field(
+        None, description="Класс (1-11) — только для category=school_student", examples=[9, None]
+    )
+    city: Optional[str] = Field(None, description="Город", examples=["Москва", None])
+    timezone: Optional[str] = Field(
+        None, description="Часовой пояс, IANA-идентификатор", examples=["Europe/Moscow", None]
     )
 
     @field_validator("email", mode="before")

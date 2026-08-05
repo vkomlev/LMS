@@ -17,6 +17,28 @@ ProfileCategory = Literal[
 ]
 
 
+def normalize_city(v: str | None) -> str | None:
+    """Обрезать пробелы; строка из одних пробелов = не заполнено (None)."""
+    if v is None:
+        return v
+    stripped = v.strip()
+    return stripped or None
+
+
+def validate_timezone(v: str | None) -> str | None:
+    """Проверить, что значение — валидный IANA-идентификатор часового пояса."""
+    if v is None:
+        return v
+    try:
+        ZoneInfo(v)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(
+            f"Некорректный часовой пояс: «{v}». Ожидается IANA-идентификатор, "
+            "например Europe/Moscow."
+        ) from exc
+    return v
+
+
 class MeResponse(BaseModel):
     id: int
     email: str | None
@@ -84,24 +106,12 @@ class MeUpdateRequest(BaseModel):
     @field_validator("city")
     @classmethod
     def _strip_city(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        stripped = v.strip()
-        return stripped or None
+        return normalize_city(v)
 
     @field_validator("timezone")
     @classmethod
     def _validate_timezone(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        try:
-            ZoneInfo(v)
-        except ZoneInfoNotFoundError as exc:
-            raise ValueError(
-                f"Некорректный часовой пояс: «{v}». Ожидается IANA-идентификатор, "
-                "например Europe/Moscow."
-            ) from exc
-        return v
+        return validate_timezone(v)
 
 
 # ── Phase Y-3: /me/identities ────────────────────────────────────────────────

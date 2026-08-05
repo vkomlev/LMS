@@ -49877,6 +49877,77 @@
               "2026-07-31T12:00:00Z",
               null
             ]
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "school_student",
+                  "university_student",
+                  "college_student",
+                  "applicant",
+                  "adult"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "description": "Категория ученика",
+            "examples": [
+              "school_student",
+              null
+            ]
+          },
+          "school_grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Grade",
+            "description": "Класс (1-11) — только для category=school_student",
+            "examples": [
+              9,
+              null
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City",
+            "description": "Город",
+            "examples": [
+              "Москва",
+              null
+            ]
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "Часовой пояс, IANA-идентификатор",
+            "examples": [
+              "Europe/Moscow",
+              null
+            ]
           }
         },
         "type": "object",
@@ -49945,6 +50016,80 @@
               987654321,
               null
             ]
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "school_student",
+                  "university_student",
+                  "college_student",
+                  "applicant",
+                  "adult"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category",
+            "description": "Категория ученика",
+            "examples": [
+              "school_student",
+              null
+            ]
+          },
+          "school_grade": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 11.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "School Grade",
+            "description": "Класс (1-11) — только для category=school_student",
+            "examples": [
+              9,
+              null
+            ]
+          },
+          "city": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "City",
+            "description": "Город",
+            "examples": [
+              "Москва",
+              null
+            ]
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "Часовой пояс, IANA-идентификатор",
+            "examples": [
+              "Europe/Moscow",
+              null
+            ]
           }
         },
         "type": "object",
@@ -49960,6 +50105,12 @@
           },
           {
             "tg_id": 987654321
+          },
+          {
+            "category": "school_student",
+            "city": "Москва",
+            "school_grade": 9,
+            "timezone": "Europe/Moscow"
           }
         ]
       },

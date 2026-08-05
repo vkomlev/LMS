@@ -34,6 +34,9 @@ TEACHER_LIMIT_OVERRIDE = "teacher.limit.overridden"
 # tsk-429 event types (Календарь LMS Фаза 2: явка ученика на занятие)
 STUDENT_LESSON_ATTENDANCE_RECORDED = "student.lesson_attendance.recorded"
 
+# tsk-563 event types (методист/админ правит доп. поля профиля чужого ученика)
+ADMIN_PROFILE_EXTRA_UPDATED = "admin.profile_extra.updated"
+
 
 async def log_event(
     db: AsyncSession,
