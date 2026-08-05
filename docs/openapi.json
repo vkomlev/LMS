@@ -45748,6 +45748,12 @@
             "title": "Course Uid",
             "description": "Внешний код курса (courses.course_uid), используется для импорта."
           },
+          "multiline_answer": {
+            "type": "boolean",
+            "title": "Multiline Answer",
+            "description": "tsk-412: поле «Ответ» (SA) должно быть многострочным textarea, а не однострочным input. Нужно, когда ответ — не короткая фраза/число, а программа/текст с переводами строк: однострочный input физически не может принять `\\n` (браузер удаляет переводы строк из value — см. WHATWG value sanitization algorithm для text-контролов), и без этого флага такой ответ был бы молча искалечен ещё до отправки на сервер. Для SA_COM это не нужно — там поле «Ответ» уже textarea.",
+            "default": false
+          },
           "hints_text": {
             "items": {
               "type": "string"

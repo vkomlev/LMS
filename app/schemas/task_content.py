@@ -247,6 +247,19 @@ class TaskContent(BaseModel):
         description="Внешний код курса (courses.course_uid), используется для импорта.",
     )
 
+    multiline_answer: bool = Field(
+        default=False,
+        description=(
+            "tsk-412: поле «Ответ» (SA) должно быть многострочным textarea, а не "
+            "однострочным input. Нужно, когда ответ — не короткая фраза/число, а "
+            "программа/текст с переводами строк: однострочный input физически не "
+            "может принять `\\n` (браузер удаляет переводы строк из value —"
+            " см. WHATWG value sanitization algorithm для text-контролов), и без "
+            "этого флага такой ответ был бы молча искалечен ещё до отправки на "
+            "сервер. Для SA_COM это не нужно — там поле «Ответ» уже textarea."
+        ),
+    )
+
     hints_text: List[str] = Field(
         default_factory=list,
         description=(
