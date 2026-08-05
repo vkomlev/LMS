@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from collections import Counter
 from typing import List, Optional, Set, Dict
@@ -17,6 +18,7 @@ from app.schemas.checking import (
 )
 from app.utils.exceptions import DomainError
 
+logger = logging.getLogger(__name__)
 
 _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 
@@ -105,6 +107,8 @@ class CheckingService:
         if task_type in ("SC_Qw", "MC_Qw"):
             return self._check_quiz(task_content, solution_rules, answer)
         if task_type in ("SA", "SA_COM"):
+            if solution_rules.turtle_sim is not None:
+                return self._check_turtle_sim(solution_rules, answer)
             return self._check_short_answer(task_content, solution_rules, answer)
         if task_type == "TBL_COM":
             return self._check_table_answer(task_content, solution_rules, answer)
@@ -657,6 +661,100 @@ class CheckingService:
             max_score=solution_rules.max_score,
             details=details,
             feedback=feedback,
+        )
+
+    # ---------- Проверка turtle_sim (tsk-412) ----------
+
+    def _check_turtle_sim(
+        self,
+        solution_rules: SolutionRules,
+        answer: StudentAnswer,
+    ) -> CheckResult:
+        """
+        Проверка «нарисуй фигуру черепахой» (tsk-412, курс 165).
+
+        В отличие от `_check_short_answer` (сравнение ТЕКСТА ответа/кода),
+        здесь код ученика (response.value) исполняется в песочнице
+        (`app.services.turtle_sandbox`), а сравнивается получившаяся трасса
+        (координаты, цвета, финальное состояние) с эталонной трассой,
+        вычисленной офлайн при авторинге задания. response.comment не
+        используется (как и у обычного SA) — доказательством служит сам факт
+        совпадения рисунка.
+        """
+        from app.services.turtle_sandbox.comparator import compare_traces
+        from app.services.turtle_sandbox.executor import run_student_code
+
+        rules = solution_rules.turtle_sim
+        if rules is None:
+            raise DomainError(
+                detail="turtle_sim не задан, хотя проверка была выбрана как turtle_sim.",
+                status_code=500,
+            )
+
+        value_raw = answer.response.value or ""
+        if not value_raw.strip():
+            return CheckResult(
+                is_correct=False,
+                score=0,
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=CheckFeedback(general="Ответ пуст. Введите программу на Python."),
+            )
+
+        result = run_student_code(
+            value_raw,
+            random_seed=rules.random_seed,
+            synthetic_clicks=rules.synthetic_clicks,
+            max_steps=rules.max_steps,
+            timeout_sec=rules.timeout_sec,
+        )
+
+        if not result.ok:
+            logger.info(
+                "turtle_sim: код ученика не выполнен (error=%s): %s",
+                result.error, result.message,
+            )
+            feedback_by_error = {
+                "syntax_error": "В программе синтаксическая ошибка. Проверьте код.",
+                "forbidden_construct": (
+                    "В программе есть запрещённые конструкции (импорт непредусмотренных "
+                    "модулей, обращение к служебным атрибутам)."
+                ),
+                "timeout": "Программа выполнялась слишком долго — проверьте условие выхода из цикла.",
+                "step_limit_exceeded": "Черепаха рисует слишком долго — проверьте условие выхода из цикла.",
+                "runtime_error": "Программа завершилась с ошибкой при выполнении.",
+                "turtle_usage_error": "Некорректное использование команд черепахи.",
+                "sandbox_busy": "Песочница перегружена — попробуйте отправить ответ ещё раз через несколько секунд.",
+            }
+            general = feedback_by_error.get(result.error or "", "Не удалось выполнить программу.")
+            return CheckResult(
+                is_correct=False,
+                score=0,
+                max_score=solution_rules.max_score,
+                details=None,
+                feedback=CheckFeedback(general=general),
+            )
+
+        matches, reason = compare_traces(
+            rules.expected_trace.model_dump(mode="python"),
+            result.trace or {},
+            tolerance_px=rules.tolerance_px,
+        )
+        if reason:
+            logger.info("turtle_sim: расхождение трассы: %s", reason)
+
+        return CheckResult(
+            is_correct=matches,
+            score=solution_rules.max_score if matches else 0,
+            max_score=solution_rules.max_score,
+            details=None,
+            feedback=CheckFeedback(
+                general=(
+                    "Отлично! Рисунок совпадает с эталоном." if matches
+                    else "Рисунок не совпадает с ожидаемым результатом. "
+                         "Проверьте координаты, углы поворота и порядок команд."
+                )
+            ),
         )
 
     # ---------- Проверка TBL_COM (табличный ответ) ----------

@@ -231,6 +231,98 @@ class QuizRules(BaseModel):
     )
 
 
+class TurtleSegment(BaseModel):
+    """
+    Один примитив трассы черепахи (tsk-412): отрезок линии или дуга circle().
+
+    Записывается стабом `app/services/turtle_sandbox/stub_turtle.py` только при
+    опущенном пере (pen down) — движение с поднятым пером на трассу не влияет,
+    но всё равно расходует `max_steps` (см. TurtleSimRules).
+    """
+
+    kind: Literal["line", "circle"] = Field(
+        ...,
+        description="line — прямой отрезок (forward/backward/goto/setpos), circle — дуга circle().",
+    )
+    start: List[float] = Field(..., description="Координаты начала [x, y].", min_length=2, max_length=2)
+    end: List[float] = Field(..., description="Координаты конца [x, y].", min_length=2, max_length=2)
+    color_rgb: List[float] = Field(
+        ...,
+        description="Цвет пера в момент отрисовки, нормализованный к RGB [0..1].",
+        min_length=3,
+        max_length=3,
+    )
+    radius: Optional[float] = Field(
+        default=None, description="Радиус дуги (только kind='circle')."
+    )
+    extent: Optional[float] = Field(
+        default=None, description="Угол дуги в градусах (только kind='circle')."
+    )
+
+
+class TurtleFinalState(BaseModel):
+    """Конечное состояние черепахи(-ах) после исполнения программы (tsk-412)."""
+
+    position: List[float] = Field(..., description="Финальные координаты [x, y] ПЕРВОЙ созданной черепахи.", min_length=2, max_length=2)
+    heading: float = Field(..., description="Финальный угол поворота в градусах [0, 360).")
+    pen_down: bool = Field(..., description="Опущено ли перо в конце.")
+
+
+class TurtleTrace(BaseModel):
+    """Полная трасса исполнения программы в песочнице turtle (tsk-412)."""
+
+    segments: List[TurtleSegment] = Field(default_factory=list)
+    final_state: TurtleFinalState
+
+
+class TurtleSimRules(BaseModel):
+    """
+    Правила проверки задания «нарисуй фигуру черепахой» (tsk-412, курс 165).
+
+    В отличие от `short_answer.normalization=code_ast` (сравнение ИСХОДНОГО КОДА
+    как программы), здесь сравнивается РЕЗУЛЬТАТ исполнения: ответ ученика —
+    полная Python-программа в `response.value` (тип задачи `SA`, без comment —
+    доказательством служит сам факт совпадения рисунка). Код исполняется в
+    песочнице (`app/services/turtle_sandbox/`), полученная трасса сравнивается
+    с `expected_trace`, вычисленной ОДИН РАЗ офлайн прогоном эталонного решения
+    через тот же стаб (не хранится сам эталонный код — только трасса, чтобы не
+    исполнять «доверенный» код на каждой проверке и не хранить решение в
+    открытом виде рядом с заданием).
+    """
+
+    expected_trace: TurtleTrace = Field(
+        ..., description="Эталонная трасса, вычисленная офлайн прогоном решения через стаб."
+    )
+    random_seed: Optional[int] = Field(
+        default=None,
+        description="Если задание использует random — сид, который ставится ПЕРЕД исполнением "
+        "кода ученика (и ставился перед вычислением эталонной трассы). Без сида "
+        "ответы со случайностью невоспроизводимы и не могут сравниваться.",
+    )
+    synthetic_clicks: List[List[float]] = Field(
+        default_factory=list,
+        description="Синтетические клики [[x,y], ...], поданные по очереди в обработчик "
+        "onscreenclick при вызове done()/mainloop() — для заданий с интерактивом мыши.",
+    )
+    tolerance_px: float = Field(
+        default=0.75,
+        gt=0,
+        description="Допустимое отклонение координат/радиуса в пикселях (накопление float).",
+    )
+    max_steps: int = Field(
+        default=5000,
+        gt=0,
+        description="Предел числа примитивов движения (forward/circle/goto/...) — защита "
+        "от программ с бесконечным рисованием (`while True` без верного условия выхода).",
+    )
+    timeout_sec: float = Field(
+        default=5.0,
+        gt=0,
+        le=15.0,
+        description="Жёсткий лимит времени исполнения в песочнице (wall-clock).",
+    )
+
+
 class SolutionRules(BaseModel):
     """
     Структура JSON-поля tasks.solution_rules.
@@ -286,6 +378,19 @@ class SolutionRules(BaseModel):
     short_answer: Optional[ShortAnswerRules] = Field(
         default=None,
         description="Правила проверки короткого ответа (SA/SA_COM).",
+    )
+
+    # Для «нарисуй фигуру черепахой» (tsk-412): исполнение кода ученика в
+    # песочнице и сравнение трассы, а не сравнение самого кода как текста.
+    turtle_sim: Optional[TurtleSimRules] = Field(
+        default=None,
+        description=(
+            "Правила проверки через безопасное исполнение кода ученика (tsk-412, "
+            "курс 165). Тип задачи остаётся SA (эталон — response.value = полная "
+            "программа), но при заполненном turtle_sim CheckingService НЕ делает "
+            "code_ast/текстовое сравнение — вместо этого исполняет код в песочнице "
+            "и сравнивает получившуюся трассу с эталонной."
+        ),
     )
 
     # Для табличного ответа (TBL_COM); эталон берётся из short_answer
@@ -375,6 +480,8 @@ class SolutionRules(BaseModel):
 
         :returns: True — эталон задан (списком принимаемых ответов либо regex).
         """
+        if self.turtle_sim is not None:
+            return True
         rules = self.short_answer
         if rules is None:
             return False

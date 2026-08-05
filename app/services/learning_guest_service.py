@@ -8,6 +8,7 @@ ACL: только курсы с `courses.is_public_demo=TRUE` доступны �
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 from uuid import UUID
@@ -231,7 +232,10 @@ async def submit_guest_attempt(
         )
 
     # 3. Проверить ответ через тот же checking_service что в /attempts
-    check_result = _checking_service.check_task(
+    # (asyncio.to_thread — на случай turtle_sim/tsk-412, блокирующий вызов
+    # песочницы; для SA/SC/MC guest-типов это по-прежнему быстрый sync-путь)
+    check_result = await asyncio.to_thread(
+        _checking_service.check_task,
         task_content=content,
         solution_rules=rules,
         answer=answer,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends
@@ -91,7 +92,8 @@ async def check_task_endpoint(
         payload.solution_rules.custom_scoring_config is not None,
     )
     try:
-        result = checking_service.check_task(
+        result = await asyncio.to_thread(
+            checking_service.check_task,
             task_content=payload.task_content,
             solution_rules=payload.solution_rules,
             answer=payload.answer,
@@ -174,7 +176,8 @@ async def check_tasks_batch_endpoint(
 
     for index, item in enumerate(payload.items):
         try:
-            result = checking_service.check_task(
+            result = await asyncio.to_thread(
+                checking_service.check_task,
                 task_content=item.task_content,
                 solution_rules=item.solution_rules,
                 answer=item.answer,

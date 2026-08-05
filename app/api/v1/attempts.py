@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -611,7 +612,12 @@ async def submit_attempt_answers(
                     ),
                 )
 
-        check_result: CheckResult = checking_service.check_task(
+        # asyncio.to_thread: tsk-412 добавил turtle_sim — блокирующий вызов
+        # песочницы (subprocess.run с таймаутом до неск. секунд). Для остальных
+        # типов задач это по-прежнему быстрый sync-вызов, накладные расходы
+        # thread-пула пренебрежимо малы.
+        check_result: CheckResult = await asyncio.to_thread(
+            checking_service.check_task,
             task_content=task_content,
             solution_rules=solution_rules,
             answer=answer,
