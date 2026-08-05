@@ -183,6 +183,8 @@ async def get_task_by_external_uid(
                 }
             }
         },
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет искать задания (нужна methodist/admin)"},
     },
 )
 async def search_tasks(
@@ -190,26 +192,36 @@ async def search_tasks(
     course_id: Optional[int] = Query(None, description="Фильтр по курсу"),
     limit: int = Query(20, ge=1, le=200, description="Максимум результатов"),
     offset: int = Query(0, ge=0, description="Смещение"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> List[TaskRead]:
     """
-    Поиск заданий по содержимому.
-    
+    Поиск заданий по содержимому (tsk-564: cookie auth + роль методист/админ).
+
     Поиск выполняется по:
     - task_content.stem (формулировка вопроса)
     - task_content.title (название задания, если указано)
     - external_uid (внешний идентификатор)
-    
+
     Поиск регистронезависимый (case-insensitive).
-    
+
     Args:
         q: Поисковый запрос (минимум 2 символа)
         course_id: Опциональный фильтр по курсу
         limit: Максимум результатов (1-200)
         offset: Смещение для пагинации
-    
+
     Returns:
         Список найденных заданий
+
+    tsk-564: раньше сидел на legacy `get_db` (любой валидный API-ключ, без
+    разбора роли) и звал `TaskRead.model_validate(task)` напрямую — держатель
+    ЛЮБОГО сервисного ключа мог вытащить `solution_rules` (верные ответы)
+    поиском по тексту, тот же класс утечки, что tsk-460 закрыл для трёх
+    других эндпоинтов. `_STRUCTURE_GATE` пропускает сервисный ключ bypass'ом
+    и роли methodist/admin — оба случая по семантике `_task_read_for`
+    привилегированы, поэтому `privileged=True` фиксирован для всех, кто
+    прошёл гейт.
     """
     from app.models.tasks import Tasks
     
@@ -230,8 +242,8 @@ async def search_tasks(
     
     result = await db.execute(query)
     tasks = result.scalars().all()
-    
-    return [TaskRead.model_validate(task) for task in tasks]
+
+    return [_task_read_for(task, privileged=True) for task in tasks]
 
 
 @router.get(

@@ -73,15 +73,27 @@ settings = Settings()
     "/materials/search",
     response_model=MaterialsListResponse,
     summary="Поиск материалов по title и external_uid",
+    responses={
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет искать материалы (нужна methodist/admin)"},
+    },
 )
 async def search_materials(
     q: str = Query(..., min_length=1, description="Строка поиска (title, external_uid)"),
     course_id: int | None = Query(None, description="Ограничить поиск курсом; при отсутствии — по всем курсам"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
 ) -> MaterialsListResponse:
-    """Глобальный поиск материалов по заголовку и external_uid. course_id опционально."""
+    """Глобальный поиск материалов по заголовку и external_uid. course_id опционально.
+
+    tsk-564: переведён с legacy `get_db` (любой валидный API-ключ) на
+    `_STRUCTURE_GATE` для единообразия с `/tasks/search` и остальными
+    структурными операциями этого файла (tsk-433 Волна 2.3). Материалы не
+    несут секрета уровня `solution_rules` — здесь это архитектурная
+    нестыковка (сирота вне паттерна авторизации файла), не утечка данных.
+    """
     items, total = await materials_service.search_materials(
         db, q, course_id=course_id, skip=skip, limit=limit
     )

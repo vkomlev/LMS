@@ -4700,6 +4700,12 @@
               }
             }
           },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет искать материалы (нужна methodist/admin)"
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -8731,6 +8737,12 @@
                 ]
               }
             }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет искать задания (нужна methodist/admin)"
           },
           "422": {
             "description": "Validation Error",
