@@ -42,6 +42,7 @@ from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
+from app.services.code_quality_service import analyze_student_code_quality
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
 from app.services import (
@@ -623,6 +624,46 @@ async def submit_attempt_answers(
             answer=answer,
         )
 
+        # 2.3b.1 tsk-302 (направление 1): статический анализ стиля кода (pylint/
+        # radon) для заданий turtle_sim — код ученика уже есть (answer.response.value),
+        # анализ независим от результата сверки трассы (даже неверный рисунок может
+        # быть написан аккуратно или неряшливо). НАМЕРЕННО не кладётся в check_result:
+        # тот эхо-возвращается ученику в AttemptAnswerResult (см. 2.5 ниже) — решение
+        # оператора "видимость только teacher/methodist" требует, чтобы отчёт вообще
+        # не проходил через объект, отдаваемый в ответе на сдачу. Пишется напрямую в
+        # task_results.metrics (см. вызовы create_from_check_result ниже), которое
+        # отдаётся только через методист/teacher-эндпоинты (_STATS_GATE).
+        #
+        # review-gate (2026-08-06) находка Б1: анализ делит семафор песочницы с
+        # исполнением turtle-кода (executor.py, тот же _SANDBOX_SEMAPHORE — общий
+        # ресурсный бюджет прод-хоста, tsk-412) и синхронно занимает слот на время
+        # POST-запроса; уже просроченная попытка (attempt.time_expired == True ДО
+        # этого ответа) гарантированно обнуляется гейтом 2.3c ниже — анализ стиля
+        # заведомо мёртвого кода только тратит слот в ущерб другим ученикам. Гейт по
+        # свежей просрочке (task_deadline_sec, вычисляется НИЖЕ) не форсится здесь —
+        # это дало бы дублирование логики дедлайна; остаточный риск задокументирован
+        # в reviews/2026-08-06-tsk302-dir1-code-quality-review.md (У3/остаточные).
+        #
+        # Б2: сбой subprocess вне timeout (OSError и т.п.) не должен ронять приём
+        # ответа — check_result уже посчитан на строке 620 и не должен пропасть
+        # из-за побочной метрики. executor.run_code_quality_check сам не бросает
+        # (см. её докстринг), но try/except здесь — то же defense-in-depth, что и
+        # у soft-fail гейтов 2.4b/2.4c/2.4d ниже.
+        code_quality_metrics: Optional[dict] = None
+        if solution_rules.turtle_sim is not None and not attempt.time_expired:
+            student_code = answer.response.value or ""
+            if student_code.strip():
+                try:
+                    code_quality_metrics = await asyncio.to_thread(
+                        analyze_student_code_quality, student_code,
+                    )
+                except Exception:
+                    logger.warning(
+                        "tsk-302: анализ качества кода упал (attempt=%s task=%s), "
+                        "приём ответа продолжается без metrics",
+                        attempt.id, task.id, exc_info=True,
+                    )
+
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
         task_deadline_sec = getattr(task, "time_limit_sec", None) or (
@@ -799,6 +840,7 @@ async def submit_attempt_answers(
                 user_id=attempt.user_id,
                 answer=answer,
                 check_result=check_result,
+                metrics=code_quality_metrics,
                 source_system=attempt.source_system,
                 commit=False,
             )
@@ -811,6 +853,7 @@ async def submit_attempt_answers(
                 user_id=attempt.user_id,
                 answer=answer,
                 check_result=check_result,
+                metrics=code_quality_metrics,
                 source_system=attempt.source_system,
             )
 

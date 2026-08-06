@@ -1,0 +1,673 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 3f1279a..f61c533 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -42,6 +42,7 @@ from app.services.attempts_service import AttemptsService
+ from app.services.task_results_service import TaskResultsService
+ from app.services.tasks_service import TasksService
+ from app.services.checking_service import CheckingService
++from app.services.code_quality_service import analyze_student_code_quality
+ from app.services.learning_engine_service import LearningEngineService
+ from app.services.tasks_acl_service import assert_task_access
+ from app.services import (
+@@ -623,6 +624,46 @@ async def submit_attempt_answers(
+             answer=answer,
+         )
+ 
++        # 2.3b.1 tsk-302 (направление 1): статический анализ стиля кода (pylint/
++        # radon) для заданий turtle_sim — код ученика уже есть (answer.response.value),
++        # анализ независим от результата сверки трассы (даже неверный рисунок может
++        # быть написан аккуратно или неряшливо). НАМЕРЕННО не кладётся в check_result:
++        # тот эхо-возвращается ученику в AttemptAnswerResult (см. 2.5 ниже) — решение
++        # оператора "видимость только teacher/methodist" требует, чтобы отчёт вообще
++        # не проходил через объект, отдаваемый в ответе на сдачу. Пишется напрямую в
++        # task_results.metrics (см. вызовы create_from_check_result ниже), которое
++        # отдаётся только через методист/teacher-эндпоинты (_STATS_GATE).
++        #
++        # review-gate (2026-08-06) находка Б1: анализ делит семафор песочницы с
++        # исполнением turtle-кода (executor.py, тот же _SANDBOX_SEMAPHORE — общий
++        # ресурсный бюджет прод-хоста, tsk-412) и синхронно занимает слот на время
++        # POST-запроса; уже просроченная попытка (attempt.time_expired == True ДО
++        # этого ответа) гарантированно обнуляется гейтом 2.3c ниже — анализ стиля
++        # заведомо мёртвого кода только тратит слот в ущерб другим ученикам. Гейт по
++        # свежей просрочке (task_deadline_sec, вычисляется НИЖЕ) не форсится здесь —
++        # это дало бы дублирование логики дедлайна; остаточный риск задокументирован
++        # в reviews/2026-08-06-tsk302-dir1-code-quality-review.md (У3/остаточные).
++        #
++        # Б2: сбой subprocess вне timeout (OSError и т.п.) не должен ронять приём
++        # ответа — check_result уже посчитан на строке 620 и не должен пропасть
++        # из-за побочной метрики. executor.run_code_quality_check сам не бросает
++        # (см. её докстринг), но try/except здесь — то же defense-in-depth, что и
++        # у soft-fail гейтов 2.4b/2.4c/2.4d ниже.
++        code_quality_metrics: Optional[dict] = None
++        if solution_rules.turtle_sim is not None and not attempt.time_expired:
++            student_code = answer.response.value or ""
++            if student_code.strip():
++                try:
++                    code_quality_metrics = await asyncio.to_thread(
++                        analyze_student_code_quality, student_code,
++                    )
++                except Exception:
++                    logger.warning(
++                        "tsk-302: анализ качества кода упал (attempt=%s task=%s), "
++                        "приём ответа продолжается без metrics",
++                        attempt.id, task.id, exc_info=True,
++                    )
++
+         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
+         now = datetime.now(timezone.utc)
+         task_deadline_sec = getattr(task, "time_limit_sec", None) or (
+@@ -799,6 +840,7 @@ async def submit_attempt_answers(
+                 user_id=attempt.user_id,
+                 answer=answer,
+                 check_result=check_result,
++                metrics=code_quality_metrics,
+                 source_system=attempt.source_system,
+                 commit=False,
+             )
+@@ -811,6 +853,7 @@ async def submit_attempt_answers(
+                 user_id=attempt.user_id,
+                 answer=answer,
+                 check_result=check_result,
++                metrics=code_quality_metrics,
+                 source_system=attempt.source_system,
+             )
+ 
+diff --git a/app/services/turtle_sandbox/executor.py b/app/services/turtle_sandbox/executor.py
+index 4be1ae8..fa63bb4 100644
+--- a/app/services/turtle_sandbox/executor.py
++++ b/app/services/turtle_sandbox/executor.py
+@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
+ 
+ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ _RUNNER_PATH = Path(__file__).resolve().parent / "runner.py"
++_LINT_RUNNER_PATH = Path(__file__).resolve().parent / "lint_runner.py"
+ 
+ # Запас поверх timeout_sec самой задачи — время на старт unshare/интерпретатора.
+ _SUBPROCESS_OVERHEAD_SEC = 3.0
+@@ -43,6 +44,17 @@ _SANDBOX_CONCURRENCY_LIMIT = 3
+ _SANDBOX_SEMAPHORE = threading.Semaphore(_SANDBOX_CONCURRENCY_LIMIT)
+ _SEMAPHORE_WAIT_SEC = 5.0
+ 
++# tsk-302 (направление 1) review-gate находка Б1: анализ стиля кода (pylint/
++# radon, не exec) сперва делил _SANDBOX_SEMAPHORE с исполнением turtle-кода —
++# один и тот же ученик синхронно занимал слот исполнения, а следом ещё и слот
++# анализа (до ~10с суммарно вместо ~5с), и при умеренной параллельной нагрузке
++# (класс сдаёт одно задание) это провоцировало sandbox_busy у ДРУГИХ учеников
++# ради второстепенной, невидимой ученику фичи. Отдельный, более узкий бюджет —
++# анализ стиля не должен конкурировать за тот же ресурс с корректностной
++# проверкой.
++_LINT_CONCURRENCY_LIMIT = 2
++_LINT_SEMAPHORE = threading.Semaphore(_LINT_CONCURRENCY_LIMIT)
++
+ 
+ @dataclass(frozen=True)
+ class SandboxResult:
+@@ -52,7 +64,16 @@ class SandboxResult:
+     message: Optional[str] = None
+ 
+ 
+-def _build_command() -> List[str]:
++@dataclass(frozen=True)
++class CodeQualityResult:
++    """Результат статического анализа стиля кода (tsk-302, направление 1)."""
++    ok: bool
++    report: Optional[Dict[str, Any]] = None
++    error: Optional[str] = None
++    message: Optional[str] = None
++
++
++def _build_command(entry_script: Path) -> List[str]:
+     python_executable = sys.executable
+     if sys.platform.startswith("linux"):
+         # --pid --fork: отдельный PID-namespace (процесс не видит и не может
+@@ -63,9 +84,9 @@ def _build_command() -> List[str]:
+         # снаружи и PID 1 в новом ns никогда не запускается.
+         return [
+             "unshare", "--user", "--net", "--pid", "--fork", "--map-root-user", "--",
+-            python_executable, str(_RUNNER_PATH),
++            python_executable, str(entry_script),
+         ]
+-    return [python_executable, str(_RUNNER_PATH)]
++    return [python_executable, str(entry_script)]
+ 
+ 
+ def run_student_code(
+@@ -113,7 +134,7 @@ def _run_student_code_locked(
+         "synthetic_clicks": synthetic_clicks,
+         "max_steps": max_steps,
+     })
+-    command = _build_command()
++    command = _build_command(_RUNNER_PATH)
+     env = {
+         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+         "PYTHONPATH": str(_PROJECT_ROOT),
+@@ -150,3 +171,85 @@ def _run_student_code_locked(
+     if not data.get("ok"):
+         return SandboxResult(ok=False, error=data.get("error", "unknown"), message=data.get("message"))
+     return SandboxResult(ok=True, trace=data.get("trace"))
++
++
++def run_code_quality_check(code: str, *, timeout_sec: float = 5.0) -> CodeQualityResult:
++    """
++    Статический анализ стиля кода ученика (pylint/radon, tsk-302) в ТОЙ ЖЕ
++    изоляции, что и `run_student_code` (`lint_runner.py` вместо `runner.py`,
++    та же обёртка `unshare`), но с ОТДЕЛЬНЫМ, более узким бюджетом
++    одновременных процессов (`_LINT_SEMAPHORE`, не `_SANDBOX_SEMAPHORE`) —
++    см. комментарий у `_LINT_CONCURRENCY_LIMIT` (review-gate находка Б1,
++    2026-08-06): второстепенный, невидимый ученику анализ не должен
++    конкурировать за тот же слот, что и исполнение turtle-кода, иначе он
++    провоцирует `sandbox_busy` у ДРУГИХ учеников.
++
++    В отличие от `run_student_code`, код ученика здесь НЕ исполняется —
++    pylint/radon разбирают только AST, — но процесс всё равно изолирован и
++    ограничен по ресурсам (см. `lint_runner.py`): вход студенческий,
++    непривилегированный, а pylint/astroid на патологическом вводе способны
++    уйти в тяжёлый CPU/память путь.
++
++    Не бросает исключений — сбой анализа (таймаут, авария процесса) не должен
++    ронять приём ответа; вызывающая сторона получает `CodeQualityResult(ok=False, ...)`.
++    """
++    if not _LINT_SEMAPHORE.acquire(timeout=_SEMAPHORE_WAIT_SEC):
++        return CodeQualityResult(
++            ok=False, error="sandbox_busy",
++            message="Песочница анализа кода перегружена.",
++        )
++    try:
++        return _run_code_quality_check_locked(code, timeout_sec=timeout_sec)
++    finally:
++        _LINT_SEMAPHORE.release()
++
++
++def _run_code_quality_check_locked(code: str, *, timeout_sec: float) -> CodeQualityResult:
++    payload = json.dumps({"code": code})
++    command = _build_command(_LINT_RUNNER_PATH)
++    env = {
++        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
++        "PYTHONPATH": str(_PROJECT_ROOT),
++    }
++
++    try:
++        with tempfile.TemporaryDirectory(prefix="turtle_sandbox_lint_") as scratch_dir:
++            try:
++                proc = subprocess.run(
++                    command,
++                    input=payload,
++                    capture_output=True,
++                    encoding="utf-8",
++                    errors="replace",
++                    timeout=timeout_sec + _SUBPROCESS_OVERHEAD_SEC,
++                    env=env,
++                    cwd=scratch_dir,
++                )
++            except subprocess.TimeoutExpired:
++                return CodeQualityResult(ok=False, error="timeout", message="Превышено время анализа кода.")
++    except OSError as exc:
++        # review-gate (2026-08-06) находка Б2: TemporaryDirectory/subprocess.run
++        # способны бросить OSError (бинарь unshare/интерпретатор недоступен, нет
++        # места на диске) помимо TimeoutExpired — сбой побочного анализа стиля не
++        # должен ронять весь приём ответа ученика (тот же принцип, что и timeout).
++        return CodeQualityResult(
++            ok=False, error="sandbox_error",
++            message=f"Анализ кода не запустился: {type(exc).__name__}: {exc}",
++        )
++
++    if proc.returncode != 0 or not proc.stdout.strip():
++        stderr_tail = (proc.stderr or "").strip().splitlines()[-1:] or [""]
++        return CodeQualityResult(
++            ok=False,
++            error="sandbox_killed",
++            message=f"Анализ кода завершился аварийно (код {proc.returncode}): {stderr_tail[0][:200]}",
++        )
++
++    try:
++        data = json.loads(proc.stdout.strip().splitlines()[-1])
++    except (json.JSONDecodeError, IndexError):
++        return CodeQualityResult(ok=False, error="bad_output", message="Не удалось разобрать результат анализа.")
++
++    if not data.get("ok"):
++        return CodeQualityResult(ok=False, error=data.get("error", "unknown"), message=data.get("message"))
++    return CodeQualityResult(ok=True, report=data.get("report"))
+diff --git a/requirements.txt b/requirements.txt
+index 3d8dee7..ff574d6 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -38,4 +38,9 @@ bandit>=1.9.0
+ APScheduler>=3.10,<4
+ 
+ # tsk-520 — файлы материалов лежат в S3-хранилище, а не на диске приложения
+-boto3>=1.34
+\ No newline at end of file
++boto3>=1.34
++
++# tsk-302 (направление 1) — статический анализ качества/стиля кода ученика
++# (turtle_sim) внутри изоляции песочницы tsk-412
++pylint>=3.0,<4.0
++radon>=6.0,<7.0
+\ No newline at end of file
+diff --git a/app/services/code_quality_service.py b/app/services/code_quality_service.py
+new file mode 100644
+index 0000000..5c6a787
+--- /dev/null
++++ b/app/services/code_quality_service.py
+@@ -0,0 +1,56 @@
++# app/services/code_quality_service.py
++"""
++Сервис статического анализа качества/стиля кода ученика (tsk-302, направление 1).
++
++Оценивает СТИЛЬ уже принятого кода (магические числа, сложность, длина/число
++аргументов функций, читаемость имён) — не корректность (её проверяет
++turtle-песочница, tsk-412, через сравнение трассы рисунка).
++
++Видимость результата — ТОЛЬКО teacher/methodist/admin (решение оператора,
++tsk-302, 2026-08-06): функция намеренно не встраивается в `CheckResult`,
++который эхо-возвращается ученику в ответе `POST /attempts/{id}/answers`
++(`AttemptAnswerResult.check_result`). Вызывающая сторона (`app/api/v1/attempts.py`)
++кладёт результат напрямую в `metrics` при записи `task_results` — это поле
++уже отдаётся только через методист/teacher-эндпоинты
++(`GET /task-results/detail/by-user/{user_id}`, `stats/by-task`, `stats/by-course`).
++"""
++
++from __future__ import annotations
++
++import logging
++from typing import Any, Dict, Optional
++
++logger = logging.getLogger(__name__)
++
++
++def analyze_student_code_quality(code: str, *, timeout_sec: float = 5.0) -> Optional[Dict[str, Any]]:
++    """
++    Прогоняет код ученика через статический анализ (pylint/radon) в изоляции
++    песочницы turtle_sandbox (tsk-412) и возвращает JSON-совместимый отчёт для
++    `task_results.metrics`.
++
++    Синхронная блокирующая функция (subprocess) — вызывающая сторона обязана
++    звать через `asyncio.to_thread`, как и `run_student_code`.
++
++    Args:
++        code: Исходный код ученика (`answer.response.value`).
++        timeout_sec: Таймаут анализа в изолированном процессе.
++
++    Returns:
++        None при пустом коде; иначе словарь с отчётом либо `{"error": ..., "message": ...}`
++        при сбое анализа (таймаут/авария процесса) — сбой анализа не бросает исключение,
++        приём ответа ученика не должен падать из-за побочной метрики.
++    """
++    if not code.strip():
++        return None
++
++    from app.services.turtle_sandbox.executor import run_code_quality_check
++
++    result = run_code_quality_check(code, timeout_sec=timeout_sec)
++    if not result.ok:
++        logger.info(
++            "code_quality: анализ не выполнен (error=%s): %s",
++            result.error, result.message,
++        )
++        return {"error": result.error, "message": result.message}
++    return result.report
+diff --git a/app/services/turtle_sandbox/lint_runner.py b/app/services/turtle_sandbox/lint_runner.py
+new file mode 100644
+index 0000000..736f778
+--- /dev/null
++++ b/app/services/turtle_sandbox/lint_runner.py
+@@ -0,0 +1,193 @@
++# app/services/turtle_sandbox/lint_runner.py
++"""
++Точка входа песочницы статического анализа качества кода (tsk-302, направление 1).
++
++Протокол, как у `runner.py` (tsk-412): один JSON-объект на stdin
++    {"code": str}
++и один JSON-объект на stdout:
++    {"ok": true, "report": {...}}
++    {"ok": false, "error": "<категория>", "message": "<для лога>"}
++
++В отличие от `runner.py`, код ученика здесь НЕ ИСПОЛНЯЕТСЯ — pylint/radon
++разбирают только AST (`ast.parse`, без `exec`). Тем не менее файл запускается
++как отдельный OS-процесс той же обвязкой `executor.py` (на проде — под
++`unshare`), потому что вход — код ученика: pylint/astroid на патологическом
++вводе (глубокая вложенность, огромные выражения) способны уйти в тяжёлый
++CPU/память путь, а RLIMIT_CPU/RLIMIT_AS процесса — дешёвая защита от этого.
++
++Оценивается только СТИЛЬ (магические числа, сложность, длина/число
++аргументов функций, имена) — не корректность (её проверяет `runner.py`
++исполнением в песочнице и сравнением трассы).
++"""
++
++from __future__ import annotations
++
++import io
++import json
++import sys
++import tempfile
++from typing import Any, Dict, List
++
++
++def _set_resource_limits() -> None:
++    """Лимиты процесса анализа (POSIX only — на Windows no-op, прод всегда Linux).
++
++    Мягче, чем у `runner.py._set_resource_limits`: там лимиты рассчитаны на
++    интерпретатор, исполняющий код ученика (RLIMIT_FSIZE=0 — код не должен
++    писать файлы). Здесь код не исполняется, а pylint/astroid сами по себе
++    требовательнее к памяти, чем стаб turtle — берём RLIMIT_AS пошире и не
++    трогаем RLIMIT_FSIZE/RLIMIT_NPROC (pylint не форкает при `--jobs=1`,
++    но может использовать собственный дисковый кеш инференса).
++    """
++    try:
++        import resource
++    except ImportError:
++        return  # Windows: локальная разработка/тесты, прод всегда Linux.
++
++    try:
++        resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
++    except (ValueError, OSError):
++        pass
++    try:
++        limit_bytes = 512 * 1024 * 1024
++        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
++    except (ValueError, OSError):
++        pass
++
++
++def _emit(payload: dict) -> None:
++    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
++    sys.stdout.write("\n")
++    sys.stdout.flush()
++
++
++def _run_radon(code: str) -> Dict[str, Any]:
++    from radon.complexity import cc_visit, cc_rank
++    from radon.metrics import mi_visit
++    from radon.raw import analyze as radon_raw_analyze
++
++    complexity: List[Dict[str, Any]] = []
++    for block in cc_visit(code):
++        complexity.append({
++            "name": block.name,
++            "kind": type(block).__name__,  # "Function" | "Class"
++            "complexity": block.complexity,
++            "rank": cc_rank(block.complexity),
++        })
++
++    raw = radon_raw_analyze(code)
++    return {
++        "complexity": complexity,
++        "maintainability_index": round(mi_visit(code, multi=True), 2),
++        "raw": {
++            "loc": raw.loc,
++            "lloc": raw.lloc,
++            "sloc": raw.sloc,
++            "comments": raw.comments,
++            "blank": raw.blank,
++        },
++    }
++
++
++# Пилот tsk-302: магические числа, сложность (дублирует radon, но с точным
++# местом), длина/число аргументов функций, читаемость имён. Полный список
++# доступных проверок шире — сознательно взят узкий набор под задачу, а не
++# "всё, что есть в pylint" (anti-bloat: лишние правила только шумят методисту).
++_PYLINT_ENABLE = (
++    "invalid-name,"
++    "too-many-branches,"
++    "too-many-statements,"
++    "too-many-locals,"
++    "too-many-arguments,"
++    "magic-value-comparison"
++)
++
++
++def _run_pylint(code: str) -> Dict[str, Any]:
++    from pylint.lint import Run
++    from pylint.reporters.json_reporter import JSON2Reporter
++
++    # dir="." кладёт файл в cwd процесса — это scratch_dir, который executor.py
++    # создаёт как tempfile.TemporaryDirectory и удаляет целиком после того, как
++    # subprocess.run вернётся; отдельного os.unlink здесь поэтому не требуется.
++    with tempfile.NamedTemporaryFile(
++        mode="w", suffix=".py", delete=False, encoding="utf-8", dir="."
++    ) as f:
++        f.write(code)
++        tmp_path = f.name
++
++    buf = io.StringIO()
++    reporter = JSON2Reporter(buf)
++    args = [
++        tmp_path,
++        "--disable=all",
++        f"--enable={_PYLINT_ENABLE}",
++        "--load-plugins=pylint.extensions.magic_value",
++        "--jobs=1",
++        "--persistent=n",
++    ]
++    run = Run(args, reporter=reporter, exit=False)
++
++    score = getattr(run.linter.stats, "global_note", None)
++    try:
++        parsed = json.loads(buf.getvalue())
++    except json.JSONDecodeError:
++        parsed = {"messages": []}
++
++    messages = [
++        {
++            "symbol": m.get("symbol"),
++            "message": m.get("message"),
++            "type": m.get("type"),
++            "obj": m.get("obj") or None,
++            "line": m.get("line"),
++            "column": m.get("column"),
++        }
++        for m in parsed.get("messages", [])
++    ]
++    return {"score": round(score, 2) if score is not None else None, "messages": messages}
++
++
++def main() -> None:
++    # Явная UTF-8: на Windows (локальная разработка) stdin/stdout по умолчанию
++    # используют системную кодировку, а сообщения/имена — кириллица.
++    if hasattr(sys.stdin, "reconfigure"):
++        sys.stdin.reconfigure(encoding="utf-8")
++    if hasattr(sys.stdout, "reconfigure"):
++        sys.stdout.reconfigure(encoding="utf-8")
++
++    _set_resource_limits()
++
++    try:
++        raw = sys.stdin.read()
++        payload = json.loads(raw)
++    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
++        _emit({"ok": False, "error": "bad_input", "message": str(exc)})
++        return
++
++    code = payload.get("code", "")
++    if not code.strip():
++        _emit({"ok": False, "error": "empty_code", "message": "Код пуст."})
++        return
++
++    try:
++        import ast
++        ast.parse(code, mode="exec")
++    except SyntaxError as exc:
++        _emit({"ok": False, "error": "syntax_error", "message": str(exc)})
++        return
++
++    try:
++        report = {
++            "radon": _run_radon(code),
++            "pylint": _run_pylint(code),
++        }
++    except BaseException as exc:  # noqa: BLE001 — анализ не должен уронить процесс без ответа
++        _emit({"ok": False, "error": "analysis_error", "message": f"{type(exc).__name__}: {exc}"})
++        return
++
++    _emit({"ok": True, "report": report})
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/test_code_quality_tsk302.py b/tests/test_code_quality_tsk302.py
+new file mode 100644
+index 0000000..478c3c9
+--- /dev/null
++++ b/tests/test_code_quality_tsk302.py
+@@ -0,0 +1,159 @@
++# tests/test_code_quality_tsk302.py
++"""
++Тесты статического анализа качества/стиля кода ученика (tsk-302, направление 1):
++запуск pylint/radon в изоляции песочницы turtle_sandbox (executor.run_code_quality_check),
++сервисная обёртка (code_quality_service), интеграция с _check_turtle_sim и защита от
++утечки отчёта в ответ ученику (CheckResult).
++
++Не требуют БД — как и test_turtle_sandbox_tsk412.py, реальный subprocess (без unshare
++на Windows), но реальный pylint/radon из .venv.
++"""
++from __future__ import annotations
++
++import pytest
++
++from app.schemas.checking import CheckResult
++from app.services.code_quality_service import analyze_student_code_quality
++from app.services.turtle_sandbox.executor import run_code_quality_check
++
++CLEAN_CODE = """
++import turtle
++
++def draw_square(t, size):
++    for _ in range(4):
++        t.forward(size)
++        t.right(90)
++
++t = turtle.Turtle()
++draw_square(t, 50)
++turtle.done()
++"""
++
++MAGIC_NUMBER_CODE = """
++import turtle
++
++t = turtle.Turtle()
++for i in range(4):
++    if i == 42:
++        t.forward(999)
++    t.forward(50)
++    t.right(90)
++"""
++
++DEEPLY_NESTED_CODE = """
++def f(a, b, c, d, e, x, y):
++    if a == 1:
++        if b == 2:
++            if c == 3:
++                if d == 4:
++                    if e == 5:
++                        return x + y
++    return 0
++"""
++
++
++# ---------- executor.run_code_quality_check (subprocess-уровень) ----------
++
++def test_run_code_quality_check_ok_for_clean_code() -> None:
++    result = run_code_quality_check(CLEAN_CODE, timeout_sec=5.0)
++    assert result.ok, result.message
++    assert result.report is not None
++    assert "radon" in result.report
++    assert "pylint" in result.report
++    assert result.report["pylint"]["score"] is not None
++    # draw_square действительно найдена радоном как функция с CC>=1.
++    names = [c["name"] for c in result.report["radon"]["complexity"]]
++    assert "draw_square" in names
++
++
++def test_run_code_quality_check_flags_magic_number() -> None:
++    result = run_code_quality_check(MAGIC_NUMBER_CODE, timeout_sec=5.0)
++    assert result.ok, result.message
++    symbols = {m["symbol"] for m in result.report["pylint"]["messages"]}
++    assert "magic-value-comparison" in symbols
++
++
++def test_run_code_quality_check_flags_deep_nesting_and_arg_count() -> None:
++    result = run_code_quality_check(DEEPLY_NESTED_CODE, timeout_sec=5.0)
++    assert result.ok, result.message
++    symbols = {m["symbol"] for m in result.report["pylint"]["messages"]}
++    assert "too-many-arguments" in symbols
++    # radon видит вложенные if как рост цикломатической сложности.
++    complexity = result.report["radon"]["complexity"]
++    assert complexity[0]["complexity"] >= 5
++
++
++def test_run_code_quality_check_syntax_error_is_reported_not_crashed() -> None:
++    result = run_code_quality_check("def f(:\n    pass", timeout_sec=5.0)
++    assert not result.ok
++    assert result.error == "syntax_error"
++
++
++def test_run_code_quality_check_empty_code_reports_error_not_crash() -> None:
++    result = run_code_quality_check("   \n", timeout_sec=5.0)
++    assert not result.ok
++    assert result.error == "empty_code"
++
++
++def test_run_code_quality_check_oserror_is_reported_not_crashed(monkeypatch: pytest.MonkeyPatch) -> None:
++    # review-gate (2026-08-06) находка Б2: subprocess.run/TemporaryDirectory
++    # способны бросить OSError помимo TimeoutExpired (бинарь недоступен, нет
++    # места на диске) — это не должно пробрасываться наружу.
++    import subprocess as subprocess_module
++
++    def _raise_oserror(*args, **kwargs):
++        raise FileNotFoundError("unshare: no such file or directory")
++
++    monkeypatch.setattr(subprocess_module, "run", _raise_oserror)
++    result = run_code_quality_check("x = 1\n", timeout_sec=5.0)
++    assert not result.ok
++    assert result.error == "sandbox_error"
++
++
++# ---------- code_quality_service (сервисный уровень) ----------
++
++def test_analyze_student_code_quality_returns_none_for_empty_code() -> None:
++    assert analyze_student_code_quality("") is None
++    assert analyze_student_code_quality("   \n\t") is None
++
++
++def test_analyze_student_code_quality_returns_report_for_real_code() -> None:
++    report = analyze_student_code_quality(CLEAN_CODE)
++    assert report is not None
++    assert "radon" in report
++    assert "pylint" in report
++    assert "error" not in report
++
++
++def test_analyze_student_code_quality_degrades_gracefully_on_sandbox_failure(monkeypatch: pytest.MonkeyPatch) -> None:
++    # Сбой анализа (таймаут/авария subprocess) не должен ронять приём ответа —
++    # сервис возвращает отчёт с error, а не бросает исключение.
++    from app.services.turtle_sandbox.executor import CodeQualityResult
++
++    def _fake_run_code_quality_check(code: str, *, timeout_sec: float = 5.0) -> CodeQualityResult:
++        return CodeQualityResult(ok=False, error="timeout", message="Превышено время анализа кода.")
++
++    monkeypatch.setattr(
++        "app.services.turtle_sandbox.executor.run_code_quality_check",
++        _fake_run_code_quality_check,
++    )
++    report = analyze_student_code_quality(CLEAN_CODE)
++    assert report == {"error": "timeout", "message": "Превышено время анализа кода."}
++
++
++# ---------- Защита от утечки отчёта ученику (решение оператора tsk-302) ----------
++
++def test_check_result_schema_has_no_code_quality_field() -> None:
++    """
++    CheckResult эхо-возвращается ученику в POST /attempts/{id}/answers
++    (AttemptAnswerResult.check_result, см. app/api/v1/attempts.py). Отчёт по
++    качеству кода НЕ должен попадать в эту схему ни сейчас, ни при будущих
++    правках — иначе он утечёт ученику в обход решения оператора "видимость
++    только teacher/methodist" (2026-08-06). Отчёт передаётся отдельно, напрямую
++    в task_results.metrics (см. app/api/v1/attempts.py, code_quality_metrics).
++    """
++    assert "code_quality" not in CheckResult.model_fields
++    for field_name in CheckResult.model_fields:
++        assert "quality" not in field_name.lower(), (
++            f"CheckResult.{field_name} похоже на утечку code_quality в ответ ученику"
++        )
