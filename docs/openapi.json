@@ -14125,6 +14125,117 @@
         }
       }
     },
+    "/api/v1/courses/{course_id}/dependencies/{required_course_id}/impact": {
+      "get": {
+        "tags": [
+          "course_dependencies"
+        ],
+        "summary": "Превью влияния добавления зависимости (tsk-231)",
+        "description": "Read-only превью ДО `POST /{required_course_id}`: сколько уже зачисленных\nна course_id учеников будет немедленно заблокировано новой зависимостью.\n\nБлокировка глобальная и мгновенная (решение оператора, план tsk-231) —\nдействует на всех, не только на тех, кто провалил задание. Используется\nдля confirm-диалога методиста перед фактическим добавлением.",
+        "operationId": "preview_course_dependency_impact_api_v1_courses__course_id__dependencies__required_course_id__impact_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Course Id"
+            }
+          },
+          {
+            "name": "required_course_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Required Course Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Число уже зачисленных студентов, которых заблокирует добавление",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseDependencyImpact"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Invalid or missing API Key"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/courses/{course_id}/dependencies/{required_course_id}": {
       "post": {
         "tags": [
@@ -35118,6 +35229,43 @@
         "title": "BlockUserRequest",
         "description": "Причина блокировки — для карточки, не для человека."
       },
+      "BlockedDependency": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id",
+            "description": "Заблокированный узел (совпадает с элементом blocked_courses)"
+          },
+          "required_course_id": {
+            "type": "integer",
+            "title": "Required Course Id",
+            "description": "Курс, который нужно завершить, чтобы снять блокировку"
+          },
+          "required_course_title": {
+            "type": "string",
+            "title": "Required Course Title"
+          },
+          "required_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Course Uid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "required_course_id",
+          "required_course_title"
+        ],
+        "title": "BlockedDependency",
+        "description": "Обогащённая проекция одной непройденной зависимости (tsk-231).\n\n`blocked_courses` (ниже) отдаёт только голый ID заблокированного узла —\nэтого недостаточно клиенту, чтобы показать ученику ПОЧЕМУ заблокировано\nи куда идти: нужен ID+название именно required-курса, а не заблокированного."
+      },
       "BlockedStateRead": {
         "properties": {
           "id": {
@@ -36177,6 +36325,21 @@
             }
           }
         ]
+      },
+      "CourseDependencyImpact": {
+        "properties": {
+          "affected_students_count": {
+            "type": "integer",
+            "title": "Affected Students Count",
+            "description": "Сколько уже зачисленных студентов course_id будет немедленно заблокировано"
+          }
+        },
+        "type": "object",
+        "required": [
+          "affected_students_count"
+        ],
+        "title": "CourseDependencyImpact",
+        "description": "tsk-231: превью влияния ДО добавления зависимости (для confirm-диалога методиста).\n\nБлокировка через course_dependencies глобальная и мгновенная — действует\nна ВСЕХ уже зачисленных на course_id учеников, не только на тех, кто\nпровалил задание (решение оператора, план tsk-231). Прецедент случайной\nмассовой блокировки — tsk-523."
       },
       "CourseMoveRequest": {
         "properties": {
@@ -42522,6 +42685,29 @@
               }
             ],
             "title": "Dependency Course Id"
+          },
+          "dependency_course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependency Course Title",
+            "description": "tsk-231: название курса-зависимости для UI (SPW/TG_LMS)."
+          },
+          "dependency_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependency Course Uid"
           }
         },
         "type": "object",
@@ -47177,6 +47363,14 @@
             },
             "type": "array",
             "title": "Blocked Courses"
+          },
+          "blocked_dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedDependency"
+            },
+            "type": "array",
+            "title": "Blocked Dependencies",
+            "description": "tsk-231: обогащённая версия blocked_courses — для каждого заблокированного узла указывает ID+название required-курса. blocked_courses НЕ убирается (обратная совместимость)."
           },
           "sections": {
             "items": {
