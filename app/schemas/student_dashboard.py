@@ -6,21 +6,35 @@ docs/specs/2026-08-01-plan-tsk494-student-dashboard-api.md.
 прецедент tsk-460): полей `solution_rules`, текста заявок помощи
 (`message`/`resolution_comment`), деталей `blocked_tasks` текстом в этой
 схеме НЕТ ВООБЩЕ — не "добавили и скрыли постфильтром", а не добавляли.
+
+Цветовая подсветка метрик относительно сверстников (tsk-504) — тот же
+принцип: наружу отдаётся только уровень (`CohortLevel`) СВОЕГО ребёнка,
+сырые значения и состав когорты других учеников в ответе не появляются
+вообще (см. `app/services/student_dashboard_service.py`).
 """
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
 from app.schemas.pricing import FrequencySource
+
+#: Позиция ученика относительно сверстников того же курса (tsk-504) — терциль
+#: распределения когорты (нижняя/средняя/верхняя треть) или явная пометка
+#: недостаточности данных (когорта < порога, см. `Settings.student_dashboard_cohort_min_size`,
+#: либо у самого ученика метрика не определена — напр. курс без содержимого).
+CohortLevel = Literal["worse", "average", "better", "insufficient_data"]
 
 
 class StudentDashboardCourseRead(BaseModel):
     course_id: int
     title: str
     percent_complete: int
+    #: Темп прохождения ЭТОГО курса относительно других активных учеников
+    #: этого же курса (tsk-504).
+    pace_level: CohortLevel
     current_section_title: Optional[str] = None
     current_item_title: Optional[str] = None
     forecast_completion_date: Optional[date] = None
@@ -68,6 +82,9 @@ class StudentDashboardAttendanceRead(BaseModel):
     #: Норматив всё равно считается по расписанию — это только сигнал
     #: методисту сверить расписание и цену. `None` для родителя.
     discrepancy: Optional[bool] = None
+    #: Доля пропусков (``missed``/``planned``) относительно других активных
+    #: учеников курсов, на которые записан ребёнок (tsk-504).
+    missed_level: CohortLevel
 
 
 class StudentDashboardRead(BaseModel):
@@ -79,3 +96,9 @@ class StudentDashboardRead(BaseModel):
     in_class_hours: StudentDashboardMetricsRead
     between_lessons: StudentDashboardMetricsRead
     attendance: StudentDashboardAttendanceRead
+    #: Активность между занятиями (``between_lessons.tasks_completed +
+    #: theory_completed``) относительно других активных учеников курсов, на
+    #: которые записан ребёнок (tsk-504). Не поле внутри `between_lessons` —
+    #: та же форма используется и для `period_total`/`in_class_hours`,
+    #: которые оператор явно исключил из подсветки.
+    between_lessons_activity_level: CohortLevel

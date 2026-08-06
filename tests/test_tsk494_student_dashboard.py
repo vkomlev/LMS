@@ -312,6 +312,7 @@ async def test_dashboard_empty_period_all_metrics_zero(db, client):
     assert body["attendance"] == {
         "planned": 0, "attended": 0, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
     assert body["courses"] == []
 
@@ -498,6 +499,7 @@ async def test_attendance_normative_counts_and_invariant(db, client):
     assert a == {
         "planned": 5, "attended": 2, "missed": 2, "upcoming": 1,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
     assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
 
@@ -537,6 +539,7 @@ async def test_attendance_teacher_marked_absent_then_present(db, client):
     assert a == {
         "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -572,6 +575,7 @@ async def test_attendance_break_excluded_from_norm(db, client):
     assert a == {
         "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -608,6 +612,7 @@ async def test_attendance_future_tail_from_permanent_schedule(db, client):
         # Активный слот есть — норматив из цены не нужен (tsk-557): источник
         # "schedule", ручной цены у ученика нет, расхождения нет.
         "norm_source": "schedule", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -651,6 +656,7 @@ async def test_attendance_past_norm_survives_schedule_change(db, client):
     assert a == {
         "planned": 2, "attended": 2, "missed": 0, "upcoming": 0,
         "norm_source": "schedule", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -710,6 +716,7 @@ async def test_attendance_reschedule_inside_period_attended(db, client):
     assert a == {
         "planned": 6, "attended": 3, "missed": 3, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
     assert a["planned"] == a["attended"] + a["missed"] + a["upcoming"]
 
@@ -750,6 +757,7 @@ async def test_attendance_reschedule_to_missed_target_still_unresolved(db, clien
     assert a == {
         "planned": 1, "attended": 0, "missed": 1, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -794,6 +802,7 @@ async def test_attendance_reschedule_chain_of_two_resolved(db, client):
     assert a == {
         "planned": 1, "attended": 1, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -837,6 +846,7 @@ async def test_attendance_reschedule_chain_of_two_still_unresolved(db, client):
     assert a == {
         "planned": 1, "attended": 0, "missed": 1, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -878,6 +888,7 @@ async def test_attendance_no_double_count_within_period(db, client):
     assert a == {
         "planned": 2, "attended": 2, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 
@@ -916,6 +927,7 @@ async def test_attendance_reschedule_out_of_period_is_not_a_miss(db, client):
     assert a == {
         "planned": 0, "attended": 0, "missed": 0, "upcoming": 0,
         "norm_source": "unknown", "not_conducted": None, "discrepancy": False,
+        "missed_level": "insufficient_data",
     }
 
 

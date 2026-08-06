@@ -35,6 +35,48 @@ tsk-460, reviews/2026-07-29-tsk460-solution-rules-leak.md): контракт Н�
   очередной перенос снова ``no_show``/``declined``/``rescheduled`` — пропуск
   всё ещё открыт, идём по цепочке дальше). Прежняя версия останавливалась на
   первом ``rescheduled`` — это и было дефектом tsk-503.
+
+Цветовая подсветка относительно сверстников (tsk-504, решения оператора
+2026-08-06):
+- Метрики: темп прохождения (per-course ``percent_complete``), доля пропусков
+  (``attendance.missed``/``attendance.planned``), активность между занятиями
+  (``between_lessons.tasks_completed + theory_completed``).
+  ``period_total``/``in_class_hours`` НЕ подсвечиваются (решение оператора).
+- Когорта — ДРУГИЕ активные ученики (``user_courses.is_active``, сам ученик
+  исключён — оператор: "опираться можно на других учеников"). Порог
+  ``>= Settings.student_dashboard_cohort_min_size`` (дефолт 5) — иначе
+  ``insufficient_data``, а не молчаливое отсутствие подсветки.
+- Для ``pace_level`` (percent_complete) когорта — активные ученики ТОГО ЖЕ
+  ``course_id`` (метрика per-course, однозначно). Для ``missed_level``/
+  ``between_lessons_activity_level`` (метрики общие для ученика, не per-course
+  — расписание вообще не привязано к курсу, см. cross-project
+  ``project_lms_pricing_model.md``) когорта — ОБЪЕДИНЕНИЕ активных учеников
+  ВСЕХ корневых курсов, на которые записан ребёнок (прод: 33 из 47 активных
+  учеников на 2026-08-06 записаны на ≥2 корневых курса одновременно —
+  единственный курс как якорь потерял бы фактуру половине семей). Так же
+  отражает исходную формулировку оператора ("опираться можно на других
+  учеников ТЕХ ЖЕ курсОВ", множественное число), уточнённую позже до
+  единственного числа уже применительно к per-course-метрике.
+- Терциль (нижняя/средняя/верхняя треть распределения когорты) — простой и
+  устойчивый к выбросам метод из вариантов, разрешённых оператором явно
+  ("на усмотрение реализации"). Ранг ученика — доля пиров со значением ``<=``
+  его собственного; ``rank < 1/3`` → ``worse``, ``< 2/3`` → ``average``, иначе
+  ``better`` (для метрик, где "меньше — лучше", напр. доля пропусков, шкала
+  инвертируется).
+- **Производительность.** СОБСТВЕННОЕ значение ученика — ВСЕГДА точное, тем же
+  кодом, что и раньше (``percent``/``attendance``/``between_lessons`` не
+  меняются). Для распределения КОГОРТЫ (только чтобы найти терцильные
+  границы, само число не публикуется) используются облегчённые bulk-запросы
+  (``_bulk_percent_complete``/``_bulk_missed_ratio``/
+  ``_bulk_between_lessons_activity``, GROUP BY по всем пирам ОДНИМ запросом) —
+  не полный движок статусов на пира (что было бы N+1: до 30+ пиров × несколько
+  запросов на каждого). Упрощения bulk-пути документированы у каждой функции;
+  расхождение с точным движком возможно только в редких пограничных случаях
+  (напр. хвост норматива за горизонтом генератора occurrence не учитывается у
+  ПИРОВ) и не влияет на публикуемое числовое значение — только на позицию в
+  терциле.
+- **Минимизация данных** (tsk-460): в ответе нет ни сырых значений пиров, ни
+  их состава/количества — только ``CohortLevel`` СВОЕГО ребёнка.
 """
 from __future__ import annotations
 
@@ -321,6 +363,234 @@ async def _generator_horizon(
     return max(last, fallback) if last is not None else fallback
 
 
+def _tercile_level(
+    value: Optional[float],
+    peer_values: list[float],
+    *,
+    higher_is_better: bool,
+    cohort_size: int,
+    min_cohort: int,
+) -> str:
+    """Классифицировать ``value`` относительно ``peer_values`` (tsk-504).
+
+    ``cohort_size`` — размер когорты ПО ЗАПИСИ на курс (``user_courses``),
+    а не ``len(peer_values)``: у части пиров конкретная метрика может быть
+    неопределена (напр. ``planned == 0``) и они отфильтрованы из
+    ``peer_values`` — порог "фактуры" при этом решает ЗАПИСЬ, а не то, у
+    скольких пиров метрика посчиталась (иначе порог оператора ``>= 5``
+    незаметно сузился бы до другого числа).
+
+    Ранг — доля пиров со значением ``<=`` собственного (не строгое
+    неравенство: иначе ученик, равный ХУДШЕМУ пиру, ранжировался бы как 0-й
+    ранг вместо честного "на уровне нижней трети").
+    """
+    if value is None or cohort_size < min_cohort or not peer_values:
+        return "insufficient_data"
+    rank = sum(1 for v in peer_values if v <= value) / len(peer_values)
+    if rank < 1 / 3:
+        tier = "worse"
+    elif rank < 2 / 3:
+        tier = "average"
+    else:
+        tier = "better"
+    if not higher_is_better:
+        tier = {"worse": "better", "better": "worse", "average": "average"}[tier]
+    return tier
+
+
+async def _active_course_peers(
+    db: AsyncSession, *, course_ids: list[int], exclude_student_id: int,
+) -> list[int]:
+    """Другие активные ученики (``user_courses.is_active``) курсов
+    ``course_ids`` — сам ``exclude_student_id`` исключён по построению
+    (оператор: "опираться можно на других учеников", tsk-504)."""
+    if not course_ids:
+        return []
+    rows = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT user_id FROM user_courses "
+                "WHERE course_id = ANY(:course_ids) AND is_active = true "
+                "  AND user_id != :exclude_id"
+            ),
+            {"course_ids": course_ids, "exclude_id": exclude_student_id},
+        )
+    ).scalars().all()
+    return [int(r) for r in rows]
+
+
+async def _bulk_percent_complete(
+    db: AsyncSession, *, peer_ids: list[int], task_ids: list[int], material_ids: list[int],
+) -> dict[int, float]:
+    """Процент прохождения ЭТОГО дерева курса для каждого пира, ОДНИМ
+    запросом (не движок статусов на пира — см. docstring модуля).
+
+    Приближение: "пройдено" — задание с ЛЮБЫМ верным результатом
+    (``is_correct=true``, попытка не отменена) либо явно пропущенное
+    (``student_task_progress.status='skipped'``); материал — ``completed``
+    либо ``skipped``. Не учитывает ``BLOCKED_LIMIT`` и прочие промежуточные
+    состояния движка — им и так не место в "пройдено", расхождения с точным
+    движком нет. Пир без единого результата в выдачу не попадёт — учтён как
+    0 через ``unnest(:peer_ids)`` (LEFT JOIN), а не молча пропущен.
+    """
+    total = len(task_ids) + len(material_ids)
+    if not peer_ids or total == 0:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "WITH task_done AS ( "
+                "  SELECT user_id, COUNT(DISTINCT task_id) AS n FROM ( "
+                "    SELECT tr.user_id, tr.task_id FROM task_results tr "
+                "    JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "    WHERE tr.task_id = ANY(:task_ids) AND tr.is_correct = true "
+                "      AND tr.user_id = ANY(:peer_ids) "
+                "    UNION "
+                "    SELECT stp.student_id AS user_id, stp.task_id FROM student_task_progress stp "
+                "    WHERE stp.task_id = ANY(:task_ids) AND stp.status = 'skipped' "
+                "      AND stp.student_id = ANY(:peer_ids) "
+                "  ) x GROUP BY user_id "
+                "), material_done AS ( "
+                "  SELECT student_id AS user_id, COUNT(DISTINCT material_id) AS n "
+                "  FROM student_material_progress "
+                "  WHERE material_id = ANY(:material_ids) AND status IN ('completed', 'skipped') "
+                "    AND student_id = ANY(:peer_ids) "
+                "  GROUP BY student_id "
+                ") "
+                "SELECT p.user_id, COALESCE(td.n, 0) + COALESCE(md.n, 0) AS done "
+                "FROM unnest(CAST(:peer_ids AS int[])) AS p(user_id) "
+                "LEFT JOIN task_done td ON td.user_id = p.user_id "
+                "LEFT JOIN material_done md ON md.user_id = p.user_id"
+            ),
+            {"peer_ids": peer_ids, "task_ids": task_ids, "material_ids": material_ids},
+        )
+    ).mappings().fetchall()
+    return {int(r["user_id"]): int(r["done"]) / total * 100.0 for r in rows}
+
+
+async def _bulk_missed_ratio(
+    db: AsyncSession, *, peer_ids: list[int], period_from: datetime, period_to: datetime, now: datetime,
+) -> dict[int, float]:
+    """``missed/planned`` для каждого пира, ОДНИМ запросом.
+
+    Упрощение относительно точного ``_load_attendance`` (см. docstring
+    модуля): ``planned`` — только УЖЕ сгенерированные occurrence в периоде,
+    БЕЗ хвоста по расписанию за горизонтом генератора (тот хвост требует
+    per-student `_generator_horizon` — снова N+1). Занятия генерируются на
+    3 недели вперёд (проектная память) — хвост существен только для периодов
+    длиннее этого горизонта. Пир с ``planned == 0`` в выдачу не попадает —
+    ratio для него не определён, не 0 (0 пропусков при 0 занятий — не
+    "отлично", а "нечего сравнивать")."""
+    if not peer_ids:
+        return {}
+    elapsed_to = min(period_to, now)
+    rows = (
+        await db.execute(
+            text(
+                "SELECT lop.student_id AS user_id, "
+                "  count(*) FILTER (WHERE lo.scheduled_at <= :elapsed_to) AS elapsed, "
+                "  count(*) FILTER (WHERE lo.scheduled_at <= :elapsed_to "
+                "                     AND lop.status = ANY(:attended)) AS attended, "
+                "  count(*) AS planned "
+                "FROM lesson_occurrence_participant lop "
+                "JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "WHERE lop.student_id = ANY(:peer_ids) "
+                "  AND lo.scheduled_at >= :period_from AND lo.scheduled_at <= :period_to "
+                "  AND NOT (lop.status = ANY(:not_counted)) "
+                "GROUP BY lop.student_id"
+            ),
+            {
+                "peer_ids": peer_ids, "period_from": period_from, "period_to": period_to,
+                "elapsed_to": elapsed_to, "attended": list(_ATTENDED_STATUSES),
+                "not_counted": list(_NOT_COUNTED_STATUSES),
+            },
+        )
+    ).mappings().fetchall()
+    result: dict[int, float] = {}
+    for r in rows:
+        planned = int(r["planned"] or 0)
+        if planned <= 0:
+            continue
+        elapsed = int(r["elapsed"] or 0)
+        attended = int(r["attended"] or 0)
+        result[int(r["user_id"])] = max(0, elapsed - attended) / planned
+    return result
+
+
+async def _bulk_between_lessons_activity(
+    db: AsyncSession, *, peer_ids: list[int], period_from: datetime, period_to: datetime,
+) -> dict[int, float]:
+    """"Между занятиями" активность (``tasks_completed + theory_completed``
+    вне occurrence-окон) для каждого пира, ДВУМЯ запросами (задания +
+    материалы, не по одному на пира — см. docstring модуля).
+
+    Пир без единого результата за период НЕ появится ни в одной из двух
+    выборок — инициализируем 0 явно для всех ``peer_ids``, иначе он выпал бы
+    из распределения когорты вместо честного "наименее активный"."""
+    activity: dict[int, float] = {uid: 0.0 for uid in peer_ids}
+    if not peer_ids:
+        return activity
+    task_rows = (
+        await db.execute(
+            text(
+                "SELECT tr.user_id, "
+                "  COUNT(DISTINCT tr.task_id) AS total_n, "
+                "  COUNT(DISTINCT tr.task_id) FILTER ( "
+                "    WHERE EXISTS ( "
+                "      SELECT 1 FROM lesson_occurrence_participant lop "
+                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "      WHERE lop.student_id = tr.user_id "
+                "        AND tr.submitted_at BETWEEN lo.scheduled_at "
+                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+                "    ) "
+                "  ) AS in_class_n "
+                "FROM task_results tr "
+                "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                "WHERE tr.user_id = ANY(:peer_ids) AND tr.is_correct = true "
+                "  AND tr.source_system IS DISTINCT FROM :manual_source "
+                "  AND tr.submitted_at >= :period_from AND tr.submitted_at <= :period_to "
+                "GROUP BY tr.user_id"
+            ),
+            {
+                "peer_ids": peer_ids, "manual_source": MANUAL_SOURCE,
+                "period_from": period_from, "period_to": period_to,
+            },
+        )
+    ).mappings().fetchall()
+    material_rows = (
+        await db.execute(
+            text(
+                "SELECT smp.student_id AS user_id, "
+                "  COUNT(DISTINCT smp.material_id) AS total_n, "
+                "  COUNT(DISTINCT smp.material_id) FILTER ( "
+                "    WHERE EXISTS ( "
+                "      SELECT 1 FROM lesson_occurrence_participant lop "
+                "      JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id "
+                "      WHERE lop.student_id = smp.student_id "
+                "        AND smp.completed_at BETWEEN lo.scheduled_at "
+                "            AND lo.scheduled_at + make_interval(mins => lo.duration_minutes) "
+                "    ) "
+                "  ) AS in_class_n "
+                "FROM student_material_progress smp "
+                "WHERE smp.student_id = ANY(:peer_ids) AND smp.status = 'completed' "
+                "  AND smp.completed_at IS NOT NULL "
+                "  AND smp.source IS DISTINCT FROM :manual_source "
+                "  AND smp.completed_at >= :period_from AND smp.completed_at <= :period_to "
+                "GROUP BY smp.student_id"
+            ),
+            {
+                "peer_ids": peer_ids, "manual_source": MANUAL_SOURCE,
+                "period_from": period_from, "period_to": period_to,
+            },
+        )
+    ).mappings().fetchall()
+    for r in task_rows:
+        activity[int(r["user_id"])] += max(0, int(r["total_n"]) - int(r["in_class_n"]))
+    for r in material_rows:
+        activity[int(r["user_id"])] += max(0, int(r["total_n"]) - int(r["in_class_n"]))
+    return activity
+
+
 async def _load_course_pace_and_forecast(
     db: AsyncSession,
     *,
@@ -423,6 +693,35 @@ async def get_student_dashboard(
     )
 
     accessible = await _list_active_student_courses(db, student_id)
+    min_cohort = settings.student_dashboard_cohort_min_size
+
+    # tsk-504: когорта для missed_level/between_lessons_activity_level —
+    # объединение активных учеников ВСЕХ корневых курсов ребёнка (метрики не
+    # per-course, см. docstring модуля).
+    own_course_ids = [c["course_id"] for c in accessible]
+    global_peer_ids = await _active_course_peers(
+        db, course_ids=own_course_ids, exclude_student_id=student_id,
+    )
+    missed_peer_ratios = await _bulk_missed_ratio(
+        db, peer_ids=global_peer_ids, period_from=period_from, period_to=period_to, now=now,
+    )
+    own_missed_ratio = (
+        attendance["missed"] / attendance["planned"] if attendance["planned"] else None
+    )
+    attendance["missed_level"] = _tercile_level(
+        own_missed_ratio, list(missed_peer_ratios.values()),
+        higher_is_better=False, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
+    )
+
+    activity_peer_values = await _bulk_between_lessons_activity(
+        db, peer_ids=global_peer_ids, period_from=period_from, period_to=period_to,
+    )
+    own_activity = between_lessons["tasks_completed"] + between_lessons["theory_completed"]
+    between_lessons_activity_level = _tercile_level(
+        own_activity, list(activity_peer_values.values()),
+        higher_is_better=True, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
+    )
+
     courses: list[dict[str, Any]] = []
     for course in accessible:
         course_id = course["course_id"]
@@ -434,6 +733,21 @@ async def get_student_dashboard(
         done = sum(1 for i in countable if i["status"] in DONE_STATUSES)
         total = len(countable)
         percent = round(done / total * 100) if total else 0
+
+        # tsk-504: когорта per-course (метрика однозначно привязана к
+        # course_id) — активные ученики ИМЕННО этого курса.
+        course_peer_ids = await _active_course_peers(
+            db, course_ids=[course_id], exclude_student_id=student_id,
+        )
+        task_ids = [i["item_id"] for i in countable if i["item_type"] == "task"]
+        material_ids = [i["item_id"] for i in countable if i["item_type"] == "material"]
+        percent_peer_values = await _bulk_percent_complete(
+            db, peer_ids=course_peer_ids, task_ids=task_ids, material_ids=material_ids,
+        )
+        pace_level = _tercile_level(
+            float(percent) if total else None, list(percent_peer_values.values()),
+            higher_is_better=True, cohort_size=len(course_peer_ids), min_cohort=min_cohort,
+        )
 
         section_titles = {i["item_id"]: i["title"] for i in items if i["item_type"] == "course"}
         current_section_title: Optional[str] = None
@@ -460,6 +774,7 @@ async def get_student_dashboard(
             "course_id": course_id,
             "title": course["title"],
             "percent_complete": percent,
+            "pace_level": pace_level,
             "current_section_title": current_section_title,
             "current_item_title": current_item_title,
             "forecast_completion_date": forecast_date,
@@ -490,6 +805,7 @@ async def get_student_dashboard(
             "help_requested_count": between_lessons["help_requested"],
         },
         "attendance": attendance,
+        "between_lessons_activity_level": between_lessons_activity_level,
     }
 
 

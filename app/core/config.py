@@ -299,6 +299,12 @@ class Settings:
         self.student_forecast_pace_weeks: int = int(
             os.getenv("STUDENT_FORECAST_PACE_WEEKS", "4")
         )
+        # tsk-504 (цветовая подсветка метрик дашборда родителя): минимальный
+        # размер когорты ДРУГИХ активных учеников курса, при котором позиция
+        # ученика вообще классифицируется (решение оператора 2026-08-06).
+        self.student_dashboard_cohort_min_size: int = int(
+            os.getenv("STUDENT_DASHBOARD_COHORT_MIN_SIZE", "5")
+        )
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(
