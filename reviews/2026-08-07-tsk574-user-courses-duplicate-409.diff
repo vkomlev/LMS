@@ -1,0 +1,423 @@
+diff --git a/app/api/v1/user_courses.py b/app/api/v1/user_courses.py
+index f601f54..714e89a 100644
+--- a/app/api/v1/user_courses.py
++++ b/app/api/v1/user_courses.py
+@@ -32,7 +32,7 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+         "**Особенности:**\n"
+         "- Если `order_number` не указан (null), он проставится автоматически триггером БД\n"
+         "- Пара (user_id, course_id) должна быть уникальной (составной PK)\n"
+-        "- При попытке создать дубликат связи возвращается ошибка 400\n\n"
++        "- При попытке создать дубликат связи возвращается ошибка 409 Conflict\n\n"
+         "**Использование:**\n"
+         "Используется для привязки студента к курсу как из меню курсов, так и из меню студентов."
+     ),
+@@ -50,15 +50,19 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
+                 }
+             }
+         },
+-        400: {
+-            "description": "Дубликат связи или некорректные данные",
++        403: {"description": "Invalid or missing API Key"},
++        409: {
++            "description": "Связь уже существует (студент уже привязан к курсу)",
+             "content": {
+                 "application/json": {
+-                    "example": {"detail": "Duplicate entry or invalid data"}
++                    "example": {
++                        "error": "domain_error",
++                        "detail": "Курс уже назначен этому ученику",
++                        "payload": {"user_id": 13, "course_id": 1},
++                    }
+                 }
+             }
+         },
+-        403: {"description": "Invalid or missing API Key"},
+         422: {"description": "Ошибка валидации данных запроса"},
+     },
+ )
+@@ -79,8 +83,8 @@ async def create_user_course(
+     
+     **Коды ответов:**
+     - `201` - Связь успешно создана
+-    - `400` - Дубликат связи (студент уже привязан к курсу) или некорректные данные
+     - `403` - Неверный или отсутствующий API ключ
++    - `409` - Дубликат связи: студент уже привязан к курсу (tsk-574)
+     - `422` - Ошибка валидации данных запроса
+     """
+     return await service.create(db, obj_in.model_dump())
+diff --git a/app/services/user_courses_service.py b/app/services/user_courses_service.py
+index fb327fb..65e19c8 100644
+--- a/app/services/user_courses_service.py
++++ b/app/services/user_courses_service.py
+@@ -4,6 +4,7 @@ from __future__ import annotations
+ 
+ from typing import Optional, List, Dict
+ 
++from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.user_courses import UserCourses
+@@ -12,6 +13,31 @@ from app.services import course_dependencies_enrollment_service
+ from app.services.base import BaseService
+ from app.utils.exceptions import DomainError
+ 
++# tsk-574: PG-код нарушения уникальности. Составной PK `user_courses_pkey`
++# (user_id, course_id) ловит повторное назначение курса тому же ученику.
++_PG_UNIQUE_VIOLATION = "23505"
++
++# Единый код ответа на повторное назначение. 409, а не 400: запрос корректен,
++# конфликтует состояние ресурса — как у остальных конфликтов LMS (лимит попыток
++# tsk-269, identity-overlap VK). Раньше этот путь отдавал 500, и оператор при
++# пакетном назначении не мог отличить «уже назначено» от отказа сервера.
++_DUPLICATE_STATUS = 409
++_DUPLICATE_DETAIL = "Курс уже назначен этому ученику"
++
++
++def _is_unique_violation(exc: IntegrityError) -> bool:
++    """Отличить дубль связи от прочих нарушений целостности (например, FK).
++
++    :param exc: исключение SQLAlchemy, полученное на вставке.
++    :return: True, если это нарушение уникальности (PG 23505).
++    """
++    orig = getattr(exc, "orig", None)
++    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
++    if sqlstate == _PG_UNIQUE_VIOLATION:
++        return True
++    # Драйвер без sqlstate — опираемся на имя ограничения в тексте ошибки.
++    return "user_courses_pkey" in str(orig)
++
+ 
+ class UserCoursesService(BaseService[UserCourses]):
+     """
+@@ -37,17 +63,44 @@ class UserCoursesService(BaseService[UserCourses]):
+         коммитит сам, и падение доназначения оставило бы курс назначенным без
+         зависимости (замок навсегда), а вызывающему отдало 500.
+ 
++        tsk-574: повторное назначение — это `DomainError` 409, а не 500. Защита
++        двухслойная и оба слоя нужны. Ранняя проверка отсекает дубль ДО
++        доназначения зависимостей (иначе побочные вставки делаются впустую и
++        сносятся откатом), а перехват `IntegrityError` закрывает гонку двух
++        параллельных назначений — между проверкой и вставкой строку может
++        создать соседний запрос.
++
+         :param db: асинхронная сессия БД.
+         :param obj_in: данные связи (`user_id`, `course_id`, опц. `order_number`).
+         :return: созданная связь.
++        :raises DomainError: 409, если связь ученик↔курс уже существует.
+         """
+         user_id = obj_in.get("user_id")
+         course_id = obj_in.get("course_id")
+         if user_id is not None and course_id is not None:
++            keys = {"user_id": int(user_id), "course_id": int(course_id)}
++            if await self.repo.get_by_keys(db, keys):
++                raise DomainError(
++                    detail=_DUPLICATE_DETAIL,
++                    status_code=_DUPLICATE_STATUS,
++                    payload=keys,
++                )
+             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+                 db, student_id=int(user_id), course_ids=[int(course_id)]
+             )
+-        return await super().create(db, obj_in)
++        try:
++            return await super().create(db, obj_in)
++        except IntegrityError as exc:
++            # Сессия после провала вставки непригодна к работе — откатываем,
++            # иначе следующий запрос по ней упадёт уже на чтении.
++            await db.rollback()
++            if not _is_unique_violation(exc):
++                raise
++            raise DomainError(
++                detail=_DUPLICATE_DETAIL,
++                status_code=_DUPLICATE_STATUS,
++                payload={"user_id": user_id, "course_id": course_id},
++            ) from exc
+ 
+     async def get_user_courses(
+         self,
+@@ -81,19 +134,11 @@ class UserCoursesService(BaseService[UserCourses]):
+         :param course_id: ID курса.
+         :param order_number: Порядковый номер (опционально, установится автоматически если None).
+         :return: Созданная связь пользователя с курсом.
++        :raises DomainError: 409, если связь ученик↔курс уже существует.
+         """
+-        # Проверяем, не существует ли уже такая связь
+-        existing = await self.repo.get_by_keys(
+-            db,
+-            {"user_id": user_id, "course_id": course_id},
+-        )
+-        if existing:
+-            raise DomainError(
+-                detail="Курс уже привязан к пользователю",
+-                status_code=400,
+-                payload={"user_id": user_id, "course_id": course_id},
+-            )
+-
++        # Дубль ловит `create` (проверка + перехват IntegrityError на гонке),
++        # tsk-574: код один на оба пути назначения, отдельная проверка здесь
++        # больше не нужна.
+         # Создаем связь (order_number установится триггером, если не указан)
+         return await self.create(
+             db,
+diff --git a/docs/API_STUDENTS_MANAGEMENT.md b/docs/API_STUDENTS_MANAGEMENT.md
+index 127857c..4f73d9b 100644
+--- a/docs/API_STUDENTS_MANAGEMENT.md
++++ b/docs/API_STUDENTS_MANAGEMENT.md
+@@ -710,21 +710,25 @@ Content-Type: application/json
+ | Код | Описание | Причина |
+ |-----|----------|---------|
+ | `201` | Created | Связь успешно создана |
+-| `400` | Bad Request | Дубликат связи (студент уже привязан к курсу) или некорректные данные |
+ | `403` | Forbidden | Неверный или отсутствующий API ключ |
++| `409` | Conflict | Дубликат связи: студент уже привязан к курсу (tsk-574) |
+ | `422` | Unprocessable Entity | Ошибка валидации данных запроса |
+ 
+-**Пример ошибки (400):**
++**Пример ошибки (409):**
+ 
+ ```json
+ {
+-  "detail": "Duplicate entry or invalid data"
++  "error": "domain_error",
++  "detail": "Курс уже назначен этому ученику",
++  "payload": {"user_id": 13, "course_id": 1}
+ }
+ ```
+ 
+ **Примечания:**
+ - Пара (user_id, course_id) должна быть уникальной (составной PK)
+-- При попытке создать дубликат связи возвращается ошибка 400
++- При попытке создать дубликат связи возвращается ошибка 409 Conflict.
++  До tsk-574 (2026-08-07) этот путь отдавал 500 — повторное назначение было
++  неотличимо от отказа сервера
+ - Если `order_number` не указан (null), он проставится автоматически триггером БД
+ 
+ ---
+@@ -1294,9 +1298,10 @@ DELETE /api/v1/users/13?api_key=bot-key-1
+ 
+ | Код | Описание | Причины | Пример ответа |
+ |-----|----------|---------|----------------|
+-| `400` | Bad Request | Некорректный запрос, дубликат связи | `{"detail": "Duplicate entry or invalid data"}` |
++| `400` | Bad Request | Некорректный запрос | `{"detail": "Bad request"}` |
+ | `403` | Forbidden | Неверный или отсутствующий API ключ | `{"detail": "Invalid or missing API Key"}` |
+ | `404` | Not Found | Ресурс не найден (пользователь, связь и т.д.) | `{"detail": "Not found"}` или `{"detail": "User with tg_id=123 not found"}` |
++| `409` | Conflict | Конфликт состояния: связь студент-курс уже существует | `{"error": "domain_error", "detail": "Курс уже назначен этому ученику"}` |
+ | `422` | Unprocessable Entity | Ошибка валидации параметров или данных запроса | `{"detail": [{"loc": ["body", "email"], "msg": "value is not a valid email address", "type": "value_error.email"}]}` |
+ 
+ ### Ошибки сервера (5xx)
+@@ -1555,7 +1560,9 @@ GET /api/v1/user-courses/{user_id}/{course_id}?api_key=bot-key-1
+ ### 10. Что происходит при попытке создать дубликат связи?
+ 
+ - Для связи студент-преподаватель: операция идемпотентна, ошибки не будет
+-- Для связи студент-курс: вернется ошибка `400 Bad Request`
++- Для связи студент-курс: вернётся ошибка `409 Conflict` (tsk-574)
++- Для массового зачисления (`POST /users/{id}/courses/bulk`): уже привязанные
++  курсы просто пропускаются, ошибки не будет
+ 
+ ---
+ 
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index 5b19ed6..5583ca6 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -35,4 +35,5 @@
+ - Отдельно разобрать `S1/S2`.
+ - Обновить минимум 1 артефакт процесса (rule/skill/workflow) на повторяющиеся причины.
+ | 2026-07-22 (tsk-363) | LMS / TG_LMS | Боевая VK-регистрация на SPW: новый пользователь без почты (user_id=4505, 07:14:17 UTC) | Через минуту бот методиста перестал загружать список студентов: `GET /api/v1/users/?role=student` → 500 `Internal server error`; `role=methodist` → 200 (в том списке битой строки нет). Ломался бы любой список пользователей с этим студентом — админ-бот, преподаватель, SPW | VK userinfo вернул `email` **пустой строкой**, а не отсутствием ключа. Проверка `if email:` в `fetch_vk_userinfo` пропускала нормализацию (falsy → ветка не выполнялась), и `''` уходила в `users.email`. Схема ответа `UserRead.email: Optional[EmailStr]` пустую строку не принимает → падал **весь ответ списка**, а не одна запись. Вторая, не успевшая сработать мина: уникальный partial index `users_email_unique_partial (email) WHERE email IS NOT NULL` держал занятым слот `''` — следующая VK-регистрация без почты упала бы на конфликте уникальности | LOGIC + DATA | S1 (боевой отказ user-facing флоу) | Жалоба оператора → лог бота (запрос уходит, ответ 500) → лог LMS (`loc=('response','items',9,'email')`, `input=''`) → сверка с прод-БД read-only (ровно 1 строка с `email=''`) → аудит `user.registered.via_vk email_provided=False` | **Данные:** `/db-check` режим записи, `UPDATE users SET email = NULL WHERE id = 4505 AND email = ''` в транзакции (1 строка, верификация до/после). **Код:** `vk_oauth_service` — `email = (user.get("email") or "").strip().lower() or None`; `UserRead._blank_email_as_none` — валидатор гасит историческую пустоту в БД, чтобы одна битая строка не роняла весь список. Тесты `tests/test_vk_blank_email_tsk363.py` (8 шт., оба конца). Развёрнуто 374385f, живая проверка: student/teacher/methodist → 200, тело разобрано клиентской моделью бота | (a) **Falsy-проверка — не нормализация.** `if x:` перед `x.strip() or None` оставляет пустую строку нетронутой: нормализовать надо безусловно — `(x or "").strip() or None`. Класс шире почты: любое опциональное строковое поле от внешнего провайдера. (b) **Внешний провайдер отдаёт пустую строку, а не отсутствие ключа** — тесты на «поля нет» дефект не ловят: старый `test_first_time_vk_no_email_creates_user_email_null` подавал `email=None` напрямую в сервис, минуя разбор userinfo, где и был баг. Тестировать разбор ответа провайдера, а не только сервис за ним. (c) **Одна битая строка не должна ронять весь список** — при `EmailStr`/строгих типах в схеме выдачи поверх исторических данных нужна подстраховка на уровне схемы, иначе единичная запись даёт полный отказ эндпоинта. (d) Клиентская модель TG_LMS `UserRead.email` — тоже `Optional[EmailStr]`: пустая строка от сервера уронила бы и сам бот, страховка на сервере закрывает оба | FIXED |
++| 2026-08-07 (tsk-574) | LMS | Прод 2026-08-06: скрипт пакетного назначения курса группе учеников отработал дважды | Первый прогон создал все пять связей, второй вернул пять `500 Internal server error`. Оператор не мог отличить «уже назначено» от отказа сервера и повторял запрос вслепую; выглядело как полный отказ. В логах — `asyncpg.UniqueViolationError: duplicate key value violates unique constraint "user_courses_pkey"` | `POST /api/v1/user-courses/` вставлял связь без перехвата `IntegrityError`: нарушение составного PK доходило до глобального обработчика `Exception` и превращалось в 500. При этом собственное описание эндпоинта с самого начала обещало 400 на дубликат — обещание не выполнялось никогда. **Рецидив класса 2026-04-28 #4** («orphan email → 500 вместо 409»): та же ошибка на другом эндпоинте, prevention-action прошлой записи была сформулирована узко — про пару «users.email ↔ identity_link», а не про класс «UNIQUE/PK из пользовательского ввода» | LOGIC + INTEGRATION | S2 (прод, user-facing операторский флоу; данные не пострадали — вставки не было) | Жалоба оператора + `logs/app.log` (`Unhandled exception at /api/v1/user-courses/`) | Перехват в `UserCoursesService.create` двумя слоями: ранняя проверка `get_by_keys` (до доназначения курсов-зависимостей) + перехват `IntegrityError` по SQLSTATE 23505 на гонке → `DomainError` 409 с телом `{"error": "domain_error", "detail": "Курс уже назначен этому ученику", "payload": {...}}`. Обязательный `db.rollback()` перед выбросом. Описание/`responses`/docstring/`docs/openapi.json`/`docs/API_STUDENTS_MANAGEMENT.md` приведены к 409. Второй путь (`assign_course_with_order`) отдавал 400 — расхождение убрано. Тесты `tests/test_user_courses_duplicate_tsk574.py` (штатный дубль + гонка) | (a) **Любая вставка по ключу из пользовательского ввода обязана маппить `IntegrityError` на 409** — не только пара «users.email ↔ identity_link» из записи 2026-04-28. При добавлении эндпоинта записи проверять: что будет при повторе того же тела? (b) **Обещание в описании эндпоинта — не реализация.** `responses={400: ...}` в декораторе не создаёт поведения; если код ответа заявлен, нужен тест, который его проверяет. (c) Ранняя проверка существования НЕ отменяет перехват `IntegrityError` — между ними гонка; и наоборот, перехват без ранней проверки делает бесполезные побочные вставки | FIXED |
+ | 2026-08-06 (tsk-303 Фаза 1) | LMS | Review-gate фазы 1 «лестница помощи»: CHECK на непустую вебинар-ссылку в миграции `tsk303_help_ladder` | Проверка «ссылка непустая», написанная как `length(btrim(webinar_link)) > 0`, пропускала строку из табуляции и перевода строки (`E'\t\n'`). До прода не дошло — поймано собственным тестом с набором `("", "   ", "\t\n")` | В PostgreSQL `btrim(string)` **без второго аргумента срезает только ПРОБЕЛЫ**, а не whitespace целиком (в отличие от `str.strip()` в Python, откуда и была перенесена интуиция). `length(btrim(E'\t\n'))` → 2, то есть условие `> 0` выполнялось. Класс тот же, что у 2026-07-17 (tsk-262/278) — «SQL-семантика ≠ интуиция из Python», но конкретная ловушка другая: не диалект регулярок, а умолчание аргумента функции | LOGIC | S3 (поймано до merge; дошло бы до прода — ученик получил бы кнопку «Перейти к разбору» в пустоту при формально отвеченной заявке) | Тест `tests/test_help_ladder_schema_tsk303.py::test_blank_webinar_link_rejected` (набор пустых значений включал табуляцию) + прямая проверка в БД: `SELECT length(btrim(E'\t\n'))` → 2, `SELECT E'\t\n' ~ '\S'` → false | Ограничение переписано на `webinar_link ~ '\S'` (есть хоть один непробельный символ) — проверено в самой БД до фиксации | (a) **«Непустая строка» в PG — это `~ '\S'`, а не `length(btrim(x)) > 0`.** Если всё же нужен btrim — задавать набор символов явно: `btrim(x, E' \t\r\n')`. (b) Тестовый набор «пустых» значений обязан включать НЕ ТОЛЬКО `''` и пробелы, но и табуляцию/перевод строки — иначе дефект этого класса тест не увидит. (c) Подтверждает и расширяет профилактику 2026-07-17: проверять в БД надо не только регулярки, но и умолчания строковых функций | FIXED |
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 928cd46..1223273 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -10344,7 +10344,7 @@
+           "user_courses"
+         ],
+         "summary": "Создать связь пользователь ↔ курс",
+-        "description": "Привязать студента к курсу.\n\n**Особенности:**\n- Если `order_number` не указан (null), он проставится автоматически триггером БД\n- Пара (user_id, course_id) должна быть уникальной (составной PK)\n- При попытке создать дубликат связи возвращается ошибка 400\n\n**Использование:**\nИспользуется для привязки студента к курсу как из меню курсов, так и из меню студентов.",
++        "description": "Привязать студента к курсу.\n\n**Особенности:**\n- Если `order_number` не указан (null), он проставится автоматически триггером БД\n- Пара (user_id, course_id) должна быть уникальной (составной PK)\n- При попытке создать дубликат связи возвращается ошибка 409 Conflict\n\n**Использование:**\nИспользуется для привязки студента к курсу как из меню курсов, так и из меню студентов.",
+         "operationId": "create_user_course_api_v1_user_courses__post",
+         "requestBody": {
+           "content": {
+@@ -10374,19 +10374,24 @@
+               }
+             }
+           },
+-          "400": {
+-            "description": "Дубликат связи или некорректные данные",
++          "403": {
++            "description": "Invalid or missing API Key"
++          },
++          "409": {
++            "description": "Связь уже существует (студент уже привязан к курсу)",
+             "content": {
+               "application/json": {
+                 "example": {
+-                  "detail": "Duplicate entry or invalid data"
++                  "error": "domain_error",
++                  "detail": "Курс уже назначен этому ученику",
++                  "payload": {
++                    "user_id": 13,
++                    "course_id": 1
++                  }
+                 }
+               }
+             }
+           },
+-          "403": {
+-            "description": "Invalid or missing API Key"
+-          },
+           "422": {
+             "description": "Ошибка валидации данных запроса"
+           }
+
+--- новый файл (untracked): tests/test_user_courses_duplicate_tsk574.py ---
+diff --git a/tests/test_user_courses_duplicate_tsk574.py b/tests/test_user_courses_duplicate_tsk574.py
+new file mode 100644
+index 0000000..ddf0801
+--- /dev/null
++++ b/tests/test_user_courses_duplicate_tsk574.py
+@@ -0,0 +1,143 @@
++"""Повторное назначение курса ученику отдаёт 409, а не 500 (tsk-574).
++
++Прод 2026-08-06: скрипт пакетного назначения отработал дважды. Первый прогон
++создал все связи, второй вернул пять «Internal server error» — оператор не мог
++отличить «уже назначено» от отказа сервера и повторял запрос вслепую.
++Причина: `UniqueViolationError` на составном PK `user_courses_pkey` доходил до
++глобального обработчика `Exception` и превращался в 500.
++
++Проверяем оба слоя защиты:
++* штатный дубль — ранняя проверка в `UserCoursesService.create`;
++* гонка (строку создали между проверкой и вставкой) — перехват
++  `IntegrityError`; заодно доказываем, что после конфликта соединение
++  остаётся рабочим (следующий запрос отвечает нормально).
++"""
++from __future__ import annotations
++
++import os
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.api.v1 import user_courses as user_courses_api
++from app.models.users import Users
++
++_TAG = "tsk574"
++
++
++def _api_key_qs() -> str:
++    """Legacy `get_db` ждёт api_key в QUERY-параметре, не в заголовке."""
++    key = os.environ.get("VALID_API_KEYS", "").split(",")[0].strip()
++    if not key:
++        pytest.skip("VALID_API_KEYS не задан в .env — пропускаем")
++    return f"api_key={key}"
++
++
++async def _create_student(db) -> int:
++    """Завести ученика для теста."""
++    user = Users(
++        email=f"{_TAG}-stud-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG}-stud",
++        tg_id=None,
++    )
++    db.add(user)
++    await db.flush()
++    await db.commit()
++    return user.id
++
++
++async def _create_root_course(db) -> int:
++    """Завести корневой курс (без родителей — иначе триггер запретит связь)."""
++    res = await db.execute(
++        text(
++            "INSERT INTO courses (title, access_level) "
++            "VALUES (:title, 'self_guided') RETURNING id"
++        ),
++        {"title": f"{_TAG}-course-{random.randint(10**8, 10**10)}"},
++    )
++    course_id = res.scalar_one()
++    await db.commit()
++    return course_id
++
++
++async def _link_count(db, user_id: int, course_id: int) -> int:
++    """Сколько строк связи лежит в БД для пары ученик↔курс."""
++    res = await db.execute(
++        text(
++            "SELECT count(*) FROM user_courses "
++            "WHERE user_id = :u AND course_id = :c"
++        ),
++        {"u": user_id, "c": course_id},
++    )
++    return int(res.scalar_one())
++
++
++@pytest.mark.asyncio
++async def test_duplicate_assignment_returns_409(db, client):
++    """Второй POST той же пары — 409 с понятным телом, дубля в БД нет."""
++    student_id = await _create_student(db)
++    course_id = await _create_root_course(db)
++    payload = {"user_id": student_id, "course_id": course_id, "is_active": True}
++    url = f"/api/v1/user-courses/?{_api_key_qs()}"
++
++    first = await client.post(url, json=payload)
++    assert first.status_code == 201, first.text
++
++    second = await client.post(url, json=payload)
++    assert second.status_code == 409, second.text
++
++    body = second.json()
++    assert body["error"] == "domain_error"
++    assert "уже назначен" in body["detail"]
++    assert body["payload"] == {"user_id": student_id, "course_id": course_id}
++
++    assert await _link_count(db, student_id, course_id) == 1
++
++
++@pytest.mark.asyncio
++async def test_duplicate_race_returns_409_and_keeps_session_usable(
++    db, client, monkeypatch
++):
++    """Гонка: строка появилась между проверкой и вставкой — тоже 409.
++
++    Раннюю проверку глушим (`get_by_keys` возвращает None), чтобы запрос дошёл
++    до INSERT и упал на `user_courses_pkey`. Это ровно то, что произойдёт при
++    двух параллельных назначениях одной пары.
++    """
++    student_id = await _create_student(db)
++    course_id = await _create_root_course(db)
++    payload = {"user_id": student_id, "course_id": course_id, "is_active": True}
++    url = f"/api/v1/user-courses/?{_api_key_qs()}"
++
++    first = await client.post(url, json=payload)
++    assert first.status_code == 201, first.text
++
++    original_get_by_keys = user_courses_api.service.repo.get_by_keys
++
++    async def _blind_get_by_keys(*args, **kwargs):
++        """Сделать вид, что связи ещё нет — как соседний запрос до вставки."""
++        return None
++
++    monkeypatch.setattr(
++        user_courses_api.service.repo, "get_by_keys", _blind_get_by_keys
++    )
++    try:
++        raced = await client.post(url, json=payload)
++    finally:
++        monkeypatch.setattr(
++            user_courses_api.service.repo, "get_by_keys", original_get_by_keys
++        )
++
++    assert raced.status_code == 409, raced.text
++    assert raced.json()["error"] == "domain_error"
++    assert await _link_count(db, student_id, course_id) == 1
++
++    # После конфликта соединение обязано остаться рабочим: откат сессии не
++    # должен обрывать транзакцию так, чтобы следующий запрос падал.
++    after = await client.get(
++        f"/api/v1/user-courses/{student_id}/{course_id}?{_api_key_qs()}"
++    )
++    assert after.status_code == 200, after.text
++    assert after.json()["user_id"] == student_id

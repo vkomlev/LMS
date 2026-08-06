@@ -32,7 +32,7 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
         "**Особенности:**\n"
         "- Если `order_number` не указан (null), он проставится автоматически триггером БД\n"
         "- Пара (user_id, course_id) должна быть уникальной (составной PK)\n"
-        "- При попытке создать дубликат связи возвращается ошибка 400\n\n"
+        "- При попытке создать дубликат связи возвращается ошибка 409 Conflict\n\n"
         "**Использование:**\n"
         "Используется для привязки студента к курсу как из меню курсов, так и из меню студентов."
     ),
@@ -50,15 +50,19 @@ _PEOPLE_WRITE_GATE = require_role("methodist", "admin")
                 }
             }
         },
-        400: {
-            "description": "Дубликат связи или некорректные данные",
+        403: {"description": "Invalid or missing API Key"},
+        409: {
+            "description": "Связь уже существует (студент уже привязан к курсу)",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Duplicate entry or invalid data"}
+                    "example": {
+                        "error": "domain_error",
+                        "detail": "Курс уже назначен этому ученику",
+                        "payload": {"user_id": 13, "course_id": 1},
+                    }
                 }
             }
         },
-        403: {"description": "Invalid or missing API Key"},
         422: {"description": "Ошибка валидации данных запроса"},
     },
 )
@@ -79,8 +83,8 @@ async def create_user_course(
     
     **Коды ответов:**
     - `201` - Связь успешно создана
-    - `400` - Дубликат связи (студент уже привязан к курсу) или некорректные данные
     - `403` - Неверный или отсутствующий API ключ
+    - `409` - Дубликат связи: студент уже привязан к курсу (tsk-574)
     - `422` - Ошибка валидации данных запроса
     """
     return await service.create(db, obj_in.model_dump())

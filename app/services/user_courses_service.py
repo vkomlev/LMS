@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_courses import UserCourses
@@ -11,6 +12,31 @@ from app.repos.user_courses_repo import UserCoursesRepository
 from app.services import course_dependencies_enrollment_service
 from app.services.base import BaseService
 from app.utils.exceptions import DomainError
+
+# tsk-574: PG-код нарушения уникальности. Составной PK `user_courses_pkey`
+# (user_id, course_id) ловит повторное назначение курса тому же ученику.
+_PG_UNIQUE_VIOLATION = "23505"
+
+# Единый код ответа на повторное назначение. 409, а не 400: запрос корректен,
+# конфликтует состояние ресурса — как у остальных конфликтов LMS (лимит попыток
+# tsk-269, identity-overlap VK). Раньше этот путь отдавал 500, и оператор при
+# пакетном назначении не мог отличить «уже назначено» от отказа сервера.
+_DUPLICATE_STATUS = 409
+_DUPLICATE_DETAIL = "Курс уже назначен этому ученику"
+
+
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    """Отличить дубль связи от прочих нарушений целостности (например, FK).
+
+    :param exc: исключение SQLAlchemy, полученное на вставке.
+    :return: True, если это нарушение уникальности (PG 23505).
+    """
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if sqlstate == _PG_UNIQUE_VIOLATION:
+        return True
+    # Драйвер без sqlstate — опираемся на имя ограничения в тексте ошибки.
+    return "user_courses_pkey" in str(orig)
 
 
 class UserCoursesService(BaseService[UserCourses]):
@@ -37,17 +63,44 @@ class UserCoursesService(BaseService[UserCourses]):
         коммитит сам, и падение доназначения оставило бы курс назначенным без
         зависимости (замок навсегда), а вызывающему отдало 500.
 
+        tsk-574: повторное назначение — это `DomainError` 409, а не 500. Защита
+        двухслойная и оба слоя нужны. Ранняя проверка отсекает дубль ДО
+        доназначения зависимостей (иначе побочные вставки делаются впустую и
+        сносятся откатом), а перехват `IntegrityError` закрывает гонку двух
+        параллельных назначений — между проверкой и вставкой строку может
+        создать соседний запрос.
+
         :param db: асинхронная сессия БД.
         :param obj_in: данные связи (`user_id`, `course_id`, опц. `order_number`).
         :return: созданная связь.
+        :raises DomainError: 409, если связь ученик↔курс уже существует.
         """
         user_id = obj_in.get("user_id")
         course_id = obj_in.get("course_id")
         if user_id is not None and course_id is not None:
+            keys = {"user_id": int(user_id), "course_id": int(course_id)}
+            if await self.repo.get_by_keys(db, keys):
+                raise DomainError(
+                    detail=_DUPLICATE_DETAIL,
+                    status_code=_DUPLICATE_STATUS,
+                    payload=keys,
+                )
             await course_dependencies_enrollment_service.ensure_dependencies_assigned(
                 db, student_id=int(user_id), course_ids=[int(course_id)]
             )
-        return await super().create(db, obj_in)
+        try:
+            return await super().create(db, obj_in)
+        except IntegrityError as exc:
+            # Сессия после провала вставки непригодна к работе — откатываем,
+            # иначе следующий запрос по ней упадёт уже на чтении.
+            await db.rollback()
+            if not _is_unique_violation(exc):
+                raise
+            raise DomainError(
+                detail=_DUPLICATE_DETAIL,
+                status_code=_DUPLICATE_STATUS,
+                payload={"user_id": user_id, "course_id": course_id},
+            ) from exc
 
     async def get_user_courses(
         self,
@@ -81,19 +134,11 @@ class UserCoursesService(BaseService[UserCourses]):
         :param course_id: ID курса.
         :param order_number: Порядковый номер (опционально, установится автоматически если None).
         :return: Созданная связь пользователя с курсом.
+        :raises DomainError: 409, если связь ученик↔курс уже существует.
         """
-        # Проверяем, не существует ли уже такая связь
-        existing = await self.repo.get_by_keys(
-            db,
-            {"user_id": user_id, "course_id": course_id},
-        )
-        if existing:
-            raise DomainError(
-                detail="Курс уже привязан к пользователю",
-                status_code=400,
-                payload={"user_id": user_id, "course_id": course_id},
-            )
-
+        # Дубль ловит `create` (проверка + перехват IntegrityError на гонке),
+        # tsk-574: код один на оба пути назначения, отдельная проверка здесь
+        # больше не нужна.
         # Создаем связь (order_number установится триггером, если не указан)
         return await self.create(
             db,
