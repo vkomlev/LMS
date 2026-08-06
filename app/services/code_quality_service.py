@@ -10,9 +10,22 @@ turtle-песочница, tsk-412, через сравнение трассы �
 tsk-302, 2026-08-06): функция намеренно не встраивается в `CheckResult`,
 который эхо-возвращается ученику в ответе `POST /attempts/{id}/answers`
 (`AttemptAnswerResult.check_result`). Вызывающая сторона (`app/api/v1/attempts.py`)
-кладёт результат напрямую в `metrics` при записи `task_results` — это поле
-уже отдаётся только через методист/teacher-эндпоинты
-(`GET /task-results/detail/by-user/{user_id}`, `stats/by-task`, `stats/by-course`).
+кладёт результат напрямую в `metrics` при записи `task_results`.
+
+ГДЕ `metrics` РЕАЛЬНО ВЫХОДИТ НАРУЖУ (проверено разведкой 2026-08-06; прежняя
+редакция этого докстринга называла `detail/by-user` и `stats/*` — НЕВЕРНО, они
+`metrics` не возвращают вовсе): только эндпоинты с `response_model=TaskResultRead`
+— `GET /task-results/by-user/{user_id}`, `by-task/{task_id}`, `by-attempt/{attempt_id}`,
+`by-pending-review`, `POST /task-results/{id}/manual-check` и generic-CRUD
+`/task-results/{item_id}`. Ученику эти маршруты недоступны (роль/сервисный ключ).
+
+ДВА ИЗВЕСТНЫХ ДЕФЕКТА ЭТОЙ СХЕМЫ (tsk-302, обнаружены 2026-08-06, чинятся отдельно):
+1. `POST /task-results/{id}/manual-check` передаёт `metrics` в `TaskResultUpdate`
+   ЯВНО, поэтому `model_dump(exclude_unset=True)` его не отбрасывает — ручная
+   проверка преподавателя ПЕРЕЗАПИСЫВАЕТ (обнуляет) этот отчёт.
+2. Ни `PendingReviewItem`, ни `ReviewClaimItem` (`app/schemas/teacher_next_modes.py`,
+   маршруты `/teacher/reviews/*`) поля `metrics` НЕ содержат — то есть на экране
+   проверки работы преподаватель этот отчёт сейчас не видит в принципе.
 """
 
 from __future__ import annotations
