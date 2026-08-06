@@ -937,6 +937,10 @@ class LearningEngineService:
                         root_course_id=current_root_id,
                         reason="Требуется завершить курс",
                         dependency_course_id=req_course.id,
+                        # tsk-231: req_course уже загружен ORM'ом
+                        # (list_dependencies), доп. запрос не нужен.
+                        dependency_course_title=req_course.title,
+                        dependency_course_uid=req_course.course_uid,
                     )
 
             # Обход дерева: root + дети по order_number

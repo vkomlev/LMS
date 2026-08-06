@@ -31,6 +31,10 @@ class NextItemResponse(BaseModel):
     task_id: Optional[int] = None
     reason: Optional[str] = None
     dependency_course_id: Optional[int] = None
+    dependency_course_title: Optional[str] = Field(
+        None, description="tsk-231: название курса-зависимости для UI (SPW/TG_LMS)."
+    )
+    dependency_course_uid: Optional[str] = None
 
 
 # ----- Material complete -----

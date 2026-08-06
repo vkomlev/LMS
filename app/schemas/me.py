@@ -254,6 +254,20 @@ class SyllabusSectionMeta(BaseModel):
     )
 
 
+class BlockedDependency(BaseModel):
+    """Обогащённая проекция одной непройденной зависимости (tsk-231).
+
+    `blocked_courses` (ниже) отдаёт только голый ID заблокированного узла —
+    этого недостаточно клиенту, чтобы показать ученику ПОЧЕМУ заблокировано
+    и куда идти: нужен ID+название именно required-курса, а не заблокированного.
+    """
+
+    course_id: int = Field(..., description="Заблокированный узел (совпадает с элементом blocked_courses)")
+    required_course_id: int = Field(..., description="Курс, который нужно завершить, чтобы снять блокировку")
+    required_course_title: str
+    required_course_uid: str | None = None
+
+
 class SyllabusStatesResponse(BaseModel):
     """Снимок состояний всех задач+материалов поддерева курса для рендера syllabus.
 
@@ -270,6 +284,14 @@ class SyllabusStatesResponse(BaseModel):
     course_id: int
     items: list[SyllabusItem]
     blocked_courses: list[int]
+    blocked_dependencies: list[BlockedDependency] = Field(
+        default_factory=list,
+        description=(
+            "tsk-231: обогащённая версия blocked_courses — для каждого "
+            "заблокированного узла указывает ID+название required-курса. "
+            "blocked_courses НЕ убирается (обратная совместимость)."
+        ),
+    )
     sections: list[SyllabusSectionMeta] = Field(
         default_factory=list,
         description=(

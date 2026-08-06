@@ -847,8 +847,9 @@ ORDER BY m.course_id,
 """
 
 _BLOCKED_COURSES_SQL = """
-SELECT DISTINCT cd.course_id
+SELECT DISTINCT cd.course_id, cd.required_course_id, rc.title, rc.course_uid
 FROM course_dependencies cd
+JOIN courses rc ON rc.id = cd.required_course_id
 WHERE cd.course_id = ANY(:tree_ids)
   AND NOT EXISTS (
       SELECT 1 FROM student_course_state scs
@@ -1005,7 +1006,8 @@ async def get_syllabus_states(
     - per-task status — последний task_result × attempts_used × override
     - per-material status — student_material_progress.status='completed'
     - blocked_courses — course_dependencies без COMPLETED prerequisite
-      в `student_course_state` пользователя.
+      в `student_course_state` пользователя. blocked_dependencies (tsk-231) —
+      та же выборка, обогащённая ID+названием required-курса.
     - sections (Y-6.2 ext) — список подкурсов с titles+depth для SPW
       sticky-headers (нужно потому что `/courses/{id}/tree` legacy
       service-key only — недоступен студенту под cookie auth).
@@ -1070,7 +1072,21 @@ async def get_syllabus_states(
         text(_BLOCKED_COURSES_SQL),
         {"user_id": user_id, "tree_ids": tree_ids},
     )
-    blocked_courses: list[int] = [int(r[0]) for r in blocked_res.fetchall()]
+    blocked_dep_rows = blocked_res.fetchall()
+    # blocked_courses — прежний контракт (только ID), не трогаем ради
+    # обратной совместимости; dict.fromkeys сохраняет порядок первого
+    # появления и убирает дубли, если один узел заблокирован НЕСКОЛЬКИМИ
+    # required-курсами (blocked_dependencies тогда даст несколько строк).
+    blocked_courses: list[int] = list(dict.fromkeys(int(r[0]) for r in blocked_dep_rows))
+    blocked_dependencies: list[dict] = [
+        {
+            "course_id": int(r[0]),
+            "required_course_id": int(r[1]),
+            "required_course_title": r[2],
+            "required_course_uid": r[3],
+        }
+        for r in blocked_dep_rows
+    ]
 
     # Группировка по course_id для depth-first emit
     materials_by_course: dict[int, list[dict]] = {}
@@ -1121,6 +1137,7 @@ async def get_syllabus_states(
         "course_id": root_course_id,
         "items": items,
         "blocked_courses": blocked_courses,
+        "blocked_dependencies": blocked_dependencies,
         "sections": section_meta,
     }
 

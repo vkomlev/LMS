@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.courses import Courses
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
+from app.services import course_dependencies_enrollment_service
 from app.services.learning_engine_service import LearningEngineService
 
 
@@ -27,6 +28,69 @@ class CourseDependenciesService:
     ) -> List[Courses]:
         return await self.repo.list_dependencies(db, course_id)
 
+    async def _enroll_existing_students(
+        self, db: AsyncSession, course_id: int, required_course_id: int
+    ) -> int:
+        """tsk-231: доназначить required_course_id ученикам, уже зачисленным
+        на course_id, в момент ДОБАВЛЕНИЯ зависимости к уже идущему курсу.
+
+        tsk-261 закрыл симметричный путь — доназначение зависимостей в
+        момент НАЗНАЧЕНИЯ курса ученику (`user_courses_service`,
+        `assignment_rules_service`). Но методист чаще добавляет зависимость
+        к курсу, который уже идёт (на нём уже есть ученики) — этот путь
+        (`add_dependency`/`bulk_add_dependencies`) раньше доназначения не
+        делал вовсе: `_BLOCKED_COURSES_SQL`/`resolve_next_item` блокируют
+        таких учеников немедленно (после backfill_dependency_state выше), а
+        required_course_id физически недостижим — его нет в их
+        `user_courses`. Замок без выхода (тот же класс проблемы, что и
+        tsk-261, только на другом пути записи).
+
+        Переиспользует `ensure_dependencies_assigned` — та же идемпотентность
+        (`INSERT ... ON CONFLICT DO NOTHING`, атомарно на уровне БД без
+        отдельного lock'а) и пропуск некорневых required-курсов, что и в
+        существующих вызовах (tsk-261).
+
+        Остаточный риск: если цикл прервётся исключением на каком-то
+        студенте, уже обработанные до него доназначения останутся
+        незакоммиченными (общая транзакция с `add_dependency`) и откатятся
+        вместе с ней — НО сама зависимость в `course_dependencies` к этому
+        моменту уже закоммичена репозиторием (`repo.add_dependency` коммитит
+        сама). В отличие от кеша `student_course_state` (чинит фоновый тик
+        `course_dependency_state_cron_service`), отсутствующее зачисление
+        сам себя не лечит — повторный вызов add_dependency идемпотентен и
+        закрывает пробел вручную. См. review Фазы 1.
+
+        Returns:
+            Число студентов, которым реально доназначен курс.
+        """
+        student_ids = await self.engine.list_active_students_with_node_in_tree(
+            db, course_id
+        )
+        enrolled_count = 0
+        for student_id in student_ids:
+            assigned = await course_dependencies_enrollment_service.ensure_dependencies_assigned(
+                db, student_id=student_id, course_ids=[course_id]
+            )
+            if assigned:
+                enrolled_count += 1
+        return enrolled_count
+
+    async def count_affected_students(
+        self, db: AsyncSession, course_id: int
+    ) -> int:
+        """tsk-231: сколько уже зачисленных на course_id студентов мгновенно
+        заблокирует добавление НОВОЙ зависимости (превью для confirm-диалога
+        методиста, до фактического add_dependency).
+
+        Считает тем же критерием, что и `_enroll_existing_students` —
+        активные студенты, у кого course_id входит в дерево (не только
+        прямое зачисление на сам course_id).
+        """
+        student_ids = await self.engine.list_active_students_with_node_in_tree(
+            db, course_id
+        )
+        return len(student_ids)
+
     async def add_dependency(
         self, db: AsyncSession, course_id: int, required_course_id: int
     ) -> None:
@@ -36,6 +100,8 @@ class CourseDependenciesService:
         # уже прошедший пререквизит, видит новую зависимость как блокировку
         # (ровно регрессия tsk-523).
         await self.engine.backfill_dependency_state(db, course_id, required_course_id)
+        # tsk-231: см. docstring _enroll_existing_students.
+        await self._enroll_existing_students(db, course_id, required_course_id)
         await db.commit()
 
     async def remove_dependency(
@@ -60,5 +126,7 @@ class CourseDependenciesService:
         # self-dependency уже отфильтрованы репозиторием).
         for dep in added:
             await self.engine.backfill_dependency_state(db, course_id, dep.id)
+            # tsk-231: см. docstring _enroll_existing_students.
+            await self._enroll_existing_students(db, course_id, dep.id)
         await db.commit()
         return added

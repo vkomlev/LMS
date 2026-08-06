@@ -33,6 +33,10 @@ class NextItemResult:
     task_id: Optional[int] = None
     reason: Optional[str] = None
     dependency_course_id: Optional[int] = None
+    # tsk-231: голый ID недостаточен клиенту (SPW/TG_LMS), чтобы показать
+    # ученику название курса-зависимости и ссылку на него.
+    dependency_course_title: Optional[str] = None
+    dependency_course_uid: Optional[str] = None
 
 
 TaskStateType = Literal[

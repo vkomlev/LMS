@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
-from app.schemas.courses import CourseRead, CourseDependenciesBulkCreate
+from app.schemas.courses import CourseRead, CourseDependenciesBulkCreate, CourseDependencyImpact
 from app.services.course_dependencies_service import CourseDependenciesService
 
 router = APIRouter(
@@ -108,6 +108,33 @@ async def bulk_add_course_dependencies(
         return [CourseRead.model_validate(dep) for dep in dependencies]
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+
+
+@router.get(
+    "/{required_course_id}/impact",
+    response_model=CourseDependencyImpact,
+    summary="Превью влияния добавления зависимости (tsk-231)",
+    responses={
+        200: {"description": "Число уже зачисленных студентов, которых заблокирует добавление"},
+        403: {"description": "Invalid or missing API Key"},
+    },
+)
+async def preview_course_dependency_impact(
+    course_id: int,
+    required_course_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_WRITE_GATE),
+) -> CourseDependencyImpact:
+    """
+    Read-only превью ДО `POST /{required_course_id}`: сколько уже зачисленных
+    на course_id учеников будет немедленно заблокировано новой зависимостью.
+
+    Блокировка глобальная и мгновенная (решение оператора, план tsk-231) —
+    действует на всех, не только на тех, кто провалил задание. Используется
+    для confirm-диалога методиста перед фактическим добавлением.
+    """
+    count = await service.count_affected_students(db, course_id)
+    return CourseDependencyImpact(affected_students_count=count)
 
 
 @router.post(

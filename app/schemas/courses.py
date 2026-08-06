@@ -284,6 +284,19 @@ class CourseDependenciesBulkCreate(BaseModel):
     )
 
 
+class CourseDependencyImpact(BaseModel):
+    """tsk-231: превью влияния ДО добавления зависимости (для confirm-диалога методиста).
+
+    Блокировка через course_dependencies глобальная и мгновенная — действует
+    на ВСЕХ уже зачисленных на course_id учеников, не только на тех, кто
+    провалил задание (решение оператора, план tsk-231). Прецедент случайной
+    массовой блокировки — tsk-523.
+    """
+    affected_students_count: int = Field(
+        ..., description="Сколько уже зачисленных студентов course_id будет немедленно заблокировано"
+    )
+
+
 # ---------- Импорт из Google Sheets ----------
 
 

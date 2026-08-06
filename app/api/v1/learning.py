@@ -150,6 +150,8 @@ async def get_next_item(
         task_id=result.task_id,
         reason=result.reason,
         dependency_course_id=result.dependency_course_id,
+        dependency_course_title=result.dependency_course_title,
+        dependency_course_uid=result.dependency_course_uid,
     )
 
 
