@@ -410,7 +410,7 @@ async def claim_next_review(
             SET review_claimed_by = :teacher_id, review_claim_token = :token, review_claim_expires_at = :expires_at
             FROM cand
             WHERE tr.id = cand.id
-            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id
+            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id, tr.code_review
         """),  # nosec B608 — REVIEW_ACL_SQL/course_cond/user_cond из закрытого набора литералов
         params,
     )
@@ -423,7 +423,7 @@ async def claim_next_review(
                 _idempotency_cache[cache_key] = (None, None, None, cache_until)
         return (None, None, None)
 
-    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val = row
+    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val, code_review = row
     # Догрузить task title и user name для ответа
     r2 = await db.execute(
         text("""
@@ -462,6 +462,9 @@ async def claim_next_review(
         "user_name": user_name,
         "course_id": course_id_val,
         "attempt_id": attempt_id_val,
+        # tsk-302 этап 0: машинная оценка работы для экрана проверки. Без неё
+        # преподаватель не видел отчёт вовсе — он писался в БД и никуда не отдавался.
+        "code_review": code_review,
     }
     if idempotency_key:
         cache_until = expires_at + timedelta(seconds=_IDEM_SUCCESS_BUFFER_SEC)
@@ -620,7 +623,8 @@ async def claim_review_by_id(
                    OR tr.review_claimed_by = :teacher_id)
             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
                       tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
-                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem'
+                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem',
+                      tr.code_review
         """),
         {
             "result_id": result_id,
@@ -641,7 +645,7 @@ async def claim_review_by_id(
     (
         rid, task_id, user_id_val, score, submitted_at,
         max_score, is_correct, answer_json, task_external_uid, course_id_val, attempt_id_val,
-        task_title_raw, task_stem,
+        task_title_raw, task_stem, code_review,
     ) = urow
     # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
     task_title = humanize_task_title(task_id, task_title_raw, task_stem, task_external_uid)
@@ -662,6 +666,8 @@ async def claim_review_by_id(
         "user_name": urow2[0] if urow2 else None,
         "course_id": course_id_val,
         "attempt_id": attempt_id_val,
+        # tsk-302 этап 0: см. комментарий в claim_next — тот же контракт.
+        "code_review": code_review,
     }
     return (item, token, expires_at)
 

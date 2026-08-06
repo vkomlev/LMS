@@ -330,13 +330,24 @@ async def manual_check_task_result(
         )
     
     # РћР±РЅРѕРІР»СЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚; СЌС‚Р°Рї 3.9: СЃР±СЂР°СЃС‹РІР°РµРј claim РїРѕСЃР»Рµ РїСЂРѕРІРµСЂРєРё
-    update_data = TaskResultUpdate(
-        score=score,
-        checked_by=checked_by,
-        checked_at=datetime.now(),
-        is_correct=payload_data.get("is_correct"),
-        metrics=payload_data.get("metrics"),
-    )
+    # tsk-302 этап 0: поля, которых НЕТ в теле запроса, не должны затираться.
+    # Прежняя редакция передавала `metrics=payload_data.get("metrics")` безусловно,
+    # то есть ЯВНО — и `exclude_unset=True` такое поле уже не отбрасывает (оно
+    # «выставлено», пусть и в None). Итог: каждая ручная дооценка обнуляла metrics,
+    # унося комментарий предыдущей проверки. Тот же дефект был у `is_correct`.
+    # `payload_data` собран через `model_dump(exclude_unset=True)` выше, поэтому
+    # проверка «ключ пришёл» здесь достоверна и отличает «не прислано» от «прислан null».
+    update_kwargs: dict = {
+        "score": score,
+        "checked_by": checked_by,
+        "checked_at": datetime.now(),
+    }
+    if "is_correct" in payload_data:
+        update_kwargs["is_correct"] = payload_data["is_correct"]
+    if "metrics" in payload_data:
+        update_kwargs["metrics"] = payload_data["metrics"]
+
+    update_data = TaskResultUpdate(**update_kwargs)
     update_dict = update_data.model_dump(exclude_unset=True)
     update_dict["review_claimed_by"] = None
     update_dict["review_claim_token"] = None

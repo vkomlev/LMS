@@ -17,6 +17,14 @@ class TaskResultCreate(BaseModel):
     user_id: int = Field(..., description="ID пользователя, выполнившего задачу", examples=[10, 15])
     task_id: int = Field(..., description="ID задачи", examples=[1, 5])
     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Хороший ответ"}])
+    code_review: Optional[Any] = Field(
+        None,
+        description=(
+            "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). "
+            "Отдельно от metrics: то поле несёт ручную проверку и обнуляется ею. Ученику не показывается."
+        ),
+        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
+    )
     count_retry: Optional[int] = Field(0, description="Количество попыток выполнения задачи", ge=0, examples=[0, 1, 2])
 
     attempt_id: Optional[int] = Field(None, description="ID попытки, если результат привязан к попытке", examples=[1, 5])
@@ -33,6 +41,11 @@ class TaskResultUpdate(BaseModel):
     """
     score: Optional[int] = Field(None, description="Набранный балл за задачу", ge=0, examples=[10, 5, 0])
     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Обновленный комментарий"}])
+    code_review: Optional[Any] = Field(
+        None,
+        description="tsk-302: машинная оценка работы (чистота кода, признак ИИ, время решения)",
+        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
+    )
     count_retry: Optional[int] = Field(None, description="Количество попыток выполнения задачи", ge=0, examples=[0, 1, 2])
 
     attempt_id: Optional[int] = Field(None, description="ID попытки", examples=[1, 5])
@@ -72,6 +85,14 @@ class TaskResultRead(BaseModel):
     task_id: int = Field(..., description="ID задачи", examples=[1, 5])
     submitted_at: datetime = Field(..., description="Время сдачи ответа", examples=["2026-02-16T12:00:00Z"])
     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Хороший ответ"}])
+    code_review: Optional[Any] = Field(
+        None,
+        description=(
+            "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). "
+            "Ученику не показывается — читают преподаватель и методист."
+        ),
+        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
+    )
     count_retry: int = Field(..., description="Количество попыток выполнения задачи", examples=[0, 1, 2])
     received_at: datetime = Field(..., description="Время начала выполнения задачи", examples=["2026-02-16T12:00:00Z"])
 

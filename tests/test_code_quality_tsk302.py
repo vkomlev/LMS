@@ -149,11 +149,35 @@ def test_check_result_schema_has_no_code_quality_field() -> None:
     (AttemptAnswerResult.check_result, см. app/api/v1/attempts.py). Отчёт по
     качеству кода НЕ должен попадать в эту схему ни сейчас, ни при будущих
     правках — иначе он утечёт ученику в обход решения оператора "видимость
-    только teacher/methodist" (2026-08-06). Отчёт передаётся отдельно, напрямую
-    в task_results.metrics (см. app/api/v1/attempts.py, code_quality_metrics).
+    только teacher/methodist" (2026-08-06). Отчёт хранится отдельно, в колонке
+    task_results.code_review (см. app/api/v1/attempts.py, code_review_report).
     """
     assert "code_quality" not in CheckResult.model_fields
+    assert "code_review" not in CheckResult.model_fields
     for field_name in CheckResult.model_fields:
         assert "quality" not in field_name.lower(), (
-            f"CheckResult.{field_name} похоже на утечку code_quality в ответ ученику"
+            f"CheckResult.{field_name} похоже на утечку оценки в ответ ученику"
         )
+        assert "review" not in field_name.lower(), (
+            f"CheckResult.{field_name} похоже на утечку оценки в ответ ученику"
+        )
+
+
+def test_student_facing_answer_schemas_have_no_code_review() -> None:
+    """
+    Страж на ВСЮ цепочку ответа ученику на сдачу, а не только на CheckResult.
+
+    Ученик получает `AttemptAnswersResponse`, внутри — список `AttemptAnswerResult`,
+    внутри — `CheckResult`. Утечка возможна на любом из трёх уровней: достаточно
+    кому-то добавить поле «чтобы фронту было удобнее», и машинная оценка окажется
+    у того, от кого её прячут. Проверяем все три яруса разом.
+    """
+    from app.schemas.attempts import AttemptAnswerResult, AttemptAnswersResponse
+
+    for schema in (AttemptAnswersResponse, AttemptAnswerResult, CheckResult):
+        for field_name in schema.model_fields:
+            lowered = field_name.lower()
+            assert "code_review" not in lowered and "code_quality" not in lowered, (
+                f"{schema.__name__}.{field_name} утекает машинную оценку ученику — "
+                "она предназначена только преподавателю и методисту (tsk-302)"
+            )

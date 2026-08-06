@@ -10,22 +10,26 @@ turtle-песочница, tsk-412, через сравнение трассы �
 tsk-302, 2026-08-06): функция намеренно не встраивается в `CheckResult`,
 который эхо-возвращается ученику в ответе `POST /attempts/{id}/answers`
 (`AttemptAnswerResult.check_result`). Вызывающая сторона (`app/api/v1/attempts.py`)
-кладёт результат напрямую в `metrics` при записи `task_results`.
+кладёт результат в `task_results.code_review` — отдельную колонку, секцией
+`{"code_quality": ...}`.
 
-ГДЕ `metrics` РЕАЛЬНО ВЫХОДИТ НАРУЖУ (проверено разведкой 2026-08-06; прежняя
-редакция этого докстринга называла `detail/by-user` и `stats/*` — НЕВЕРНО, они
-`metrics` не возвращают вовсе): только эндпоинты с `response_model=TaskResultRead`
-— `GET /task-results/by-user/{user_id}`, `by-task/{task_id}`, `by-attempt/{attempt_id}`,
-`by-pending-review`, `POST /task-results/{id}/manual-check` и generic-CRUD
-`/task-results/{item_id}`. Ученику эти маршруты недоступны (роль/сервисный ключ).
+ГДЕ `code_review` ВЫХОДИТ НАРУЖУ (этап 0, 2026-08-06):
+- `ReviewClaimItem` — захват работы преподавателем (`POST /teacher/reviews/{id}/claim`,
+  `claim-next`), это и есть экран проверки в SPW;
+- эндпоинты с `response_model=TaskResultRead` — `by-user`, `by-task`, `by-attempt`,
+  `by-pending-review`, `manual-check`, generic-CRUD `/task-results/{item_id}`.
+Все перечисленные требуют роли teacher/methodist/admin либо сервисного ключа —
+ученику ни один недоступен. Инвариант «ученик не видит» закреплён тестами
+`tests/test_code_quality_tsk302.py` (страж по схемам ответа на сдачу).
 
-ДВА ИЗВЕСТНЫХ ДЕФЕКТА ЭТОЙ СХЕМЫ (tsk-302, обнаружены 2026-08-06, чинятся отдельно):
-1. `POST /task-results/{id}/manual-check` передаёт `metrics` в `TaskResultUpdate`
-   ЯВНО, поэтому `model_dump(exclude_unset=True)` его не отбрасывает — ручная
-   проверка преподавателя ПЕРЕЗАПИСЫВАЕТ (обнуляет) этот отчёт.
-2. Ни `PendingReviewItem`, ни `ReviewClaimItem` (`app/schemas/teacher_next_modes.py`,
-   маршруты `/teacher/reviews/*`) поля `metrics` НЕ содержат — то есть на экране
-   проверки работы преподаватель этот отчёт сейчас не видит в принципе.
+ПОЧЕМУ ОТДЕЛЬНАЯ КОЛОНКА, А НЕ `metrics` (оба дефекта ЗАКРЫТЫ этапом 0):
+1. `manual-check` передавал `metrics` в `TaskResultUpdate` безусловно, из-за чего
+   `model_dump(exclude_unset=True)` его не отбрасывал и ручная проверка ОБНУЛЯЛА
+   отчёт. Починено: тело собирается только из реально присланных ключей.
+2. Кабинет преподавателя поля не отдавал вовсе. Починено: `ReviewClaimItem`
+   получил `code_review`, оба пути захвата работы его читают.
+Плюс `metrics` уже несёт чужую семантику (комментарий преподавателя, `manual_grant`,
+метки эскалаций) — держать там третью сущность значит спорить за одно поле.
 """
 
 from __future__ import annotations

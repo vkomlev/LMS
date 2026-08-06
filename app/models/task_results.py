@@ -85,6 +85,16 @@ class TaskResults(Base):
         JSONB,
         comment="Метрики качества ответа",
     )
+    code_review: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment=(
+            "tsk-302: машинная оценка работы — чистота кода, признак ИИ-авторства, "
+            "время решения. Отдельно от `metrics` намеренно: то поле несёт ручную "
+            "проверку преподавателя и обнуляется ею при каждой дооценке "
+            "(см. миграцию tsk302_code_review). Ученику не показывается."
+        ),
+    )
     count_retry: Mapped[int] = mapped_column(
         SmallInteger,
         server_default=text("0"),

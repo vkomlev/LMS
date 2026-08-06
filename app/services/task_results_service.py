@@ -61,6 +61,7 @@ class TaskResultsService(BaseService[TaskResults]):
         check_result: CheckResult,
         source_system: str = "system",
         metrics: Any | None = None,
+        code_review: Any | None = None,
         count_retry: int = 0,
         commit: bool = True,
     ) -> TaskResults:
@@ -74,7 +75,10 @@ class TaskResultsService(BaseService[TaskResults]):
         :param answer: Исходный ответ ученика (StudentAnswer).
         :param check_result: Результат проверки (CheckResult).
         :param source_system: Источник системы.
-        :param metrics: Доп. метрики (опционально).
+        :param metrics: Доп. метрики (опционально). ВНИМАНИЕ: это поле ручной проверки —
+            `manual-check` его перезаписывает. Машинную оценку класть в `code_review`.
+        :param code_review: Машинная оценка работы (tsk-302): чистота кода, признак
+            ИИ-авторства, время решения. Ученику не показывается.
         :param count_retry: Номер попытки/кол-во попыток.
         :param commit: Если False — только flush (для внешней транзакции, tsk-273:
             запись идёт внутри критической секции под advisory-lock, коммит — снаружи).
@@ -84,6 +88,7 @@ class TaskResultsService(BaseService[TaskResults]):
             user_id=user_id,
             task_id=task_id,
             metrics=metrics,
+            code_review=code_review,
             count_retry=count_retry,
             attempt_id=attempt_id,
             answer_json=answer.model_dump(),

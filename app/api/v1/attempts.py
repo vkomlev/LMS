@@ -631,12 +631,17 @@ async def submit_attempt_answers(
         # тот эхо-возвращается ученику в AttemptAnswerResult (см. 2.5 ниже) — решение
         # оператора "видимость только teacher/methodist" требует, чтобы отчёт вообще
         # не проходил через объект, отдаваемый в ответе на сдачу. Пишется напрямую в
-        # task_results.metrics (см. вызовы create_from_check_result ниже), которое
-        # отдаётся только через методист/teacher-эндпоинты (_STATS_GATE).
+        # task_results.code_review (см. вызовы create_from_check_result ниже).
         #
-        # review-gate (2026-08-06) находка Б1: анализ делит семафор песочницы с
-        # исполнением turtle-кода (executor.py, тот же _SANDBOX_SEMAPHORE — общий
-        # ресурсный бюджет прод-хоста, tsk-412) и синхронно занимает слот на время
+        # ПОЧЕМУ code_review, А НЕ metrics (этап 0 tsk-302, 2026-08-06): `metrics`
+        # несёт ручную проверку преподавателя, и `manual-check` его ПЕРЕЗАПИСЫВАЕТ
+        # целиком — отчёт обнулялся при первой же ручной оценке. Плюс на проде в
+        # `metrics` уже 13.8K записей чужой семантики (comment/manual_grant/
+        # escalated_at). Отдельная колонка снимает спор за одно поле.
+        #
+        # review-gate (2026-08-06) находка Б1: анализ идёт в отдельном процессе со
+        # СВОИМ семафором (`executor._LINT_SEMAPHORE`, лимит 2 — он не конкурирует
+        # с исполнением turtle-кода), но синхронно занимает слот на время
         # POST-запроса; уже просроченная попытка (attempt.time_expired == True ДО
         # этого ответа) гарантированно обнуляется гейтом 2.3c ниже — анализ стиля
         # заведомо мёртвого кода только тратит слот в ущерб другим ученикам. Гейт по
@@ -649,20 +654,27 @@ async def submit_attempt_answers(
         # из-за побочной метрики. executor.run_code_quality_check сам не бросает
         # (см. её докстринг), но try/except здесь — то же defense-in-depth, что и
         # у soft-fail гейтов 2.4b/2.4c/2.4d ниже.
-        code_quality_metrics: Optional[dict] = None
+        # Отчёт секционирован сразу: `code_quality` — то, что умеем сейчас; секции
+        # `ai_authorship` и `timing` добавятся этапом 3, когда появится LLM-транспорт
+        # и телеметрия времени. Читатель (кабинет преподавателя) написан под секции,
+        # поэтому их появление не сломает разбор.
+        code_review_report: Optional[dict] = None
         if solution_rules.turtle_sim is not None and not attempt.time_expired:
             student_code = answer.response.value or ""
             if student_code.strip():
                 try:
-                    code_quality_metrics = await asyncio.to_thread(
+                    quality = await asyncio.to_thread(
                         analyze_student_code_quality, student_code,
                     )
                 except Exception:
                     logger.warning(
                         "tsk-302: анализ качества кода упал (attempt=%s task=%s), "
-                        "приём ответа продолжается без metrics",
+                        "приём ответа продолжается без code_review",
                         attempt.id, task.id, exc_info=True,
                     )
+                else:
+                    if quality is not None:
+                        code_review_report = {"code_quality": quality}
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
@@ -840,7 +852,7 @@ async def submit_attempt_answers(
                 user_id=attempt.user_id,
                 answer=answer,
                 check_result=check_result,
-                metrics=code_quality_metrics,
+                code_review=code_review_report,
                 source_system=attempt.source_system,
                 commit=False,
             )
@@ -853,7 +865,7 @@ async def submit_attempt_answers(
                 user_id=attempt.user_id,
                 answer=answer,
                 check_result=check_result,
-                metrics=code_quality_metrics,
+                code_review=code_review_report,
                 source_system=attempt.source_system,
             )
 

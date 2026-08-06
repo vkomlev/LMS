@@ -1,0 +1,702 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index f61c533..88896eb 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -631,12 +631,17 @@ async def submit_attempt_answers(
+         # тот эхо-возвращается ученику в AttemptAnswerResult (см. 2.5 ниже) — решение
+         # оператора "видимость только teacher/methodist" требует, чтобы отчёт вообще
+         # не проходил через объект, отдаваемый в ответе на сдачу. Пишется напрямую в
+-        # task_results.metrics (см. вызовы create_from_check_result ниже), которое
+-        # отдаётся только через методист/teacher-эндпоинты (_STATS_GATE).
++        # task_results.code_review (см. вызовы create_from_check_result ниже).
+         #
+-        # review-gate (2026-08-06) находка Б1: анализ делит семафор песочницы с
+-        # исполнением turtle-кода (executor.py, тот же _SANDBOX_SEMAPHORE — общий
+-        # ресурсный бюджет прод-хоста, tsk-412) и синхронно занимает слот на время
++        # ПОЧЕМУ code_review, А НЕ metrics (этап 0 tsk-302, 2026-08-06): `metrics`
++        # несёт ручную проверку преподавателя, и `manual-check` его ПЕРЕЗАПИСЫВАЕТ
++        # целиком — отчёт обнулялся при первой же ручной оценке. Плюс на проде в
++        # `metrics` уже 13.8K записей чужой семантики (comment/manual_grant/
++        # escalated_at). Отдельная колонка снимает спор за одно поле.
++        #
++        # review-gate (2026-08-06) находка Б1: анализ идёт в отдельном процессе со
++        # СВОИМ семафором (`executor._LINT_SEMAPHORE`, лимит 2 — он не конкурирует
++        # с исполнением turtle-кода), но синхронно занимает слот на время
+         # POST-запроса; уже просроченная попытка (attempt.time_expired == True ДО
+         # этого ответа) гарантированно обнуляется гейтом 2.3c ниже — анализ стиля
+         # заведомо мёртвого кода только тратит слот в ущерб другим ученикам. Гейт по
+@@ -649,20 +654,27 @@ async def submit_attempt_answers(
+         # из-за побочной метрики. executor.run_code_quality_check сам не бросает
+         # (см. её докстринг), но try/except здесь — то же defense-in-depth, что и
+         # у soft-fail гейтов 2.4b/2.4c/2.4d ниже.
+-        code_quality_metrics: Optional[dict] = None
++        # Отчёт секционирован сразу: `code_quality` — то, что умеем сейчас; секции
++        # `ai_authorship` и `timing` добавятся этапом 3, когда появится LLM-транспорт
++        # и телеметрия времени. Читатель (кабинет преподавателя) написан под секции,
++        # поэтому их появление не сломает разбор.
++        code_review_report: Optional[dict] = None
+         if solution_rules.turtle_sim is not None and not attempt.time_expired:
+             student_code = answer.response.value or ""
+             if student_code.strip():
+                 try:
+-                    code_quality_metrics = await asyncio.to_thread(
++                    quality = await asyncio.to_thread(
+                         analyze_student_code_quality, student_code,
+                     )
+                 except Exception:
+                     logger.warning(
+                         "tsk-302: анализ качества кода упал (attempt=%s task=%s), "
+-                        "приём ответа продолжается без metrics",
++                        "приём ответа продолжается без code_review",
+                         attempt.id, task.id, exc_info=True,
+                     )
++                else:
++                    if quality is not None:
++                        code_review_report = {"code_quality": quality}
+ 
+         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
+         now = datetime.now(timezone.utc)
+@@ -840,7 +852,7 @@ async def submit_attempt_answers(
+                 user_id=attempt.user_id,
+                 answer=answer,
+                 check_result=check_result,
+-                metrics=code_quality_metrics,
++                code_review=code_review_report,
+                 source_system=attempt.source_system,
+                 commit=False,
+             )
+@@ -853,7 +865,7 @@ async def submit_attempt_answers(
+                 user_id=attempt.user_id,
+                 answer=answer,
+                 check_result=check_result,
+-                metrics=code_quality_metrics,
++                code_review=code_review_report,
+                 source_system=attempt.source_system,
+             )
+ 
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index ba7324d..b20b475 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -330,13 +330,24 @@ async def manual_check_task_result(
+         )
+     
+     # РћР±РЅРѕРІР»СЏРµРј СЂРµР·СѓР»СЊС‚Р°С‚; СЌС‚Р°Рї 3.9: СЃР±СЂР°СЃС‹РІР°РµРј claim РїРѕСЃР»Рµ РїСЂРѕРІРµСЂРєРё
+-    update_data = TaskResultUpdate(
+-        score=score,
+-        checked_by=checked_by,
+-        checked_at=datetime.now(),
+-        is_correct=payload_data.get("is_correct"),
+-        metrics=payload_data.get("metrics"),
+-    )
++    # tsk-302 этап 0: поля, которых НЕТ в теле запроса, не должны затираться.
++    # Прежняя редакция передавала `metrics=payload_data.get("metrics")` безусловно,
++    # то есть ЯВНО — и `exclude_unset=True` такое поле уже не отбрасывает (оно
++    # «выставлено», пусть и в None). Итог: каждая ручная дооценка обнуляла metrics,
++    # унося комментарий предыдущей проверки. Тот же дефект был у `is_correct`.
++    # `payload_data` собран через `model_dump(exclude_unset=True)` выше, поэтому
++    # проверка «ключ пришёл» здесь достоверна и отличает «не прислано» от «прислан null».
++    update_kwargs: dict = {
++        "score": score,
++        "checked_by": checked_by,
++        "checked_at": datetime.now(),
++    }
++    if "is_correct" in payload_data:
++        update_kwargs["is_correct"] = payload_data["is_correct"]
++    if "metrics" in payload_data:
++        update_kwargs["metrics"] = payload_data["metrics"]
++
++    update_data = TaskResultUpdate(**update_kwargs)
+     update_dict = update_data.model_dump(exclude_unset=True)
+     update_dict["review_claimed_by"] = None
+     update_dict["review_claim_token"] = None
+diff --git a/app/models/task_results.py b/app/models/task_results.py
+index 7c0fbbf..061e4de 100644
+--- a/app/models/task_results.py
++++ b/app/models/task_results.py
+@@ -85,6 +85,16 @@ class TaskResults(Base):
+         JSONB,
+         comment="Метрики качества ответа",
+     )
++    code_review: Mapped[Optional[dict]] = mapped_column(
++        JSONB,
++        nullable=True,
++        comment=(
++            "tsk-302: машинная оценка работы — чистота кода, признак ИИ-авторства, "
++            "время решения. Отдельно от `metrics` намеренно: то поле несёт ручную "
++            "проверку преподавателя и обнуляется ею при каждой дооценке "
++            "(см. миграцию tsk302_code_review). Ученику не показывается."
++        ),
++    )
+     count_retry: Mapped[int] = mapped_column(
+         SmallInteger,
+         server_default=text("0"),
+diff --git a/app/schemas/task_results.py b/app/schemas/task_results.py
+index 0513d2c..8dfc19a 100644
+--- a/app/schemas/task_results.py
++++ b/app/schemas/task_results.py
+@@ -17,6 +17,14 @@ class TaskResultCreate(BaseModel):
+     user_id: int = Field(..., description="ID пользователя, выполнившего задачу", examples=[10, 15])
+     task_id: int = Field(..., description="ID задачи", examples=[1, 5])
+     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Хороший ответ"}])
++    code_review: Optional[Any] = Field(
++        None,
++        description=(
++            "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). "
++            "Отдельно от metrics: то поле несёт ручную проверку и обнуляется ею. Ученику не показывается."
++        ),
++        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
++    )
+     count_retry: Optional[int] = Field(0, description="Количество попыток выполнения задачи", ge=0, examples=[0, 1, 2])
+ 
+     attempt_id: Optional[int] = Field(None, description="ID попытки, если результат привязан к попытке", examples=[1, 5])
+@@ -33,6 +41,11 @@ class TaskResultUpdate(BaseModel):
+     """
+     score: Optional[int] = Field(None, description="Набранный балл за задачу", ge=0, examples=[10, 5, 0])
+     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Обновленный комментарий"}])
++    code_review: Optional[Any] = Field(
++        None,
++        description="tsk-302: машинная оценка работы (чистота кода, признак ИИ, время решения)",
++        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
++    )
+     count_retry: Optional[int] = Field(None, description="Количество попыток выполнения задачи", ge=0, examples=[0, 1, 2])
+ 
+     attempt_id: Optional[int] = Field(None, description="ID попытки", examples=[1, 5])
+@@ -72,6 +85,14 @@ class TaskResultRead(BaseModel):
+     task_id: int = Field(..., description="ID задачи", examples=[1, 5])
+     submitted_at: datetime = Field(..., description="Время сдачи ответа", examples=["2026-02-16T12:00:00Z"])
+     metrics: Optional[Any] = Field(None, description="Метрики качества ответа (произвольный JSON)", examples=[{}, {"comment": "Хороший ответ"}])
++    code_review: Optional[Any] = Field(
++        None,
++        description=(
++            "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). "
++            "Ученику не показывается — читают преподаватель и методист."
++        ),
++        examples=[{"code_quality": {"pylint": {"score": 8.75}}}, None],
++    )
+     count_retry: int = Field(..., description="Количество попыток выполнения задачи", examples=[0, 1, 2])
+     received_at: datetime = Field(..., description="Время начала выполнения задачи", examples=["2026-02-16T12:00:00Z"])
+ 
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index d543f67..c2a142b 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -87,6 +87,18 @@ class ReviewClaimItem(BaseModel):
+     # tsk-298 Фаза 2: attempt_id нужен веб-порталу для построения URL скачивания
+     # вложений ответа (`/attempts/{attempt_id}/attachments/{id}`). Аддитивно.
+     attempt_id: Optional[int] = None
++    # tsk-302 этап 0: машинная оценка работы (чистота кода; далее — признак
++    # ИИ-авторства и время решения). Аддитивно и опционально: у работ, сданных до
++    # включения оценки, и у не-кодовых заданий поле остаётся null, клиент просто
++    # не рисует блок. Ученику это поле не уходит — оно только здесь и в
++    # `TaskResultRead`, обе поверхности доступны лишь персоналу.
++    code_review: Optional[Dict[str, Any]] = Field(
++        None,
++        description=(
++            "Машинная оценка работы: секции `code_quality`, далее `ai_authorship` и "
++            "`timing`. Null — оценки нет (не код, старая работа, сбой анализа)."
++        ),
++    )
+ 
+ 
+ # ----- Review pending list (tsk-298 Фаза 2, teacher-scoped очередь для веб-портала) -----
+diff --git a/app/services/code_quality_service.py b/app/services/code_quality_service.py
+index 579f6eb..39d3af5 100644
+--- a/app/services/code_quality_service.py
++++ b/app/services/code_quality_service.py
+@@ -10,22 +10,26 @@ turtle-песочница, tsk-412, через сравнение трассы 
+ tsk-302, 2026-08-06): функция намеренно не встраивается в `CheckResult`,
+ который эхо-возвращается ученику в ответе `POST /attempts/{id}/answers`
+ (`AttemptAnswerResult.check_result`). Вызывающая сторона (`app/api/v1/attempts.py`)
+-кладёт результат напрямую в `metrics` при записи `task_results`.
++кладёт результат в `task_results.code_review` — отдельную колонку, секцией
++`{"code_quality": ...}`.
+ 
+-ГДЕ `metrics` РЕАЛЬНО ВЫХОДИТ НАРУЖУ (проверено разведкой 2026-08-06; прежняя
+-редакция этого докстринга называла `detail/by-user` и `stats/*` — НЕВЕРНО, они
+-`metrics` не возвращают вовсе): только эндпоинты с `response_model=TaskResultRead`
+-— `GET /task-results/by-user/{user_id}`, `by-task/{task_id}`, `by-attempt/{attempt_id}`,
+-`by-pending-review`, `POST /task-results/{id}/manual-check` и generic-CRUD
+-`/task-results/{item_id}`. Ученику эти маршруты недоступны (роль/сервисный ключ).
++ГДЕ `code_review` ВЫХОДИТ НАРУЖУ (этап 0, 2026-08-06):
++- `ReviewClaimItem` — захват работы преподавателем (`POST /teacher/reviews/{id}/claim`,
++  `claim-next`), это и есть экран проверки в SPW;
++- эндпоинты с `response_model=TaskResultRead` — `by-user`, `by-task`, `by-attempt`,
++  `by-pending-review`, `manual-check`, generic-CRUD `/task-results/{item_id}`.
++Все перечисленные требуют роли teacher/methodist/admin либо сервисного ключа —
++ученику ни один недоступен. Инвариант «ученик не видит» закреплён тестами
++`tests/test_code_quality_tsk302.py` (страж по схемам ответа на сдачу).
+ 
+-ДВА ИЗВЕСТНЫХ ДЕФЕКТА ЭТОЙ СХЕМЫ (tsk-302, обнаружены 2026-08-06, чинятся отдельно):
+-1. `POST /task-results/{id}/manual-check` передаёт `metrics` в `TaskResultUpdate`
+-   ЯВНО, поэтому `model_dump(exclude_unset=True)` его не отбрасывает — ручная
+-   проверка преподавателя ПЕРЕЗАПИСЫВАЕТ (обнуляет) этот отчёт.
+-2. Ни `PendingReviewItem`, ни `ReviewClaimItem` (`app/schemas/teacher_next_modes.py`,
+-   маршруты `/teacher/reviews/*`) поля `metrics` НЕ содержат — то есть на экране
+-   проверки работы преподаватель этот отчёт сейчас не видит в принципе.
++ПОЧЕМУ ОТДЕЛЬНАЯ КОЛОНКА, А НЕ `metrics` (оба дефекта ЗАКРЫТЫ этапом 0):
++1. `manual-check` передавал `metrics` в `TaskResultUpdate` безусловно, из-за чего
++   `model_dump(exclude_unset=True)` его не отбрасывал и ручная проверка ОБНУЛЯЛА
++   отчёт. Починено: тело собирается только из реально присланных ключей.
++2. Кабинет преподавателя поля не отдавал вовсе. Починено: `ReviewClaimItem`
++   получил `code_review`, оба пути захвата работы его читают.
++Плюс `metrics` уже несёт чужую семантику (комментарий преподавателя, `manual_grant`,
++метки эскалаций) — держать там третью сущность значит спорить за одно поле.
+ """
+ 
+ from __future__ import annotations
+diff --git a/app/services/task_results_service.py b/app/services/task_results_service.py
+index d454562..2368bf2 100644
+--- a/app/services/task_results_service.py
++++ b/app/services/task_results_service.py
+@@ -61,6 +61,7 @@ class TaskResultsService(BaseService[TaskResults]):
+         check_result: CheckResult,
+         source_system: str = "system",
+         metrics: Any | None = None,
++        code_review: Any | None = None,
+         count_retry: int = 0,
+         commit: bool = True,
+     ) -> TaskResults:
+@@ -74,7 +75,10 @@ class TaskResultsService(BaseService[TaskResults]):
+         :param answer: Исходный ответ ученика (StudentAnswer).
+         :param check_result: Результат проверки (CheckResult).
+         :param source_system: Источник системы.
+-        :param metrics: Доп. метрики (опционально).
++        :param metrics: Доп. метрики (опционально). ВНИМАНИЕ: это поле ручной проверки —
++            `manual-check` его перезаписывает. Машинную оценку класть в `code_review`.
++        :param code_review: Машинная оценка работы (tsk-302): чистота кода, признак
++            ИИ-авторства, время решения. Ученику не показывается.
+         :param count_retry: Номер попытки/кол-во попыток.
+         :param commit: Если False — только flush (для внешней транзакции, tsk-273:
+             запись идёт внутри критической секции под advisory-lock, коммит — снаружи).
+@@ -84,6 +88,7 @@ class TaskResultsService(BaseService[TaskResults]):
+             user_id=user_id,
+             task_id=task_id,
+             metrics=metrics,
++            code_review=code_review,
+             count_retry=count_retry,
+             attempt_id=attempt_id,
+             answer_json=answer.model_dump(),
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 3fd5a35..78849b1 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -410,7 +410,7 @@ async def claim_next_review(
+             SET review_claimed_by = :teacher_id, review_claim_token = :token, review_claim_expires_at = :expires_at
+             FROM cand
+             WHERE tr.id = cand.id
+-            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id
++            RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at, tr.max_score, tr.is_correct, tr.answer_json, tr.attempt_id, tr.code_review
+         """),  # nosec B608 — REVIEW_ACL_SQL/course_cond/user_cond из закрытого набора литералов
+         params,
+     )
+@@ -423,7 +423,7 @@ async def claim_next_review(
+                 _idempotency_cache[cache_key] = (None, None, None, cache_until)
+         return (None, None, None)
+ 
+-    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val = row
++    result_id, task_id, user_id_val, score, submitted_at, max_score, is_correct, answer_json, attempt_id_val, code_review = row
+     # Догрузить task title и user name для ответа
+     r2 = await db.execute(
+         text("""
+@@ -462,6 +462,9 @@ async def claim_next_review(
+         "user_name": user_name,
+         "course_id": course_id_val,
+         "attempt_id": attempt_id_val,
++        # tsk-302 этап 0: машинная оценка работы для экрана проверки. Без неё
++        # преподаватель не видел отчёт вовсе — он писался в БД и никуда не отдавался.
++        "code_review": code_review,
+     }
+     if idempotency_key:
+         cache_until = expires_at + timedelta(seconds=_IDEM_SUCCESS_BUFFER_SEC)
+@@ -620,7 +623,8 @@ async def claim_review_by_id(
+                    OR tr.review_claimed_by = :teacher_id)
+             RETURNING tr.id, tr.task_id, tr.user_id, tr.score, tr.submitted_at,
+                       tr.max_score, tr.is_correct, tr.answer_json, t.external_uid, t.course_id,
+-                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem'
++                      tr.attempt_id, t.task_content->>'title', t.task_content->>'stem',
++                      tr.code_review
+         """),
+         {
+             "result_id": result_id,
+@@ -641,7 +645,7 @@ async def claim_review_by_id(
+     (
+         rid, task_id, user_id_val, score, submitted_at,
+         max_score, is_correct, answer_json, task_external_uid, course_id_val, attempt_id_val,
+-        task_title_raw, task_stem,
++        task_title_raw, task_stem, code_review,
+     ) = urow
+     # tsk-298 follow-up: человекочитаемый заголовок вместо сырого external_uid.
+     task_title = humanize_task_title(task_id, task_title_raw, task_stem, task_external_uid)
+@@ -662,6 +666,8 @@ async def claim_review_by_id(
+         "user_name": urow2[0] if urow2 else None,
+         "course_id": course_id_val,
+         "attempt_id": attempt_id_val,
++        # tsk-302 этап 0: см. комментарий в claim_next — тот же контракт.
++        "code_review": code_review,
+     }
+     return (item, token, expires_at)
+ 
+diff --git a/tests/test_code_quality_tsk302.py b/tests/test_code_quality_tsk302.py
+index 478c3c9..6aeda0c 100644
+--- a/tests/test_code_quality_tsk302.py
++++ b/tests/test_code_quality_tsk302.py
+@@ -149,11 +149,35 @@ def test_check_result_schema_has_no_code_quality_field() -> None:
+     (AttemptAnswerResult.check_result, см. app/api/v1/attempts.py). Отчёт по
+     качеству кода НЕ должен попадать в эту схему ни сейчас, ни при будущих
+     правках — иначе он утечёт ученику в обход решения оператора "видимость
+-    только teacher/methodist" (2026-08-06). Отчёт передаётся отдельно, напрямую
+-    в task_results.metrics (см. app/api/v1/attempts.py, code_quality_metrics).
++    только teacher/methodist" (2026-08-06). Отчёт хранится отдельно, в колонке
++    task_results.code_review (см. app/api/v1/attempts.py, code_review_report).
+     """
+     assert "code_quality" not in CheckResult.model_fields
++    assert "code_review" not in CheckResult.model_fields
+     for field_name in CheckResult.model_fields:
+         assert "quality" not in field_name.lower(), (
+-            f"CheckResult.{field_name} похоже на утечку code_quality в ответ ученику"
++            f"CheckResult.{field_name} похоже на утечку оценки в ответ ученику"
+         )
++        assert "review" not in field_name.lower(), (
++            f"CheckResult.{field_name} похоже на утечку оценки в ответ ученику"
++        )
++
++
++def test_student_facing_answer_schemas_have_no_code_review() -> None:
++    """
++    Страж на ВСЮ цепочку ответа ученику на сдачу, а не только на CheckResult.
++
++    Ученик получает `AttemptAnswersResponse`, внутри — список `AttemptAnswerResult`,
++    внутри — `CheckResult`. Утечка возможна на любом из трёх уровней: достаточно
++    кому-то добавить поле «чтобы фронту было удобнее», и машинная оценка окажется
++    у того, от кого её прячут. Проверяем все три яруса разом.
++    """
++    from app.schemas.attempts import AttemptAnswerResult, AttemptAnswersResponse
++
++    for schema in (AttemptAnswersResponse, AttemptAnswerResult, CheckResult):
++        for field_name in schema.model_fields:
++            lowered = field_name.lower()
++            assert "code_review" not in lowered and "code_quality" not in lowered, (
++                f"{schema.__name__}.{field_name} утекает машинную оценку ученику — "
++                "она предназначена только преподавателю и методисту (tsk-302)"
++            )
+diff --git a/app/db/migrations/versions/20260806_210000_tsk302_code_review.py b/app/db/migrations/versions/20260806_210000_tsk302_code_review.py
+new file mode 100644
+index 0000000..8e21184
+--- /dev/null
++++ b/app/db/migrations/versions/20260806_210000_tsk302_code_review.py
+@@ -0,0 +1,69 @@
++"""tsk-302 этап 0: отдельное поле под машинную оценку работы ученика.
++
++**Почему не `task_results.metrics`, где отчёт лежал изначально.** Два независимых
++дефекта, найденных 2026-08-06:
++
++1. `POST /task-results/{id}/manual-check` передаёт `metrics` в `TaskResultUpdate`
++   явно, поэтому `model_dump(exclude_unset=True)` его не отбрасывает — первая же
++   ручная проверка преподавателя ОБНУЛЯЕТ содержимое поля. Отчёт, который никто
++   не восстановит, живёт до ближайшего клика преподавателя.
++2. `metrics` уже несёт чужую семантику: на проде 13.8K записей с ключами
++   `comment` (комментарий преподавателя), `manual_grant`, `escalated_at`,
++   `completion_escalated_at`. Дописывать туда третью сущность — гарантированный
++   спор за одно поле между ручной проверкой и машинной оценкой.
++
++Отдельная колонка снимает оба вопроса разом: у ручной оценки своё поле, у
++машинной — своё, и перезапись одной не задевает другую.
++
++**Структура значения** (JSONB, форма задаётся приложением, не БД):
++`{"code_quality": {...}, "ai_authorship": {...}, "timing": {...}}` — секции
++необязательные и появляются по мере готовности источников. Схему намеренно не
++фиксируем constraint'ом: состав сигналов будет меняться (сейчас pylint/radon по
++Python, дальше — ИИ-оценка любого языка и время решения), а миграция ради
++каждого нового ключа — цена без выгоды.
++
++**Видимость.** Поле не показывается ученику: оно не входит ни в `CheckResult`,
++который эхом уходит в ответ на сдачу, ни в какие ученические схемы. Читают его
++преподаватель и методист (`ReviewClaimItem`) — решение оператора 2026-08-06.
++
++Rollback: `alembic downgrade tsk303_feedback_reports` — колонка удаляется вместе
++с накопленными оценками. Данные машинные и пересчитываемые, ручной труд
++преподавателей в ней не хранится, поэтому потеря не критична.
++
++Revision ID: tsk302_code_review
++Revises: tsk303_feedback_reports
++Create Date: 2026-08-06
++"""
++
++from __future__ import annotations
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++from sqlalchemy.dialects import postgresql
++
++revision: str = "tsk302_code_review"
++down_revision: Union[str, None] = "tsk303_feedback_reports"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column(
++        "task_results",
++        sa.Column(
++            "code_review",
++            postgresql.JSONB(astext_type=sa.Text()),
++            nullable=True,
++            comment=(
++                "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, "
++                "время решения). Видна преподавателю и методисту, не ученику. "
++                "Отдельно от metrics, которое несёт ручную проверку."
++            ),
++        ),
++    )
++
++
++def downgrade() -> None:
++    op.drop_column("task_results", "code_review")
+diff --git a/tests/test_code_review_stage0_tsk302.py b/tests/test_code_review_stage0_tsk302.py
+new file mode 100644
+index 0000000..aaa3e49
+--- /dev/null
++++ b/tests/test_code_review_stage0_tsk302.py
+@@ -0,0 +1,239 @@
++# tests/test_code_review_stage0_tsk302.py
++"""
++tsk-302 этап 0: машинная оценка работы доезжает до преподавателя и переживает
++ручную проверку.
++
++Закрывает два дефекта, найденных 2026-08-06:
++
++1. `POST /task-results/{id}/manual-check` затирал `metrics`, потому что передавал
++   поле в `TaskResultUpdate` ЯВНО — `exclude_unset=True` такое поле не отбрасывает.
++   Первая же ручная дооценка обнуляла комментарий предыдущей проверки.
++2. Машинная оценка писалась в `metrics` и не отдавалась НИ ОДНИМ эндпоинтом
++   кабинета преподавателя (`PendingReviewItem`/`ReviewClaimItem` его не содержали) —
++   то есть копилась в БД и никуда не показывалась.
++"""
++from __future__ import annotations
++
++import json
++import os
++import random
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++_API_KEY = (os.environ.get("VALID_API_KEYS") or "").split(",")[0].strip()
++
++_SAMPLE_REPORT = {
++    "code_quality": {
++        "pylint": {"score": 8.75, "messages": [{"symbol": "magic-value-comparison", "line": 4}]},
++        "radon": {"maintainability_index": 75.16, "complexity": []},
++    }
++}
++
++
++async def _create_methodist(db) -> tuple[int, str]:
++    """Методист видит весь pool проверок (REVIEW_ACL_SQL bypass) — не зависим от teacher_courses."""
++    u = Users(
++        email=f"tsk302-mth-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="tsk302-methodist", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, id FROM roles WHERE name='methodist' ON CONFLICT DO NOTHING"
++        ),
++        {"u": u.id},
++    )
++    await db.commit()
++    return u.id, token
++
++
++async def _create_student(db) -> int:
++    u = Users(
++        email=f"tsk302-stud-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="tsk302-stud", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await db.commit()
++    return u.id
++
++
++async def _create_task(db, *, course_id: int = 1) -> int:
++    """SA_COM с manual_review_required — попадает в обязательную очередь проверки."""
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
++            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), :cid, 1) RETURNING id"
++        ),
++        {
++            "ext": f"tsk302-stage0-{random.randint(10**8, 10**10)}",
++            "content": json.dumps({"type": "SA_COM", "stem": "напиши программу"}),
++            "rules": json.dumps({"max_score": 10, "manual_review_required": True}),
++            "cid": course_id,
++        },
++    )
++    tid = res.scalar_one()
++    await db.commit()
++    return tid
++
++
++async def _create_result(
++    db, *, user_id: int, task_id: int, code_review: dict | None, metrics: dict | None = None,
++) -> int:
++    now = datetime.now(timezone.utc)
++    res = await db.execute(
++        text(
++            "INSERT INTO task_results "
++            "(score, user_id, task_id, submitted_at, count_retry, received_at, max_score, "
++            " source_system, is_correct, code_review, metrics) "
++            "VALUES (:s, :u, :t, :now, 0, :now, 10, 'spw', NULL, "
++            "        CAST(:cr AS jsonb), CAST(:m AS jsonb)) RETURNING id"
++        ),
++        {
++            "s": 0, "u": user_id, "t": task_id, "now": now,
++            "cr": json.dumps(code_review) if code_review is not None else None,
++            "m": json.dumps(metrics) if metrics is not None else None,
++        },
++    )
++    rid = res.scalar_one()
++    await db.commit()
++    return rid
++
++
++async def _cleanup(db, *, ids: list[int], task_ids: list[int], rids: list[int]) -> None:
++    if rids:
++        await db.execute(text("DELETE FROM task_results WHERE id = ANY(:r)"), {"r": rids})
++    if task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": task_ids})
++    await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": ids})
++    await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": ids})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": ids})
++    await db.commit()
++
++
++# ---------- Дефект 1: ручная проверка не должна затирать чужие поля ----------
++
++@pytest.mark.skipif(not _API_KEY, reason="нужен VALID_API_KEYS для legacy-эндпоинта manual-check")
++async def test_manual_check_without_metrics_keeps_existing_metrics(db, client) -> None:
++    """Тело без `metrics` НЕ обнуляет уже записанный комментарий предыдущей проверки."""
++    student_id = await _create_student(db)
++    task_id = await _create_task(db)
++    existing = {"comment": "комментарий первой проверки", "manual_grant": True}
++    rid = await _create_result(db, user_id=student_id, task_id=task_id, code_review=None, metrics=existing)
++    try:
++        resp = await client.post(
++            f"/api/v1/task-results/{rid}/manual-check?api_key={_API_KEY}",
++            json={"score": 7, "checked_by": student_id},  # metrics НЕ передан
++        )
++        assert resp.status_code == 200, resp.text
++
++        row = (await db.execute(
++            text("SELECT metrics FROM task_results WHERE id = :r"), {"r": rid}
++        )).scalar_one()
++        assert row == existing, "ручная проверка без metrics не должна затирать существующие"
++    finally:
++        await _cleanup(db, ids=[student_id], task_ids=[task_id], rids=[rid])
++
++
++@pytest.mark.skipif(not _API_KEY, reason="нужен VALID_API_KEYS для legacy-эндпоинта manual-check")
++async def test_manual_check_with_metrics_still_overwrites(db, client) -> None:
++    """Явно переданный `metrics` по-прежнему записывается — прежнее поведение сохранено."""
++    student_id = await _create_student(db)
++    task_id = await _create_task(db)
++    rid = await _create_result(
++        db, user_id=student_id, task_id=task_id, code_review=None, metrics={"comment": "старое"},
++    )
++    try:
++        resp = await client.post(
++            f"/api/v1/task-results/{rid}/manual-check?api_key={_API_KEY}",
++            json={"score": 9, "checked_by": student_id, "metrics": {"comment": "новое"}},
++        )
++        assert resp.status_code == 200, resp.text
++
++        row = (await db.execute(
++            text("SELECT metrics FROM task_results WHERE id = :r"), {"r": rid}
++        )).scalar_one()
++        assert row == {"comment": "новое"}
++    finally:
++        await _cleanup(db, ids=[student_id], task_ids=[task_id], rids=[rid])
++
++
++@pytest.mark.skipif(not _API_KEY, reason="нужен VALID_API_KEYS для legacy-эндпоинта manual-check")
++async def test_manual_check_never_touches_code_review(db, client) -> None:
++    """
++    Машинная оценка переживает ручную проверку — ради этого она и вынесена из `metrics`.
++
++    Это главный регрессионный страж этапа 0: пока отчёт лежал в `metrics`, любая
++    дооценка преподавателем стирала его безвозвратно.
++    """
++    student_id = await _create_student(db)
++    task_id = await _create_task(db)
++    rid = await _create_result(db, user_id=student_id, task_id=task_id, code_review=_SAMPLE_REPORT)
++    try:
++        resp = await client.post(
++            f"/api/v1/task-results/{rid}/manual-check?api_key={_API_KEY}",
++            json={"score": 10, "checked_by": student_id, "is_correct": True,
++                  "metrics": {"comment": "проверено"}},
++        )
++        assert resp.status_code == 200, resp.text
++
++        row = (await db.execute(
++            text("SELECT code_review FROM task_results WHERE id = :r"), {"r": rid}
++        )).scalar_one()
++        assert row == _SAMPLE_REPORT, "ручная проверка не должна трогать машинную оценку"
++    finally:
++        await _cleanup(db, ids=[student_id], task_ids=[task_id], rids=[rid])
++
++
++# ---------- Дефект 2: оценка обязана доезжать до преподавателя ----------
++
++async def test_claim_returns_code_review(db, client) -> None:
++    """`POST /teacher/reviews/{id}/claim` отдаёт машинную оценку — раньше поля не было вовсе."""
++    methodist_id, token = await _create_methodist(db)
++    student_id = await _create_student(db)
++    task_id = await _create_task(db)
++    rid = await _create_result(db, user_id=student_id, task_id=task_id, code_review=_SAMPLE_REPORT)
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/reviews/{rid}/claim",
++            json={"teacher_id": methodist_id, "ttl_sec": 60},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        item = resp.json()["item"]
++        assert item["code_review"] == _SAMPLE_REPORT
++        assert item["code_review"]["code_quality"]["pylint"]["score"] == 8.75
++    finally:
++        await _cleanup(db, ids=[methodist_id, student_id], task_ids=[task_id], rids=[rid])
++
++
++async def test_claim_without_report_returns_null_not_error(db, client) -> None:
++    """
++    Работа без машинной оценки (не код, старая сдача, сбой анализа) отдаётся с null.
++
++    Поле аддитивное и опциональное: клиент просто не рисует блок, а не падает.
++    """
++    methodist_id, token = await _create_methodist(db)
++    student_id = await _create_student(db)
++    task_id = await _create_task(db)
++    rid = await _create_result(db, user_id=student_id, task_id=task_id, code_review=None)
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/reviews/{rid}/claim",
++            json={"teacher_id": methodist_id, "ttl_sec": 60},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["item"]["code_review"] is None
++    finally:
++        await _cleanup(db, ids=[methodist_id, student_id], task_ids=[task_id], rids=[rid])
