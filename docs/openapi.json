@@ -45015,6 +45015,19 @@
               }
             ],
             "title": "Attempt Id"
+          },
+          "code_review": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Review",
+            "description": "Машинная оценка работы: секции `code_quality`, далее `ai_authorship` и `timing`. Null — оценки нет (не код, старая работа, сбой анализа)."
           }
         },
         "type": "object",
