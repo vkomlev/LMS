@@ -49363,6 +49363,26 @@
               }
             ]
           },
+          "code_review": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Review",
+            "description": "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). Отдельно от metrics: то поле несёт ручную проверку и обнуляется ею. Ученику не показывается.",
+            "examples": [
+              {
+                "code_quality": {
+                  "pylint": {
+                    "score": 8.75
+                  }
+                }
+              },
+              null
+            ]
+          },
           "count_retry": {
             "anyOf": [
               {
@@ -49642,6 +49662,26 @@
               }
             ]
           },
+          "code_review": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Review",
+            "description": "tsk-302: машинная оценка работы (чистота кода, признак ИИ-авторства, время решения). Ученику не показывается — читают преподаватель и методист.",
+            "examples": [
+              {
+                "code_quality": {
+                  "pylint": {
+                    "score": 8.75
+                  }
+                }
+              },
+              null
+            ]
+          },
           "count_retry": {
             "type": "integer",
             "title": "Count Retry",
@@ -49846,6 +49886,26 @@
               {
                 "comment": "Обновленный комментарий"
               }
+            ]
+          },
+          "code_review": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code Review",
+            "description": "tsk-302: машинная оценка работы (чистота кода, признак ИИ, время решения)",
+            "examples": [
+              {
+                "code_quality": {
+                  "pylint": {
+                    "score": 8.75
+                  }
+                }
+              },
+              null
             ]
           },
           "count_retry": {
