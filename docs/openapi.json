@@ -27461,6 +27461,142 @@
         }
       }
     },
+    "/api/v1/students/{student_id}/lesson-reminders/pending": {
+      "get": {
+        "tags": [
+          "student_lesson_reminders"
+        ],
+        "summary": "Pending lesson_reminder для ученика (tsk-431)",
+        "description": "Read-only. Используется TG_LMS student-поллером (tsk-431).\n\nKind жёстко зафиксирован на `lesson_reminder` — эндпоинт называется по\nзадаче, которую решает, не общий inbox-proxy (для этого есть\n`/me/notifications`, недоступный сервисному токену).",
+        "operationId": "list_pending_lesson_reminders_api_v1_students__student_id__lesson_reminders_pending_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Если указано — только события с created_at >= since (ISO8601)",
+              "title": "Since"
+            },
+            "description": "Если указано — только события с created_at >= since (ISO8601)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список (возможно пустой)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentLessonReminderPendingResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Не свой user_id и не сервисный токен"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/students/{student_id}/dashboard": {
       "get": {
         "tags": [
@@ -46569,6 +46705,83 @@
         ],
         "title": "StudentHelpRequestResponse",
         "description": "Текущая заявка помощи ученика по заданию.\n\nПризнаки `can_*` считает сервер: гейты уровней лестницы — часть правил, и\nвторой их экземпляр в клиенте неизбежно с ними разъедется."
+      },
+      "StudentLessonReminderItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "kind",
+          "payload"
+        ],
+        "title": "StudentLessonReminderItem",
+        "description": "Элемент списка pending lesson_reminder для ученика."
+      },
+      "StudentLessonReminderPendingResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudentLessonReminderItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count",
+            "description": "Длина items (≤ limit)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "StudentLessonReminderPendingResponse",
+        "description": "Ответ /students/{student_id}/lesson-reminders/pending."
       },
       "StudentPaymentRead": {
         "properties": {

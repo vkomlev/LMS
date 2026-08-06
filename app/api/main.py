@@ -410,6 +410,10 @@ app.include_router(lesson_occurrences_router, prefix=API_PREFIX)
 from app.api.v1.teacher_lesson_occurrences import router as teacher_lesson_occurrences_router
 app.include_router(teacher_lesson_occurrences_router, prefix=API_PREFIX)
 
+# tsk-431 (Календарь LMS Фаза 4): pending lesson_reminder для TG_LMS student-поллера
+from app.api.v1.student_lesson_reminders import router as student_lesson_reminders_router
+app.include_router(student_lesson_reminders_router, prefix=API_PREFIX)
+
 # tsk-494 (дашборд ученика — данные/API для будущего кабинета родителя tsk-478)
 from app.api.v1.student_dashboard import router as student_dashboard_router
 app.include_router(student_dashboard_router, prefix=API_PREFIX)

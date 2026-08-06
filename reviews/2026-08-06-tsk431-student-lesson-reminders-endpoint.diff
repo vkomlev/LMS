@@ -1,0 +1,532 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 365d10d..2a121d0 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -410,6 +410,10 @@ app.include_router(lesson_occurrences_router, prefix=API_PREFIX)
+ from app.api.v1.teacher_lesson_occurrences import router as teacher_lesson_occurrences_router
+ app.include_router(teacher_lesson_occurrences_router, prefix=API_PREFIX)
+ 
++# tsk-431 (Календарь LMS Фаза 4): pending lesson_reminder для TG_LMS student-поллера
++from app.api.v1.student_lesson_reminders import router as student_lesson_reminders_router
++app.include_router(student_lesson_reminders_router, prefix=API_PREFIX)
++
+ # tsk-494 (дашборд ученика — данные/API для будущего кабинета родителя tsk-478)
+ from app.api.v1.student_dashboard import router as student_dashboard_router
+ app.include_router(student_dashboard_router, prefix=API_PREFIX)
+diff --git a/docs/openapi.json b/docs/openapi.json
+index ad0a8b7..539af10 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -27461,6 +27461,142 @@
+         }
+       }
+     },
++    "/api/v1/students/{student_id}/lesson-reminders/pending": {
++      "get": {
++        "tags": [
++          "student_lesson_reminders"
++        ],
++        "summary": "Pending lesson_reminder для ученика (tsk-431)",
++        "description": "Read-only. Используется TG_LMS student-поллером (tsk-431).\n\nKind жёстко зафиксирован на `lesson_reminder` — эндпоинт называется по\nзадаче, которую решает, не общий inbox-proxy (для этого есть\n`/me/notifications`, недоступный сервисному токену).",
++        "operationId": "list_pending_lesson_reminders_api_v1_students__student_id__lesson_reminders_pending_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "student_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Student Id"
++            }
++          },
++          {
++            "name": "since",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string",
++                  "format": "date-time"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "description": "Если указано — только события с created_at >= since (ISO8601)",
++              "title": "Since"
++            },
++            "description": "Если указано — только события с created_at >= since (ISO8601)"
++          },
++          {
++            "name": "limit",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "type": "integer",
++              "maximum": 500,
++              "minimum": 1,
++              "default": 100,
++              "title": "Limit"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Список (возможно пустой)",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/StudentLessonReminderPendingResponse"
++                }
++              }
++            }
++          },
++          "401": {
++            "description": "Не аутентифицирован"
++          },
++          "403": {
++            "description": "Не свой user_id и не сервисный токен"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/students/{student_id}/dashboard": {
+       "get": {
+         "tags": [
+@@ -46570,6 +46706,83 @@
+         "title": "StudentHelpRequestResponse",
+         "description": "Текущая заявка помощи ученика по заданию.\n\nПризнаки `can_*` считает сервер: гейты уровней лестницы — часть правил, и\nвторой их экземпляр в клиенте неизбежно с ними разъедется."
+       },
++      "StudentLessonReminderItem": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "created_at": {
++            "type": "string",
++            "format": "date-time",
++            "title": "Created At"
++          },
++          "kind": {
++            "type": "string",
++            "title": "Kind"
++          },
++          "title": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Title"
++          },
++          "payload": {
++            "additionalProperties": true,
++            "type": "object",
++            "title": "Payload"
++          },
++          "read_at": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date-time"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Read At"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "created_at",
++          "kind",
++          "payload"
++        ],
++        "title": "StudentLessonReminderItem",
++        "description": "Элемент списка pending lesson_reminder для ученика."
++      },
++      "StudentLessonReminderPendingResponse": {
++        "properties": {
++          "items": {
++            "items": {
++              "$ref": "#/components/schemas/StudentLessonReminderItem"
++            },
++            "type": "array",
++            "title": "Items"
++          },
++          "count": {
++            "type": "integer",
++            "title": "Count",
++            "description": "Длина items (≤ limit)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "items",
++          "count"
++        ],
++        "title": "StudentLessonReminderPendingResponse",
++        "description": "Ответ /students/{student_id}/lesson-reminders/pending."
++      },
+       "StudentPaymentRead": {
+         "properties": {
+           "id": {
+warning: in the working copy of 'app/api/v1/student_lesson_reminders.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/api/v1/student_lesson_reminders.py b/app/api/v1/student_lesson_reminders.py
+new file mode 100644
+index 0000000..74d6e0a
+--- /dev/null
++++ b/app/api/v1/student_lesson_reminders.py
+@@ -0,0 +1,112 @@
++"""tsk-431 (Календарь LMS Фаза 4): GET /students/{student_id}/lesson-reminders/pending.
++
++Позволяет TG_LMS student-боту (сервисный X-API-Key, общий на всех учеников)
++прочитать `lesson_reminder`-события конкретного ученика из inbox `Notifications`
++(tsk-429), чтобы продублировать напоминание в Telegram — без нового вебхука,
++read-only поверх существующей таблицы.
++
++До этого эндпоинта service-key бот не мог получить per-ученический список:
++`/me/notifications` требует `require_authenticated` и отвергает сервисный токен
++(403), а legacy `/api/v1/notifications/` не фильтрует по user_id/kind вовсе.
++
++Identity-гейт — тот же приём, что в `messages_extra.py::get_messages_for_user`
++(explicit `user_id` в query + `current_user.is_service` bypass), а не
++role-гейт `methodist/escalations/pending` — тот привязан к `current_user.id`,
++что делает его непригодным для сервисного токена, читающего ЗА разных учеников
++одним и тем же ключом (см. разведку tsk-431).
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime
++from typing import Optional
++
++from fastapi import APIRouter, Depends, HTTPException, Query, status
++from pydantic import BaseModel, Field
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_async_db, get_current_user
++from app.auth.current_user import CurrentUser
++
++router = APIRouter(prefix="/students", tags=["student_lesson_reminders"])
++logger = logging.getLogger("api.student_lesson_reminders")
++
++
++class StudentLessonReminderItem(BaseModel):
++    """Элемент списка pending lesson_reminder для ученика."""
++    id: int
++    created_at: datetime
++    kind: str
++    title: Optional[str] = None
++    payload: dict
++    read_at: Optional[datetime] = None
++
++
++class StudentLessonReminderPendingResponse(BaseModel):
++    """Ответ /students/{student_id}/lesson-reminders/pending."""
++    items: list[StudentLessonReminderItem]
++    count: int = Field(..., description="Длина items (≤ limit)")
++
++
++@router.get(
++    "/{student_id}/lesson-reminders/pending",
++    response_model=StudentLessonReminderPendingResponse,
++    status_code=status.HTTP_200_OK,
++    summary="Pending lesson_reminder для ученика (tsk-431)",
++    responses={
++        200: {"description": "Список (возможно пустой)"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Не свой user_id и не сервисный токен"},
++    },
++)
++async def list_pending_lesson_reminders(
++    student_id: int,
++    since: Optional[datetime] = Query(
++        None,
++        description="Если указано — только события с created_at >= since (ISO8601)",
++    ),
++    limit: int = Query(100, ge=1, le=500),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_async_db),
++) -> StudentLessonReminderPendingResponse:
++    """Read-only. Используется TG_LMS student-поллером (tsk-431).
++
++    Kind жёстко зафиксирован на `lesson_reminder` — эндпоинт называется по
++    задаче, которую решает, не общий inbox-proxy (для этого есть
++    `/me/notifications`, недоступный сервисному токену).
++    """
++    if not current_user.is_service and current_user.id != student_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++
++    params: dict = {"uid": student_id, "limit": int(limit)}
++    since_clause = ""
++    if since is not None:
++        since_clause = "AND n.modified_at >= :since "
++        params["since"] = since
++
++    res = await db.execute(
++        text(
++            "SELECT n.id, n.modified_at, n.kind, n.title, n.payload, n.read_at "
++            "FROM notifications n "
++            "WHERE n.user_id = :uid "
++            "  AND n.kind = 'lesson_reminder' "
++            f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
++            "ORDER BY n.modified_at ASC "
++            "LIMIT :limit"
++        ),
++        params,
++    )
++    rows = res.fetchall()
++    items = [
++        StudentLessonReminderItem(
++            id=int(r[0]),
++            created_at=r[1],
++            kind=str(r[2]),
++            title=str(r[3]) if r[3] is not None else None,
++            payload=dict(r[4]) if r[4] is not None else {},
++            read_at=r[5],
++        )
++        for r in rows
++    ]
++    return StudentLessonReminderPendingResponse(items=items, count=len(items))
+warning: in the working copy of 'tests/test_tsk431_student_lesson_reminders.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/tests/test_tsk431_student_lesson_reminders.py b/tests/test_tsk431_student_lesson_reminders.py
+new file mode 100644
+index 0000000..faa01d4
+--- /dev/null
++++ b/tests/test_tsk431_student_lesson_reminders.py
+@@ -0,0 +1,160 @@
++"""tsk-431 (Календарь LMS Фаза 4): GET /students/{student_id}/lesson-reminders/pending.
++
++Покрывает identity-гейт (self / service-key / чужой) и фильтрацию по kind,
++since, limit — тот же набор, что у сестринского эндпоинта
++`methodist/escalations/pending` (test_y6_review_loop.py), но с явным
++`student_id` вместо `current_user.id` (см. разведку tsk-431: у методиста
++current_user.id=0 под сервисным ключом ломает фильтр, здесь student_id
++передаётся явно и это единственный правильный путь для бота, читающего
++за многих учеников одним ключом).
++"""
++from __future__ import annotations
++
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services import inbox_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++
++
++def _api_key_headers() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++async def _create_user(db, *, prefix: str = "tsk431") -> int:
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=f"{prefix}-user", tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    await db.commit()
++    return u.id
++
++
++async def _seed_reminder(db, *, student_id: int, occurrence_id: int) -> int:
++    item = await inbox_service.create_for_user(
++        db,
++        user_id=student_id,
++        kind="lesson_reminder",
++        title="Скоро занятие",
++        content="Занятие начинается через 30 минут.",
++        payload={"occurrence_id": occurrence_id, "teacher_id": 1, "role": "student"},
++        created_by=None,
++    )
++    await db.commit()
++    return item.id
++
++
++@pytest.mark.asyncio
++async def test_lesson_reminders_pending_acl(db, client):
++    """401 без auth, 403 для другого ученика, 200 для self и для service-key."""
++    student_id = await _create_user(db, prefix="tsk431-stud")
++    other_id = await _create_user(db, prefix="tsk431-other")
++    student_token, _, _ = await create_session(db, user_id=student_id)
++    other_token, _, _ = await create_session(db, user_id=other_id)
++    await db.commit()
++
++    # 401 — без каких-либо credentials
++    resp = await client.get(f"/api/v1/students/{student_id}/lesson-reminders/pending")
++    assert resp.status_code == 401, resp.text
++
++    # 403 — другой ученик пытается прочитать чужие напоминания
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        headers={"Authorization": f"Bearer {other_token}"},
++    )
++    assert resp.status_code == 403, resp.text
++
++    # 200 — сам ученик
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        headers={"Authorization": f"Bearer {student_token}"},
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert "items" in body and "count" in body
++
++    # 200 — сервисный токен (TG_LMS бот), читает ЗА ученика
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        headers=_api_key_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++
++
++@pytest.mark.asyncio
++async def test_lesson_reminders_pending_kind_filter_and_since_and_limit(db, client):
++    """Возвращаются только kind='lesson_reminder' этого ученика; since/limit работают."""
++    student_id = await _create_user(db, prefix="tsk431-stud2")
++    other_id = await _create_user(db, prefix="tsk431-other2")
++    await db.commit()
++
++    # Посторонний kind того же ученика — не должен попасть в ответ
++    await inbox_service.create_for_user(
++        db,
++        user_id=student_id,
++        kind="lesson_missed",
++        title="Занятие пропущено",
++        content="...",
++        payload={"occurrence_id": 999},
++        created_by=None,
++    )
++    # lesson_reminder ДРУГОГО ученика — не должен попасть
++    await _seed_reminder(db, student_id=other_id, occurrence_id=1)
++    await db.commit()
++
++    id_1 = await _seed_reminder(db, student_id=student_id, occurrence_id=101)
++    id_2 = await _seed_reminder(db, student_id=student_id, occurrence_id=102)
++    # Обе строки созданы в рамках одной тестовой транзакции — Postgres `now()`
++    # у обеих совпадает (транзакционное время, не время оператора), поэтому
++    # ordering по modified_at явно бэкдейтится, а не берётся из wall-clock.
++    old_ts = datetime.now(timezone.utc) - timedelta(hours=1)
++    cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
++    await db.execute(
++        text("UPDATE notifications SET modified_at = :ts WHERE id = :id"),
++        {"ts": old_ts, "id": id_1},
++    )
++    await db.commit()
++
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        headers=_api_key_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    ids = [it["id"] for it in body["items"]]
++    assert id_1 in ids and id_2 in ids
++    assert all(it["kind"] == "lesson_reminder" for it in body["items"])
++    other_occurrence_ids = {it["payload"].get("occurrence_id") for it in body["items"]}
++    assert 999 not in other_occurrence_ids  # lesson_missed отфильтрован
++    assert 1 not in other_occurrence_ids  # чужой ученик отфильтрован
++
++    # since — только события ПОСЛЕ cutoff (т.е. только id_2)
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        params={"since": cutoff.isoformat()},
++        headers=_api_key_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    since_ids = [it["id"] for it in resp.json()["items"]]
++    assert id_1 not in since_ids
++    assert id_2 in since_ids
++
++    # limit=1 — не больше одного элемента
++    resp = await client.get(
++        f"/api/v1/students/{student_id}/lesson-reminders/pending",
++        params={"limit": 1},
++        headers=_api_key_headers(),
++    )
++    assert resp.status_code == 200, resp.text
++    assert len(resp.json()["items"]) == 1
