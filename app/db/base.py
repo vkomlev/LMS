@@ -25,6 +25,7 @@ import app.models.task_results
 import app.models.student_task_progress
 import app.models.help_requests
 import app.models.help_request_replies
+import app.models.help_request_reopens
 import app.models.identity_link
 import app.models.user_session
 import app.models.magic_link

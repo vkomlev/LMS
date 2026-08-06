@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from app.models.attempts import Attempts
     from app.models.messages import Messages
     from app.models.help_request_replies import HelpRequestReplies
+    from app.models.help_request_reopens import HelpRequestReopens
 
 
 class HelpRequests(Base):
@@ -72,7 +73,7 @@ class HelpRequests(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'open'"))
     request_type: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default=text("'manual_help'"),
-        comment="manual_help | blocked_limit (этап 3.8.1)",
+        comment="manual_help | blocked_limit (этап 3.8.1) | individual_review (tsk-303)",
     )
     auto_created: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"),
@@ -107,8 +108,27 @@ class HelpRequests(Base):
     claim_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     claim_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # tsk-303: лестница помощи, уровни 2-3.
+    webinar_link: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+        comment="Ссылка на комнату разбора (уровень 2). Обнуляется при закрытии заявки.",
+    )
+    review_understood: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+        comment="Оценка ученика после разбора: NULL — не оценивал, false — ведёт к эскалации.",
+    )
+    escalated_to_methodist_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Когда заявка ушла методисту (уровень 3).",
+    )
+
     replies: Mapped[List["HelpRequestReplies"]] = relationship(
         "HelpRequestReplies",
         back_populates="help_request",
         foreign_keys="HelpRequestReplies.request_id",
+    )
+    reopens: Mapped[List["HelpRequestReopens"]] = relationship(
+        "HelpRequestReopens",
+        back_populates="help_request",
+        foreign_keys="HelpRequestReopens.request_id",
     )
