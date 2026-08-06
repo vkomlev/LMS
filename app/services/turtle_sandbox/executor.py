@@ -207,13 +207,26 @@ def run_code_quality_check(code: str, *, timeout_sec: float = 5.0) -> CodeQualit
 def _run_code_quality_check_locked(code: str, *, timeout_sec: float) -> CodeQualityResult:
     payload = json.dumps({"code": code})
     command = _build_command(_LINT_RUNNER_PATH)
-    env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONPATH": str(_PROJECT_ROOT),
-    }
 
     try:
         with tempfile.TemporaryDirectory(prefix="turtle_sandbox_lint_") as scratch_dir:
+            # HOME/PYLINT_HOME/XDG_CACHE_HOME — в scratch, и вот почему (найдено
+            # живым прогоном на проде 2026-08-06, tsk-302 этап 0). Процесс идёт под
+            # `unshare --map-root-user`, то есть ВНУТРИ namespace он root, и pylint
+            # пытается сохранить статистику в `/root/.cache/pylint/…stats`. Записи
+            # туда нет → каждый анализ падал `PermissionError`, а отчёт превращался
+            # в `{"error": "analysis_error"}`. На Windows (локальная разработка и
+            # тесты) HOME доступен, поэтому дефект был не виден вовсе.
+            # `--persistent=n` от этого не спасает: он про переиспользование
+            # результатов между запусками, а не про сам факт записи файла.
+            # Каталог удаляется вместе со scratch — мусор не копится.
+            env = {
+                "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                "PYTHONPATH": str(_PROJECT_ROOT),
+                "HOME": scratch_dir,
+                "PYLINT_HOME": scratch_dir,
+                "XDG_CACHE_HOME": scratch_dir,
+            }
             try:
                 proc = subprocess.run(
                     command,

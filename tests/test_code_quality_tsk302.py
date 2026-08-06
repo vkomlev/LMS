@@ -95,6 +95,36 @@ def test_run_code_quality_check_empty_code_reports_error_not_crash() -> None:
     assert result.error == "empty_code"
 
 
+def test_lint_subprocess_gets_writable_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Процессу анализа передаётся своя HOME внутри scratch — иначе pylint падает.
+
+    Найдено живым прогоном на проде (2026-08-06): под `unshare --map-root-user`
+    процесс внутри namespace — root, и pylint пытается писать статистику в
+    `/root/.cache/pylint/…stats`, куда доступа нет. Каждый анализ возвращал
+    `PermissionError`, отчёт превращался в `{"error": "analysis_error"}`.
+    На Windows дефект не воспроизводится (HOME доступен), поэтому проверяем
+    не результат, а сам факт: HOME/PYLINT_HOME/XDG_CACHE_HOME заданы и указывают
+    в рабочий каталог процесса, а не в домашний каталог пользователя.
+    """
+    import subprocess as subprocess_module
+
+    captured: dict = {}
+
+    def _capture(*args, **kwargs):
+        captured["env"] = kwargs.get("env")
+        captured["cwd"] = kwargs.get("cwd")
+        raise subprocess_module.TimeoutExpired(cmd="x", timeout=1)  # прерываем сразу
+
+    monkeypatch.setattr(subprocess_module, "run", _capture)
+    run_code_quality_check("x = 1\n", timeout_sec=1.0)
+
+    env = captured["env"]
+    for var in ("HOME", "PYLINT_HOME", "XDG_CACHE_HOME"):
+        assert var in env, f"{var} не передан процессу анализа — pylint пойдёт писать в /root"
+        assert env[var] == captured["cwd"], f"{var} должен указывать в scratch-каталог процесса"
+
+
 def test_run_code_quality_check_oserror_is_reported_not_crashed(monkeypatch: pytest.MonkeyPatch) -> None:
     # review-gate (2026-08-06) находка Б2: subprocess.run/TemporaryDirectory
     # способны бросить OSError помимo TimeoutExpired (бинарь недоступен, нет
