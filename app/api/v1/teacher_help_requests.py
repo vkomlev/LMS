@@ -9,6 +9,7 @@ POST /api/v1/teacher/help-requests/{request_id}/reply — ответить ст�
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
@@ -26,6 +27,10 @@ from app.schemas.teacher_help_requests import (
     HelpRequestReplyRequest,
     HelpRequestReplyResponse,
     HelpRequestPendingCountResponse,
+    WebinarLinkRequest,
+    WebinarLinkResponse,
+    ReopenKpiItem,
+    ReopenKpiResponse,
 )
 from app.schemas.teacher_next_modes import (
     HelpRequestClaimNextRequest,
@@ -41,8 +46,11 @@ from app.services.help_requests_service import (
     help_request_exists,
     close_help_request,
     reply_help_request,
+    set_webinar_link,
     get_help_requests_pending_count,
+    get_reopen_kpi,
 )
+from app.services import roles_service
 from app.services.teacher_queue_service import (
     claim_next_help_request,
     release_help_request_claim,
@@ -107,6 +115,55 @@ async def help_requests_pending_count(
 
 
 @router.get(
+    "/kpi/reopens",
+    response_model=ReopenKpiResponse,
+    summary="Возвраты заявок: свой показатель или сводка по всем (tsk-303)",
+    responses={
+        200: {"description": "Сводка возвратов"},
+        403: {"description": "Чужой teacher_id без роли методиста/админа"},
+    },
+)
+async def help_request_reopen_kpi(
+    teacher_id: Optional[int] = Query(
+        None,
+        description="ID преподавателя. Не задан — сводка по всем (только методист/админ).",
+    ),
+    since: Optional[datetime] = Query(
+        None, description="Считать возвраты с этого момента (ISO8601)"
+    ),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> ReopenKpiResponse:
+    """Две поверхности одного агрегата (решение оператора: KPI видят оба).
+
+    Преподаватель смотрит СВОЙ показатель — для самоконтроля. Методист и админ
+    видят сводку по всем — это оценка преподавателей, поэтому чужой показатель
+    без такой роли не отдаётся. Считает один и тот же
+    `help_requests_service.get_reopen_kpi`, чтобы две панели не разъехались в
+    цифрах.
+    """
+    is_privileged = current_user.is_service or bool(
+        {"methodist", "admin"}
+        & set(await roles_service.get_user_role_names(db, current_user.id))
+    )
+    if teacher_id is None:
+        if not is_privileged:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Сводка по всем преподавателям доступна методисту или админу",
+            )
+    elif not is_privileged and current_user.id != teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    items = await get_reopen_kpi(db, teacher_id=teacher_id, since=since)
+    return ReopenKpiResponse(
+        items=[ReopenKpiItem(**it) for it in items],
+        total_reopens=sum(int(it["reopens"]) for it in items),
+        since=since,
+    )
+
+
+@router.get(
     "",
     response_model=HelpRequestListResponse,
     summary="Список заявок на помощь (с ACL)",
@@ -114,7 +171,11 @@ async def help_requests_pending_count(
 async def help_requests_list(
     teacher_id: int = Query(..., description="ID преподавателя/методиста"),
     status_filter: str = Query("open", description="open | closed | all", alias="status"),
-    request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
+    request_type_filter: str = Query(
+        "all",
+        description="manual_help | blocked_limit | individual_review | all",
+        alias="request_type",
+    ),
     sort: str = Query("priority", description="priority | created_at | due_at (этап 3.9)", alias="sort"),
     overdue: bool = Query(False, description="true — только просроченные (due_at < now), ортогонально типу (tsk-312)"),
     limit: int = Query(20, ge=1, le=100),
@@ -129,10 +190,13 @@ async def help_requests_list(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="status должен быть open, closed или all",
         )
-    if request_type_filter not in ("manual_help", "blocked_limit", "all"):
+    if request_type_filter not in ("manual_help", "blocked_limit", "individual_review", "all"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="request_type должен быть manual_help, blocked_limit или all",
+            detail=(
+                "request_type должен быть manual_help, blocked_limit, "
+                "individual_review или all"
+            ),
         )
     if sort not in ("priority", "created_at", "due_at"):
         raise HTTPException(
@@ -240,6 +304,50 @@ async def help_request_release(
         )
     await db.commit()
     return HelpRequestReleaseResponse(released=released)
+
+
+@router.post(
+    "/{request_id}/webinar-link",
+    response_model=WebinarLinkResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Прислать ученику ссылку на индивидуальный разбор (tsk-303, уровень 2)",
+    responses={
+        404: {"description": "Заявка не найдена"},
+        403: {"description": "Нет доступа"},
+        409: {"description": "Заявка не того типа, закрыта или токен блокировки невалиден"},
+        422: {"description": "Ссылка пустая или не http/https"},
+    },
+)
+async def help_request_webinar_link(
+    request_id: int = Path(..., description="ID заявки"),
+    body: WebinarLinkRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> WebinarLinkResponse:
+    """Заявку не закрывает: разбор впереди, закроет её оценка ученика."""
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    data, err = await set_webinar_link(
+        db, request_id, body.teacher_id, body.webinar_link, lock_token=body.lock_token
+    )
+    if err == "not_found":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    if err == "forbidden":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
+    if err == "lock_conflict":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Токен блокировки невалиден или просрочен"
+        )
+    if err == "wrong_type":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Ссылка на разбор доступна только по заявке на индивидуальный разбор",
+        )
+    if err == "not_open":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Заявка закрыта")
+    await db.commit()
+    logger.info("tsk-303 webinar-link: request_id=%s teacher_id=%s", request_id, body.teacher_id)
+    return WebinarLinkResponse(**data)
 
 
 @router.post(

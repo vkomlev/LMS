@@ -4,6 +4,8 @@ Learning API V1 (этап 3): next-item, materials/complete, tasks/start-or-get-
 from __future__ import annotations
 
 import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +27,11 @@ from app.schemas.learning_api import (
     TaskStateResponse,
     RequestHelpRequest,
     RequestHelpResponse,
+    StudentHelpRequestResponse,
+    HelpRequestReopenResponse,
+    IndividualReviewResponse,
+    RateReviewRequest,
+    RateReviewResponse,
     HintEventRequest,
     HintEventResponse,
 )
@@ -39,6 +46,10 @@ from app.services.learning_events_service import (
 from app.services.help_requests_service import (
     get_or_create_help_request,
     get_or_create_blocked_limit_help_request,
+    get_student_help_request,
+    reopen_help_request,
+    request_individual_review,
+    rate_individual_review,
 )
 from app.services import payment_access_service
 from app.services import lesson_attendance_service
@@ -558,6 +569,189 @@ async def request_help(
     return RequestHelpResponse(
         ok=True, event_id=event_id, deduplicated=deduplicated, request_id=request_id
     )
+
+
+# ----- tsk-303: лестница помощи, сторона ученика -----
+
+# Состояние заявки не сошлось с запрошенным шагом лестницы. Для клиента это
+# один класс: экран устарел, надо перечитать заявку.
+_LADDER_STATE_ERRORS: dict[str, str] = {
+    "not_closed": "Заявка ещё открыта — возвращать нечего.",
+    "not_open": "Заявка закрыта.",
+    "wrong_type": "Это действие недоступно для заявки такого типа.",
+    "no_reopen": "Индивидуальный разбор доступен после повторного обращения по этому заданию.",
+    "no_webinar_link": "Преподаватель ещё не прислал ссылку на разбор.",
+    "already_rated": "Разбор уже оценён.",
+}
+
+
+def _raise_ladder_error(err: str) -> None:
+    """Единая раскладка ошибок шагов лестницы в HTTP-коды."""
+    if err == "not_found":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    if err == "forbidden":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
+    raise HTTPException(
+        status.HTTP_409_CONFLICT,
+        _LADDER_STATE_ERRORS.get(err, "Действие недоступно в текущем состоянии заявки."),
+    )
+
+
+async def _resolve_ladder_student(
+    db: AsyncSession,
+    request_id: int,
+    current_user: CurrentUser,
+) -> int:
+    """От имени какого ученика выполняется шаг лестницы.
+
+    Обычный пользователь действует только от себя — сервис ниже сверит это с
+    владельцем заявки и отдаст 403 при чужом `request_id`. Сервисный ключ
+    (боты) действует от имени владельца, как и на остальных learning-путях,
+    поэтому владельца берём из самой заявки.
+
+    Ключевое: `student_id` нигде не приходит из тела/запроса — подставить
+    чужой нечем, а значит перебором `request_id` чужую заявку не прочитать.
+    """
+    if not current_user.is_service:
+        return current_user.id
+    row = (
+        await db.execute(
+            text("SELECT student_id FROM help_requests WHERE id = :id"),
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    return int(row[0])
+
+
+@router.get(
+    "/tasks/{task_id}/help-request",
+    response_model=Optional[StudentHelpRequestResponse],
+    summary="Текущая заявка помощи ученика по заданию (tsk-303)",
+    responses={
+        200: {"description": "Заявка или null, если ученик помощь не запрашивал"},
+        403: {"description": "Чужой student_id"},
+    },
+)
+async def student_help_request_state(
+    task_id: int = Path(..., description="ID задания"),
+    student_id: int = Query(..., description="ID ученика"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> Optional[StudentHelpRequestResponse]:
+    """Состояние лестницы помощи для страницы задания.
+
+    До tsk-303 ученик вообще не мог увидеть на странице задания, что с его
+    заявкой: ответ учителя долетал только уведомлением в общей ленте, а сама
+    страница о заявке не знала. Без этого чтения кнопкам «Вернуть заявку» и
+    «Запросить разбор» негде появиться.
+
+    Гейт оплаты здесь НЕ применяется: читать состояние собственного обращения
+    должник вправе — закрыт учебный контент, а не поддержка.
+    """
+    if not current_user.is_service and current_user.id != student_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    data = await get_student_help_request(db, student_id, task_id)
+    if data is None:
+        return None
+    return StudentHelpRequestResponse(**data)
+
+
+@router.post(
+    "/help-requests/{request_id}/reopen",
+    response_model=HelpRequestReopenResponse,
+    summary="Вернуть заявку: ответ преподавателя не помог (tsk-303)",
+    responses={
+        404: {"description": "Заявка не найдена"},
+        403: {"description": "Чужая заявка"},
+        409: {"description": "Заявка не закрыта или не того типа"},
+    },
+)
+async def reopen_student_help_request(
+    request_id: int = Path(..., description="ID заявки"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> HelpRequestReopenResponse:
+    """Уровень 1 → повтор: ученик отмечает, что после ответа не разобрался.
+
+    Возврат начисляется преподавателю, чей ответ не помог, — это KPI
+    (`help_request_reopens`). Владелец заявки берётся из самой заявки, а не из
+    тела запроса: подставить чужой `student_id` тут физически нечем.
+    """
+    student_id = await _resolve_ladder_student(db, request_id, current_user)
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, student_id)
+    data, err = await reopen_help_request(db, request_id, student_id)
+    if err is not None:
+        _raise_ladder_error(err)
+    await db.commit()
+    logger.info("tsk-303 reopen: request_id=%s student_id=%s", request_id, student_id)
+    return HelpRequestReopenResponse(**data)
+
+
+@router.post(
+    "/help-requests/{request_id}/request-individual-review",
+    response_model=IndividualReviewResponse,
+    summary="Запросить индивидуальный разбор (tsk-303, уровень 2)",
+    responses={
+        404: {"description": "Заявка не найдена"},
+        403: {"description": "Чужая заявка"},
+        409: {"description": "Заявка закрыта, не того типа или не возвращалась"},
+    },
+)
+async def request_individual_review_endpoint(
+    request_id: int = Path(..., description="ID заявки"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> IndividualReviewResponse:
+    """Доступно только по заявке, которую ученик уже возвращал."""
+    student_id = await _resolve_ladder_student(db, request_id, current_user)
+    if not current_user.is_service:
+        await payment_access_service.assert_content_allowed(db, student_id)
+    data, err = await request_individual_review(db, request_id, student_id)
+    if err is not None:
+        _raise_ladder_error(err)
+    await db.commit()
+    logger.info(
+        "tsk-303 individual-review: request_id=%s student_id=%s already=%s",
+        request_id, student_id, data.get("already"),
+    )
+    return IndividualReviewResponse(**data)
+
+
+@router.post(
+    "/help-requests/{request_id}/rate-review",
+    response_model=RateReviewResponse,
+    summary="Оценить индивидуальный разбор (tsk-303, уровень 3)",
+    responses={
+        404: {"description": "Заявка не найдена"},
+        403: {"description": "Чужая заявка"},
+        409: {"description": "Нет ссылки на разбор, заявка закрыта или уже оценена"},
+    },
+)
+async def rate_individual_review_endpoint(
+    request_id: int = Path(..., description="ID заявки"),
+    body: RateReviewRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> RateReviewResponse:
+    """«Понятно» закрывает заявку, «непонятно» уводит её методисту.
+
+    Гейт оплаты здесь НЕ применяется намеренно: это ответ на уже оказанную
+    помощь. Заблокировать его значило бы оставить заявку висеть открытой без
+    оценки и без маршрута дальше.
+    """
+    student_id = await _resolve_ladder_student(db, request_id, current_user)
+    data, err = await rate_individual_review(db, request_id, student_id, body.understood)
+    if err is not None:
+        _raise_ladder_error(err)
+    await db.commit()
+    logger.info(
+        "tsk-303 rate-review: request_id=%s student_id=%s understood=%s escalated=%s",
+        request_id, student_id, data.get("understood"), data.get("escalated"),
+    )
+    return RateReviewResponse(**data)
 
 
 # ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----

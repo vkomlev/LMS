@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class HelpRequestClaimNextRequest(BaseModel):
     """Тело запроса «взять следующий help-request»."""
     teacher_id: int = Field(..., description="ID преподавателя")
-    request_type: Literal["manual_help", "blocked_limit", "all"] = Field(
+    request_type: Literal["manual_help", "blocked_limit", "individual_review", "all"] = Field(
         "all",
         description="Тип заявки: manual_help | blocked_limit | all",
     )
@@ -175,6 +175,9 @@ class TeacherWorkloadResponse(BaseModel):
     open_help_requests_total: int = Field(0, description="Всего открытых заявок на помощь")
     open_blocked_limit_total: int = Field(0, description="Открытых заявок типа blocked_limit")
     open_manual_help_total: int = Field(0, description="Открытых заявок типа manual_help")
+    open_individual_review_total: int = Field(
+        0, description="Открытых заявок на индивидуальный разбор (tsk-303, уровень 2)"
+    )
     pending_manual_reviews_total: int = Field(0, description="Результатов в ожидании ручной проверки")
     overdue_total: int = Field(0, description="Просроченных (due_at < now) открытых заявок")
 

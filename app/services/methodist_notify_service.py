@@ -170,6 +170,74 @@ async def escalate_pending_timeout(
     return created
 
 
+async def escalate_help_request(
+    db: AsyncSession,
+    *,
+    request_id: int,
+    student_id: int,
+    task_id: int,
+    course_id: int | None,
+) -> int:
+    """tsk-303, уровень 3: заявка помощи уходит методисту после разбора.
+
+    Вызывается, когда ученик после индивидуального разбора отметил, что всё
+    ещё не понял. Заявка остаётся ОТКРЫТОЙ — методист разбирается с учеником
+    лично и закрывает её сам через уже существующий
+    `POST /teacher/help-requests/{id}/close` (методист входит в ACL заявок по
+    роли, отдельный канал закрытия не нужен).
+
+    В отличие от `escalate_pending_timeout`/`escalate_course_completion`
+    rate-limit здесь НЕ применяется: те две запускает cron и они способны
+    сыпать пачками, а тут — осознанное действие ученика, ровно одно на заявку
+    (повторную оценку сервис не принимает).
+
+    Возвращает число созданных уведомлений (0, если методистов в системе нет).
+    """
+    methodist_ids = await _list_methodist_user_ids(db)
+    if not methodist_ids:
+        logger.warning(
+            "tsk-303: нет методистов в БД (role=methodist), эскалация заявки %s не доставлена",
+            request_id,
+        )
+        return 0
+
+    payload = {
+        "request_id": int(request_id),
+        "student_id": int(student_id),
+        "task_id": int(task_id),
+        "course_id": int(course_id) if course_id is not None else None,
+        "trigger": "individual_review_not_understood",
+    }
+    for mid in methodist_ids:
+        await inbox_service.create_for_user(
+            db,
+            user_id=mid,
+            kind="help_request_escalated",
+            title="Ученику не помог индивидуальный разбор",
+            content=(
+                f"Заявка №{request_id}: после разбора с преподавателем ученик "
+                "всё ещё не разобрался. Нужен методист."
+            ),
+            payload=payload,
+            created_by=student_id,
+        )
+
+    await audit_service.log_event(
+        db,
+        audit_service.METHODIST_ESCALATION_TRIGGERED,
+        user_id=student_id,
+        details={
+            "request_id": int(request_id),
+            "student_id": int(student_id),
+            "task_id": int(task_id),
+            "course_id": int(course_id) if course_id is not None else None,
+            "trigger": "individual_review_not_understood",
+            "methodist_count": len(methodist_ids),
+        },
+    )
+    return len(methodist_ids)
+
+
 async def escalate_course_completion(
     db: AsyncSession,
     *,

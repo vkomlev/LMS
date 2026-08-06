@@ -65,7 +65,11 @@ async def list_pending_escalations(
 
     Виды: `review_escalated` и `course_pending_review` (обе — про зависшие
     проверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на
-    файлы, которых нет; ученик видит на их месте пустоту).
+    файлы, которых нет; ученик видит на их месте пустоту) и
+    `help_request_escalated` (tsk-303, уровень 3 лестницы помощи — ученику не
+    помог даже индивидуальный разбор с преподавателем; заявка остаётся
+    открытой, методист закрывает её через
+    `POST /teacher/help-requests/{id}/close`).
 
     tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
     `require_role("methodist")` (service-token — bypass, как и раньше);
@@ -82,7 +86,8 @@ async def list_pending_escalations(
             "SELECT n.id, n.modified_at, n.kind, n.title, n.payload, n.read_at "
             "FROM notifications n "
             "WHERE n.user_id = :uid "
-            "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links') "
+            "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links',"
+            "'help_request_escalated') "
             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
             "ORDER BY n.modified_at DESC "
             "LIMIT :limit"

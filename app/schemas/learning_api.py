@@ -168,6 +168,71 @@ class RequestHelpResponse(BaseModel):
     request_id: Optional[int] = Field(None, description="ID заявки в help_requests (этап 3.8, опционально)")
 
 
+# ----- Лестница помощи, сторона ученика (tsk-303) -----
+
+
+class StudentHelpReplyItem(BaseModel):
+    """Ответ преподавателя в заявке — так, как его видит ученик."""
+    body: str
+    created_at: datetime
+
+
+class StudentHelpRequestResponse(BaseModel):
+    """Текущая заявка помощи ученика по заданию.
+
+    Признаки `can_*` считает сервер: гейты уровней лестницы — часть правил, и
+    второй их экземпляр в клиенте неизбежно с ними разъедется.
+    """
+    request_id: int
+    status: str = Field(..., description="open | closed")
+    request_type: str = Field(..., description="manual_help | individual_review")
+    message: Optional[str] = Field(None, description="Текст исходного вопроса ученика")
+    created_at: datetime
+    updated_at: datetime
+    closed_at: Optional[datetime] = None
+    resolution_comment: Optional[str] = None
+    reopen_count: int = Field(0, description="Сколько раз ученик возвращал заявку")
+    webinar_link: Optional[str] = Field(
+        None, description="Ссылка на разбор; живёт, пока заявка открыта"
+    )
+    review_understood: Optional[bool] = Field(
+        None, description="Оценка после разбора: None — ещё не оценивал"
+    )
+    escalated_to_methodist_at: Optional[datetime] = None
+    replies: list[StudentHelpReplyItem] = Field(default_factory=list)
+    can_reopen: bool = False
+    can_request_individual_review: bool = False
+    can_rate_review: bool = False
+
+
+class HelpRequestReopenResponse(BaseModel):
+    """Ответ POST /learning/help-requests/{id}/reopen."""
+    request_id: int
+    status: str = "open"
+    reopen_count: int
+    can_request_individual_review: bool = True
+
+
+class IndividualReviewResponse(BaseModel):
+    """Ответ POST /learning/help-requests/{id}/request-individual-review."""
+    request_id: int
+    request_type: str = "individual_review"
+    already: bool = Field(False, description="true — разбор был запрошен ранее (повторный клик)")
+
+
+class RateReviewRequest(BaseModel):
+    """Тело POST /learning/help-requests/{id}/rate-review."""
+    understood: bool = Field(..., description="true — после разбора всё понятно")
+
+
+class RateReviewResponse(BaseModel):
+    """Ответ на оценку разбора."""
+    request_id: int
+    understood: bool
+    status: str = Field(..., description="closed при understood=true, иначе open")
+    escalated: bool = Field(False, description="true — заявка ушла методисту")
+
+
 # ----- Hint events (этап 3.6) -----
 
 HintType = Literal["text", "video"]

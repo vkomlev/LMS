@@ -394,6 +394,10 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
 from app.api.v1.methodist_escalations import router as methodist_escalations_router
 app.include_router(methodist_escalations_router, prefix=API_PREFIX)
 
+# tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич
+from app.api.v1.feedback_reports import router as feedback_reports_router
+app.include_router(feedback_reports_router, prefix=API_PREFIX)
+
 # tsk-428 (Календарь LMS Фаза 1): admin-расписание (operating-hours, lesson-slots)
 from app.api.v1.lesson_calendar_admin import router as lesson_calendar_admin_router
 app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)

@@ -223,6 +223,8 @@ async def claim_next_help_request(
         type_cond = "AND hr.request_type = 'manual_help'"
     elif request_type == "blocked_limit":
         type_cond = "AND hr.request_type = 'blocked_limit'"
+    elif request_type == "individual_review":
+        type_cond = "AND hr.request_type = 'individual_review'"
     course_cond = "AND hr.course_id = :course_id" if course_id is not None else ""
     params: dict[str, Any] = {"teacher_id": teacher_id}
     if course_id is not None:
@@ -1308,6 +1310,8 @@ async def get_teacher_workload(
             SELECT
                 COUNT(*) FILTER (WHERE hr.request_type = 'manual_help') AS manual_help,
                 COUNT(*) FILTER (WHERE hr.request_type = 'blocked_limit') AS blocked_limit,
+                COUNT(*) FILTER (WHERE hr.request_type = 'individual_review')
+                    AS individual_review,
                 COUNT(*) FILTER (WHERE hr.due_at IS NOT NULL AND hr.due_at < :now_ts) AS overdue
             FROM help_requests hr
             WHERE hr.status = 'open' AND {HELP_REQUESTS_ACL_SQL}
@@ -1317,8 +1321,13 @@ async def get_teacher_workload(
     row = r.fetchone()
     open_manual_help = int(row[0] or 0)
     open_blocked_limit = int(row[1] or 0)
-    overdue_total = int(row[2] or 0)
-    open_help_requests_total = open_manual_help + open_blocked_limit
+    # tsk-303: третий тип обязан попасть и в свой счётчик, и в общий итог.
+    # Итог складывался из двух типов поимённо, поэтому заявки на индивидуальный
+    # разбор выпали бы из панели нагрузки целиком — а это самый срочный случай
+    # лестницы: ученик уже сказал, что текстовый ответ не помог, и ждёт ссылку.
+    open_individual_review = int(row[2] or 0)
+    overdue_total = int(row[3] or 0)
+    open_help_requests_total = open_manual_help + open_blocked_limit + open_individual_review
 
     # tsk-298 (fix): «На проверке» ДОЛЖНО совпадать с фактической очередью
     # (`/teacher/reviews/pending` / claim-next), иначе счётчик показывает N, а
@@ -1344,6 +1353,7 @@ async def get_teacher_workload(
         "open_help_requests_total": open_help_requests_total,
         "open_blocked_limit_total": open_blocked_limit,
         "open_manual_help_total": open_manual_help,
+        "open_individual_review_total": open_individual_review,
         "pending_manual_reviews_total": pending_manual_reviews_total,
         "overdue_total": overdue_total,
     }

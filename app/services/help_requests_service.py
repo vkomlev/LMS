@@ -27,6 +27,7 @@ from app.services.learning_events_service import (
     record_attempt_limit_reached,
 )
 from app.services import inbox_service
+from app.services import methodist_notify_service
 from app.services.messages_service import MessagesService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
 from app.services.teacher_courses_service import TeacherCoursesService
@@ -404,6 +405,8 @@ async def list_help_requests(
         type_cond = "AND hr.request_type = 'manual_help'"
     elif request_type_filter == "blocked_limit":
         type_cond = "AND hr.request_type = 'blocked_limit'"
+    elif request_type_filter == "individual_review":
+        type_cond = "AND hr.request_type = 'individual_review'"
     student_cond = ""
     order_sql = _order_by_sort(sort)
 
@@ -522,7 +525,10 @@ async def get_help_request_detail(
                    t.external_uid AS task_external_uid,
                    c.title AS course_title,
                    t.task_content->>'title' AS task_title_raw,
-                   t.task_content->>'stem' AS task_stem
+                   t.task_content->>'stem' AS task_stem,
+                   hr.webinar_link, hr.review_understood, hr.escalated_to_methodist_at,
+                   (SELECT COUNT(*) FROM help_request_reopens rr
+                     WHERE rr.request_id = hr.id) AS reopen_count
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
@@ -607,6 +613,14 @@ async def get_help_request_detail(
             max_len=HINT_MAX_LEN,
         ),
         "course_title": row[21] if len(row) > 21 else None,
+        # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
+        # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
+        # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
+        # конец, а не в середину.
+        "webinar_link": row[24] if len(row) > 24 else None,
+        "review_understood": row[25] if len(row) > 25 else None,
+        "escalated_to_methodist_at": row[26] if len(row) > 26 else None,
+        "reopen_count": int(row[27]) if len(row) > 27 and row[27] is not None else 0,
         "history": replies,
     }, None)
 
@@ -688,11 +702,16 @@ async def close_help_request(
 
     now = datetime.now(timezone.utc)
     comment_truncated = (resolution_comment or "")[:2000] or None
+    # tsk-303: TTL вебинар-ссылки — она живёт ровно пока заявка открыта
+    # (решение оператора). Обнуление стоит здесь, в единственной точке закрытия,
+    # чтобы инвариант держался на ВСЕХ путях сразу: закрытие учителем, ответ с
+    # закрытием, системное закрытие и подтверждение ученика после разбора.
     await db.execute(
         text("""
             UPDATE help_requests
             SET status = 'closed', closed_at = :closed_at, closed_by = :closed_by,
-                resolution_comment = :resolution_comment, updated_at = :updated_at
+                resolution_comment = :resolution_comment, updated_at = :updated_at,
+                webinar_link = NULL
             WHERE id = :id
         """),
         {
@@ -767,6 +786,569 @@ async def close_blocked_limit_if_resolved(
     return data
 
 
+# ----- tsk-303: лестница помощи, сторона ученика -----
+#
+# Три шага поверх уже готовой заявки `manual_help`:
+#   уровень 1 → «Вернуть заявку» (ответ не помог, начисляется в KPI учителя);
+#   уровень 2 → «Запросить индивидуальный разбор» (только после возврата);
+#   уровень 3 → оценка после разбора; «непонятно» уводит заявку методисту.
+#
+# Новых записей в `learning_events` эти шаги НЕ делают: каждый из них durable
+# отражён в доменных таблицах (строка в `help_request_reopens`, смена
+# `request_type`, отметка `escalated_to_methodist_at`), а `learning_events`
+# в приложении никем не читается — второй, несогласуемый источник правды тут
+# был бы лишним. Закрытие заявки своё событие пишет как и раньше — через
+# `close_help_request`.
+
+_LADDER_TYPES = ("manual_help", "individual_review")
+
+# Отдельное пространство ключей advisory-локов: в этом же файле уже есть
+# блокировки по паре (student_id, task_id) для blocked_limit, и совпадение
+# ключей заблокировало бы несвязанные между собой вещи.
+_LADDER_LOCK_NAMESPACE = 303
+
+
+async def _lock_request(db: AsyncSession, request_id: int) -> None:
+    """Сериализовать шаги лестницы по одной заявке.
+
+    Кнопки ученика легко нажать дважды (двойной клик, повтор запроса сети):
+    без блокировки два «Вернуть заявку» дали бы две строки возврата, то есть
+    задвоенный KPI учителя, а два запроса разбора — гонку на смене типа.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
+        {"k1": _LADDER_LOCK_NAMESPACE, "k2": request_id},
+    )
+
+
+async def get_reopen_kpi(
+    db: AsyncSession,
+    *,
+    teacher_id: Optional[int] = None,
+    since: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    """Агрегат возвратов заявок по преподавателям — KPI «текст не помог».
+
+    Один запрос на двух потребителей (решение плана, чтобы не разошлись):
+    преподаватель смотрит свой показатель (`teacher_id=<свой>`), методист и
+    админ — по всем сразу (`teacher_id=None`).
+
+    `since` режет по `reopened_at` — панель почти всегда смотрит окно («за
+    месяц»), а не всю историю; ради этого история и хранится строками, а не
+    счётчиком на заявке.
+
+    Возвраты с неизвестным автором (`teacher_id IS NULL` — учётку удалили)
+    в разрез по людям не попадают: приписать их некому, а «ничей» столбец в
+    оценке преподавателей только путал бы.
+    """
+    conds = ["rr.teacher_id IS NOT NULL"]
+    params: dict[str, Any] = {}
+    if teacher_id is not None:
+        conds.append("rr.teacher_id = :teacher_id")
+        params["teacher_id"] = teacher_id
+    if since is not None:
+        conds.append("rr.reopened_at >= :since")
+        params["since"] = since
+    where_sql = " AND ".join(conds)
+
+    rows = (
+        await db.execute(
+            text(f"""
+                SELECT rr.teacher_id,
+                       u.full_name,
+                       COUNT(*) AS reopens,
+                       COUNT(DISTINCT rr.request_id) AS requests,
+                       MAX(rr.reopened_at) AS last_reopened_at
+                FROM help_request_reopens rr
+                LEFT JOIN users u ON u.id = rr.teacher_id
+                WHERE {where_sql}
+                GROUP BY rr.teacher_id, u.full_name
+                ORDER BY COUNT(*) DESC, rr.teacher_id
+            """),  # nosec B608 — where_sql собран из литералов модуля, значения идут через bind
+            params,
+        )
+    ).fetchall()
+    return [
+        {
+            "teacher_id": int(r[0]),
+            "teacher_name": r[1],
+            "reopens": int(r[2] or 0),
+            "requests": int(r[3] or 0),
+            "last_reopened_at": r[4],
+        }
+        for r in rows
+    ]
+
+
+async def _repeat_ask_count(
+    db: AsyncSession,
+    request_id: int,
+    student_id: int,
+    task_id: int,
+) -> int:
+    """Сколько раз ученик обращался по этому заданию СВЕРХ первого раза.
+
+    Оператор задал гейт уровня 2 как «повторная заявка по тому же `task_id`».
+    Повтор бывает двух видов, и засчитывать надо оба:
+
+    1. ученик вернул эту же заявку кнопкой «Вернуть заявку» (штатный путь);
+    2. ученик завёл по тому же заданию ВТОРУЮ заявку — `request-help`
+       дедуплицирует обращения лишь окном в несколько минут, так что это
+       достижимо и без всякой кнопки.
+
+    Считать только (1) значило бы отказать в разборе ученику, который просил
+    помощь дважды — то есть ровно тому, для кого уровень 2 и придуман.
+    """
+    return int(
+        (
+            await db.execute(
+                text("""
+                    SELECT
+                      (SELECT COUNT(*) FROM help_request_reopens rr
+                        WHERE rr.request_id = :request_id)
+                      +
+                      (SELECT COUNT(*) FROM help_requests hr
+                        WHERE hr.student_id = :student_id
+                          AND hr.task_id = :task_id
+                          AND hr.request_type = ANY(:types)
+                          AND hr.id <> :request_id)
+                """),
+                {
+                    "request_id": request_id,
+                    "student_id": student_id,
+                    "task_id": task_id,
+                    "types": list(_LADDER_TYPES),
+                },
+            )
+        ).scalar()
+        or 0
+    )
+
+
+async def get_student_help_request(
+    db: AsyncSession,
+    student_id: int,
+    task_id: int,
+) -> Optional[dict[str, Any]]:
+    """Текущая заявка помощи ученика по заданию — для его собственного экрана.
+
+    Берётся последняя заявка лестницы (`manual_help`/`individual_review`) по
+    паре (ученик, задание). `blocked_limit` сюда не попадает: это другой
+    механизм со своим интерфейсом, лестницы помощи у него нет.
+
+    Признаки `can_*` считает сервер, а не клиент: гейты уровней — часть
+    правил, и второй их экземпляр в UI неизбежно разъедется с этим.
+    """
+    row = (
+        await db.execute(
+            text("""
+                SELECT hr.id, hr.status, hr.request_type, hr.message,
+                       hr.created_at, hr.updated_at, hr.closed_at,
+                       hr.webinar_link, hr.review_understood,
+                       hr.escalated_to_methodist_at, hr.resolution_comment,
+                       (SELECT COUNT(*) FROM help_request_reopens rr
+                         WHERE rr.request_id = hr.id) AS reopen_count
+                FROM help_requests hr
+                WHERE hr.student_id = :student_id
+                  AND hr.task_id = :task_id
+                  AND hr.request_type = ANY(:types)
+                ORDER BY hr.created_at DESC, hr.id DESC
+                LIMIT 1
+            """),
+            {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
+        )
+    ).fetchone()
+    if row is None:
+        return None
+
+    request_id = int(row[0])
+    status_val, request_type = row[1], row[2]
+    webinar_link, review_understood = row[7], row[8]
+    reopen_count = int(row[11] or 0)
+    is_open = status_val == "open"
+
+    replies = [
+        {"body": r[0], "created_at": r[1]}
+        for r in (
+            await db.execute(
+                text("""
+                    SELECT body, created_at FROM help_request_replies
+                    WHERE request_id = :request_id ORDER BY created_at ASC
+                """),
+                {"request_id": request_id},
+            )
+        ).fetchall()
+    ]
+    repeat_asks = await _repeat_ask_count(db, request_id, student_id, task_id)
+
+    return {
+        "request_id": request_id,
+        "status": status_val,
+        "request_type": request_type or "manual_help",
+        "message": row[3],
+        "created_at": row[4],
+        "updated_at": row[5],
+        "closed_at": row[6],
+        "webinar_link": webinar_link,
+        "review_understood": review_understood,
+        "escalated_to_methodist_at": row[9],
+        "resolution_comment": row[10],
+        "reopen_count": reopen_count,
+        "replies": replies,
+        # Гейты уровней — те же условия, что проверяют сами операции ниже.
+        "can_reopen": (not is_open) and request_type == "manual_help",
+        "can_request_individual_review": (
+            is_open and request_type == "manual_help" and repeat_asks >= 1
+        ),
+        "can_rate_review": (
+            is_open
+            and request_type == "individual_review"
+            and webinar_link is not None
+            and review_understood is None
+        ),
+    }
+
+
+async def reopen_help_request(
+    db: AsyncSession,
+    request_id: int,
+    student_id: int,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """«Вернуть заявку»: ответ учителя не помог, заявка снова открыта.
+
+    Возврат начисляется тому, чей ответ не помог — `closed_by` на момент
+    возврата, с откатом на `assigned_teacher_id`, если заявку закрыли системно.
+    Снимок делается ДО очистки полей закрытия, иначе атрибутировать будет нечем.
+
+    Возвращает (data, error). error: None | "not_found" | "forbidden" |
+    "not_closed" | "wrong_type".
+    """
+    await _lock_request(db, request_id)
+    row = (
+        await db.execute(
+            text("""
+                SELECT student_id, task_id, status, request_type, closed_by,
+                       assigned_teacher_id
+                FROM help_requests WHERE id = :id
+            """),
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        return (None, "not_found")
+    owner_id, task_id, status_val, request_type, closed_by, assigned = row
+    if owner_id != student_id:
+        return (None, "forbidden")
+    if request_type != "manual_help":
+        # Разбор и лимит попыток возвращать нечем: у первого своя оценка,
+        # у второго — свой механизм закрытия.
+        return (None, "wrong_type")
+    if status_val != "closed":
+        return (None, "not_closed")
+
+    blamed_teacher_id = closed_by if closed_by is not None else assigned
+
+    await db.execute(
+        text("""
+            UPDATE help_requests
+            SET status = 'open', closed_at = NULL, closed_by = NULL,
+                resolution_comment = NULL, updated_at = now()
+            WHERE id = :id
+        """),
+        {"id": request_id},
+    )
+    # Поля закрытия чистятся намеренно: иначе открытая заявка несла бы дату
+    # закрытия и комментарий об уже отвергнутом решении.
+    await db.execute(
+        text("""
+            INSERT INTO help_request_reopens (request_id, teacher_id)
+            VALUES (:request_id, :teacher_id)
+        """),
+        {"request_id": request_id, "teacher_id": blamed_teacher_id},
+    )
+    reopen_count = int(
+        (
+            await db.execute(
+                text("SELECT COUNT(*) FROM help_request_reopens WHERE request_id = :id"),
+                {"id": request_id},
+            )
+        ).scalar()
+        or 0
+    )
+
+    if blamed_teacher_id is not None:
+        await inbox_service.create_for_user(
+            db,
+            user_id=blamed_teacher_id,
+            kind="help_request_reopened",
+            title="Ученик вернул заявку: ответ не помог",
+            content="Ученик отметил, что после ответа всё равно не разобрался.",
+            payload={
+                "request_id": request_id,
+                "task_id": task_id,
+                "student_id": student_id,
+                "reopen_count": reopen_count,
+            },
+            created_by=student_id,
+        )
+
+    return (
+        {
+            "request_id": request_id,
+            "status": "open",
+            "reopen_count": reopen_count,
+            "can_request_individual_review": True,
+        },
+        None,
+    )
+
+
+async def request_individual_review(
+    db: AsyncSession,
+    request_id: int,
+    student_id: int,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Уровень 2: ученик просит индивидуальный разбор.
+
+    Доступно только после возврата заявки — то есть когда текстовый ответ уже
+    подтверждённо не помог (решение оператора: «повторная заявка по тому же
+    заданию»). Повторный вызов идемпотентен: заявка уже в нужном классе, и
+    отвечать ошибкой на второй клик незачем.
+
+    Возвращает (data, error). error: None | "not_found" | "forbidden" |
+    "not_open" | "wrong_type" | "no_reopen".
+    """
+    await _lock_request(db, request_id)
+    row = (
+        await db.execute(
+            text("""
+                SELECT student_id, task_id, status, request_type, assigned_teacher_id
+                FROM help_requests WHERE id = :id
+            """),
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        return (None, "not_found")
+    owner_id, task_id, status_val, request_type, assigned = row
+    if owner_id != student_id:
+        return (None, "forbidden")
+    if status_val != "open":
+        return (None, "not_open")
+    if request_type == "individual_review":
+        return (
+            {"request_id": request_id, "request_type": request_type, "already": True},
+            None,
+        )
+    if request_type != "manual_help":
+        return (None, "wrong_type")
+    if await _repeat_ask_count(db, request_id, student_id, task_id) < 1:
+        return (None, "no_reopen")
+
+    await db.execute(
+        text("""
+            UPDATE help_requests
+            SET request_type = 'individual_review', updated_at = now()
+            WHERE id = :id
+        """),
+        {"id": request_id},
+    )
+    if assigned is not None:
+        await inbox_service.create_for_user(
+            db,
+            user_id=assigned,
+            kind="individual_review_requested",
+            title="Ученик просит индивидуальный разбор",
+            content="Текстовый ответ не помог — ученик просит разбор в личной встрече.",
+            payload={
+                "request_id": request_id,
+                "task_id": task_id,
+                "student_id": student_id,
+            },
+            created_by=student_id,
+        )
+
+    return (
+        {"request_id": request_id, "request_type": "individual_review", "already": False},
+        None,
+    )
+
+
+async def rate_individual_review(
+    db: AsyncSession,
+    request_id: int,
+    student_id: int,
+    understood: bool,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Уровень 3: оценка ученика после разбора.
+
+    «Понятно» закрывает заявку, «непонятно» уводит её методисту. Оценка
+    принимается один раз: она развилка маршрута, а не мнение, которое можно
+    менять — второй ответ либо переоткрыл бы закрытую заявку, либо повторно
+    дёрнул методистов.
+
+    Возвращает (data, error). error: None | "not_found" | "forbidden" |
+    "wrong_type" | "not_open" | "no_webinar_link" | "already_rated".
+    """
+    await _lock_request(db, request_id)
+    row = (
+        await db.execute(
+            text("""
+                SELECT student_id, task_id, course_id, status, request_type,
+                       webinar_link, review_understood
+                FROM help_requests WHERE id = :id
+            """),
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        return (None, "not_found")
+    owner_id, task_id, course_id, status_val, request_type, webinar_link, rated = row
+    if owner_id != student_id:
+        return (None, "forbidden")
+    if request_type != "individual_review":
+        return (None, "wrong_type")
+    if status_val != "open":
+        return (None, "not_open")
+    if webinar_link is None:
+        # Оценивать нечего: преподаватель ещё не прислал ссылку на разбор.
+        return (None, "no_webinar_link")
+    if rated is not None:
+        return (None, "already_rated")
+
+    await db.execute(
+        text("UPDATE help_requests SET review_understood = :v, updated_at = now() WHERE id = :id"),
+        {"v": understood, "id": request_id},
+    )
+
+    if understood:
+        # Системное закрытие (`closed_by=None`), как в tsk-339: инициатор —
+        # сам ученик, и уведомление «учитель закрыл ваш вопрос» тут было бы
+        # неправдой. Кто и почему закрыл, видно по `review_understood`.
+        await close_help_request(
+            db,
+            request_id,
+            closed_by=None,
+            resolution_comment="Ученик подтвердил: после разбора всё понятно",
+        )
+        return (
+            {"request_id": request_id, "understood": True, "status": "closed", "escalated": False},
+            None,
+        )
+
+    await db.execute(
+        text(
+            "UPDATE help_requests SET escalated_to_methodist_at = now(), updated_at = now() "
+            "WHERE id = :id"
+        ),
+        {"id": request_id},
+    )
+    escalated_count = await methodist_notify_service.escalate_help_request(
+        db,
+        request_id=request_id,
+        student_id=student_id,
+        task_id=task_id,
+        course_id=course_id,
+    )
+    logger.info(
+        "tsk-303: заявка %s ушла методисту после разбора (уведомлено: %s)",
+        request_id,
+        escalated_count,
+    )
+    return (
+        {"request_id": request_id, "understood": False, "status": "open", "escalated": True},
+        None,
+    )
+
+
+async def set_webinar_link(
+    db: AsyncSession,
+    request_id: int,
+    teacher_id: int,
+    webinar_link: str,
+    lock_token: Optional[str] = None,
+) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
+    """Уровень 2, сторона преподавателя: прислать ссылку на разбор.
+
+    Заявку НЕ закрывает: разбор ещё впереди, а закроет заявку оценка ученика
+    после него (или методист, если разбор не помог).
+
+    Ссылку преподаватель вводит вручную любым инструментом — интеграции с
+    видео-сервисом здесь нет по решению оператора. Живёт она, пока заявка
+    открыта: при закрытии обнуляется.
+
+    Возвращает (data, error). error: None | "not_found" | "forbidden" |
+    "not_open" | "wrong_type" | "lock_conflict".
+    """
+    await _lock_request(db, request_id)
+    row = (
+        await db.execute(
+            text("""
+                SELECT student_id, task_id, status, request_type
+                FROM help_requests WHERE id = :id
+            """),
+            {"id": request_id},
+        )
+    ).fetchone()
+    if row is None:
+        return (None, "not_found")
+    student_id, task_id, status_val, request_type = row
+
+    err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
+    if err is not None:
+        return (None, err)
+    if not await can_access_help_request(db, request_id, teacher_id):
+        return (None, "forbidden")
+    if request_type != "individual_review":
+        return (None, "wrong_type")
+    if status_val != "open":
+        return (None, "not_open")
+
+    link = webinar_link.strip()
+    await db.execute(
+        text("UPDATE help_requests SET webinar_link = :l, updated_at = now() WHERE id = :id"),
+        {"l": link, "id": request_id},
+    )
+
+    # Ссылка бесполезна, если ученик о ней не узнает: шлём и в переписку
+    # (там же, где живут текстовые ответы), и в inbox — как это уже делает
+    # ответ на заявку.
+    messages_svc = MessagesService()
+    thread_row = (
+        await db.execute(
+            text("SELECT thread_id FROM help_requests WHERE id = :id"), {"id": request_id}
+        )
+    ).fetchone()
+    thread_id = thread_row[0] if thread_row is not None else None
+    msg = await messages_svc.send_message(
+        db,
+        message_type="teacher_reply",
+        content={"text": f"Приглашение на индивидуальный разбор: {link}"},
+        recipient_id=student_id,
+        sender_id=teacher_id,
+        source_system="help_request_webinar_link",
+        thread_id=thread_id,
+    )
+    await db.flush()
+    if thread_id is None:
+        await db.execute(
+            text("UPDATE help_requests SET thread_id = :tid WHERE id = :id"),
+            {"tid": msg.thread_id or msg.id, "id": request_id},
+        )
+
+    await inbox_service.create_for_user(
+        db,
+        user_id=student_id,
+        kind="individual_review_scheduled",
+        title="Преподаватель пригласил на разбор",
+        content=f"Ссылка на разбор: {link}",
+        payload={"request_id": request_id, "task_id": task_id, "webinar_link": link},
+        created_by=teacher_id,
+    )
+
+    return ({"request_id": request_id, "webinar_link": link, "status": status_val}, None)
+
+
 async def reply_help_request(
     db: AsyncSession,
     request_id: int,
@@ -783,7 +1365,8 @@ async def reply_help_request(
     """
     r = await db.execute(
         text("""
-            SELECT id, student_id, status, thread_id, task_id FROM help_requests WHERE id = :request_id
+            SELECT id, student_id, status, thread_id, task_id, request_type
+            FROM help_requests WHERE id = :request_id
         """),
         {"request_id": request_id},
     )
@@ -791,6 +1374,7 @@ async def reply_help_request(
     if row is None:
         return (None, "not_found")
     hid, student_id, req_status, thread_id, task_id = row[0], row[1], row[2], row[3], row[4]
+    request_type = row[5] or "manual_help"
 
     if req_status == "closed":
         return (None, "closed")
@@ -861,12 +1445,28 @@ async def reply_help_request(
     )
     await record_help_request_replied(db, student_id, request_id, teacher_id, msg.id, thread_id)
 
+    # tsk-303: текстовый ответ на заявку помощи ЗАКРЫВАЕТ её — это правило
+    # (решение оператора), а не выбор клиента. Держим его на сервере, иначе
+    # каждый клиент (веб, бот) решал бы по-своему и лестница помощи собиралась
+    # бы из разных правил. Дальше ход за учеником: не помогло — «Вернуть
+    # заявку», и возврат попадёт в KPI преподавателя.
+    #
+    # Только `manual_help`: у `individual_review` заявку закрывает оценка
+    # ученика после разбора, у `blocked_limit` — своё закрытие при выдаче
+    # лимита.
+    force_close = request_type == "manual_help"
     final_status = req_status
-    if close_after_reply:
+    if close_after_reply or force_close:
+        # Вторая точка закрытия заявки в этом файле (первая — `close_help_request`).
+        # Делегировать туда нельзя: та шлёт ученику отдельное уведомление
+        # «вопрос закрыт», и вместе с уже уходящим «учитель ответил» получилось
+        # бы два пуша на одно действие. Поэтому обнуление вебинар-ссылки (TTL,
+        # tsk-303) продублировано здесь осознанно — оба пути обязаны его делать.
         await db.execute(
             text("""
                 UPDATE help_requests
-                SET status = 'closed', closed_at = now(), closed_by = :closed_by, updated_at = now()
+                SET status = 'closed', closed_at = now(), closed_by = :closed_by,
+                    updated_at = now(), webinar_link = NULL
                 WHERE id = :id
             """),
             {"id": request_id, "closed_by": teacher_id},

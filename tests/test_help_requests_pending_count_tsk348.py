@@ -224,10 +224,20 @@ async def test_explicit_close_notifies_student_but_system_close_does_not(db, cli
 
 @pytest.mark.asyncio
 async def test_pending_count_excludes_after_teacher_reply_includes_again_after_student_reply(db, client):
-    """tsk-415: колокольчик светит только заявки, ждущие ОТВЕТА УЧИТЕЛЯ. После
-    того как учитель ответил, заявка остаётся open (ученик её не закрыл), но
-    бейдж должен погаснуть — а если ученик написал в ответ (follow-up в том же
-    треде), бейдж должен снова зажечься."""
+    """tsk-415 + tsk-303: колокольчик светит только заявки, ждущие ОТВЕТА УЧИТЕЛЯ.
+
+    **Семантика изменена в tsk-303** (решение оператора 2026-08-06). Раньше
+    ответ учителя оставлял заявку открытой, и вернуть на себя внимание ученик
+    мог, просто написав в тред. Теперь ответ на `manual_help` ЗАКРЫВАЕТ заявку,
+    а сказать «не помогло» ученик должен явной кнопкой «Вернуть заявку» — и
+    только этот возврат идёт в KPI преподавателя.
+
+    Почему не оставили и прежний путь: сообщение в треде бывает и «спасибо,
+    понял», и «всё равно не понимаю». Считать любое из них возвратом значило бы
+    портить показатель, которым ОЦЕНИВАЮТ людей. Само сообщение ученика не
+    теряется — оно приходит в раздел «Сообщения» преподавателя, просто не
+    зажигает бейдж заявок.
+    """
     teacher_id, token = await _setup_teacher(db)
     student_id, student_token = await _create_student_with_session(db)
     task_id = await _pick_task(db)
@@ -258,11 +268,13 @@ async def test_pending_count_excludes_after_teacher_reply_includes_again_after_s
             f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert detail_resp.json()["status"] == "open", "бейдж гаснет, но заявка остаётся открытой в списке"
+        assert detail_resp.json()["status"] == "closed", (
+            "tsk-303: ответ текстом закрывает заявку помощи — дальше ход за учеником"
+        )
 
-        # follow-up ученика — реальный SPW-путь для живого пользователя
-        # (POST /messages/{id}/reply — legacy сервисный эндпоинт под X-API-Key
-        # для TG_LMS-бота, обычной сессии ученика недостаточно).
+        # Сообщение ученика в тред больше НЕ зажигает бейдж заявок: оно уходит
+        # в раздел «Сообщения» преподавателя, а сигнал «не помогло» подаётся
+        # отдельной кнопкой (иначе «спасибо, понял» портило бы KPI).
         follow_up_resp = await client.post(
             "/api/v1/messages/send",
             json={
@@ -279,7 +291,22 @@ async def test_pending_count_excludes_after_teacher_reply_includes_again_after_s
             f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert resp.json()["count"] == 1, "ответ ученика после реплики учителя должен снова зажечь бейдж"
+        assert resp.json()["count"] == 0, (
+            "сообщение в переписке — не сигнал «верните заявку»; бейдж молчит"
+        )
+
+        # А вот явный возврат заявки учеником обязан зажечь бейдж снова.
+        reopen_resp = await client.post(
+            f"/api/v1/learning/help-requests/{rid}/reopen",
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+        assert reopen_resp.status_code == 200, reopen_resp.text
+
+        resp = await client.get(
+            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.json()["count"] == 1, "возврат заявки учеником обязан зажечь бейдж"
     finally:
         await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid])
 

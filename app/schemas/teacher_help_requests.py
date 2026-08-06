@@ -4,13 +4,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 HelpRequestStatus = Literal["open", "closed"]
 HelpRequestStatusFilter = Literal["open", "closed", "all"]
-HelpRequestType = Literal["manual_help", "blocked_limit"]
-HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "all"]
+# tsk-303: третий класс заявки — индивидуальный разбор. Без него карточка и
+# список у преподавателя падали бы на сериализации, как только ученик поднялся
+# на уровень 2: литерал закрытый, а тип в БД уже допустим.
+HelpRequestType = Literal["manual_help", "blocked_limit", "individual_review"]
+HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "individual_review", "all"]
 
 
 # ----- GET list -----
@@ -72,9 +75,74 @@ class HelpRequestDetailResponse(HelpRequestListItem):
     closed_by: Optional[int] = None
     resolution_comment: Optional[str] = None
     history: list[HelpRequestReplyItem] = Field(default_factory=list, description="Ответы преподавателей")
+    # tsk-303: состояние лестницы помощи — преподавателю нужно видеть, на каком
+    # уровне заявка и не вернул ли её ученик, иначе он отвечает вслепую.
+    reopen_count: int = Field(0, description="Сколько раз ученик возвращал заявку")
+    webinar_link: Optional[str] = Field(None, description="Ссылка на разбор (пока заявка открыта)")
+    review_understood: Optional[bool] = Field(
+        None, description="Оценка ученика после разбора; false — заявка ушла методисту"
+    )
+    escalated_to_methodist_at: Optional[datetime] = Field(
+        None, description="Когда заявка эскалирована методисту (уровень 3)"
+    )
 
 
 # ----- POST close -----
+
+class ReopenKpiItem(BaseModel):
+    """Возвраты заявок на одного преподавателя (tsk-303, KPI)."""
+    teacher_id: int
+    teacher_name: Optional[str] = None
+    reopens: int = Field(..., description="Сколько раз ученики возвращали заявки этого преподавателя")
+    requests: int = Field(..., description="По скольким разным заявкам это было")
+    last_reopened_at: Optional[datetime] = None
+
+
+class ReopenKpiResponse(BaseModel):
+    """Сводка возвратов. Одна и та же для кабинета преподавателя и методиста."""
+    items: list[ReopenKpiItem] = Field(default_factory=list)
+    total_reopens: int = Field(0, description="Сумма возвратов по всем строкам выборки")
+    since: Optional[datetime] = Field(None, description="Начало окна, если задано")
+
+
+class WebinarLinkRequest(BaseModel):
+    """Тело запроса ссылки на индивидуальный разбор (tsk-303, уровень 2)."""
+    teacher_id: int = Field(..., description="ID преподавателя")
+    webinar_link: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Ссылка на комнату разбора (http/https), вводится вручную",
+    )
+    lock_token: Optional[str] = Field(
+        None, description="Токен блокировки; при невалидном/просроченном — 409"
+    )
+
+    @field_validator("webinar_link")
+    @classmethod
+    def _must_be_http_url(cls, v: str) -> str:
+        """Отбить пустую строку и не-ссылку.
+
+        Ученику эта строка приезжает кнопкой «Перейти к разбору». Текст вместо
+        ссылки даст кнопку в никуда, а заявка при этом будет выглядеть
+        отвеченной — тот же класс дефекта, что уже закрыт на уровне БД
+        (`ck_help_requests_webinar_link_type`), просто с понятной ошибкой
+        вместо 500 от нарушенного ограничения.
+        """
+        link = v.strip()
+        if not link:
+            raise ValueError("Ссылка не может быть пустой")
+        if not (link.startswith("http://") or link.startswith("https://")):
+            raise ValueError("Ссылка должна начинаться с http:// или https://")
+        return link
+
+
+class WebinarLinkResponse(BaseModel):
+    """Ответ на отправку ссылки на разбор."""
+    request_id: int
+    webinar_link: str
+    status: str = Field(..., description="Заявка остаётся открытой — разбор впереди")
+
 
 class HelpRequestCloseRequest(BaseModel):
     """Тело запроса закрытия заявки."""
