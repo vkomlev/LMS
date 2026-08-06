@@ -1,0 +1,786 @@
+diff --git a/.claude/settings.local.json b/.claude/settings.local.json
+index 092f0e5..2686c87 100644
+--- a/.claude/settings.local.json
++++ b/.claude/settings.local.json
+@@ -34,7 +34,12 @@
+       "Bash(python -)",
+       "Bash(mkdir -p \"C:\\\\Users\\\\user\\\\.claude\\\\skills\\\\claude-booster\\\\references\\\\backups\")",
+       "Bash(cp \"C:\\\\Users\\\\user\\\\.claude\\\\skills\\\\methodist\\\\references\\\\assignment-rules.md\" \"C:\\\\Users\\\\user\\\\.claude\\\\skills\\\\claude-booster\\\\references\\\\backups\\\\methodist-assignment-rules-2026-07-21.md\")",
+-      "Bash(SRC=\"C:\\\\Users\\\\user\\\\.claude\\\\projects\\\\D--Work-LMS\\\\ada0fb00-f804-4c32-ae2a-646ee1b58642\\\\tool-results\\\\mcp-learn_prod_db-query-1784648895290.txt\" *)"
++      "Bash(SRC=\"C:\\\\Users\\\\user\\\\.claude\\\\projects\\\\D--Work-LMS\\\\ada0fb00-f804-4c32-ae2a-646ee1b58642\\\\tool-results\\\\mcp-learn_prod_db-query-1784648895290.txt\" *)",
++      "Bash(mkdir -p \"D:/Work/LMS/reviews/tsk411-python-materials\" && cp \"C:\\\\Users\\\\user\\\\.claude\\\\projects\\\\D--Work-LMS\\\\4ac8f585-764e-44aa-9ee7-ec433c6d983a\\\\tool-results\\\\mcp-learn_prod_db-query-1784968800708.txt\" \"D:/Work/LMS/reviews/tsk411-python-materials/2026-07-25-backup-before-trim.json\" && wc -l \"D:/Work/LMS/reviews/tsk411-python-materials/2026-07-25-backup-before-trim.json\" && head -c 300 \"D:/Work/LMS/reviews/tsk411-python-materials/2026-07-25-backup-before-trim.json\")",
++      "Bash(cp \"C:\\\\Users\\\\user\\\\.claude\\\\hooks\\\\db_write_gate.py\" \"C:\\\\Users\\\\user\\\\.claude\\\\skills\\\\claude-booster\\\\references\\\\backups\\\\db_write_gate-2026-07-26.py\")",
++      "Bash(rm -f \"D:/Work/Root/.git/index.lock\")",
++      "Bash(rm \"D:/Work/LMS/.git/index.lock\" && git status --short reviews/2026-08-02-tsk531-course112-bank-zadanij.md)",
++      "Bash(rm .git/index.lock *)"
+     ],
+     "additionalDirectories": [
+       "C:\\Users\\user\\.claude"
+diff --git a/app/api/v1/course_dependencies.py b/app/api/v1/course_dependencies.py
+index d6a3f03..b21e152 100644
+--- a/app/api/v1/course_dependencies.py
++++ b/app/api/v1/course_dependencies.py
+@@ -1,7 +1,7 @@
+ # app/api/v1/course_dependencies.py
+ 
+ from typing import List
+-from fastapi import APIRouter, Depends, HTTPException, status, Body
++from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import get_async_db, require_role
+@@ -103,7 +103,8 @@ async def bulk_add_course_dependencies(
+     """
+     try:
+         dependencies = await service.bulk_add_dependencies(
+-            db, course_id, payload.required_course_ids
++            db, course_id, payload.required_course_ids,
++            auto_assign=payload.auto_assign,
+         )
+         return [CourseRead.model_validate(dep) for dep in dependencies]
+     except ValueError as e:
+@@ -122,6 +123,10 @@ async def bulk_add_course_dependencies(
+ async def preview_course_dependency_impact(
+     course_id: int,
+     required_course_id: int,
++    auto_assign: bool = Query(
++        True,
++        description="Режим будущей зависимости — превью обязано совпадать с тем, что реально произойдёт",
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_WRITE_GATE),
+ ) -> CourseDependencyImpact:
+@@ -129,11 +134,12 @@ async def preview_course_dependency_impact(
+     Read-only превью ДО `POST /{required_course_id}`: сколько уже зачисленных
+     на course_id учеников будет немедленно заблокировано новой зависимостью.
+ 
+-    Блокировка глобальная и мгновенная (решение оператора, план tsk-231) —
+-    действует на всех, не только на тех, кто провалил задание. Используется
+-    для confirm-диалога методиста перед фактическим добавлением.
++    При `auto_assign=true` блокировка глобальная и мгновенная (решение
++    оператора, план tsk-231) — действует на всех, не только на тех, кто
++    провалил задание. При `auto_assign=false` (фаза 6) мгновенно заблокированных
++    нет: курс блокирует только тех, кому его назначат адресно.
+     """
+-    count = await service.count_affected_students(db, course_id)
++    count = await service.count_affected_students(db, course_id, auto_assign=auto_assign)
+     return CourseDependencyImpact(affected_students_count=count)
+ 
+ 
+@@ -151,6 +157,15 @@ async def preview_course_dependency_impact(
+ async def add_course_dependency(
+     course_id: int,
+     required_course_id: int,
++    auto_assign: bool = Query(
++        True,
++        description=(
++            "true (умолчание) — пререквизит для всех: требуемый курс раздаётся "
++            "автоматически каждому, кто получает course_id, и блокирует весь поток. "
++            "false — выдаётся точечно (мини-курс повторения, tsk-231): курс никому "
++            "не раздаётся и блокирует только тех, кому методист назначил его адресно."
++        ),
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_WRITE_GATE),
+ ) -> None:
+@@ -158,7 +173,9 @@ async def add_course_dependency(
+     Добавить зависимость: course_id зависит от required_course_id.
+     """
+     try:
+-        await service.add_dependency(db, course_id, required_course_id)
++        await service.add_dependency(
++            db, course_id, required_course_id, auto_assign=auto_assign
++        )
+     except ValueError as e:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
+ 
+diff --git a/app/models/association_tables.py b/app/models/association_tables.py
+index d2cbdc2..6a24d89 100644
+--- a/app/models/association_tables.py
++++ b/app/models/association_tables.py
+@@ -1,5 +1,5 @@
+ from sqlalchemy import (
+-    Table, Column, Integer, SmallInteger, ForeignKeyConstraint,
++    Table, Column, Integer, SmallInteger, Boolean, ForeignKeyConstraint,
+     PrimaryKeyConstraint, text, DateTime
+ )
+ from app.db.base import Base
+@@ -17,6 +17,14 @@ t_course_dependencies = Table(
+         )
+     ),
+     Column("required_course_id", Integer, primary_key=True, nullable=False, comment="ID обязательного курса"),
++    Column(
++        "auto_assign", Boolean, nullable=False, server_default=text("true"),
++        comment=(
++            "tsk-231: выдавать ли требуемый курс автоматически всем, кто получает "
++            "зависимый курс. true — пререквизит для всех. false — выдаётся точечно: "
++            "блокирует только тех, кому назначен (мини-курсы повторения)."
++        )
++    ),
+     ForeignKeyConstraint(
+         ["course_id"], ["courses.id"],
+         ondelete="CASCADE", name="course_dependencies_course_id_fkey"
+diff --git a/app/repos/course_dependencies_repository.py b/app/repos/course_dependencies_repository.py
+index b8095ff..02cb38a 100644
+--- a/app/repos/course_dependencies_repository.py
++++ b/app/repos/course_dependencies_repository.py
+@@ -52,11 +52,15 @@ class CourseDependenciesRepository:
+         return res.first() is not None
+ 
+     async def add_dependency(
+-        self, db: AsyncSession, course_id: int, required_course_id: int
++        self, db: AsyncSession, course_id: int, required_course_id: int,
++        auto_assign: bool = True,
+     ) -> None:
+         """
+         Добавить зависимость: course_id зависит от required_course_id.
+         Пропускаем, если уже существует.
++
++        auto_assign=False (tsk-231) — зависимость выдаётся точечно: требуемый
++        курс не раздаётся автоматически и блокирует только тех, кому назначен.
+         """
+         # Проверяем, что оба курса существуют
+         course = await db.get(Courses, course_id)
+@@ -66,7 +70,11 @@ class CourseDependenciesRepository:
+ 
+         stmt = (
+             insert(t_course_dependencies)
+-            .values(course_id=course_id, required_course_id=required_course_id)
++            .values(
++                course_id=course_id,
++                required_course_id=required_course_id,
++                auto_assign=auto_assign,
++            )
+             .on_conflict_do_nothing(index_elements=["course_id", "required_course_id"])
+         )
+         await db.execute(stmt)
+@@ -92,12 +100,17 @@ class CourseDependenciesRepository:
+         self,
+         db: AsyncSession,
+         course_id: int,
+-        required_course_ids: List[int]
++        required_course_ids: List[int],
++        auto_assign: bool = True,
+     ) -> List[Courses]:
+         """
+         Массовое добавление зависимостей: course_id зависит от всех курсов из списка.
+         Пропускает уже существующие зависимости и self-dependency.
+         Возвращает список успешно добавленных зависимостей.
++
++        auto_assign применяется ко всем связям вызова (tsk-231): смешивать
++        режимы в одном bulk-запросе незачем — методист добавляет либо
++        пререквизиты курса, либо точечные мини-курсы.
+         """
+         # Проверяем, что курс существует
+         course = await db.get(Courses, course_id)
+@@ -120,7 +133,11 @@ class CourseDependenciesRepository:
+         
+         # Массовое добавление зависимостей (пропускаем конфликты)
+         values = [
+-            {"course_id": course_id, "required_course_id": rid}
++            {
++                "course_id": course_id,
++                "required_course_id": rid,
++                "auto_assign": auto_assign,
++            }
+             for rid in valid_course_ids
+         ]
+         
+diff --git a/app/schemas/courses.py b/app/schemas/courses.py
+index bf70e63..84be0bb 100644
+--- a/app/schemas/courses.py
++++ b/app/schemas/courses.py
+@@ -267,6 +267,14 @@ class CourseDependenciesBulkCreate(BaseModel):
+         description="Список ID курсов-зависимостей для добавления. Минимум 1 элемент.",
+         examples=[[2, 3, 4], [7, 8]],
+     )
++    auto_assign: bool = Field(
++        True,
++        description=(
++            "tsk-231: true (умолчание) — пререквизит для всех, требуемые курсы "
++            "раздаются автоматически и блокируют весь поток. false — выдаются "
++            "точечно: не раздаются никому и блокируют только тех, кому назначены."
++        ),
++    )
+ 
+     model_config = ConfigDict(
+         json_schema_extra={
+@@ -287,10 +295,11 @@ class CourseDependenciesBulkCreate(BaseModel):
+ class CourseDependencyImpact(BaseModel):
+     """tsk-231: превью влияния ДО добавления зависимости (для confirm-диалога методиста).
+ 
+-    Блокировка через course_dependencies глобальная и мгновенная — действует
+-    на ВСЕХ уже зачисленных на course_id учеников, не только на тех, кто
+-    провалил задание (решение оператора, план tsk-231). Прецедент случайной
+-    массовой блокировки — tsk-523.
++    Блокировка через course_dependencies с `auto_assign=true` глобальная и
++    мгновенная — действует на ВСЕХ уже зачисленных на course_id учеников, не
++    только на тех, кто провалил задание (решение оператора, план tsk-231).
++    Прецедент случайной массовой блокировки — tsk-523. У точечной зависимости
++    (`auto_assign=false`, фаза 6) мгновенно заблокированных нет.
+     """
+     affected_students_count: int = Field(
+         ..., description="Сколько уже зачисленных студентов course_id будет немедленно заблокировано"
+diff --git a/app/services/course_dependencies_enrollment_service.py b/app/services/course_dependencies_enrollment_service.py
+index 7dc58a3..135c1e4 100644
+--- a/app/services/course_dependencies_enrollment_service.py
++++ b/app/services/course_dependencies_enrollment_service.py
+@@ -35,18 +35,26 @@ logger = logging.getLogger(__name__)
+ 
+ # Транзитивный обход зависимостей с защитой от циклов через накопленный путь.
+ # NOT ... = ANY(path) отсекает повторный вход в уже пройденный курс.
++#
++# tsk-231 фаза 6: обход идёт ТОЛЬКО по связям с auto_assign — точечная
++# зависимость (мини-курс повторения) не выдаётся автоматически никому.
++# Фильтр стоит и в якоре, и в рекурсивном шаге: точечная связь обрывает ветку
++# целиком. Иначе цепочка A →(авто) B →(точечно) C раздала бы C всем, кто получил
++# A, — ровно то, что флаг и должен запрещать.
+ _REQUIRED_COURSES_SQL = """
+ WITH RECURSIVE deps AS (
+     SELECT cd.required_course_id AS course_id,
+            ARRAY[cd.course_id, cd.required_course_id] AS path
+     FROM course_dependencies cd
+     WHERE cd.course_id = ANY(:course_ids)
++      AND cd.auto_assign
+     UNION ALL
+     SELECT cd.required_course_id,
+            d.path || cd.required_course_id
+     FROM deps d
+     JOIN course_dependencies cd ON cd.course_id = d.course_id
+     WHERE NOT (cd.required_course_id = ANY(d.path))
++      AND cd.auto_assign
+ )
+ SELECT DISTINCT course_id FROM deps
+ """
+@@ -59,6 +67,9 @@ async def collect_required_course_ids(
+ ) -> list[int]:
+     """Транзитивно собрать курсы, от которых зависят указанные курсы.
+ 
++    Учитываются только связи с `auto_assign` — точечные зависимости (tsk-231)
++    выдаются методистом адресно и в автоматический сбор не попадают.
++
+     Сами `course_ids` в результат не входят. Циклы в графе зависимостей
+     безопасны — путь обхода не заходит в уже посещённый курс.
+ 
+diff --git a/app/services/course_dependencies_service.py b/app/services/course_dependencies_service.py
+index 0e783a1..2401716 100644
+--- a/app/services/course_dependencies_service.py
++++ b/app/services/course_dependencies_service.py
+@@ -29,11 +29,18 @@ class CourseDependenciesService:
+         return await self.repo.list_dependencies(db, course_id)
+ 
+     async def _enroll_existing_students(
+-        self, db: AsyncSession, course_id: int, required_course_id: int
++        self, db: AsyncSession, course_id: int, required_course_id: int,
++        auto_assign: bool = True,
+     ) -> int:
+         """tsk-231: доназначить required_course_id ученикам, уже зачисленным
+         на course_id, в момент ДОБАВЛЕНИЯ зависимости к уже идущему курсу.
+ 
++        При `auto_assign=False` (фаза 6) не делает ничего: точечную зависимость
++        методист выдаёт адресно. Ранний выход тут — экономия, а не защита:
++        durable-фильтр стоит в SQL `collect_required_course_ids`, поэтому даже
++        без этой ветки цикл не назначил бы точечный курс никому. Без раннего
++        выхода мы бы прогнали пустой запрос по каждому ученику курса.
++
+         tsk-261 закрыл симметричный путь — доназначение зависимостей в
+         момент НАЗНАЧЕНИЯ курса ученику (`user_courses_service`,
+         `assignment_rules_service`). Но методист чаще добавляет зависимость
+@@ -63,6 +70,8 @@ class CourseDependenciesService:
+         Returns:
+             Число студентов, которым реально доназначен курс.
+         """
++        if not auto_assign:
++            return 0
+         student_ids = await self.engine.list_active_students_with_node_in_tree(
+             db, course_id
+         )
+@@ -76,7 +85,7 @@ class CourseDependenciesService:
+         return enrolled_count
+ 
+     async def count_affected_students(
+-        self, db: AsyncSession, course_id: int
++        self, db: AsyncSession, course_id: int, auto_assign: bool = True
+     ) -> int:
+         """tsk-231: сколько уже зачисленных на course_id студентов мгновенно
+         заблокирует добавление НОВОЙ зависимости (превью для confirm-диалога
+@@ -85,23 +94,36 @@ class CourseDependenciesService:
+         Считает тем же критерием, что и `_enroll_existing_students` —
+         активные студенты, у кого course_id входит в дерево (не только
+         прямое зачисление на сам course_id).
++
++        Фаза 6: у точечной зависимости (`auto_assign=False`) мгновенно
++        заблокированных нет вовсе — требуемый курс никому не выдаётся, а
++        блокирует он только назначенных. Превью обязано это отражать: цифра
++        «заблокирует 35» на связке, которая не заблокирует никого, отпугнула бы
++        методиста ровно от того сценария, ради которого флаг и вводился.
+         """
++        if not auto_assign:
++            return 0
+         student_ids = await self.engine.list_active_students_with_node_in_tree(
+             db, course_id
+         )
+         return len(student_ids)
+ 
+     async def add_dependency(
+-        self, db: AsyncSession, course_id: int, required_course_id: int
++        self, db: AsyncSession, course_id: int, required_course_id: int,
++        auto_assign: bool = True,
+     ) -> None:
+-        await self.repo.add_dependency(db, course_id, required_course_id)
++        await self.repo.add_dependency(
++            db, course_id, required_course_id, auto_assign=auto_assign
++        )
+         # tsk-541: без этого student_course_state для required_course_id не
+         # пишет никто до следующего прогона фонового тика — активный студент,
+         # уже прошедший пререквизит, видит новую зависимость как блокировку
+         # (ровно регрессия tsk-523).
+         await self.engine.backfill_dependency_state(db, course_id, required_course_id)
+         # tsk-231: см. docstring _enroll_existing_students.
+-        await self._enroll_existing_students(db, course_id, required_course_id)
++        await self._enroll_existing_students(
++            db, course_id, required_course_id, auto_assign=auto_assign
++        )
+         await db.commit()
+ 
+     async def remove_dependency(
+@@ -110,7 +132,8 @@ class CourseDependenciesService:
+         await self.repo.remove_dependency(db, course_id, required_course_id)
+ 
+     async def bulk_add_dependencies(
+-        self, db: AsyncSession, course_id: int, required_course_ids: List[int]
++        self, db: AsyncSession, course_id: int, required_course_ids: List[int],
++        auto_assign: bool = True,
+     ) -> List[Courses]:
+         """
+         Массовое добавление зависимостей для курса.
+@@ -118,15 +141,21 @@ class CourseDependenciesService:
+         :param db: асинхронная сессия БД.
+         :param course_id: ID курса.
+         :param required_course_ids: Список ID курсов-зависимостей.
++        :param auto_assign: False — точечные зависимости (tsk-231): требуемые
++            курсы не раздаются автоматически и блокируют только адресатов.
+         :return: Список успешно добавленных зависимостей.
+         """
+-        added = await self.repo.bulk_add_dependencies(db, course_id, required_course_ids)
++        added = await self.repo.bulk_add_dependencies(
++            db, course_id, required_course_ids, auto_assign=auto_assign
++        )
+         # tsk-541: тот же бэкфилл, что в add_dependency — по одному пересчёту
+         # на каждую реально добавленную зависимость (пропущенные конфликты/
+         # self-dependency уже отфильтрованы репозиторием).
+         for dep in added:
+             await self.engine.backfill_dependency_state(db, course_id, dep.id)
+             # tsk-231: см. docstring _enroll_existing_students.
+-            await self._enroll_existing_students(db, course_id, dep.id)
++            await self._enroll_existing_students(
++                db, course_id, dep.id, auto_assign=auto_assign
++            )
+         await db.commit()
+         return added
+\ No newline at end of file
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index df4f15b..2deda6c 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -888,6 +888,39 @@ class LearningEngineService:
+         # Активные курсы пользователя по порядку
+         user_courses = await self._user_courses_repo.get_user_courses(db, student_id, order_by_order=True)
+         active = [uc for uc in user_courses if uc.is_active]
++        # Отдельная привязка ДО фильтра по корню (ниже `active` переопределяется).
++        # Замыкание `_reachable` захватывает имя, а не значение: сошлись бы оно
++        # на `active` — при заданном root_course_id доступным считалось бы только
++        # текущее дерево, и межкурсовой пререквизит («ЕГЭ после Python для ЕГЭ»,
++        # 33 ученика на проде) молча перестал бы блокировать.
++        all_active = active
++        # tsk-231 фаза 6: множество ДОСТУПНЫХ ученику курсов — объединение
++        # деревьев ВСЕХ его активных корней, а не список самих корней.
++        #
++        # Почему именно дерево, а не `user_courses`. Ученика можно закрепить
++        # только на КОРНЕВОМ курсе (триггер `trg_check_user_course_no_parents`),
++        # а 79 из 81 прод-зависимости требуют ПОДКУРС («Списки» после «Циклов»
++        # внутри «Python для ЕГЭ»). Условие «есть запись в user_courses на
++        # required_course_id» для них ложно всегда — и молча отключило бы 214 из
++        # 248 действующих блокировок у 38 учеников. Подкурс ученику доступен
++        # через свой корень, и именно это делает зависимость выполнимой.
++        #
++        # Считается ЛЕНИВО и не более одного раза: обход дерева — это запрос на
++        # каждый узел, а зависимости есть у меньшинства курсов. Платить за них
++        # на каждом вызове next-item (в т.ч. у курсов вообще без зависимостей)
++        # незачем. Множество берётся по ВСЕМ активным корням, а не только по
++        # текущему: требуемый курс может лежать в дереве другого корня
++        # (межкурсовой пререквизит «ЕГЭ после Python для ЕГЭ»).
++        reachable_course_ids: Optional[set[int]] = None
++
++        async def _reachable() -> set[int]:
++            nonlocal reachable_course_ids
++            if reachable_course_ids is None:
++                acc: set[int] = set()
++                for _uc in all_active:
++                    acc.update(await self._collect_courses_in_order(db, _uc.course_id))
++                reachable_course_ids = acc
++            return reachable_course_ids
+         # tsk-127: ограничить обход деревом одного корня, если задан фильтр.
+         if root_course_id is not None:
+             active = [uc for uc in active if uc.course_id == root_course_id]
+@@ -923,6 +956,22 @@ class LearningEngineService:
+             # Зависимости: все required должны быть COMPLETED
+             deps = await self._deps_repo.list_dependencies(db, current_root_id)
+             for req_course in deps:
++                # tsk-231 фаза 6: блокировать может только ДОСТУПНЫЙ ученику курс.
++                # compute_course_state не смотрит в user_courses вовсе — у
++                # недоступного ученику курса он даёт 0 из N, то есть
++                # NOT_STARTED, неотличимо от «доступен, но не начат». Без этого
++                # условия точечная зависимость (мини-курс повторения)
++                # блокировала бы весь поток, а не адресатов. Заодно закрывается
++                # класс «замок без выхода» (tsk-261): курс, до которого ученик
++                # не может добраться, пройти физически нельзя, и замок висел бы
++                # вечно (на проде таких пар 7 — курсы Excel из чужого дерева).
++                if req_course.id not in await _reachable():
++                    logger.info(
++                        "resolve_next_item: student_id=%s root=%s зависимость required=%s "
++                        "пропущена — курс ученику недоступен (tsk-231)",
++                        student_id, current_root_id, req_course.id,
++                    )
++                    continue
+                 course_state = await self.compute_course_state(
+                     db, student_id, req_course.id, update_state_table=True
+                 )
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 62b89bc..988c628 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -846,11 +846,38 @@ ORDER BY m.course_id,
+          m.id ASC
+ """
+ 
++# tsk-231 фаза 6: CTE `dostupno` — зеркало условия из `resolve_next_item`
++# (блокировать может только ДОСТУПНЫЙ ученику курс). Условие обязано стоять в
++# обоих местах: движок отдаёт «следующий шаг», а этот запрос рисует синтабус, и
++# разойдись они — ученик видел бы замок на странице курса, продолжая нормально
++# получать задания (или наоборот). Расхождение молчаливое: ни тест эндпоинта,
++# ни ошибка его не покажут.
++#
++# Доступность = дерево активных зачислений, а НЕ сам список `user_courses`:
++# закрепить ученика можно только на корневом курсе (триггер
++# `trg_check_user_course_no_parents`), а 79 из 81 прод-зависимости требуют
++# подкурс. Проверка «есть запись в user_courses» для них ложна всегда и молча
++# сняла бы 214 из 248 действующих блокировок у 38 учеников.
++#
++# `path` в обходе — защита от цикла в `course_parents` (тот же приём, что в
++# `course_dependencies_enrollment_service`): без него запрос ушёл бы в
++# бесконечную рекурсию, а не отдал неверный ответ.
+ _BLOCKED_COURSES_SQL = """
++WITH RECURSIVE dostupno AS (
++    SELECT uc.course_id AS node_id, ARRAY[uc.course_id] AS path
++    FROM user_courses uc
++    WHERE uc.user_id = :user_id AND uc.is_active
++    UNION ALL
++    SELECT cp.course_id, d.path || cp.course_id
++    FROM dostupno d
++    JOIN course_parents cp ON cp.parent_course_id = d.node_id
++    WHERE NOT (cp.course_id = ANY(d.path))
++)
+ SELECT DISTINCT cd.course_id, cd.required_course_id, rc.title, rc.course_uid
+ FROM course_dependencies cd
+ JOIN courses rc ON rc.id = cd.required_course_id
+ WHERE cd.course_id = ANY(:tree_ids)
++  AND cd.required_course_id IN (SELECT node_id FROM dostupno)
+   AND NOT EXISTS (
+       SELECT 1 FROM student_course_state scs
+       WHERE scs.student_id = :user_id
+diff --git a/skills/core/ai-orchestrator/references/operating-model.md b/skills/core/ai-orchestrator/references/operating-model.md
+index 0c2ec8d..b34b8ac 100644
+--- a/skills/core/ai-orchestrator/references/operating-model.md
++++ b/skills/core/ai-orchestrator/references/operating-model.md
+@@ -24,4 +24,3 @@
+ ## Branch Policy
+ - Default mode: direct work in main/master with stronger pre-commit controls.
+ - Separate branches: only for fully autonomous long-running agent work.
+-
+diff --git a/skills/core/ceo-review/SKILL.md b/skills/core/ceo-review/SKILL.md
+index aec73d6..96beab5 100644
+--- a/skills/core/ceo-review/SKILL.md
++++ b/skills/core/ceo-review/SKILL.md
+@@ -30,4 +30,4 @@ For new work, prefer [product-review](/d:/Work/IDE_booster/skills/product-review
+ 
+ ## Migration Note
+ - New specs, orchestrated stage plans, and internal references should point to `product-review`, not `ceo-review`.
+-- Existing user habits can keep using `ceo-review` without breaking compatibility.
+\ No newline at end of file
++- Existing user habits can keep using `ceo-review` without breaking compatibility.
+diff --git a/skills/core/change-plan-architect/references/resource-gap-checklist.md b/skills/core/change-plan-architect/references/resource-gap-checklist.md
+index 5ac835e..b6b1567 100644
+--- a/skills/core/change-plan-architect/references/resource-gap-checklist.md
++++ b/skills/core/change-plan-architect/references/resource-gap-checklist.md
+@@ -29,4 +29,3 @@
+ - Missing smoke/regression command set
+ - Missing release/rollback playbook
+ - Missing owner for production incidents
+-
+diff --git a/skills/core/change-plan-architect/references/ux-complexity-guard.md b/skills/core/change-plan-architect/references/ux-complexity-guard.md
+index 1b72f0e..bb08d92 100644
+--- a/skills/core/change-plan-architect/references/ux-complexity-guard.md
++++ b/skills/core/change-plan-architect/references/ux-complexity-guard.md
+@@ -12,4 +12,3 @@ Prevent unnecessary intermediate screens/steps that increase user friction.
+ ## Decision Rule
+ - If an intermediate screen has no distinct user value, remove it.
+ - Mark deliberate complexity as `justified` with explicit reason and acceptance test.
+-
+diff --git a/skills/core/codex-booster/references/booster-shared.md b/skills/core/codex-booster/references/booster-shared.md
+index b7bcaa3..5962dd2 100644
+--- a/skills/core/codex-booster/references/booster-shared.md
++++ b/skills/core/codex-booster/references/booster-shared.md
+@@ -85,6 +85,8 @@ changed URL, method, status code, request schema, response schema, or hardcoded
+ public URL requires same-task backsync or an explicit deviation note.
+ For bugfix or QA loops, re-run the original caller path and smoke the concrete
+ endpoint or schema that failed before marking the contract fixed.
++Smoke every changed contract enumerated in the specification; treat `404`,
++`422`, or a schema mismatch as unresolved drift that blocks closure.
+ 
+ ## Cross-Agent Coordination
+ 
+diff --git a/skills/core/context-auditor/SKILL.md b/skills/core/context-auditor/SKILL.md
+index bc6db08..470b345 100644
+--- a/skills/core/context-auditor/SKILL.md
++++ b/skills/core/context-auditor/SKILL.md
+@@ -58,4 +58,3 @@ Context auditor: compare the current artifact against original intent and durabl
+ - Every problematic item needs a source file, conversation anchor, or explicit local evidence.
+ - Do not perform code quality review; route quality defects to `techlead-code-reviewer` or `review-gate`.
+ - Keep covered items compact and spend detail on losses, drift, and regressions.
+-
+diff --git a/skills/core/eng-review/SKILL.md b/skills/core/eng-review/SKILL.md
+index a1d90e7..c7d6e46 100644
+--- a/skills/core/eng-review/SKILL.md
++++ b/skills/core/eng-review/SKILL.md
+@@ -72,4 +72,4 @@ It should focus on architecture integrity, delivery safety, and evidence of feas
+ ## Quality Rules
+ - Prefer compact engineering invariants over broad commentary.
+ - Every major risk must include its current-state impact and concrete fix direction.
+-- Keep the review implementation-adjacent, but not implementation-heavy.
+\ No newline at end of file
++- Keep the review implementation-adjacent, but not implementation-heavy.
+diff --git a/skills/core/fastapi-api-developer/references/api-contract-guards.md b/skills/core/fastapi-api-developer/references/api-contract-guards.md
+index 02f6bb1..e15f53a 100644
+--- a/skills/core/fastapi-api-developer/references/api-contract-guards.md
++++ b/skills/core/fastapi-api-developer/references/api-contract-guards.md
+@@ -32,4 +32,3 @@ Mock-only success is insufficient for external write paths. Require either:
+ ## Spec Test List
+ 
+ If a tech spec names test files or edge cases, every named test must be present and passing, or the implementation remains `NOT_READY`.
+-
+diff --git a/skills/core/fastapi-api-developer/references/cursor-subagents-and-plugin.md b/skills/core/fastapi-api-developer/references/cursor-subagents-and-plugin.md
+index 603cee5..6a956cf 100644
+--- a/skills/core/fastapi-api-developer/references/cursor-subagents-and-plugin.md
++++ b/skills/core/fastapi-api-developer/references/cursor-subagents-and-plugin.md
+@@ -31,4 +31,3 @@ Bundle candidates:
+ 1. Pilot on `LMS` only.
+ 2. Validate one feature and one bugfix cycle.
+ 3. If stable, add to broader fleet with `sync-skills.ps1`.
+-
+diff --git a/skills/core/fastapi-api-developer/references/lms-operating-context.md b/skills/core/fastapi-api-developer/references/lms-operating-context.md
+index 95e65de..0fc763b 100644
+--- a/skills/core/fastapi-api-developer/references/lms-operating-context.md
++++ b/skills/core/fastapi-api-developer/references/lms-operating-context.md
+@@ -23,4 +23,3 @@
+ - Smoke checks for health + changed endpoints.
+ - Log validation from `logs/app.log`.
+ - DB checks through MCP for data/state verification.
+-
+diff --git a/skills/core/fastapi-api-developer/references/log-debug-playbook.md b/skills/core/fastapi-api-developer/references/log-debug-playbook.md
+index da58c3a..f107fa1 100644
+--- a/skills/core/fastapi-api-developer/references/log-debug-playbook.md
++++ b/skills/core/fastapi-api-developer/references/log-debug-playbook.md
+@@ -22,4 +22,3 @@ python d:/Work/IDE_booster/skills/fastapi-api-developer/scripts/log_triage.py --
+ 3. Correlate with MCP DB check (missing rows, FK mismatch, invalid state).
+ 4. Apply minimal fix in repo/service/api layer.
+ 5. Re-run smoke + log triage until no new blocking errors appear.
+-
+diff --git a/skills/core/fastapi-api-developer/scripts/log_triage.py b/skills/core/fastapi-api-developer/scripts/log_triage.py
+index 98c42ae..9f25863 100644
+--- a/skills/core/fastapi-api-developer/scripts/log_triage.py
++++ b/skills/core/fastapi-api-developer/scripts/log_triage.py
+@@ -149,4 +149,3 @@ def main() -> int:
+ 
+ if __name__ == "__main__":
+     sys.exit(main())
+-
+diff --git a/skills/core/product-review/SKILL.md b/skills/core/product-review/SKILL.md
+index 322fdd1..a83bf11 100644
+--- a/skills/core/product-review/SKILL.md
++++ b/skills/core/product-review/SKILL.md
+@@ -70,4 +70,4 @@ It should clarify business value, scope discipline, user impact, and acceptance
+ ## Quality Rules
+ - Stay product-focused; do not drift into low-level implementation critique.
+ - Prefer explicit tradeoffs over vague optimism.
+-- Every major risk must include user or operator impact and a concrete adjustment.
+\ No newline at end of file
++- Every major risk must include user or operator impact and a concrete adjustment.
+diff --git a/skills/core/project-docs/SKILL.md b/skills/core/project-docs/SKILL.md
+index df4ad24..95eec4f 100644
+--- a/skills/core/project-docs/SKILL.md
++++ b/skills/core/project-docs/SKILL.md
+@@ -50,4 +50,3 @@ Default to `update` when `AGENTS.md` or `README.md` already exists.
+ - Never include secret values.
+ - Prefer update with minimal diffs over rewriting existing docs.
+ - All docs must be UTF-8.
+-
+diff --git a/skills/core/qa-fix/SKILL.md b/skills/core/qa-fix/SKILL.md
+index 44b391a..0f0322f 100644
+--- a/skills/core/qa-fix/SKILL.md
++++ b/skills/core/qa-fix/SKILL.md
+@@ -107,4 +107,4 @@ It should consume reproducible QA findings first, then apply the smallest safe f
+ - Never store or repeat browser cookies, tokens, passwords, OTPs, or local storage secrets.
+ - Keep fixes minimal and scoped to the observed defect.
+ - If a defect cannot be safely fixed, say so explicitly and route it to investigation or gate failure.
+-- When 3 or more issues share one root cause, fix the common cause first instead of applying scattered local patches.
+\ No newline at end of file
++- When 3 or more issues share one root cause, fix the common cause first instead of applying scattered local patches.
+diff --git a/skills/core/qa-report/SKILL.md b/skills/core/qa-report/SKILL.md
+index c435ec2..ef3a7e6 100644
+--- a/skills/core/qa-report/SKILL.md
++++ b/skills/core/qa-report/SKILL.md
+@@ -98,4 +98,4 @@ It must not silently switch into fixing bugs. If remediation is needed, hand off
+ - For UI defects, include the strongest relevant evidence: screenshot for visual state, DOM/route/toast/status for authoritative behavior, or both when they answer different questions.
+ - Never store or repeat browser cookies, tokens, passwords, OTPs, or local storage secrets.
+ - Keep the report focused on behavior and acceptance risk, not architecture commentary.
+-- Do not treat file opens, headers, or row counts as sufficient when the operator's business question still requires manual reconciliation.
+\ No newline at end of file
++- Do not treat file opens, headers, or row counts as sufficient when the operator's business question still requires manual reconciliation.
+diff --git a/skills/core/release-prep/SKILL.md b/skills/core/release-prep/SKILL.md
+index 502cd39..dc57ef7 100644
+--- a/skills/core/release-prep/SKILL.md
++++ b/skills/core/release-prep/SKILL.md
+@@ -89,4 +89,4 @@ It does not perform the release itself. It decides whether the change is ready t
+ - Prefer current-state release evidence over intent or informal confidence.
+ - Treat rollback and operator readiness as first-class release inputs, not appendix notes.
+ - Keep the release package concise but decision-complete.
+-- End with an explicit next step: release, remediate, or escalate.
+\ No newline at end of file
++- End with an explicit next step: release, remediate, or escalate.
+diff --git a/skills/core/response-quality-coach/references/defect-taxonomy.md b/skills/core/response-quality-coach/references/defect-taxonomy.md
+index b94f5b3..a226220 100644
+--- a/skills/core/response-quality-coach/references/defect-taxonomy.md
++++ b/skills/core/response-quality-coach/references/defect-taxonomy.md
+@@ -25,4 +25,3 @@
+ - `S1`: could cause incorrect high-impact decisions or unsafe changes
+ - `S2`: blocks efficient execution or likely causes rework
+ - `S3`: cosmetic/readability issue with low risk
+-
+diff --git a/skills/core/response-quality-coach/references/durable-fix-patterns.md b/skills/core/response-quality-coach/references/durable-fix-patterns.md
+index c66b96a..aff58ce 100644
+--- a/skills/core/response-quality-coach/references/durable-fix-patterns.md
++++ b/skills/core/response-quality-coach/references/durable-fix-patterns.md
+@@ -19,4 +19,3 @@
+ - Re-run with the original failed prompt.
+ - Run one neighboring prompt from same domain.
+ - Confirm both pass without extra manual clarification.
+-
+diff --git a/skills/core/site-researcher/SKILL.md b/skills/core/site-researcher/SKILL.md
+index d7362b6..58a5778 100644
+--- a/skills/core/site-researcher/SKILL.md
++++ b/skills/core/site-researcher/SKILL.md
+@@ -51,4 +51,3 @@ Website researcher: collect evidence and produce parser, SEO, mapping, competito
+ - Prefer hidden APIs over brittle HTML parsing only when endpoint behavior is evidenced.
+ - Mark unverified selectors or endpoints as `unverified`.
+ - Store artifacts as UTF-8 when writing.
+-
+diff --git a/skills/core/techlead-code-reviewer/references/architecture-checks.md b/skills/core/techlead-code-reviewer/references/architecture-checks.md
+index 5a2e12c..9668347 100644
+--- a/skills/core/techlead-code-reviewer/references/architecture-checks.md
++++ b/skills/core/techlead-code-reviewer/references/architecture-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Architecture Checks
++# Architecture Checks
+ 
+ ## Layering and Boundaries
+ - Are module boundaries explicit and respected?
+diff --git a/skills/core/techlead-code-reviewer/references/cursor-agent-error-loop.md b/skills/core/techlead-code-reviewer/references/cursor-agent-error-loop.md
+index 214ae58..7563d31 100644
+--- a/skills/core/techlead-code-reviewer/references/cursor-agent-error-loop.md
++++ b/skills/core/techlead-code-reviewer/references/cursor-agent-error-loop.md
+@@ -38,4 +38,3 @@ For each logged Cursor-agent mistake, add at least one preventive action:
+ - tighten project rules,
+ - add validation/test command,
+ - add reusable helper/template to remove ambiguity.
+-
+diff --git a/skills/core/techlead-code-reviewer/references/datetime-type-safety-checks.md b/skills/core/techlead-code-reviewer/references/datetime-type-safety-checks.md
+index 80e86f4..d5e6d0c 100644
+--- a/skills/core/techlead-code-reviewer/references/datetime-type-safety-checks.md
++++ b/skills/core/techlead-code-reviewer/references/datetime-type-safety-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Date/Time Type Safety Checks
++# Date/Time Type Safety Checks
+ 
+ ## Raw SQL to Domain Types
+ - For fields from `text(...)`/raw SQL rows, is there explicit normalization helper before any comparison?
+diff --git a/skills/core/techlead-code-reviewer/references/migration-checks.md b/skills/core/techlead-code-reviewer/references/migration-checks.md
+index c74a9c5..ed4a07c 100644
+--- a/skills/core/techlead-code-reviewer/references/migration-checks.md
++++ b/skills/core/techlead-code-reviewer/references/migration-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Migration Checks
++# Migration Checks
+ 
+ ## Safety
+ - Is migration reversible with explicit downgrade?
+diff --git a/skills/core/techlead-code-reviewer/references/observability-checks.md b/skills/core/techlead-code-reviewer/references/observability-checks.md
+index 5afd465..fbfad9d 100644
+--- a/skills/core/techlead-code-reviewer/references/observability-checks.md
++++ b/skills/core/techlead-code-reviewer/references/observability-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Observability Checks
++# Observability Checks
+ 
+ ## Logging
+ - Are important state transitions and failures logged?
+diff --git a/skills/core/techlead-code-reviewer/references/security-checks.md b/skills/core/techlead-code-reviewer/references/security-checks.md
+index ff78d9e..edc561d 100644
+--- a/skills/core/techlead-code-reviewer/references/security-checks.md
++++ b/skills/core/techlead-code-reviewer/references/security-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Security Checks
++# Security Checks
+ 
+ ## Input and Access Control
+ - Are inputs validated and normalized at boundaries?
+diff --git a/skills/core/techlead-code-reviewer/references/spec-ambiguity-checks.md b/skills/core/techlead-code-reviewer/references/spec-ambiguity-checks.md
+index 115d371..a4a02ce 100644
+--- a/skills/core/techlead-code-reviewer/references/spec-ambiguity-checks.md
++++ b/skills/core/techlead-code-reviewer/references/spec-ambiguity-checks.md
+@@ -14,4 +14,3 @@ Prevent silent implementation drift caused by ambiguous requirements.
+ - Classify as `Blocking` if it affects critical path.
+ - Require explicit contract update in spec/TZ.
+ - Require implementation to reference exact target behavior (state/screen id).
+-
+diff --git a/skills/core/techlead-code-reviewer/references/testing-checks.md b/skills/core/techlead-code-reviewer/references/testing-checks.md
+index 0d81996..13eaba8 100644
+--- a/skills/core/techlead-code-reviewer/references/testing-checks.md
++++ b/skills/core/techlead-code-reviewer/references/testing-checks.md
+@@ -1,4 +1,4 @@
+-﻿# Testing Checks
++# Testing Checks
+ 
+ ## Coverage Depth
+ - Do tests cover changed behavior and key regressions?
+diff --git a/tests/test_y62_syllabus_states.py b/tests/test_y62_syllabus_states.py
+index 5c27600..0e8fdfb 100644
+--- a/tests/test_y62_syllabus_states.py
++++ b/tests/test_y62_syllabus_states.py
+@@ -989,6 +989,16 @@ async def test_blocked_courses_via_dependencies(db, client):
+     # Нужно убедиться что user НЕ имеет COMPLETED по other_root
+     # (по умолчанию student_course_state пуст → not COMPLETED → blocked)
+     await _add_course_dependency(db, course_id=child_id, required_course_id=other_root)
++    # tsk-231 фаза 6: блокировать может только ДОСТУПНЫЙ ученику курс. Здесь
++    # пререквизит — КОРНЕВОЙ курс (`_pick_other_root`), а корень доступен только
++    # через собственное зачисление. Хелпер выше пишет зависимость сырым SQL мимо
++    # сервиса, поэтому автоназначения (`ensure_dependencies_assigned`, tsk-261)
++    # не происходит — а в жизни оно есть, и пререквизит у ученика закреплён. Без
++    # этой строки тест проверял бы «замок без выхода»: курс недостижим, значит
++    # непроходим, значит замок вечный. Обратную сторону правила держит
++    # tests/test_tsk231_phase6_targeted_dependency.py (в т.ч. подкурсы, которые
++    # доступны через свой корень БЕЗ отдельного зачисления).
++    await _enroll(db, user_id, other_root)
+     try:
+         resp = await client.get(
+             f"/api/v1/me/courses/{root_id}/syllabus-states",

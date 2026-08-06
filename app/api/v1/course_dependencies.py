@@ -1,7 +1,7 @@
 # app/api/v1/course_dependencies.py
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
@@ -103,7 +103,8 @@ async def bulk_add_course_dependencies(
     """
     try:
         dependencies = await service.bulk_add_dependencies(
-            db, course_id, payload.required_course_ids
+            db, course_id, payload.required_course_ids,
+            auto_assign=payload.auto_assign,
         )
         return [CourseRead.model_validate(dep) for dep in dependencies]
     except ValueError as e:
@@ -122,6 +123,10 @@ async def bulk_add_course_dependencies(
 async def preview_course_dependency_impact(
     course_id: int,
     required_course_id: int,
+    auto_assign: bool = Query(
+        True,
+        description="Режим будущей зависимости — превью обязано совпадать с тем, что реально произойдёт",
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_WRITE_GATE),
 ) -> CourseDependencyImpact:
@@ -129,11 +134,12 @@ async def preview_course_dependency_impact(
     Read-only превью ДО `POST /{required_course_id}`: сколько уже зачисленных
     на course_id учеников будет немедленно заблокировано новой зависимостью.
 
-    Блокировка глобальная и мгновенная (решение оператора, план tsk-231) —
-    действует на всех, не только на тех, кто провалил задание. Используется
-    для confirm-диалога методиста перед фактическим добавлением.
+    При `auto_assign=true` блокировка глобальная и мгновенная (решение
+    оператора, план tsk-231) — действует на всех, не только на тех, кто
+    провалил задание. При `auto_assign=false` (фаза 6) мгновенно заблокированных
+    нет: курс блокирует только тех, кому его назначат адресно.
     """
-    count = await service.count_affected_students(db, course_id)
+    count = await service.count_affected_students(db, course_id, auto_assign=auto_assign)
     return CourseDependencyImpact(affected_students_count=count)
 
 
@@ -151,6 +157,15 @@ async def preview_course_dependency_impact(
 async def add_course_dependency(
     course_id: int,
     required_course_id: int,
+    auto_assign: bool = Query(
+        True,
+        description=(
+            "true (умолчание) — пререквизит для всех: требуемый курс раздаётся "
+            "автоматически каждому, кто получает course_id, и блокирует весь поток. "
+            "false — выдаётся точечно (мини-курс повторения, tsk-231): курс никому "
+            "не раздаётся и блокирует только тех, кому методист назначил его адресно."
+        ),
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_WRITE_GATE),
 ) -> None:
@@ -158,7 +173,9 @@ async def add_course_dependency(
     Добавить зависимость: course_id зависит от required_course_id.
     """
     try:
-        await service.add_dependency(db, course_id, required_course_id)
+        await service.add_dependency(
+            db, course_id, required_course_id, auto_assign=auto_assign
+        )
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
 

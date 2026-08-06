@@ -35,18 +35,26 @@ logger = logging.getLogger(__name__)
 
 # Транзитивный обход зависимостей с защитой от циклов через накопленный путь.
 # NOT ... = ANY(path) отсекает повторный вход в уже пройденный курс.
+#
+# tsk-231 фаза 6: обход идёт ТОЛЬКО по связям с auto_assign — точечная
+# зависимость (мини-курс повторения) не выдаётся автоматически никому.
+# Фильтр стоит и в якоре, и в рекурсивном шаге: точечная связь обрывает ветку
+# целиком. Иначе цепочка A →(авто) B →(точечно) C раздала бы C всем, кто получил
+# A, — ровно то, что флаг и должен запрещать.
 _REQUIRED_COURSES_SQL = """
 WITH RECURSIVE deps AS (
     SELECT cd.required_course_id AS course_id,
            ARRAY[cd.course_id, cd.required_course_id] AS path
     FROM course_dependencies cd
     WHERE cd.course_id = ANY(:course_ids)
+      AND cd.auto_assign
     UNION ALL
     SELECT cd.required_course_id,
            d.path || cd.required_course_id
     FROM deps d
     JOIN course_dependencies cd ON cd.course_id = d.course_id
     WHERE NOT (cd.required_course_id = ANY(d.path))
+      AND cd.auto_assign
 )
 SELECT DISTINCT course_id FROM deps
 """
@@ -58,6 +66,9 @@ async def collect_required_course_ids(
     db: AsyncSession, course_ids: list[int]
 ) -> list[int]:
     """Транзитивно собрать курсы, от которых зависят указанные курсы.
+
+    Учитываются только связи с `auto_assign` — точечные зависимости (tsk-231)
+    выдаются методистом адресно и в автоматический сбор не попадают.
 
     Сами `course_ids` в результат не входят. Циклы в графе зависимостей
     безопасны — путь обхода не заходит в уже посещённый курс.

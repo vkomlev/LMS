@@ -888,6 +888,39 @@ class LearningEngineService:
         # Активные курсы пользователя по порядку
         user_courses = await self._user_courses_repo.get_user_courses(db, student_id, order_by_order=True)
         active = [uc for uc in user_courses if uc.is_active]
+        # Отдельная привязка ДО фильтра по корню (ниже `active` переопределяется).
+        # Замыкание `_reachable` захватывает имя, а не значение: сошлись бы оно
+        # на `active` — при заданном root_course_id доступным считалось бы только
+        # текущее дерево, и межкурсовой пререквизит («ЕГЭ после Python для ЕГЭ»,
+        # 33 ученика на проде) молча перестал бы блокировать.
+        all_active = active
+        # tsk-231 фаза 6: множество ДОСТУПНЫХ ученику курсов — объединение
+        # деревьев ВСЕХ его активных корней, а не список самих корней.
+        #
+        # Почему именно дерево, а не `user_courses`. Ученика можно закрепить
+        # только на КОРНЕВОМ курсе (триггер `trg_check_user_course_no_parents`),
+        # а 79 из 81 прод-зависимости требуют ПОДКУРС («Списки» после «Циклов»
+        # внутри «Python для ЕГЭ»). Условие «есть запись в user_courses на
+        # required_course_id» для них ложно всегда — и молча отключило бы 214 из
+        # 248 действующих блокировок у 38 учеников. Подкурс ученику доступен
+        # через свой корень, и именно это делает зависимость выполнимой.
+        #
+        # Считается ЛЕНИВО и не более одного раза: обход дерева — это запрос на
+        # каждый узел, а зависимости есть у меньшинства курсов. Платить за них
+        # на каждом вызове next-item (в т.ч. у курсов вообще без зависимостей)
+        # незачем. Множество берётся по ВСЕМ активным корням, а не только по
+        # текущему: требуемый курс может лежать в дереве другого корня
+        # (межкурсовой пререквизит «ЕГЭ после Python для ЕГЭ»).
+        reachable_course_ids: Optional[set[int]] = None
+
+        async def _reachable() -> set[int]:
+            nonlocal reachable_course_ids
+            if reachable_course_ids is None:
+                acc: set[int] = set()
+                for _uc in all_active:
+                    acc.update(await self._collect_courses_in_order(db, _uc.course_id))
+                reachable_course_ids = acc
+            return reachable_course_ids
         # tsk-127: ограничить обход деревом одного корня, если задан фильтр.
         if root_course_id is not None:
             active = [uc for uc in active if uc.course_id == root_course_id]
@@ -923,6 +956,22 @@ class LearningEngineService:
             # Зависимости: все required должны быть COMPLETED
             deps = await self._deps_repo.list_dependencies(db, current_root_id)
             for req_course in deps:
+                # tsk-231 фаза 6: блокировать может только ДОСТУПНЫЙ ученику курс.
+                # compute_course_state не смотрит в user_courses вовсе — у
+                # недоступного ученику курса он даёт 0 из N, то есть
+                # NOT_STARTED, неотличимо от «доступен, но не начат». Без этого
+                # условия точечная зависимость (мини-курс повторения)
+                # блокировала бы весь поток, а не адресатов. Заодно закрывается
+                # класс «замок без выхода» (tsk-261): курс, до которого ученик
+                # не может добраться, пройти физически нельзя, и замок висел бы
+                # вечно (на проде таких пар 7 — курсы Excel из чужого дерева).
+                if req_course.id not in await _reachable():
+                    logger.info(
+                        "resolve_next_item: student_id=%s root=%s зависимость required=%s "
+                        "пропущена — курс ученику недоступен (tsk-231)",
+                        student_id, current_root_id, req_course.id,
+                    )
+                    continue
                 course_state = await self.compute_course_state(
                     db, student_id, req_course.id, update_state_table=True
                 )

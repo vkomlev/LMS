@@ -846,11 +846,38 @@ ORDER BY m.course_id,
          m.id ASC
 """
 
+# tsk-231 фаза 6: CTE `dostupno` — зеркало условия из `resolve_next_item`
+# (блокировать может только ДОСТУПНЫЙ ученику курс). Условие обязано стоять в
+# обоих местах: движок отдаёт «следующий шаг», а этот запрос рисует синтабус, и
+# разойдись они — ученик видел бы замок на странице курса, продолжая нормально
+# получать задания (или наоборот). Расхождение молчаливое: ни тест эндпоинта,
+# ни ошибка его не покажут.
+#
+# Доступность = дерево активных зачислений, а НЕ сам список `user_courses`:
+# закрепить ученика можно только на корневом курсе (триггер
+# `trg_check_user_course_no_parents`), а 79 из 81 прод-зависимости требуют
+# подкурс. Проверка «есть запись в user_courses» для них ложна всегда и молча
+# сняла бы 214 из 248 действующих блокировок у 38 учеников.
+#
+# `path` в обходе — защита от цикла в `course_parents` (тот же приём, что в
+# `course_dependencies_enrollment_service`): без него запрос ушёл бы в
+# бесконечную рекурсию, а не отдал неверный ответ.
 _BLOCKED_COURSES_SQL = """
+WITH RECURSIVE dostupno AS (
+    SELECT uc.course_id AS node_id, ARRAY[uc.course_id] AS path
+    FROM user_courses uc
+    WHERE uc.user_id = :user_id AND uc.is_active
+    UNION ALL
+    SELECT cp.course_id, d.path || cp.course_id
+    FROM dostupno d
+    JOIN course_parents cp ON cp.parent_course_id = d.node_id
+    WHERE NOT (cp.course_id = ANY(d.path))
+)
 SELECT DISTINCT cd.course_id, cd.required_course_id, rc.title, rc.course_uid
 FROM course_dependencies cd
 JOIN courses rc ON rc.id = cd.required_course_id
 WHERE cd.course_id = ANY(:tree_ids)
+  AND cd.required_course_id IN (SELECT node_id FROM dostupno)
   AND NOT EXISTS (
       SELECT 1 FROM student_course_state scs
       WHERE scs.student_id = :user_id

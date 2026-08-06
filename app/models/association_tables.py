@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Table, Column, Integer, SmallInteger, ForeignKeyConstraint,
+    Table, Column, Integer, SmallInteger, Boolean, ForeignKeyConstraint,
     PrimaryKeyConstraint, text, DateTime
 )
 from app.db.base import Base
@@ -17,6 +17,14 @@ t_course_dependencies = Table(
         )
     ),
     Column("required_course_id", Integer, primary_key=True, nullable=False, comment="ID обязательного курса"),
+    Column(
+        "auto_assign", Boolean, nullable=False, server_default=text("true"),
+        comment=(
+            "tsk-231: выдавать ли требуемый курс автоматически всем, кто получает "
+            "зависимый курс. true — пререквизит для всех. false — выдаётся точечно: "
+            "блокирует только тех, кому назначен (мини-курсы повторения)."
+        )
+    ),
     ForeignKeyConstraint(
         ["course_id"], ["courses.id"],
         ondelete="CASCADE", name="course_dependencies_course_id_fkey"

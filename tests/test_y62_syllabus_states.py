@@ -989,6 +989,16 @@ async def test_blocked_courses_via_dependencies(db, client):
     # Нужно убедиться что user НЕ имеет COMPLETED по other_root
     # (по умолчанию student_course_state пуст → not COMPLETED → blocked)
     await _add_course_dependency(db, course_id=child_id, required_course_id=other_root)
+    # tsk-231 фаза 6: блокировать может только ДОСТУПНЫЙ ученику курс. Здесь
+    # пререквизит — КОРНЕВОЙ курс (`_pick_other_root`), а корень доступен только
+    # через собственное зачисление. Хелпер выше пишет зависимость сырым SQL мимо
+    # сервиса, поэтому автоназначения (`ensure_dependencies_assigned`, tsk-261)
+    # не происходит — а в жизни оно есть, и пререквизит у ученика закреплён. Без
+    # этой строки тест проверял бы «замок без выхода»: курс недостижим, значит
+    # непроходим, значит замок вечный. Обратную сторону правила держит
+    # tests/test_tsk231_phase6_targeted_dependency.py (в т.ч. подкурсы, которые
+    # доступны через свой корень БЕЗ отдельного зачисления).
+    await _enroll(db, user_id, other_root)
     try:
         resp = await client.get(
             f"/api/v1/me/courses/{root_id}/syllabus-states",

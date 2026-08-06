@@ -29,10 +29,17 @@ class CourseDependenciesService:
         return await self.repo.list_dependencies(db, course_id)
 
     async def _enroll_existing_students(
-        self, db: AsyncSession, course_id: int, required_course_id: int
+        self, db: AsyncSession, course_id: int, required_course_id: int,
+        auto_assign: bool = True,
     ) -> int:
         """tsk-231: доназначить required_course_id ученикам, уже зачисленным
         на course_id, в момент ДОБАВЛЕНИЯ зависимости к уже идущему курсу.
+
+        При `auto_assign=False` (фаза 6) не делает ничего: точечную зависимость
+        методист выдаёт адресно. Ранний выход тут — экономия, а не защита:
+        durable-фильтр стоит в SQL `collect_required_course_ids`, поэтому даже
+        без этой ветки цикл не назначил бы точечный курс никому. Без раннего
+        выхода мы бы прогнали пустой запрос по каждому ученику курса.
 
         tsk-261 закрыл симметричный путь — доназначение зависимостей в
         момент НАЗНАЧЕНИЯ курса ученику (`user_courses_service`,
@@ -63,6 +70,8 @@ class CourseDependenciesService:
         Returns:
             Число студентов, которым реально доназначен курс.
         """
+        if not auto_assign:
+            return 0
         student_ids = await self.engine.list_active_students_with_node_in_tree(
             db, course_id
         )
@@ -76,7 +85,7 @@ class CourseDependenciesService:
         return enrolled_count
 
     async def count_affected_students(
-        self, db: AsyncSession, course_id: int
+        self, db: AsyncSession, course_id: int, auto_assign: bool = True
     ) -> int:
         """tsk-231: сколько уже зачисленных на course_id студентов мгновенно
         заблокирует добавление НОВОЙ зависимости (превью для confirm-диалога
@@ -85,23 +94,36 @@ class CourseDependenciesService:
         Считает тем же критерием, что и `_enroll_existing_students` —
         активные студенты, у кого course_id входит в дерево (не только
         прямое зачисление на сам course_id).
+
+        Фаза 6: у точечной зависимости (`auto_assign=False`) мгновенно
+        заблокированных нет вовсе — требуемый курс никому не выдаётся, а
+        блокирует он только назначенных. Превью обязано это отражать: цифра
+        «заблокирует 35» на связке, которая не заблокирует никого, отпугнула бы
+        методиста ровно от того сценария, ради которого флаг и вводился.
         """
+        if not auto_assign:
+            return 0
         student_ids = await self.engine.list_active_students_with_node_in_tree(
             db, course_id
         )
         return len(student_ids)
 
     async def add_dependency(
-        self, db: AsyncSession, course_id: int, required_course_id: int
+        self, db: AsyncSession, course_id: int, required_course_id: int,
+        auto_assign: bool = True,
     ) -> None:
-        await self.repo.add_dependency(db, course_id, required_course_id)
+        await self.repo.add_dependency(
+            db, course_id, required_course_id, auto_assign=auto_assign
+        )
         # tsk-541: без этого student_course_state для required_course_id не
         # пишет никто до следующего прогона фонового тика — активный студент,
         # уже прошедший пререквизит, видит новую зависимость как блокировку
         # (ровно регрессия tsk-523).
         await self.engine.backfill_dependency_state(db, course_id, required_course_id)
         # tsk-231: см. docstring _enroll_existing_students.
-        await self._enroll_existing_students(db, course_id, required_course_id)
+        await self._enroll_existing_students(
+            db, course_id, required_course_id, auto_assign=auto_assign
+        )
         await db.commit()
 
     async def remove_dependency(
@@ -110,7 +132,8 @@ class CourseDependenciesService:
         await self.repo.remove_dependency(db, course_id, required_course_id)
 
     async def bulk_add_dependencies(
-        self, db: AsyncSession, course_id: int, required_course_ids: List[int]
+        self, db: AsyncSession, course_id: int, required_course_ids: List[int],
+        auto_assign: bool = True,
     ) -> List[Courses]:
         """
         Массовое добавление зависимостей для курса.
@@ -118,15 +141,21 @@ class CourseDependenciesService:
         :param db: асинхронная сессия БД.
         :param course_id: ID курса.
         :param required_course_ids: Список ID курсов-зависимостей.
+        :param auto_assign: False — точечные зависимости (tsk-231): требуемые
+            курсы не раздаются автоматически и блокируют только адресатов.
         :return: Список успешно добавленных зависимостей.
         """
-        added = await self.repo.bulk_add_dependencies(db, course_id, required_course_ids)
+        added = await self.repo.bulk_add_dependencies(
+            db, course_id, required_course_ids, auto_assign=auto_assign
+        )
         # tsk-541: тот же бэкфилл, что в add_dependency — по одному пересчёту
         # на каждую реально добавленную зависимость (пропущенные конфликты/
         # self-dependency уже отфильтрованы репозиторием).
         for dep in added:
             await self.engine.backfill_dependency_state(db, course_id, dep.id)
             # tsk-231: см. docstring _enroll_existing_students.
-            await self._enroll_existing_students(db, course_id, dep.id)
+            await self._enroll_existing_students(
+                db, course_id, dep.id, auto_assign=auto_assign
+            )
         await db.commit()
         return added

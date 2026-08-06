@@ -52,11 +52,15 @@ class CourseDependenciesRepository:
         return res.first() is not None
 
     async def add_dependency(
-        self, db: AsyncSession, course_id: int, required_course_id: int
+        self, db: AsyncSession, course_id: int, required_course_id: int,
+        auto_assign: bool = True,
     ) -> None:
         """
         Добавить зависимость: course_id зависит от required_course_id.
         Пропускаем, если уже существует.
+
+        auto_assign=False (tsk-231) — зависимость выдаётся точечно: требуемый
+        курс не раздаётся автоматически и блокирует только тех, кому назначен.
         """
         # Проверяем, что оба курса существуют
         course = await db.get(Courses, course_id)
@@ -66,7 +70,11 @@ class CourseDependenciesRepository:
 
         stmt = (
             insert(t_course_dependencies)
-            .values(course_id=course_id, required_course_id=required_course_id)
+            .values(
+                course_id=course_id,
+                required_course_id=required_course_id,
+                auto_assign=auto_assign,
+            )
             .on_conflict_do_nothing(index_elements=["course_id", "required_course_id"])
         )
         await db.execute(stmt)
@@ -92,12 +100,17 @@ class CourseDependenciesRepository:
         self,
         db: AsyncSession,
         course_id: int,
-        required_course_ids: List[int]
+        required_course_ids: List[int],
+        auto_assign: bool = True,
     ) -> List[Courses]:
         """
         Массовое добавление зависимостей: course_id зависит от всех курсов из списка.
         Пропускает уже существующие зависимости и self-dependency.
         Возвращает список успешно добавленных зависимостей.
+
+        auto_assign применяется ко всем связям вызова (tsk-231): смешивать
+        режимы в одном bulk-запросе незачем — методист добавляет либо
+        пререквизиты курса, либо точечные мини-курсы.
         """
         # Проверяем, что курс существует
         course = await db.get(Courses, course_id)
@@ -120,7 +133,11 @@ class CourseDependenciesRepository:
         
         # Массовое добавление зависимостей (пропускаем конфликты)
         values = [
-            {"course_id": course_id, "required_course_id": rid}
+            {
+                "course_id": course_id,
+                "required_course_id": rid,
+                "auto_assign": auto_assign,
+            }
             for rid in valid_course_ids
         ]
         
