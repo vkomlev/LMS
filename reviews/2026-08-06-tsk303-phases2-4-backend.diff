@@ -1,0 +1,3709 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 912c8a9..365d10d 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -394,6 +394,10 @@ app.include_router(auth_test_session_router, prefix=API_PREFIX)
+ from app.api.v1.methodist_escalations import router as methodist_escalations_router
+ app.include_router(methodist_escalations_router, prefix=API_PREFIX)
+ 
++# tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич
++from app.api.v1.feedback_reports import router as feedback_reports_router
++app.include_router(feedback_reports_router, prefix=API_PREFIX)
++
+ # tsk-428 (Календарь LMS Фаза 1): admin-расписание (operating-hours, lesson-slots)
+ from app.api.v1.lesson_calendar_admin import router as lesson_calendar_admin_router
+ app.include_router(lesson_calendar_admin_router, prefix=API_PREFIX)
+diff --git a/app/api/v1/feedback_reports.py b/app/api/v1/feedback_reports.py
+new file mode 100644
+index 0000000..e44d1db
+--- /dev/null
++++ b/app/api/v1/feedback_reports.py
+@@ -0,0 +1,153 @@
++"""tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич.
++
++POST   /api/v1/feedback-reports          — создать обращение
++GET    /api/v1/feedback-reports          — список (свои / все — по роли)
++POST   /api/v1/feedback-reports/{id}/close — закрыть
++
++Кто и что видит (решение оператора: инбокс обращений — у методиста/админа,
++точка входа — у преподавателя):
++- создать может преподаватель, методист или админ. Ученик — нет: этот поток
++  про систему и контент, а не про его задание; для задания есть заявка помощи;
++- методист и админ видят ВСЕ обращения — это их инбокс;
++- преподаватель видит только свои: чужие жалобы на контент ему не адресованы.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Optional
++
++from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_bare_db, get_current_user
++from app.auth.current_user import CurrentUser
++from app.schemas.feedback_reports import (
++    FeedbackReportCreateRequest,
++    FeedbackReportCreateResponse,
++    FeedbackReportItem,
++    FeedbackReportListResponse,
++    FeedbackReportCloseRequest,
++    FeedbackReportCloseResponse,
++)
++from app.services import feedback_reports_service, roles_service
++
++router = APIRouter(prefix="/feedback-reports", tags=["feedback_reports"])
++logger = logging.getLogger("api.feedback_reports")
++
++_AUTHOR_ROLES = {"teacher", "methodist", "admin"}
++_INBOX_ROLES = {"methodist", "admin"}
++
++
++async def _roles(db: AsyncSession, current_user: CurrentUser) -> set[str]:
++    if current_user.is_service:
++        return set(_AUTHOR_ROLES)
++    return set(await roles_service.get_user_role_names(db, current_user.id))
++
++
++@router.post(
++    "",
++    response_model=FeedbackReportCreateResponse,
++    status_code=status.HTTP_201_CREATED,
++    summary="Создать обращение о проблеме или идею фичи (tsk-303)",
++    responses={
++        201: {"description": "Обращение создано"},
++        403: {"description": "Нет роли преподавателя/методиста/админа"},
++        422: {"description": "Неизвестный тип или пустой текст"},
++    },
++)
++async def create_feedback_report(
++    body: FeedbackReportCreateRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FeedbackReportCreateResponse:
++    """Автор берётся из сессии — подставить чужого нельзя."""
++    if not current_user.is_service and not (await _roles(db, current_user) & _AUTHOR_ROLES):
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "Обращения создают преподаватель, методист или админ",
++        )
++    data = await feedback_reports_service.create_report(
++        db,
++        author_id=current_user.id,
++        report_type=body.report_type,
++        body=body.body,
++        course_id=body.course_id,
++        material_id=body.material_id,
++        task_id=body.task_id,
++    )
++    await db.commit()
++    return FeedbackReportCreateResponse(**data)
++
++
++@router.get(
++    "",
++    response_model=FeedbackReportListResponse,
++    summary="Список обращений: свои или все (tsk-303)",
++)
++async def list_feedback_reports(
++    status_filter: str = Query("open", description="open | closed | all", alias="status"),
++    report_type: str = Query("all", description="bug | content | feature_idea | all"),
++    limit: int = Query(20, ge=1, le=100),
++    offset: int = Query(0, ge=0),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FeedbackReportListResponse:
++    """Методист и админ видят все обращения, остальные — только свои.
++
++    Сужение делается ЗДЕСЬ, параметром запроса к БД, а не фильтрацией уже
++    выбранной страницы: постфильтр по узкому ключу поверх общего `limit` молча
++    теряет строки (класс уже ловился в tsk-473).
++    """
++    roles = await _roles(db, current_user)
++    is_inbox_viewer = current_user.is_service or bool(roles & _INBOX_ROLES)
++    if not is_inbox_viewer and not (roles & _AUTHOR_ROLES):
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к обращениям")
++
++    items, total = await feedback_reports_service.list_reports(
++        db,
++        author_id=None if is_inbox_viewer else current_user.id,
++        status_filter=status_filter,
++        report_type=report_type,
++        limit=limit,
++        offset=offset,
++    )
++    return FeedbackReportListResponse(
++        items=[FeedbackReportItem(**it) for it in items],
++        total=total,
++        scope="all" if is_inbox_viewer else "own",
++    )
++
++
++@router.post(
++    "/{report_id}/close",
++    response_model=FeedbackReportCloseResponse,
++    summary="Закрыть обращение (tsk-303)",
++    responses={
++        404: {"description": "Обращение не найдено"},
++        403: {"description": "Не автор и не методист/админ"},
++    },
++)
++async def close_feedback_report(
++    report_id: int = Path(..., description="ID обращения"),
++    body: FeedbackReportCloseRequest = Body(default=FeedbackReportCloseRequest()),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> FeedbackReportCloseResponse:
++    """Закрывает автор или методист/админ; повтор идемпотентен."""
++    roles = await _roles(db, current_user)
++    is_privileged = current_user.is_service or bool(roles & _INBOX_ROLES)
++    data, err = await feedback_reports_service.close_report(
++        db,
++        report_id,
++        current_user.id,
++        body.resolution_comment,
++        is_privileged=is_privileged,
++    )
++    if err == "not_found":
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Обращение не найдено")
++    if err == "forbidden":
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN, "Закрыть обращение может автор, методист или админ"
++        )
++    await db.commit()
++    return FeedbackReportCloseResponse(**data)
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 5219972..2914b7b 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -4,6 +4,8 @@ Learning API V1 (этап 3): next-item, materials/complete, tasks/start-or-get-
+ from __future__ import annotations
+ 
+ import logging
++from typing import Optional
++
+ from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
+ from sqlalchemy import select, text
+ from sqlalchemy.ext.asyncio import AsyncSession
+@@ -25,6 +27,11 @@ from app.schemas.learning_api import (
+     TaskStateResponse,
+     RequestHelpRequest,
+     RequestHelpResponse,
++    StudentHelpRequestResponse,
++    HelpRequestReopenResponse,
++    IndividualReviewResponse,
++    RateReviewRequest,
++    RateReviewResponse,
+     HintEventRequest,
+     HintEventResponse,
+ )
+@@ -39,6 +46,10 @@ from app.services.learning_events_service import (
+ from app.services.help_requests_service import (
+     get_or_create_help_request,
+     get_or_create_blocked_limit_help_request,
++    get_student_help_request,
++    reopen_help_request,
++    request_individual_review,
++    rate_individual_review,
+ )
+ from app.services import payment_access_service
+ from app.services import lesson_attendance_service
+@@ -560,6 +571,189 @@ async def request_help(
+     )
+ 
+ 
++# ----- tsk-303: лестница помощи, сторона ученика -----
++
++# Состояние заявки не сошлось с запрошенным шагом лестницы. Для клиента это
++# один класс: экран устарел, надо перечитать заявку.
++_LADDER_STATE_ERRORS: dict[str, str] = {
++    "not_closed": "Заявка ещё открыта — возвращать нечего.",
++    "not_open": "Заявка закрыта.",
++    "wrong_type": "Это действие недоступно для заявки такого типа.",
++    "no_reopen": "Индивидуальный разбор доступен после повторного обращения по этому заданию.",
++    "no_webinar_link": "Преподаватель ещё не прислал ссылку на разбор.",
++    "already_rated": "Разбор уже оценён.",
++}
++
++
++def _raise_ladder_error(err: str) -> None:
++    """Единая раскладка ошибок шагов лестницы в HTTP-коды."""
++    if err == "not_found":
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
++    if err == "forbidden":
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
++    raise HTTPException(
++        status.HTTP_409_CONFLICT,
++        _LADDER_STATE_ERRORS.get(err, "Действие недоступно в текущем состоянии заявки."),
++    )
++
++
++async def _resolve_ladder_student(
++    db: AsyncSession,
++    request_id: int,
++    current_user: CurrentUser,
++) -> int:
++    """От имени какого ученика выполняется шаг лестницы.
++
++    Обычный пользователь действует только от себя — сервис ниже сверит это с
++    владельцем заявки и отдаст 403 при чужом `request_id`. Сервисный ключ
++    (боты) действует от имени владельца, как и на остальных learning-путях,
++    поэтому владельца берём из самой заявки.
++
++    Ключевое: `student_id` нигде не приходит из тела/запроса — подставить
++    чужой нечем, а значит перебором `request_id` чужую заявку не прочитать.
++    """
++    if not current_user.is_service:
++        return current_user.id
++    row = (
++        await db.execute(
++            text("SELECT student_id FROM help_requests WHERE id = :id"),
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
++    return int(row[0])
++
++
++@router.get(
++    "/tasks/{task_id}/help-request",
++    response_model=Optional[StudentHelpRequestResponse],
++    summary="Текущая заявка помощи ученика по заданию (tsk-303)",
++    responses={
++        200: {"description": "Заявка или null, если ученик помощь не запрашивал"},
++        403: {"description": "Чужой student_id"},
++    },
++)
++async def student_help_request_state(
++    task_id: int = Path(..., description="ID задания"),
++    student_id: int = Query(..., description="ID ученика"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> Optional[StudentHelpRequestResponse]:
++    """Состояние лестницы помощи для страницы задания.
++
++    До tsk-303 ученик вообще не мог увидеть на странице задания, что с его
++    заявкой: ответ учителя долетал только уведомлением в общей ленте, а сама
++    страница о заявке не знала. Без этого чтения кнопкам «Вернуть заявку» и
++    «Запросить разбор» негде появиться.
++
++    Гейт оплаты здесь НЕ применяется: читать состояние собственного обращения
++    должник вправе — закрыт учебный контент, а не поддержка.
++    """
++    if not current_user.is_service and current_user.id != student_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    data = await get_student_help_request(db, student_id, task_id)
++    if data is None:
++        return None
++    return StudentHelpRequestResponse(**data)
++
++
++@router.post(
++    "/help-requests/{request_id}/reopen",
++    response_model=HelpRequestReopenResponse,
++    summary="Вернуть заявку: ответ преподавателя не помог (tsk-303)",
++    responses={
++        404: {"description": "Заявка не найдена"},
++        403: {"description": "Чужая заявка"},
++        409: {"description": "Заявка не закрыта или не того типа"},
++    },
++)
++async def reopen_student_help_request(
++    request_id: int = Path(..., description="ID заявки"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> HelpRequestReopenResponse:
++    """Уровень 1 → повтор: ученик отмечает, что после ответа не разобрался.
++
++    Возврат начисляется преподавателю, чей ответ не помог, — это KPI
++    (`help_request_reopens`). Владелец заявки берётся из самой заявки, а не из
++    тела запроса: подставить чужой `student_id` тут физически нечем.
++    """
++    student_id = await _resolve_ladder_student(db, request_id, current_user)
++    if not current_user.is_service:
++        await payment_access_service.assert_content_allowed(db, student_id)
++    data, err = await reopen_help_request(db, request_id, student_id)
++    if err is not None:
++        _raise_ladder_error(err)
++    await db.commit()
++    logger.info("tsk-303 reopen: request_id=%s student_id=%s", request_id, student_id)
++    return HelpRequestReopenResponse(**data)
++
++
++@router.post(
++    "/help-requests/{request_id}/request-individual-review",
++    response_model=IndividualReviewResponse,
++    summary="Запросить индивидуальный разбор (tsk-303, уровень 2)",
++    responses={
++        404: {"description": "Заявка не найдена"},
++        403: {"description": "Чужая заявка"},
++        409: {"description": "Заявка закрыта, не того типа или не возвращалась"},
++    },
++)
++async def request_individual_review_endpoint(
++    request_id: int = Path(..., description="ID заявки"),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> IndividualReviewResponse:
++    """Доступно только по заявке, которую ученик уже возвращал."""
++    student_id = await _resolve_ladder_student(db, request_id, current_user)
++    if not current_user.is_service:
++        await payment_access_service.assert_content_allowed(db, student_id)
++    data, err = await request_individual_review(db, request_id, student_id)
++    if err is not None:
++        _raise_ladder_error(err)
++    await db.commit()
++    logger.info(
++        "tsk-303 individual-review: request_id=%s student_id=%s already=%s",
++        request_id, student_id, data.get("already"),
++    )
++    return IndividualReviewResponse(**data)
++
++
++@router.post(
++    "/help-requests/{request_id}/rate-review",
++    response_model=RateReviewResponse,
++    summary="Оценить индивидуальный разбор (tsk-303, уровень 3)",
++    responses={
++        404: {"description": "Заявка не найдена"},
++        403: {"description": "Чужая заявка"},
++        409: {"description": "Нет ссылки на разбор, заявка закрыта или уже оценена"},
++    },
++)
++async def rate_individual_review_endpoint(
++    request_id: int = Path(..., description="ID заявки"),
++    body: RateReviewRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> RateReviewResponse:
++    """«Понятно» закрывает заявку, «непонятно» уводит её методисту.
++
++    Гейт оплаты здесь НЕ применяется намеренно: это ответ на уже оказанную
++    помощь. Заблокировать его значило бы оставить заявку висеть открытой без
++    оценки и без маршрута дальше.
++    """
++    student_id = await _resolve_ladder_student(db, request_id, current_user)
++    data, err = await rate_individual_review(db, request_id, student_id, body.understood)
++    if err is not None:
++        _raise_ladder_error(err)
++    await db.commit()
++    logger.info(
++        "tsk-303 rate-review: request_id=%s student_id=%s understood=%s escalated=%s",
++        request_id, student_id, data.get("understood"), data.get("escalated"),
++    )
++    return RateReviewResponse(**data)
++
++
+ # ----- POST /learning/tasks/{task_id}/hint-events (этап 3.6) -----
+ 
+ @router.post(
+diff --git a/app/api/v1/methodist_escalations.py b/app/api/v1/methodist_escalations.py
+index c1bc2fc..9997021 100644
+--- a/app/api/v1/methodist_escalations.py
++++ b/app/api/v1/methodist_escalations.py
+@@ -65,7 +65,11 @@ async def list_pending_escalations(
+ 
+     Виды: `review_escalated` и `course_pending_review` (обе — про зависшие
+     проверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на
+-    файлы, которых нет; ученик видит на их месте пустоту).
++    файлы, которых нет; ученик видит на их месте пустоту) и
++    `help_request_escalated` (tsk-303, уровень 3 лестницы помощи — ученику не
++    помог даже индивидуальный разбор с преподавателем; заявка остаётся
++    открытой, методист закрывает её через
++    `POST /teacher/help-requests/{id}/close`).
+ 
+     tsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в
+     `require_role("methodist")` (service-token — bypass, как и раньше);
+@@ -82,7 +86,8 @@ async def list_pending_escalations(
+             "SELECT n.id, n.modified_at, n.kind, n.title, n.payload, n.read_at "
+             "FROM notifications n "
+             "WHERE n.user_id = :uid "
+-            "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links') "
++            "  AND n.kind IN ('review_escalated','course_pending_review','broken_media_links',"
++            "'help_request_escalated') "
+             f"  {since_clause}"  # nosec B608 — since_clause из закрытого набора (либо "", либо литерал с :since bind)
+             "ORDER BY n.modified_at DESC "
+             "LIMIT :limit"
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 55b0644..ce29f55 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -9,6 +9,7 @@ POST /api/v1/teacher/help-requests/{request_id}/reply — ответить ст
+ from __future__ import annotations
+ 
+ import logging
++from datetime import datetime
+ from typing import Optional
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body, status
+@@ -26,6 +27,10 @@ from app.schemas.teacher_help_requests import (
+     HelpRequestReplyRequest,
+     HelpRequestReplyResponse,
+     HelpRequestPendingCountResponse,
++    WebinarLinkRequest,
++    WebinarLinkResponse,
++    ReopenKpiItem,
++    ReopenKpiResponse,
+ )
+ from app.schemas.teacher_next_modes import (
+     HelpRequestClaimNextRequest,
+@@ -41,8 +46,11 @@ from app.services.help_requests_service import (
+     help_request_exists,
+     close_help_request,
+     reply_help_request,
++    set_webinar_link,
+     get_help_requests_pending_count,
++    get_reopen_kpi,
+ )
++from app.services import roles_service
+ from app.services.teacher_queue_service import (
+     claim_next_help_request,
+     release_help_request_claim,
+@@ -106,6 +114,55 @@ async def help_requests_pending_count(
+     return HelpRequestPendingCountResponse(count=count, oldest_created_at=oldest)
+ 
+ 
++@router.get(
++    "/kpi/reopens",
++    response_model=ReopenKpiResponse,
++    summary="Возвраты заявок: свой показатель или сводка по всем (tsk-303)",
++    responses={
++        200: {"description": "Сводка возвратов"},
++        403: {"description": "Чужой teacher_id без роли методиста/админа"},
++    },
++)
++async def help_request_reopen_kpi(
++    teacher_id: Optional[int] = Query(
++        None,
++        description="ID преподавателя. Не задан — сводка по всем (только методист/админ).",
++    ),
++    since: Optional[datetime] = Query(
++        None, description="Считать возвраты с этого момента (ISO8601)"
++    ),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> ReopenKpiResponse:
++    """Две поверхности одного агрегата (решение оператора: KPI видят оба).
++
++    Преподаватель смотрит СВОЙ показатель — для самоконтроля. Методист и админ
++    видят сводку по всем — это оценка преподавателей, поэтому чужой показатель
++    без такой роли не отдаётся. Считает один и тот же
++    `help_requests_service.get_reopen_kpi`, чтобы две панели не разъехались в
++    цифрах.
++    """
++    is_privileged = current_user.is_service or bool(
++        {"methodist", "admin"}
++        & set(await roles_service.get_user_role_names(db, current_user.id))
++    )
++    if teacher_id is None:
++        if not is_privileged:
++            raise HTTPException(
++                status.HTTP_403_FORBIDDEN,
++                "Сводка по всем преподавателям доступна методисту или админу",
++            )
++    elif not is_privileged and current_user.id != teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++
++    items = await get_reopen_kpi(db, teacher_id=teacher_id, since=since)
++    return ReopenKpiResponse(
++        items=[ReopenKpiItem(**it) for it in items],
++        total_reopens=sum(int(it["reopens"]) for it in items),
++        since=since,
++    )
++
++
+ @router.get(
+     "",
+     response_model=HelpRequestListResponse,
+@@ -114,7 +171,11 @@ async def help_requests_pending_count(
+ async def help_requests_list(
+     teacher_id: int = Query(..., description="ID преподавателя/методиста"),
+     status_filter: str = Query("open", description="open | closed | all", alias="status"),
+-    request_type_filter: str = Query("all", description="manual_help | blocked_limit | all", alias="request_type"),
++    request_type_filter: str = Query(
++        "all",
++        description="manual_help | blocked_limit | individual_review | all",
++        alias="request_type",
++    ),
+     sort: str = Query("priority", description="priority | created_at | due_at (этап 3.9)", alias="sort"),
+     overdue: bool = Query(False, description="true — только просроченные (due_at < now), ортогонально типу (tsk-312)"),
+     limit: int = Query(20, ge=1, le=100),
+@@ -129,10 +190,13 @@ async def help_requests_list(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+             detail="status должен быть open, closed или all",
+         )
+-    if request_type_filter not in ("manual_help", "blocked_limit", "all"):
++    if request_type_filter not in ("manual_help", "blocked_limit", "individual_review", "all"):
+         raise HTTPException(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+-            detail="request_type должен быть manual_help, blocked_limit или all",
++            detail=(
++                "request_type должен быть manual_help, blocked_limit, "
++                "individual_review или all"
++            ),
+         )
+     if sort not in ("priority", "created_at", "due_at"):
+         raise HTTPException(
+@@ -242,6 +306,50 @@ async def help_request_release(
+     return HelpRequestReleaseResponse(released=released)
+ 
+ 
++@router.post(
++    "/{request_id}/webinar-link",
++    response_model=WebinarLinkResponse,
++    status_code=status.HTTP_200_OK,
++    summary="Прислать ученику ссылку на индивидуальный разбор (tsk-303, уровень 2)",
++    responses={
++        404: {"description": "Заявка не найдена"},
++        403: {"description": "Нет доступа"},
++        409: {"description": "Заявка не того типа, закрыта или токен блокировки невалиден"},
++        422: {"description": "Ссылка пустая или не http/https"},
++    },
++)
++async def help_request_webinar_link(
++    request_id: int = Path(..., description="ID заявки"),
++    body: WebinarLinkRequest = Body(...),
++    current_user: CurrentUser = Depends(get_current_user),
++    db: AsyncSession = Depends(get_bare_db),
++) -> WebinarLinkResponse:
++    """Заявку не закрывает: разбор впереди, закроет её оценка ученика."""
++    if not current_user.is_service and current_user.id != body.teacher_id:
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
++    data, err = await set_webinar_link(
++        db, request_id, body.teacher_id, body.webinar_link, lock_token=body.lock_token
++    )
++    if err == "not_found":
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
++    if err == "forbidden":
++        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
++    if err == "lock_conflict":
++        raise HTTPException(
++            status.HTTP_409_CONFLICT, "Токен блокировки невалиден или просрочен"
++        )
++    if err == "wrong_type":
++        raise HTTPException(
++            status.HTTP_409_CONFLICT,
++            "Ссылка на разбор доступна только по заявке на индивидуальный разбор",
++        )
++    if err == "not_open":
++        raise HTTPException(status.HTTP_409_CONFLICT, "Заявка закрыта")
++    await db.commit()
++    logger.info("tsk-303 webinar-link: request_id=%s teacher_id=%s", request_id, body.teacher_id)
++    return WebinarLinkResponse(**data)
++
++
+ @router.post(
+     "/{request_id}/reply",
+     response_model=HelpRequestReplyResponse,
+diff --git a/app/db/base.py b/app/db/base.py
+index 1fdc381..06af3d2 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -26,6 +26,7 @@ import app.models.student_task_progress
+ import app.models.help_requests
+ import app.models.help_request_replies
+ import app.models.help_request_reopens
++import app.models.feedback_reports
+ import app.models.identity_link
+ import app.models.user_session
+ import app.models.magic_link
+diff --git a/app/db/migrations/versions/20260806_020000_tsk303_feedback_reports.py b/app/db/migrations/versions/20260806_020000_tsk303_feedback_reports.py
+new file mode 100644
+index 0000000..7f94bed
+--- /dev/null
++++ b/app/db/migrations/versions/20260806_020000_tsk303_feedback_reports.py
+@@ -0,0 +1,141 @@
++"""tsk-303 Фаза 4: обращения о проблемах системы, контента и идеях фич (Поток B).
++
++Второй поток единого инбокса. С лестницей помощи (Поток A) он не пересекается
++ничем, кроме экрана: там заявка ученика по конкретному заданию, здесь —
++сообщение о системе или контенте, и адресат другой (методист/админ, а не
++преподаватель ученика). Поэтому отдельная таблица, а не ещё один
++`request_type` в `help_requests`: у той всё построено вокруг пары
++(ученик, задание), которой здесь может не быть вовсе.
++
++**Автор — nullable (`ON DELETE SET NULL`).** Обращение переживает удаление
++учётки: «в уроке битая ссылка» остаётся правдой и без автора, а каскад стирал
++бы список задач методиста задним числом.
++
++**Привязка к курсу/материалу/заданию — три отдельных nullable FK**, а не
++свободный JSON: по ним методист попадает в конкретный объект, и целостность
++держит БД. Все три пустые — обращение про систему в целом, это нормальный
++случай, а не пропуск.
++
++**`title` намеренно НЕТ.** Форма и так просит выбрать тип и описать проблему;
++третье обязательное поле — лишняя ступень на пути к тому, чтобы человек вообще
++написал. Список инбокса показывает тип + начало текста.
++
++Rollback: `alembic downgrade tsk303_help_ladder` сносит таблицу целиком.
++ВНИМАНИЕ: вместе с ней пропадают все обращения (жалобы на контент, идеи) —
++восстановить будет неоткуда. На момент применения таблица пуста.
++
++Revision ID: tsk303_feedback_reports
++Revises: tsk303_help_ladder
++Create Date: 2026-08-06
++"""
++
++from __future__ import annotations
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk303_feedback_reports"
++down_revision: Union[str, None] = "tsk303_help_ladder"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++_TYPES = ("bug", "content", "feature_idea")
++_STATUSES = ("open", "closed")
++
++
++def _in_list(values: Sequence[str]) -> str:
++    return ", ".join(f"'{v}'" for v in values)
++
++
++def upgrade() -> None:
++    """Создаёт таблицу обращений и индексы под инбокс методиста."""
++    op.create_table(
++        "feedback_reports",
++        sa.Column("id", sa.BigInteger, primary_key=True),
++        sa.Column(
++            "report_type",
++            sa.String(32),
++            nullable=False,
++            comment="bug — проблема системы; content — проблема контента; feature_idea — идея",
++        ),
++        sa.Column("status", sa.String(16), nullable=False, server_default="open"),
++        sa.Column(
++            "author_id",
++            sa.Integer,
++            sa.ForeignKey("users.id", ondelete="SET NULL"),
++            nullable=True,
++            comment="Кто написал. NULL — учётка удалена, само обращение остаётся",
++        ),
++        sa.Column("body", sa.Text, nullable=False),
++        sa.Column(
++            "course_id",
++            sa.Integer,
++            sa.ForeignKey("courses.id", ondelete="SET NULL"),
++            nullable=True,
++        ),
++        sa.Column(
++            "material_id",
++            sa.Integer,
++            sa.ForeignKey("materials.id", ondelete="SET NULL"),
++            nullable=True,
++        ),
++        sa.Column(
++            "task_id",
++            sa.Integer,
++            sa.ForeignKey("tasks.id", ondelete="SET NULL"),
++            nullable=True,
++        ),
++        sa.Column(
++            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
++        ),
++        sa.Column(
++            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
++        ),
++        sa.Column("closed_at", sa.DateTime(timezone=True), nullable=True),
++        sa.Column(
++            "closed_by",
++            sa.Integer,
++            sa.ForeignKey("users.id", ondelete="SET NULL"),
++            nullable=True,
++        ),
++        sa.Column("resolution_comment", sa.Text, nullable=True),
++        sa.CheckConstraint(
++            f"report_type IN ({_in_list(_TYPES)})", name="ck_feedback_reports_type"
++        ),
++        sa.CheckConstraint(
++            f"status IN ({_in_list(_STATUSES)})", name="ck_feedback_reports_status"
++        ),
++        # Пустой текст — обращение без содержания: в инбоксе видно строку, а
++        # разобрать нечего. Тот же класс, что уже закрыт у вебинар-ссылки
++        # (см. `docs/ai/ERRORS.md`, 2026-07-22): проверка через `~ '\S'`, а не
++        # `length(btrim(...)) > 0` — btrim без второго аргумента срезает только
++        # пробелы и пропустил бы строку из табуляции.
++        sa.CheckConstraint(r"body ~ '\S'", name="ck_feedback_reports_body_not_blank"),
++        # Закрытие всегда со следом: «закрыто» без времени — состояние без истории.
++        sa.CheckConstraint(
++            "(status = 'open') = (closed_at IS NULL)",
++            name="ck_feedback_reports_closed_has_timestamp",
++        ),
++        comment="tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич",
++    )
++    # Инбокс методиста: сначала открытые, свежие сверху.
++    op.create_index(
++        "idx_feedback_reports_status_created",
++        "feedback_reports",
++        ["status", sa.text("created_at DESC")],
++    )
++    # «Мои обращения» у преподавателя.
++    op.create_index(
++        "idx_feedback_reports_author",
++        "feedback_reports",
++        ["author_id", sa.text("created_at DESC")],
++    )
++
++
++def downgrade() -> None:
++    """Сносит таблицу обращений целиком (вместе со всей их историей)."""
++    op.drop_index("idx_feedback_reports_author", table_name="feedback_reports")
++    op.drop_index("idx_feedback_reports_status_created", table_name="feedback_reports")
++    op.drop_table("feedback_reports")
+diff --git a/app/models/feedback_reports.py b/app/models/feedback_reports.py
+new file mode 100644
+index 0000000..fc26832
+--- /dev/null
++++ b/app/models/feedback_reports.py
+@@ -0,0 +1,78 @@
++"""Модель обращений о проблемах и идеях (tsk-303, Поток B)."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Optional
++
++from sqlalchemy import (
++    BigInteger,
++    DateTime,
++    ForeignKeyConstraint,
++    Integer,
++    PrimaryKeyConstraint,
++    String,
++    Text,
++    text,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++
++class FeedbackReports(Base):
++    """
++    Обращение о проблеме системы, проблеме контента или идея фичи.
++
++    Второй поток единого инбокса преподавателя. С заявками помощи
++    (`help_requests`) не пересекается: там всё построено вокруг пары
++    (ученик, задание), которой здесь может не быть вовсе, и адресат другой —
++    методист/админ, а не преподаватель конкретного ученика.
++    """
++    __tablename__ = "feedback_reports"
++    __table_args__ = (
++        ForeignKeyConstraint(
++            ["author_id"], ["users.id"], ondelete="SET NULL",
++            name="feedback_reports_author_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["course_id"], ["courses.id"], ondelete="SET NULL",
++            name="feedback_reports_course_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["material_id"], ["materials.id"], ondelete="SET NULL",
++            name="feedback_reports_material_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["task_id"], ["tasks.id"], ondelete="SET NULL",
++            name="feedback_reports_task_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["closed_by"], ["users.id"], ondelete="SET NULL",
++            name="feedback_reports_closed_by_fkey",
++        ),
++        PrimaryKeyConstraint("id", name="feedback_reports_pkey"),
++        {"comment": "tsk-303 Поток B: обращения о проблемах системы/контента и идеи фич"},
++    )
++
++    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
++    report_type: Mapped[str] = mapped_column(
++        String(32), nullable=False,
++        comment="bug | content | feature_idea",
++    )
++    status: Mapped[str] = mapped_column(
++        String(16), nullable=False, server_default=text("'open'")
++    )
++    author_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    body: Mapped[str] = mapped_column(Text, nullable=False)
++    course_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    material_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    task_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=text("now()")
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), nullable=False, server_default=text("now()")
++    )
++    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
++    closed_by: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
++    resolution_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+diff --git a/app/schemas/feedback_reports.py b/app/schemas/feedback_reports.py
+new file mode 100644
+index 0000000..9331c15
+--- /dev/null
++++ b/app/schemas/feedback_reports.py
+@@ -0,0 +1,89 @@
++"""Схемы обращений о проблемах и идеях (tsk-303, Поток B)."""
++from __future__ import annotations
++
++from datetime import datetime
++from typing import Literal, Optional
++
++from pydantic import BaseModel, Field, field_validator
++
++FeedbackReportType = Literal["bug", "content", "feature_idea"]
++
++
++class FeedbackReportCreateRequest(BaseModel):
++    """Тело POST /feedback-reports.
++
++    Автор не передаётся: он берётся из сессии, иначе обращение можно было бы
++    подписать чужим именем.
++    """
++    report_type: FeedbackReportType = Field(
++        ...,
++        description="bug — проблема системы; content — проблема контента; feature_idea — идея",
++    )
++    body: str = Field(..., min_length=1, max_length=4000, description="Описание")
++    course_id: Optional[int] = Field(None, description="К какому курсу относится, если известно")
++    material_id: Optional[int] = Field(None, description="К какому материалу, если известно")
++    task_id: Optional[int] = Field(None, description="К какому заданию, если известно")
++
++    @field_validator("body")
++    @classmethod
++    def _body_not_blank(cls, v: str) -> str:
++        """Пробелы — это не описание.
++
++        `min_length` строку из пробелов пропускает: в инбоксе появилась бы
++        строка, которую нечего разбирать. Тот же класс, что закрыт на уровне
++        БД (`ck_feedback_reports_body_not_blank`), но с внятной ошибкой вместо
++        500 от нарушенного ограничения.
++        """
++        body = v.strip()
++        if not body:
++            raise ValueError("Описание не может быть пустым")
++        return body
++
++
++class FeedbackReportCreateResponse(BaseModel):
++    """Ответ создания обращения."""
++    report_id: int
++    status: str = "open"
++    created_at: datetime
++
++
++class FeedbackReportItem(BaseModel):
++    """Обращение в списке инбокса."""
++    report_id: int
++    report_type: str
++    status: str
++    author_id: Optional[int] = None
++    author_name: Optional[str] = None
++    body: str
++    course_id: Optional[int] = None
++    course_title: Optional[str] = None
++    material_id: Optional[int] = None
++    task_id: Optional[int] = None
++    created_at: datetime
++    updated_at: datetime
++    closed_at: Optional[datetime] = None
++    closed_by: Optional[int] = None
++    resolution_comment: Optional[str] = None
++
++
++class FeedbackReportListResponse(BaseModel):
++    """Список обращений."""
++    items: list[FeedbackReportItem] = Field(default_factory=list)
++    total: int = 0
++    scope: str = Field(
++        "own",
++        description="all — инбокс методиста/админа (все обращения); own — только свои",
++    )
++
++
++class FeedbackReportCloseRequest(BaseModel):
++    """Тело закрытия обращения."""
++    resolution_comment: Optional[str] = Field(None, max_length=2000)
++
++
++class FeedbackReportCloseResponse(BaseModel):
++    """Ответ закрытия обращения."""
++    report_id: int
++    status: str = "closed"
++    closed_at: Optional[datetime] = None
++    already_closed: bool = False
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index f76e63c..f4ccbc6 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -168,6 +168,71 @@ class RequestHelpResponse(BaseModel):
+     request_id: Optional[int] = Field(None, description="ID заявки в help_requests (этап 3.8, опционально)")
+ 
+ 
++# ----- Лестница помощи, сторона ученика (tsk-303) -----
++
++
++class StudentHelpReplyItem(BaseModel):
++    """Ответ преподавателя в заявке — так, как его видит ученик."""
++    body: str
++    created_at: datetime
++
++
++class StudentHelpRequestResponse(BaseModel):
++    """Текущая заявка помощи ученика по заданию.
++
++    Признаки `can_*` считает сервер: гейты уровней лестницы — часть правил, и
++    второй их экземпляр в клиенте неизбежно с ними разъедется.
++    """
++    request_id: int
++    status: str = Field(..., description="open | closed")
++    request_type: str = Field(..., description="manual_help | individual_review")
++    message: Optional[str] = Field(None, description="Текст исходного вопроса ученика")
++    created_at: datetime
++    updated_at: datetime
++    closed_at: Optional[datetime] = None
++    resolution_comment: Optional[str] = None
++    reopen_count: int = Field(0, description="Сколько раз ученик возвращал заявку")
++    webinar_link: Optional[str] = Field(
++        None, description="Ссылка на разбор; живёт, пока заявка открыта"
++    )
++    review_understood: Optional[bool] = Field(
++        None, description="Оценка после разбора: None — ещё не оценивал"
++    )
++    escalated_to_methodist_at: Optional[datetime] = None
++    replies: list[StudentHelpReplyItem] = Field(default_factory=list)
++    can_reopen: bool = False
++    can_request_individual_review: bool = False
++    can_rate_review: bool = False
++
++
++class HelpRequestReopenResponse(BaseModel):
++    """Ответ POST /learning/help-requests/{id}/reopen."""
++    request_id: int
++    status: str = "open"
++    reopen_count: int
++    can_request_individual_review: bool = True
++
++
++class IndividualReviewResponse(BaseModel):
++    """Ответ POST /learning/help-requests/{id}/request-individual-review."""
++    request_id: int
++    request_type: str = "individual_review"
++    already: bool = Field(False, description="true — разбор был запрошен ранее (повторный клик)")
++
++
++class RateReviewRequest(BaseModel):
++    """Тело POST /learning/help-requests/{id}/rate-review."""
++    understood: bool = Field(..., description="true — после разбора всё понятно")
++
++
++class RateReviewResponse(BaseModel):
++    """Ответ на оценку разбора."""
++    request_id: int
++    understood: bool
++    status: str = Field(..., description="closed при understood=true, иначе open")
++    escalated: bool = Field(False, description="true — заявка ушла методисту")
++
++
+ # ----- Hint events (этап 3.6) -----
+ 
+ HintType = Literal["text", "video"]
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index 4df2faa..c54cc9d 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -4,13 +4,16 @@ from __future__ import annotations
+ from datetime import datetime
+ from typing import Any, Dict, Literal, Optional
+ 
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, field_validator
+ 
+ 
+ HelpRequestStatus = Literal["open", "closed"]
+ HelpRequestStatusFilter = Literal["open", "closed", "all"]
+-HelpRequestType = Literal["manual_help", "blocked_limit"]
+-HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "all"]
++# tsk-303: третий класс заявки — индивидуальный разбор. Без него карточка и
++# список у преподавателя падали бы на сериализации, как только ученик поднялся
++# на уровень 2: литерал закрытый, а тип в БД уже допустим.
++HelpRequestType = Literal["manual_help", "blocked_limit", "individual_review"]
++HelpRequestTypeFilter = Literal["manual_help", "blocked_limit", "individual_review", "all"]
+ 
+ 
+ # ----- GET list -----
+@@ -72,10 +75,75 @@ class HelpRequestDetailResponse(HelpRequestListItem):
+     closed_by: Optional[int] = None
+     resolution_comment: Optional[str] = None
+     history: list[HelpRequestReplyItem] = Field(default_factory=list, description="Ответы преподавателей")
++    # tsk-303: состояние лестницы помощи — преподавателю нужно видеть, на каком
++    # уровне заявка и не вернул ли её ученик, иначе он отвечает вслепую.
++    reopen_count: int = Field(0, description="Сколько раз ученик возвращал заявку")
++    webinar_link: Optional[str] = Field(None, description="Ссылка на разбор (пока заявка открыта)")
++    review_understood: Optional[bool] = Field(
++        None, description="Оценка ученика после разбора; false — заявка ушла методисту"
++    )
++    escalated_to_methodist_at: Optional[datetime] = Field(
++        None, description="Когда заявка эскалирована методисту (уровень 3)"
++    )
+ 
+ 
+ # ----- POST close -----
+ 
++class ReopenKpiItem(BaseModel):
++    """Возвраты заявок на одного преподавателя (tsk-303, KPI)."""
++    teacher_id: int
++    teacher_name: Optional[str] = None
++    reopens: int = Field(..., description="Сколько раз ученики возвращали заявки этого преподавателя")
++    requests: int = Field(..., description="По скольким разным заявкам это было")
++    last_reopened_at: Optional[datetime] = None
++
++
++class ReopenKpiResponse(BaseModel):
++    """Сводка возвратов. Одна и та же для кабинета преподавателя и методиста."""
++    items: list[ReopenKpiItem] = Field(default_factory=list)
++    total_reopens: int = Field(0, description="Сумма возвратов по всем строкам выборки")
++    since: Optional[datetime] = Field(None, description="Начало окна, если задано")
++
++
++class WebinarLinkRequest(BaseModel):
++    """Тело запроса ссылки на индивидуальный разбор (tsk-303, уровень 2)."""
++    teacher_id: int = Field(..., description="ID преподавателя")
++    webinar_link: str = Field(
++        ...,
++        min_length=1,
++        max_length=2000,
++        description="Ссылка на комнату разбора (http/https), вводится вручную",
++    )
++    lock_token: Optional[str] = Field(
++        None, description="Токен блокировки; при невалидном/просроченном — 409"
++    )
++
++    @field_validator("webinar_link")
++    @classmethod
++    def _must_be_http_url(cls, v: str) -> str:
++        """Отбить пустую строку и не-ссылку.
++
++        Ученику эта строка приезжает кнопкой «Перейти к разбору». Текст вместо
++        ссылки даст кнопку в никуда, а заявка при этом будет выглядеть
++        отвеченной — тот же класс дефекта, что уже закрыт на уровне БД
++        (`ck_help_requests_webinar_link_type`), просто с понятной ошибкой
++        вместо 500 от нарушенного ограничения.
++        """
++        link = v.strip()
++        if not link:
++            raise ValueError("Ссылка не может быть пустой")
++        if not (link.startswith("http://") or link.startswith("https://")):
++            raise ValueError("Ссылка должна начинаться с http:// или https://")
++        return link
++
++
++class WebinarLinkResponse(BaseModel):
++    """Ответ на отправку ссылки на разбор."""
++    request_id: int
++    webinar_link: str
++    status: str = Field(..., description="Заявка остаётся открытой — разбор впереди")
++
++
+ class HelpRequestCloseRequest(BaseModel):
+     """Тело запроса закрытия заявки."""
+     closed_by: int = Field(..., description="ID пользователя, закрывающего заявку")
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index 1b8d4c5..d543f67 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
+ class HelpRequestClaimNextRequest(BaseModel):
+     """Тело запроса «взять следующий help-request»."""
+     teacher_id: int = Field(..., description="ID преподавателя")
+-    request_type: Literal["manual_help", "blocked_limit", "all"] = Field(
++    request_type: Literal["manual_help", "blocked_limit", "individual_review", "all"] = Field(
+         "all",
+         description="Тип заявки: manual_help | blocked_limit | all",
+     )
+@@ -175,6 +175,9 @@ class TeacherWorkloadResponse(BaseModel):
+     open_help_requests_total: int = Field(0, description="Всего открытых заявок на помощь")
+     open_blocked_limit_total: int = Field(0, description="Открытых заявок типа blocked_limit")
+     open_manual_help_total: int = Field(0, description="Открытых заявок типа manual_help")
++    open_individual_review_total: int = Field(
++        0, description="Открытых заявок на индивидуальный разбор (tsk-303, уровень 2)"
++    )
+     pending_manual_reviews_total: int = Field(0, description="Результатов в ожидании ручной проверки")
+     overdue_total: int = Field(0, description="Просроченных (due_at < now) открытых заявок")
+ 
+diff --git a/app/services/feedback_reports_service.py b/app/services/feedback_reports_service.py
+new file mode 100644
+index 0000000..4c67b8e
+--- /dev/null
++++ b/app/services/feedback_reports_service.py
+@@ -0,0 +1,195 @@
++"""Сервис обращений о проблемах и идеях (tsk-303, Поток B).
++
++Второй поток единого инбокса. Минимальный набор операций: создать, показать
++список, закрыть. Ничего сверх этого задача не просит, а лишние состояния
++(«в работе», приоритеты, назначение исполнителя) без реального процесса вокруг
++них превратились бы в поля, которые никто не заполняет.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timezone
++from typing import Any, Optional, Tuple
++
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++logger = logging.getLogger(__name__)
++
++REPORT_TYPES: tuple[str, ...] = ("bug", "content", "feature_idea")
++BODY_MAX_LEN = 4000
++
++
++async def create_report(
++    db: AsyncSession,
++    *,
++    author_id: int,
++    report_type: str,
++    body: str,
++    course_id: Optional[int] = None,
++    material_id: Optional[int] = None,
++    task_id: Optional[int] = None,
++) -> dict[str, Any]:
++    """Создать обращение. Валидацию типа и непустого текста делает слой API."""
++    row = (
++        await db.execute(
++            text("""
++                INSERT INTO feedback_reports
++                    (report_type, status, author_id, body, course_id, material_id, task_id,
++                     created_at, updated_at)
++                VALUES (:rt, 'open', :author, :body, :course_id, :material_id, :task_id,
++                        now(), now())
++                RETURNING id, created_at
++            """),
++            {
++                "rt": report_type,
++                "author": author_id,
++                "body": body[:BODY_MAX_LEN],
++                "course_id": course_id,
++                "material_id": material_id,
++                "task_id": task_id,
++            },
++        )
++    ).fetchone()
++    logger.info(
++        "tsk-303 feedback: создано обращение %s (тип %s, автор %s)", row[0], report_type, author_id
++    )
++    return {"report_id": int(row[0]), "status": "open", "created_at": row[1]}
++
++
++async def list_reports(
++    db: AsyncSession,
++    *,
++    author_id: Optional[int] = None,
++    status_filter: str = "open",
++    report_type: str = "all",
++    limit: int = 20,
++    offset: int = 0,
++) -> Tuple[list[dict[str, Any]], int]:
++    """Список обращений.
++
++    `author_id` сужает выборку до собственных обращений — этим же параметром
++    ограничивается преподаватель, которому чужие обращения не показываются.
++    Методист и админ зовут без него и видят всё.
++    """
++    conds: list[str] = ["1=1"]
++    params: dict[str, Any] = {}
++    if author_id is not None:
++        conds.append("fr.author_id = :author_id")
++        params["author_id"] = author_id
++    if status_filter in ("open", "closed"):
++        conds.append("fr.status = :status")
++        params["status"] = status_filter
++    if report_type in REPORT_TYPES:
++        conds.append("fr.report_type = :rt")
++        params["rt"] = report_type
++    where_sql = " AND ".join(conds)
++
++    total = int(
++        (
++            await db.execute(
++                text(f"SELECT COUNT(*) FROM feedback_reports fr WHERE {where_sql}"),  # nosec B608 — where_sql из литералов, значения через bind
++                params,
++            )
++        ).scalar()
++        or 0
++    )
++
++    rows = (
++        await db.execute(
++            text(f"""
++                SELECT fr.id, fr.report_type, fr.status, fr.author_id, fr.body,
++                       fr.course_id, fr.material_id, fr.task_id,
++                       fr.created_at, fr.updated_at, fr.closed_at, fr.closed_by,
++                       fr.resolution_comment,
++                       u.full_name AS author_name,
++                       c.title AS course_title
++                FROM feedback_reports fr
++                LEFT JOIN users u ON u.id = fr.author_id
++                LEFT JOIN courses c ON c.id = fr.course_id
++                WHERE {where_sql}
++                ORDER BY fr.created_at DESC, fr.id DESC
++                LIMIT :limit OFFSET :offset
++            """),  # nosec B608 — where_sql из литералов, значения через bind
++            {**params, "limit": limit, "offset": offset},
++        )
++    ).fetchall()
++
++    items = [
++        {
++            "report_id": int(r[0]),
++            "report_type": r[1],
++            "status": r[2],
++            "author_id": r[3],
++            "body": r[4],
++            "course_id": r[5],
++            "material_id": r[6],
++            "task_id": r[7],
++            "created_at": r[8],
++            "updated_at": r[9],
++            "closed_at": r[10],
++            "closed_by": r[11],
++            "resolution_comment": r[12],
++            "author_name": r[13],
++            "course_title": r[14],
++        }
++        for r in rows
++    ]
++    return (items, total)
++
++
++async def close_report(
++    db: AsyncSession,
++    report_id: int,
++    closed_by: int,
++    resolution_comment: Optional[str] = None,
++    *,
++    is_privileged: bool,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Закрыть обращение.
++
++    Закрывает автор (передумал, сам разобрался) либо методист/админ (разобрал).
++    Повторное закрытие идемпотентно: кнопку жмут дважды, и вторая попытка не
++    повод для ошибки.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden".
++    """
++    row = (
++        await db.execute(
++            text(
++                "SELECT author_id, status, closed_at FROM feedback_reports WHERE id = :id"
++            ),
++            {"id": report_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    author_id, status_val, closed_at = row
++    if not is_privileged and author_id != closed_by:
++        return (None, "forbidden")
++    if status_val == "closed":
++        return (
++            {"report_id": report_id, "status": "closed", "closed_at": closed_at,
++             "already_closed": True},
++            None,
++        )
++
++    now = datetime.now(timezone.utc)
++    await db.execute(
++        text("""
++            UPDATE feedback_reports
++            SET status = 'closed', closed_at = :now, closed_by = :by,
++                resolution_comment = :comment, updated_at = :now
++            WHERE id = :id
++        """),
++        {
++            "id": report_id,
++            "now": now,
++            "by": closed_by,
++            "comment": (resolution_comment or "")[:2000] or None,
++        },
++    )
++    return (
++        {"report_id": report_id, "status": "closed", "closed_at": now, "already_closed": False},
++        None,
++    )
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index cdc4c72..a8147e0 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -27,6 +27,7 @@ from app.services.learning_events_service import (
+     record_attempt_limit_reached,
+ )
+ from app.services import inbox_service
++from app.services import methodist_notify_service
+ from app.services.messages_service import MessagesService
+ from app.services.student_teacher_links_service import StudentTeacherLinksService
+ from app.services.teacher_courses_service import TeacherCoursesService
+@@ -404,6 +405,8 @@ async def list_help_requests(
+         type_cond = "AND hr.request_type = 'manual_help'"
+     elif request_type_filter == "blocked_limit":
+         type_cond = "AND hr.request_type = 'blocked_limit'"
++    elif request_type_filter == "individual_review":
++        type_cond = "AND hr.request_type = 'individual_review'"
+     student_cond = ""
+     order_sql = _order_by_sort(sort)
+ 
+@@ -522,7 +525,10 @@ async def get_help_request_detail(
+                    t.external_uid AS task_external_uid,
+                    c.title AS course_title,
+                    t.task_content->>'title' AS task_title_raw,
+-                   t.task_content->>'stem' AS task_stem
++                   t.task_content->>'stem' AS task_stem,
++                   hr.webinar_link, hr.review_understood, hr.escalated_to_methodist_at,
++                   (SELECT COUNT(*) FROM help_request_reopens rr
++                     WHERE rr.request_id = hr.id) AS reopen_count
+             FROM help_requests hr
+             LEFT JOIN users u ON u.id = hr.student_id
+             LEFT JOIN tasks t ON t.id = hr.task_id
+@@ -607,6 +613,14 @@ async def get_help_request_detail(
+             max_len=HINT_MAX_LEN,
+         ),
+         "course_title": row[21] if len(row) > 21 else None,
++        # tsk-303: колонки 24-27 — состояние лестницы помощи. Индексы считаются
++        # от порядка SELECT выше; в этом же маппинге когда-то уже был сдвиг на
++        # +1 (см. комментарий про off-by-one), поэтому новые поля добавлены в
++        # конец, а не в середину.
++        "webinar_link": row[24] if len(row) > 24 else None,
++        "review_understood": row[25] if len(row) > 25 else None,
++        "escalated_to_methodist_at": row[26] if len(row) > 26 else None,
++        "reopen_count": int(row[27]) if len(row) > 27 and row[27] is not None else 0,
+         "history": replies,
+     }, None)
+ 
+@@ -688,11 +702,16 @@ async def close_help_request(
+ 
+     now = datetime.now(timezone.utc)
+     comment_truncated = (resolution_comment or "")[:2000] or None
++    # tsk-303: TTL вебинар-ссылки — она живёт ровно пока заявка открыта
++    # (решение оператора). Обнуление стоит здесь, в единственной точке закрытия,
++    # чтобы инвариант держался на ВСЕХ путях сразу: закрытие учителем, ответ с
++    # закрытием, системное закрытие и подтверждение ученика после разбора.
+     await db.execute(
+         text("""
+             UPDATE help_requests
+             SET status = 'closed', closed_at = :closed_at, closed_by = :closed_by,
+-                resolution_comment = :resolution_comment, updated_at = :updated_at
++                resolution_comment = :resolution_comment, updated_at = :updated_at,
++                webinar_link = NULL
+             WHERE id = :id
+         """),
+         {
+@@ -767,6 +786,569 @@ async def close_blocked_limit_if_resolved(
+     return data
+ 
+ 
++# ----- tsk-303: лестница помощи, сторона ученика -----
++#
++# Три шага поверх уже готовой заявки `manual_help`:
++#   уровень 1 → «Вернуть заявку» (ответ не помог, начисляется в KPI учителя);
++#   уровень 2 → «Запросить индивидуальный разбор» (только после возврата);
++#   уровень 3 → оценка после разбора; «непонятно» уводит заявку методисту.
++#
++# Новых записей в `learning_events` эти шаги НЕ делают: каждый из них durable
++# отражён в доменных таблицах (строка в `help_request_reopens`, смена
++# `request_type`, отметка `escalated_to_methodist_at`), а `learning_events`
++# в приложении никем не читается — второй, несогласуемый источник правды тут
++# был бы лишним. Закрытие заявки своё событие пишет как и раньше — через
++# `close_help_request`.
++
++_LADDER_TYPES = ("manual_help", "individual_review")
++
++# Отдельное пространство ключей advisory-локов: в этом же файле уже есть
++# блокировки по паре (student_id, task_id) для blocked_limit, и совпадение
++# ключей заблокировало бы несвязанные между собой вещи.
++_LADDER_LOCK_NAMESPACE = 303
++
++
++async def _lock_request(db: AsyncSession, request_id: int) -> None:
++    """Сериализовать шаги лестницы по одной заявке.
++
++    Кнопки ученика легко нажать дважды (двойной клик, повтор запроса сети):
++    без блокировки два «Вернуть заявку» дали бы две строки возврата, то есть
++    задвоенный KPI учителя, а два запроса разбора — гонку на смене типа.
++    """
++    await db.execute(
++        text("SELECT pg_advisory_xact_lock(:k1, :k2)"),
++        {"k1": _LADDER_LOCK_NAMESPACE, "k2": request_id},
++    )
++
++
++async def get_reopen_kpi(
++    db: AsyncSession,
++    *,
++    teacher_id: Optional[int] = None,
++    since: Optional[datetime] = None,
++) -> list[dict[str, Any]]:
++    """Агрегат возвратов заявок по преподавателям — KPI «текст не помог».
++
++    Один запрос на двух потребителей (решение плана, чтобы не разошлись):
++    преподаватель смотрит свой показатель (`teacher_id=<свой>`), методист и
++    админ — по всем сразу (`teacher_id=None`).
++
++    `since` режет по `reopened_at` — панель почти всегда смотрит окно («за
++    месяц»), а не всю историю; ради этого история и хранится строками, а не
++    счётчиком на заявке.
++
++    Возвраты с неизвестным автором (`teacher_id IS NULL` — учётку удалили)
++    в разрез по людям не попадают: приписать их некому, а «ничей» столбец в
++    оценке преподавателей только путал бы.
++    """
++    conds = ["rr.teacher_id IS NOT NULL"]
++    params: dict[str, Any] = {}
++    if teacher_id is not None:
++        conds.append("rr.teacher_id = :teacher_id")
++        params["teacher_id"] = teacher_id
++    if since is not None:
++        conds.append("rr.reopened_at >= :since")
++        params["since"] = since
++    where_sql = " AND ".join(conds)
++
++    rows = (
++        await db.execute(
++            text(f"""
++                SELECT rr.teacher_id,
++                       u.full_name,
++                       COUNT(*) AS reopens,
++                       COUNT(DISTINCT rr.request_id) AS requests,
++                       MAX(rr.reopened_at) AS last_reopened_at
++                FROM help_request_reopens rr
++                LEFT JOIN users u ON u.id = rr.teacher_id
++                WHERE {where_sql}
++                GROUP BY rr.teacher_id, u.full_name
++                ORDER BY COUNT(*) DESC, rr.teacher_id
++            """),  # nosec B608 — where_sql собран из литералов модуля, значения идут через bind
++            params,
++        )
++    ).fetchall()
++    return [
++        {
++            "teacher_id": int(r[0]),
++            "teacher_name": r[1],
++            "reopens": int(r[2] or 0),
++            "requests": int(r[3] or 0),
++            "last_reopened_at": r[4],
++        }
++        for r in rows
++    ]
++
++
++async def _repeat_ask_count(
++    db: AsyncSession,
++    request_id: int,
++    student_id: int,
++    task_id: int,
++) -> int:
++    """Сколько раз ученик обращался по этому заданию СВЕРХ первого раза.
++
++    Оператор задал гейт уровня 2 как «повторная заявка по тому же `task_id`».
++    Повтор бывает двух видов, и засчитывать надо оба:
++
++    1. ученик вернул эту же заявку кнопкой «Вернуть заявку» (штатный путь);
++    2. ученик завёл по тому же заданию ВТОРУЮ заявку — `request-help`
++       дедуплицирует обращения лишь окном в несколько минут, так что это
++       достижимо и без всякой кнопки.
++
++    Считать только (1) значило бы отказать в разборе ученику, который просил
++    помощь дважды — то есть ровно тому, для кого уровень 2 и придуман.
++    """
++    return int(
++        (
++            await db.execute(
++                text("""
++                    SELECT
++                      (SELECT COUNT(*) FROM help_request_reopens rr
++                        WHERE rr.request_id = :request_id)
++                      +
++                      (SELECT COUNT(*) FROM help_requests hr
++                        WHERE hr.student_id = :student_id
++                          AND hr.task_id = :task_id
++                          AND hr.request_type = ANY(:types)
++                          AND hr.id <> :request_id)
++                """),
++                {
++                    "request_id": request_id,
++                    "student_id": student_id,
++                    "task_id": task_id,
++                    "types": list(_LADDER_TYPES),
++                },
++            )
++        ).scalar()
++        or 0
++    )
++
++
++async def get_student_help_request(
++    db: AsyncSession,
++    student_id: int,
++    task_id: int,
++) -> Optional[dict[str, Any]]:
++    """Текущая заявка помощи ученика по заданию — для его собственного экрана.
++
++    Берётся последняя заявка лестницы (`manual_help`/`individual_review`) по
++    паре (ученик, задание). `blocked_limit` сюда не попадает: это другой
++    механизм со своим интерфейсом, лестницы помощи у него нет.
++
++    Признаки `can_*` считает сервер, а не клиент: гейты уровней — часть
++    правил, и второй их экземпляр в UI неизбежно разъедется с этим.
++    """
++    row = (
++        await db.execute(
++            text("""
++                SELECT hr.id, hr.status, hr.request_type, hr.message,
++                       hr.created_at, hr.updated_at, hr.closed_at,
++                       hr.webinar_link, hr.review_understood,
++                       hr.escalated_to_methodist_at, hr.resolution_comment,
++                       (SELECT COUNT(*) FROM help_request_reopens rr
++                         WHERE rr.request_id = hr.id) AS reopen_count
++                FROM help_requests hr
++                WHERE hr.student_id = :student_id
++                  AND hr.task_id = :task_id
++                  AND hr.request_type = ANY(:types)
++                ORDER BY hr.created_at DESC, hr.id DESC
++                LIMIT 1
++            """),
++            {"student_id": student_id, "task_id": task_id, "types": list(_LADDER_TYPES)},
++        )
++    ).fetchone()
++    if row is None:
++        return None
++
++    request_id = int(row[0])
++    status_val, request_type = row[1], row[2]
++    webinar_link, review_understood = row[7], row[8]
++    reopen_count = int(row[11] or 0)
++    is_open = status_val == "open"
++
++    replies = [
++        {"body": r[0], "created_at": r[1]}
++        for r in (
++            await db.execute(
++                text("""
++                    SELECT body, created_at FROM help_request_replies
++                    WHERE request_id = :request_id ORDER BY created_at ASC
++                """),
++                {"request_id": request_id},
++            )
++        ).fetchall()
++    ]
++    repeat_asks = await _repeat_ask_count(db, request_id, student_id, task_id)
++
++    return {
++        "request_id": request_id,
++        "status": status_val,
++        "request_type": request_type or "manual_help",
++        "message": row[3],
++        "created_at": row[4],
++        "updated_at": row[5],
++        "closed_at": row[6],
++        "webinar_link": webinar_link,
++        "review_understood": review_understood,
++        "escalated_to_methodist_at": row[9],
++        "resolution_comment": row[10],
++        "reopen_count": reopen_count,
++        "replies": replies,
++        # Гейты уровней — те же условия, что проверяют сами операции ниже.
++        "can_reopen": (not is_open) and request_type == "manual_help",
++        "can_request_individual_review": (
++            is_open and request_type == "manual_help" and repeat_asks >= 1
++        ),
++        "can_rate_review": (
++            is_open
++            and request_type == "individual_review"
++            and webinar_link is not None
++            and review_understood is None
++        ),
++    }
++
++
++async def reopen_help_request(
++    db: AsyncSession,
++    request_id: int,
++    student_id: int,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """«Вернуть заявку»: ответ учителя не помог, заявка снова открыта.
++
++    Возврат начисляется тому, чей ответ не помог — `closed_by` на момент
++    возврата, с откатом на `assigned_teacher_id`, если заявку закрыли системно.
++    Снимок делается ДО очистки полей закрытия, иначе атрибутировать будет нечем.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden" |
++    "not_closed" | "wrong_type".
++    """
++    await _lock_request(db, request_id)
++    row = (
++        await db.execute(
++            text("""
++                SELECT student_id, task_id, status, request_type, closed_by,
++                       assigned_teacher_id
++                FROM help_requests WHERE id = :id
++            """),
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    owner_id, task_id, status_val, request_type, closed_by, assigned = row
++    if owner_id != student_id:
++        return (None, "forbidden")
++    if request_type != "manual_help":
++        # Разбор и лимит попыток возвращать нечем: у первого своя оценка,
++        # у второго — свой механизм закрытия.
++        return (None, "wrong_type")
++    if status_val != "closed":
++        return (None, "not_closed")
++
++    blamed_teacher_id = closed_by if closed_by is not None else assigned
++
++    await db.execute(
++        text("""
++            UPDATE help_requests
++            SET status = 'open', closed_at = NULL, closed_by = NULL,
++                resolution_comment = NULL, updated_at = now()
++            WHERE id = :id
++        """),
++        {"id": request_id},
++    )
++    # Поля закрытия чистятся намеренно: иначе открытая заявка несла бы дату
++    # закрытия и комментарий об уже отвергнутом решении.
++    await db.execute(
++        text("""
++            INSERT INTO help_request_reopens (request_id, teacher_id)
++            VALUES (:request_id, :teacher_id)
++        """),
++        {"request_id": request_id, "teacher_id": blamed_teacher_id},
++    )
++    reopen_count = int(
++        (
++            await db.execute(
++                text("SELECT COUNT(*) FROM help_request_reopens WHERE request_id = :id"),
++                {"id": request_id},
++            )
++        ).scalar()
++        or 0
++    )
++
++    if blamed_teacher_id is not None:
++        await inbox_service.create_for_user(
++            db,
++            user_id=blamed_teacher_id,
++            kind="help_request_reopened",
++            title="Ученик вернул заявку: ответ не помог",
++            content="Ученик отметил, что после ответа всё равно не разобрался.",
++            payload={
++                "request_id": request_id,
++                "task_id": task_id,
++                "student_id": student_id,
++                "reopen_count": reopen_count,
++            },
++            created_by=student_id,
++        )
++
++    return (
++        {
++            "request_id": request_id,
++            "status": "open",
++            "reopen_count": reopen_count,
++            "can_request_individual_review": True,
++        },
++        None,
++    )
++
++
++async def request_individual_review(
++    db: AsyncSession,
++    request_id: int,
++    student_id: int,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Уровень 2: ученик просит индивидуальный разбор.
++
++    Доступно только после возврата заявки — то есть когда текстовый ответ уже
++    подтверждённо не помог (решение оператора: «повторная заявка по тому же
++    заданию»). Повторный вызов идемпотентен: заявка уже в нужном классе, и
++    отвечать ошибкой на второй клик незачем.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden" |
++    "not_open" | "wrong_type" | "no_reopen".
++    """
++    await _lock_request(db, request_id)
++    row = (
++        await db.execute(
++            text("""
++                SELECT student_id, task_id, status, request_type, assigned_teacher_id
++                FROM help_requests WHERE id = :id
++            """),
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    owner_id, task_id, status_val, request_type, assigned = row
++    if owner_id != student_id:
++        return (None, "forbidden")
++    if status_val != "open":
++        return (None, "not_open")
++    if request_type == "individual_review":
++        return (
++            {"request_id": request_id, "request_type": request_type, "already": True},
++            None,
++        )
++    if request_type != "manual_help":
++        return (None, "wrong_type")
++    if await _repeat_ask_count(db, request_id, student_id, task_id) < 1:
++        return (None, "no_reopen")
++
++    await db.execute(
++        text("""
++            UPDATE help_requests
++            SET request_type = 'individual_review', updated_at = now()
++            WHERE id = :id
++        """),
++        {"id": request_id},
++    )
++    if assigned is not None:
++        await inbox_service.create_for_user(
++            db,
++            user_id=assigned,
++            kind="individual_review_requested",
++            title="Ученик просит индивидуальный разбор",
++            content="Текстовый ответ не помог — ученик просит разбор в личной встрече.",
++            payload={
++                "request_id": request_id,
++                "task_id": task_id,
++                "student_id": student_id,
++            },
++            created_by=student_id,
++        )
++
++    return (
++        {"request_id": request_id, "request_type": "individual_review", "already": False},
++        None,
++    )
++
++
++async def rate_individual_review(
++    db: AsyncSession,
++    request_id: int,
++    student_id: int,
++    understood: bool,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Уровень 3: оценка ученика после разбора.
++
++    «Понятно» закрывает заявку, «непонятно» уводит её методисту. Оценка
++    принимается один раз: она развилка маршрута, а не мнение, которое можно
++    менять — второй ответ либо переоткрыл бы закрытую заявку, либо повторно
++    дёрнул методистов.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden" |
++    "wrong_type" | "not_open" | "no_webinar_link" | "already_rated".
++    """
++    await _lock_request(db, request_id)
++    row = (
++        await db.execute(
++            text("""
++                SELECT student_id, task_id, course_id, status, request_type,
++                       webinar_link, review_understood
++                FROM help_requests WHERE id = :id
++            """),
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    owner_id, task_id, course_id, status_val, request_type, webinar_link, rated = row
++    if owner_id != student_id:
++        return (None, "forbidden")
++    if request_type != "individual_review":
++        return (None, "wrong_type")
++    if status_val != "open":
++        return (None, "not_open")
++    if webinar_link is None:
++        # Оценивать нечего: преподаватель ещё не прислал ссылку на разбор.
++        return (None, "no_webinar_link")
++    if rated is not None:
++        return (None, "already_rated")
++
++    await db.execute(
++        text("UPDATE help_requests SET review_understood = :v, updated_at = now() WHERE id = :id"),
++        {"v": understood, "id": request_id},
++    )
++
++    if understood:
++        # Системное закрытие (`closed_by=None`), как в tsk-339: инициатор —
++        # сам ученик, и уведомление «учитель закрыл ваш вопрос» тут было бы
++        # неправдой. Кто и почему закрыл, видно по `review_understood`.
++        await close_help_request(
++            db,
++            request_id,
++            closed_by=None,
++            resolution_comment="Ученик подтвердил: после разбора всё понятно",
++        )
++        return (
++            {"request_id": request_id, "understood": True, "status": "closed", "escalated": False},
++            None,
++        )
++
++    await db.execute(
++        text(
++            "UPDATE help_requests SET escalated_to_methodist_at = now(), updated_at = now() "
++            "WHERE id = :id"
++        ),
++        {"id": request_id},
++    )
++    escalated_count = await methodist_notify_service.escalate_help_request(
++        db,
++        request_id=request_id,
++        student_id=student_id,
++        task_id=task_id,
++        course_id=course_id,
++    )
++    logger.info(
++        "tsk-303: заявка %s ушла методисту после разбора (уведомлено: %s)",
++        request_id,
++        escalated_count,
++    )
++    return (
++        {"request_id": request_id, "understood": False, "status": "open", "escalated": True},
++        None,
++    )
++
++
++async def set_webinar_link(
++    db: AsyncSession,
++    request_id: int,
++    teacher_id: int,
++    webinar_link: str,
++    lock_token: Optional[str] = None,
++) -> Tuple[Optional[dict[str, Any]], Optional[str]]:
++    """Уровень 2, сторона преподавателя: прислать ссылку на разбор.
++
++    Заявку НЕ закрывает: разбор ещё впереди, а закроет заявку оценка ученика
++    после него (или методист, если разбор не помог).
++
++    Ссылку преподаватель вводит вручную любым инструментом — интеграции с
++    видео-сервисом здесь нет по решению оператора. Живёт она, пока заявка
++    открыта: при закрытии обнуляется.
++
++    Возвращает (data, error). error: None | "not_found" | "forbidden" |
++    "not_open" | "wrong_type" | "lock_conflict".
++    """
++    await _lock_request(db, request_id)
++    row = (
++        await db.execute(
++            text("""
++                SELECT student_id, task_id, status, request_type
++                FROM help_requests WHERE id = :id
++            """),
++            {"id": request_id},
++        )
++    ).fetchone()
++    if row is None:
++        return (None, "not_found")
++    student_id, task_id, status_val, request_type = row
++
++    err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
++    if err is not None:
++        return (None, err)
++    if not await can_access_help_request(db, request_id, teacher_id):
++        return (None, "forbidden")
++    if request_type != "individual_review":
++        return (None, "wrong_type")
++    if status_val != "open":
++        return (None, "not_open")
++
++    link = webinar_link.strip()
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l, updated_at = now() WHERE id = :id"),
++        {"l": link, "id": request_id},
++    )
++
++    # Ссылка бесполезна, если ученик о ней не узнает: шлём и в переписку
++    # (там же, где живут текстовые ответы), и в inbox — как это уже делает
++    # ответ на заявку.
++    messages_svc = MessagesService()
++    thread_row = (
++        await db.execute(
++            text("SELECT thread_id FROM help_requests WHERE id = :id"), {"id": request_id}
++        )
++    ).fetchone()
++    thread_id = thread_row[0] if thread_row is not None else None
++    msg = await messages_svc.send_message(
++        db,
++        message_type="teacher_reply",
++        content={"text": f"Приглашение на индивидуальный разбор: {link}"},
++        recipient_id=student_id,
++        sender_id=teacher_id,
++        source_system="help_request_webinar_link",
++        thread_id=thread_id,
++    )
++    await db.flush()
++    if thread_id is None:
++        await db.execute(
++            text("UPDATE help_requests SET thread_id = :tid WHERE id = :id"),
++            {"tid": msg.thread_id or msg.id, "id": request_id},
++        )
++
++    await inbox_service.create_for_user(
++        db,
++        user_id=student_id,
++        kind="individual_review_scheduled",
++        title="Преподаватель пригласил на разбор",
++        content=f"Ссылка на разбор: {link}",
++        payload={"request_id": request_id, "task_id": task_id, "webinar_link": link},
++        created_by=teacher_id,
++    )
++
++    return ({"request_id": request_id, "webinar_link": link, "status": status_val}, None)
++
++
+ async def reply_help_request(
+     db: AsyncSession,
+     request_id: int,
+@@ -783,7 +1365,8 @@ async def reply_help_request(
+     """
+     r = await db.execute(
+         text("""
+-            SELECT id, student_id, status, thread_id, task_id FROM help_requests WHERE id = :request_id
++            SELECT id, student_id, status, thread_id, task_id, request_type
++            FROM help_requests WHERE id = :request_id
+         """),
+         {"request_id": request_id},
+     )
+@@ -791,6 +1374,7 @@ async def reply_help_request(
+     if row is None:
+         return (None, "not_found")
+     hid, student_id, req_status, thread_id, task_id = row[0], row[1], row[2], row[3], row[4]
++    request_type = row[5] or "manual_help"
+ 
+     if req_status == "closed":
+         return (None, "closed")
+@@ -861,12 +1445,28 @@ async def reply_help_request(
+     )
+     await record_help_request_replied(db, student_id, request_id, teacher_id, msg.id, thread_id)
+ 
++    # tsk-303: текстовый ответ на заявку помощи ЗАКРЫВАЕТ её — это правило
++    # (решение оператора), а не выбор клиента. Держим его на сервере, иначе
++    # каждый клиент (веб, бот) решал бы по-своему и лестница помощи собиралась
++    # бы из разных правил. Дальше ход за учеником: не помогло — «Вернуть
++    # заявку», и возврат попадёт в KPI преподавателя.
++    #
++    # Только `manual_help`: у `individual_review` заявку закрывает оценка
++    # ученика после разбора, у `blocked_limit` — своё закрытие при выдаче
++    # лимита.
++    force_close = request_type == "manual_help"
+     final_status = req_status
+-    if close_after_reply:
++    if close_after_reply or force_close:
++        # Вторая точка закрытия заявки в этом файле (первая — `close_help_request`).
++        # Делегировать туда нельзя: та шлёт ученику отдельное уведомление
++        # «вопрос закрыт», и вместе с уже уходящим «учитель ответил» получилось
++        # бы два пуша на одно действие. Поэтому обнуление вебинар-ссылки (TTL,
++        # tsk-303) продублировано здесь осознанно — оба пути обязаны его делать.
+         await db.execute(
+             text("""
+                 UPDATE help_requests
+-                SET status = 'closed', closed_at = now(), closed_by = :closed_by, updated_at = now()
++                SET status = 'closed', closed_at = now(), closed_by = :closed_by,
++                    updated_at = now(), webinar_link = NULL
+                 WHERE id = :id
+             """),
+             {"id": request_id, "closed_by": teacher_id},
+diff --git a/app/services/methodist_notify_service.py b/app/services/methodist_notify_service.py
+index 28d2654..39c5ab0 100644
+--- a/app/services/methodist_notify_service.py
++++ b/app/services/methodist_notify_service.py
+@@ -170,6 +170,74 @@ async def escalate_pending_timeout(
+     return created
+ 
+ 
++async def escalate_help_request(
++    db: AsyncSession,
++    *,
++    request_id: int,
++    student_id: int,
++    task_id: int,
++    course_id: int | None,
++) -> int:
++    """tsk-303, уровень 3: заявка помощи уходит методисту после разбора.
++
++    Вызывается, когда ученик после индивидуального разбора отметил, что всё
++    ещё не понял. Заявка остаётся ОТКРЫТОЙ — методист разбирается с учеником
++    лично и закрывает её сам через уже существующий
++    `POST /teacher/help-requests/{id}/close` (методист входит в ACL заявок по
++    роли, отдельный канал закрытия не нужен).
++
++    В отличие от `escalate_pending_timeout`/`escalate_course_completion`
++    rate-limit здесь НЕ применяется: те две запускает cron и они способны
++    сыпать пачками, а тут — осознанное действие ученика, ровно одно на заявку
++    (повторную оценку сервис не принимает).
++
++    Возвращает число созданных уведомлений (0, если методистов в системе нет).
++    """
++    methodist_ids = await _list_methodist_user_ids(db)
++    if not methodist_ids:
++        logger.warning(
++            "tsk-303: нет методистов в БД (role=methodist), эскалация заявки %s не доставлена",
++            request_id,
++        )
++        return 0
++
++    payload = {
++        "request_id": int(request_id),
++        "student_id": int(student_id),
++        "task_id": int(task_id),
++        "course_id": int(course_id) if course_id is not None else None,
++        "trigger": "individual_review_not_understood",
++    }
++    for mid in methodist_ids:
++        await inbox_service.create_for_user(
++            db,
++            user_id=mid,
++            kind="help_request_escalated",
++            title="Ученику не помог индивидуальный разбор",
++            content=(
++                f"Заявка №{request_id}: после разбора с преподавателем ученик "
++                "всё ещё не разобрался. Нужен методист."
++            ),
++            payload=payload,
++            created_by=student_id,
++        )
++
++    await audit_service.log_event(
++        db,
++        audit_service.METHODIST_ESCALATION_TRIGGERED,
++        user_id=student_id,
++        details={
++            "request_id": int(request_id),
++            "student_id": int(student_id),
++            "task_id": int(task_id),
++            "course_id": int(course_id) if course_id is not None else None,
++            "trigger": "individual_review_not_understood",
++            "methodist_count": len(methodist_ids),
++        },
++    )
++    return len(methodist_ids)
++
++
+ async def escalate_course_completion(
+     db: AsyncSession,
+     *,
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 012977a..3fd5a35 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -223,6 +223,8 @@ async def claim_next_help_request(
+         type_cond = "AND hr.request_type = 'manual_help'"
+     elif request_type == "blocked_limit":
+         type_cond = "AND hr.request_type = 'blocked_limit'"
++    elif request_type == "individual_review":
++        type_cond = "AND hr.request_type = 'individual_review'"
+     course_cond = "AND hr.course_id = :course_id" if course_id is not None else ""
+     params: dict[str, Any] = {"teacher_id": teacher_id}
+     if course_id is not None:
+@@ -1308,6 +1310,8 @@ async def get_teacher_workload(
+             SELECT
+                 COUNT(*) FILTER (WHERE hr.request_type = 'manual_help') AS manual_help,
+                 COUNT(*) FILTER (WHERE hr.request_type = 'blocked_limit') AS blocked_limit,
++                COUNT(*) FILTER (WHERE hr.request_type = 'individual_review')
++                    AS individual_review,
+                 COUNT(*) FILTER (WHERE hr.due_at IS NOT NULL AND hr.due_at < :now_ts) AS overdue
+             FROM help_requests hr
+             WHERE hr.status = 'open' AND {HELP_REQUESTS_ACL_SQL}
+@@ -1317,8 +1321,13 @@ async def get_teacher_workload(
+     row = r.fetchone()
+     open_manual_help = int(row[0] or 0)
+     open_blocked_limit = int(row[1] or 0)
+-    overdue_total = int(row[2] or 0)
+-    open_help_requests_total = open_manual_help + open_blocked_limit
++    # tsk-303: третий тип обязан попасть и в свой счётчик, и в общий итог.
++    # Итог складывался из двух типов поимённо, поэтому заявки на индивидуальный
++    # разбор выпали бы из панели нагрузки целиком — а это самый срочный случай
++    # лестницы: ученик уже сказал, что текстовый ответ не помог, и ждёт ссылку.
++    open_individual_review = int(row[2] or 0)
++    overdue_total = int(row[3] or 0)
++    open_help_requests_total = open_manual_help + open_blocked_limit + open_individual_review
+ 
+     # tsk-298 (fix): «На проверке» ДОЛЖНО совпадать с фактической очередью
+     # (`/teacher/reviews/pending` / claim-next), иначе счётчик показывает N, а
+@@ -1344,6 +1353,7 @@ async def get_teacher_workload(
+         "open_help_requests_total": open_help_requests_total,
+         "open_blocked_limit_total": open_blocked_limit,
+         "open_manual_help_total": open_manual_help,
++        "open_individual_review_total": open_individual_review,
+         "pending_manual_reviews_total": pending_manual_reviews_total,
+         "overdue_total": overdue_total,
+     }
+diff --git a/tests/test_feedback_and_kpi_tsk303.py b/tests/test_feedback_and_kpi_tsk303.py
+new file mode 100644
+index 0000000..29dcfd0
+--- /dev/null
++++ b/tests/test_feedback_and_kpi_tsk303.py
+@@ -0,0 +1,432 @@
++"""tsk-303 Фаза 4: KPI возвратов + обращения (Поток B).
++
++**KPI.** Оператор решил, что показатель видят ОБА: преподаватель у себя (для
++самоконтроля) и методист по всем (это оценка преподавателей). Отсюда главное,
++что здесь проверяется, — разграничение: свой показатель видит каждый, чужой —
++только методист/админ. И что цифра одна и та же, потому что считает её один
++агрегат, а не две похожие панели.
++
++**Поток B.** Отдельная сущность: у обращения о битой ссылке нет ни ученика, ни
++задания, и адресат другой — методист. Проверяется видимость (преподаватель
++видит только свои, методист все), сужение НА УРОВНЕ ЗАПРОСА (постфильтр поверх
++`limit` молча терял бы строки — класс из tsk-473) и то, что пустой текст не
++проходит.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++
++
++def _svc() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _user(db, name: str, *, role: str | None = None, with_session: bool = False):
++    u = Users(
++        email=f"t303f-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=name, tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    if not with_session:
++        return u.id, None
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    return u.id, token
++
++
++async def _task(db) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++                "course_id, difficulty_id) "
++                "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1) RETURNING id"
++            ),
++            {
++                "e": f"t303f-{random.randint(10**8, 10**10)}",
++                "c": json.dumps({"type": "SA", "stem": "x"}),
++                "r": json.dumps({"max_score": 10}),
++            },
++        )
++    ).scalar_one()
++
++
++async def _request_with_reopens(db, *, student_id, task_id, teacher_id, count: int, when=None):
++    rid = (
++        await db.execute(
++            text(
++                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++                "assigned_teacher_id, auto_created, context_json, priority, created_at, updated_at) "
++                "VALUES ('open', :s, :t, 'manual_help', :at, false, '{}'::jsonb, 100, now(), now()) "
++                "RETURNING id"
++            ),
++            {"s": student_id, "t": task_id, "at": teacher_id},
++        )
++    ).scalar_one()
++    for _ in range(count):
++        if when is None:
++            await db.execute(
++                text(
++                    "INSERT INTO help_request_reopens (request_id, teacher_id) VALUES (:r, :t)"
++                ),
++                {"r": rid, "t": teacher_id},
++            )
++        else:
++            await db.execute(
++                text(
++                    "INSERT INTO help_request_reopens (request_id, teacher_id, reopened_at) "
++                    "VALUES (:r, :t, :w)"
++                ),
++                {"r": rid, "t": teacher_id, "w": when},
++            )
++    return rid
++
++
++async def _cleanup(db, *, user_ids=(), task_ids=(), request_ids=(), report_ids=()):
++    for rid in request_ids:
++        await db.execute(text("DELETE FROM help_request_reopens WHERE request_id=:r"), {"r": rid})
++        await db.execute(text("DELETE FROM help_requests WHERE id=:r"), {"r": rid})
++    for fid in report_ids:
++        await db.execute(text("DELETE FROM feedback_reports WHERE id=:f"), {"f": fid})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM feedback_reports WHERE author_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM notifications WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    for tid in task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": tid})
++    await db.commit()
++
++
++# ── KPI возвратов ────────────────────────────────────────────────────────────
++
++async def test_teacher_sees_own_reopen_kpi(db, client):
++    """Свой показатель — для самоконтроля, доступен без особых ролей."""
++    sid, _ = await _user(db, "t303f ученик")
++    tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    task_id = await _task(db)
++    rid = await _request_with_reopens(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=3
++    )
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={tid_user}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["total_reopens"] == 3
++        assert len(body["items"]) == 1
++        assert body["items"][0]["teacher_id"] == tid_user
++        assert body["items"][0]["requests"] == 1, "три возврата по одной заявке"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_teacher_cannot_see_foreign_kpi(db, client):
++    """Чужой показатель — оценка человека, её видит только методист/админ."""
++    tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    other_id, _ = await _user(db, "t303f другой учитель")
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={other_id}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid_user, other_id])
++
++
++async def test_teacher_cannot_see_overview(db, client):
++    """Сводка по всем — тоже оценка, преподавателю её не отдаём."""
++    tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    await db.commit()
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens", headers=_bearer(token)
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[tid_user])
++
++
++async def test_methodist_sees_all_teachers_and_same_numbers(db, client):
++    """Методист видит сводку, и цифры совпадают с личной панелью преподавателя.
++
++    Это и есть смысл одного агрегата на двух потребителей: расхождение между
++    «моя панель» и «панель методиста» было бы спором о фактах.
++    """
++    sid, _ = await _user(db, "t303f ученик")
++    t_a, token_a = await _user(db, "t303f учитель А", role="teacher", with_session=True)
++    t_b, _ = await _user(db, "t303f учитель Б", role="teacher")
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    task_id = await _task(db)
++    r_a = await _request_with_reopens(
++        db, student_id=sid, task_id=task_id, teacher_id=t_a, count=2
++    )
++    r_b = await _request_with_reopens(
++        db, student_id=sid, task_id=task_id, teacher_id=t_b, count=1
++    )
++    await db.commit()
++    try:
++        overview = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens", headers=_bearer(m_token)
++        )
++        assert overview.status_code == 200, overview.text
++        rows = {i["teacher_id"]: i["reopens"] for i in overview.json()["items"]}
++        assert rows.get(t_a) == 2 and rows.get(t_b) == 1
++        assert rows[t_a] > rows[t_b], "сортировка по убыванию — худшие сверху"
++
++        own = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={t_a}",
++            headers=_bearer(token_a),
++        )
++        assert own.json()["items"][0]["reopens"] == rows[t_a], (
++            "личная панель и сводка методиста обязаны показывать одно число"
++        )
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, t_a, t_b, m_id], task_ids=[task_id], request_ids=[r_a, r_b]
++        )
++
++
++async def test_kpi_window_excludes_older_reopens(db, client):
++    """Окно «за период» — то, ради чего история хранится строками, а не счётчиком."""
++    sid, _ = await _user(db, "t303f ученик")
++    tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    task_id = await _task(db)
++    old = datetime.now(timezone.utc) - timedelta(days=90)
++    r_old = await _request_with_reopens(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=5, when=old
++    )
++    r_new = await _request_with_reopens(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=2
++    )
++    await db.commit()
++    try:
++        # `since` передаётся параметром, а не склейкой в строку: смещение
++        # `+00:00` в сыром URL декодируется как пробел, и сервер отвечает 422.
++        # Ловушка не тестовая — на неё наступит любой клиент, собирающий URL
++        # руками.
++        since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
++        resp = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens",
++            params={"teacher_id": tid_user, "since": since},
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["total_reopens"] == 2, "старые возвраты в окно не входят"
++
++        all_time = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={tid_user}",
++            headers=_bearer(token),
++        )
++        assert all_time.json()["total_reopens"] == 7
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[r_old, r_new]
++        )
++
++
++# ── Поток B: обращения ───────────────────────────────────────────────────────
++
++async def test_teacher_creates_report_and_methodist_sees_it(db, client):
++    """Точка входа у преподавателя, инбокс — у методиста (решение оператора)."""
++    t_id, t_token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    await db.commit()
++    report_id = None
++    try:
++        created = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "content", "body": "В уроке 3 битая ссылка на材ериал"},
++            headers=_bearer(t_token),
++        )
++        assert created.status_code == 201, created.text
++        report_id = created.json()["report_id"]
++
++        inbox = await client.get("/api/v1/feedback-reports", headers=_bearer(m_token))
++        assert inbox.status_code == 200, inbox.text
++        assert inbox.json()["scope"] == "all"
++        assert any(i["report_id"] == report_id for i in inbox.json()["items"])
++    finally:
++        await _cleanup(db, user_ids=[t_id, m_id], report_ids=[report_id] if report_id else [])
++
++
++async def test_teacher_sees_only_own_reports(db, client):
++    """Чужие жалобы на контент преподавателю не адресованы.
++
++    Сужение делает запрос к БД, а не постфильтр по уже выбранной странице —
++    иначе чужие строки съедали бы `limit` и свои терялись (класс из tsk-473).
++    """
++    t_a, token_a = await _user(db, "t303f учитель А", role="teacher", with_session=True)
++    t_b, token_b = await _user(db, "t303f учитель Б", role="teacher", with_session=True)
++    await db.commit()
++    ids = []
++    try:
++        for token in (token_a, token_b):
++            r = await client.post(
++                "/api/v1/feedback-reports",
++                json={"report_type": "bug", "body": "Кнопка не нажимается"},
++                headers=_bearer(token),
++            )
++            assert r.status_code == 201, r.text
++            ids.append(r.json()["report_id"])
++
++        mine = await client.get("/api/v1/feedback-reports", headers=_bearer(token_a))
++        assert mine.status_code == 200, mine.text
++        body = mine.json()
++        assert body["scope"] == "own"
++        assert body["total"] == 1, "в счётчике тоже только свои, а не всё с постфильтром"
++        assert body["items"][0]["report_id"] == ids[0]
++    finally:
++        await _cleanup(db, user_ids=[t_a, t_b], report_ids=ids)
++
++
++async def test_student_cannot_create_report(db, client):
++    """Ученику этот поток не адресован — для его задания есть заявка помощи."""
++    s_id, s_token = await _user(db, "t303f ученик", role="student", with_session=True)
++    await db.commit()
++    try:
++        resp = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "feature_idea", "body": "Хочу тёмную тему"},
++            headers=_bearer(s_token),
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[s_id])
++
++
++@pytest.mark.parametrize("bad_body", ["", "   ", "\t\n"])
++async def test_blank_report_body_rejected(db, client, bad_body):
++    """Обращение без содержания — строка в инбоксе, которую нечего разбирать."""
++    t_id, t_token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    await db.commit()
++    try:
++        resp = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "bug", "body": bad_body},
++            headers=_bearer(t_token),
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_ids=[t_id])
++
++
++async def test_unknown_report_type_rejected(db, client):
++    """Тип из закрытого набора: иначе инбокс не разложить по разделам."""
++    t_id, t_token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    await db.commit()
++    try:
++        resp = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "прочее", "body": "что-то не так"},
++            headers=_bearer(t_token),
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_ids=[t_id])
++
++
++async def test_methodist_closes_report_idempotently(db, client):
++    """Закрытие методистом; повтор — не ошибка (кнопку жмут дважды)."""
++    t_id, t_token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    await db.commit()
++    report_id = None
++    try:
++        created = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "bug", "body": "Падает экспорт"},
++            headers=_bearer(t_token),
++        )
++        report_id = created.json()["report_id"]
++
++        first = await client.post(
++            f"/api/v1/feedback-reports/{report_id}/close",
++            json={"resolution_comment": "Починили"},
++            headers=_bearer(m_token),
++        )
++        assert first.status_code == 200, first.text
++        assert first.json()["already_closed"] is False
++
++        second = await client.post(
++            f"/api/v1/feedback-reports/{report_id}/close",
++            json={},
++            headers=_bearer(m_token),
++        )
++        assert second.status_code == 200, second.text
++        assert second.json()["already_closed"] is True
++
++        row = (
++            await db.execute(
++                text(
++                    "SELECT status, closed_by, resolution_comment, closed_at "
++                    "FROM feedback_reports WHERE id = :f"
++                ),
++                {"f": report_id},
++            )
++        ).fetchone()
++        assert row[0] == "closed" and row[1] == m_id
++        assert row[2] == "Починили", "повторное закрытие не затирает разбор первого"
++        assert row[3] is not None, "закрытие всегда со следом времени"
++    finally:
++        await _cleanup(db, user_ids=[t_id, m_id], report_ids=[report_id] if report_id else [])
++
++
++async def test_foreign_teacher_cannot_close_report(db, client):
++    """Закрыть может автор или методист/админ — но не посторонний преподаватель."""
++    t_a, token_a = await _user(db, "t303f учитель А", role="teacher", with_session=True)
++    t_b, token_b = await _user(db, "t303f учитель Б", role="teacher", with_session=True)
++    await db.commit()
++    report_id = None
++    try:
++        created = await client.post(
++            "/api/v1/feedback-reports",
++            json={"report_type": "content", "body": "Опечатка в задании"},
++            headers=_bearer(token_a),
++        )
++        report_id = created.json()["report_id"]
++
++        resp = await client.post(
++            f"/api/v1/feedback-reports/{report_id}/close", json={}, headers=_bearer(token_b)
++        )
++        assert resp.status_code == 403, resp.text
++
++        own = await client.post(
++            f"/api/v1/feedback-reports/{report_id}/close", json={}, headers=_bearer(token_a)
++        )
++        assert own.status_code == 200, "автор своё обращение закрыть может"
++    finally:
++        await _cleanup(db, user_ids=[t_a, t_b], report_ids=[report_id] if report_id else [])
+diff --git a/tests/test_help_ladder_endpoints_tsk303.py b/tests/test_help_ladder_endpoints_tsk303.py
+new file mode 100644
+index 0000000..a1bc13a
+--- /dev/null
++++ b/tests/test_help_ladder_endpoints_tsk303.py
+@@ -0,0 +1,633 @@
++"""tsk-303 Фаза 2: лестница помощи, сторона ученика.
++
++Покрывают четыре новых эндпоинта и, главное, ГЕЙТЫ между уровнями — именно они
++несут продуктовое решение оператора, а не механика записи:
++
++- уровень 1 → «Вернуть заявку» доступен только по ЗАКРЫТОЙ заявке `manual_help`;
++- уровень 2 → «Запросить индивидуальный разбор» только после возврата по ТОМУ ЖЕ
++  заданию (то есть по той же заявке — возврат реоткрывает её, а не плодит новую);
++- уровень 3 → оценка только когда преподаватель уже прислал ссылку, ровно один
++  раз, и «непонятно» уводит заявку методисту.
++
++Отдельно проверяется атрибуция возврата: он начисляется тому, чей ответ не
++помог, а не назначенному преподавателю — это и есть KPI, и перепутать здесь
++человека значит оценить не того.
++
++Тесты идут внутри общей откатываемой транзакции; уборка за собой — на случай
++прогонов вне изоляции.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++
++_WEBINAR = "https://meet.example/room-303"
++
++
++def _headers() -> dict[str, str]:
++    """Заголовки сервисного ключа (действует от имени владельца заявки)."""
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++def _bearer(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _user(db, name: str, *, role: str | None = None, with_session: bool = False):
++    """Создать пользователя; при with_session — вернуть (id, token)."""
++    u = Users(
++        email=f"t303-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=name,
++        tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    if not with_session:
++        return u.id, None
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    return u.id, token
++
++
++async def _task(db) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++            "course_id, difficulty_id) "
++            "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1) RETURNING id"
++        ),
++        {
++            "e": f"t303-{random.randint(10**8, 10**10)}",
++            "c": json.dumps({"type": "SA", "stem": "x"}),
++            "r": json.dumps({"max_score": 10}),
++        },
++    )
++    return res.scalar_one()
++
++
++async def _help_request(
++    db,
++    *,
++    student_id: int,
++    task_id: int,
++    assigned_teacher_id: int | None = None,
++    request_type: str = "manual_help",
++    status: str = "open",
++    closed_by: int | None = None,
++) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++            "assigned_teacher_id, closed_by, closed_at, auto_created, context_json, "
++            "priority, message, created_at, updated_at) "
++            "VALUES (:st, :s, :t, :rt, :at, :cb, "
++            "        CASE WHEN :is_closed THEN now() ELSE NULL END, "
++            "        false, '{}'::jsonb, 100, 'не понимаю', now(), now()) RETURNING id"
++        ),
++        {
++            "st": status,
++            "is_closed": status == "closed",
++            "s": student_id,
++            "t": task_id,
++            "rt": request_type,
++            "at": assigned_teacher_id,
++            "cb": closed_by,
++        },
++    )
++    return res.scalar_one()
++
++
++async def _row(db, request_id: int) -> dict:
++    r = (
++        await db.execute(
++            text(
++                "SELECT status, request_type, webinar_link, review_understood, "
++                "escalated_to_methodist_at, closed_by, resolution_comment "
++                "FROM help_requests WHERE id = :id"
++            ),
++            {"id": request_id},
++        )
++    ).fetchone()
++    return {
++        "status": r[0], "request_type": r[1], "webinar_link": r[2],
++        "review_understood": r[3], "escalated_at": r[4], "closed_by": r[5],
++        "resolution_comment": r[6],
++    }
++
++
++async def _cleanup(db, *, user_ids=(), task_ids=(), request_ids=()):
++    for rid in request_ids:
++        await db.execute(text("DELETE FROM help_request_reopens WHERE request_id=:r"), {"r": rid})
++        await db.execute(text("DELETE FROM help_requests WHERE id=:r"), {"r": rid})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM notifications WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM help_requests WHERE student_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++        # Сами `users` не удаляем: FK `audit_event.user_id` — ON DELETE SET NULL,
++        # то есть UPDATE по append-only таблице, и триггер его отбивает. Тот же
++        # приём, что в tsk-298-тестах; строки всё равно уходят с откатом
++        # транзакции теста.
++    for tid in task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": tid})
++    await db.commit()
++
++
++# ── чтение состояния ─────────────────────────────────────────────────────────
++
++async def test_state_is_null_when_student_never_asked(db, client):
++    """Ученик помощь не просил — эндпоинт отдаёт null, а не 404."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/learning/tasks/{tid}/help-request?student_id={sid}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json() is None
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid])
++
++
++async def test_state_of_foreign_student_forbidden(db, client):
++    """Чужой student_id в запросе состояния — 403, а не чужая заявка в ответе."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    other_id, _ = await _user(db, "t303 чужой")
++    tid = await _task(db)
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/learning/tasks/{tid}/help-request?student_id={other_id}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 403, resp.text
++    finally:
++        await _cleanup(db, user_ids=[sid, other_id], task_ids=[tid])
++
++
++async def test_blocked_limit_request_not_shown_as_ladder(db, client):
++    """Заявка «лимит попыток» — другой механизм, в лестницу не попадает."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="blocked_limit")
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/learning/tasks/{tid}/help-request?student_id={sid}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json() is None, "blocked_limit не должен показываться как заявка лестницы"
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++# ── уровень 1: возврат заявки ────────────────────────────────────────────────
++
++async def test_reopen_rejected_while_request_is_open(db, client):
++    """Открытую заявку возвращать нечего — 409, а не молчаливый успех."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid)
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert resp.status_code == 409, resp.text
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_reopen_of_foreign_request_forbidden(db, client):
++    """Чужая заявка по её id — 403. Перебор id чужую заявку не открывает."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    other_id, _ = await _user(db, "t303 чужой")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=other_id, task_id=tid, status="closed")
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert resp.status_code == 403, resp.text
++        assert (await _row(db, rid))["status"] == "closed", "чужая заявка не должна открыться"
++    finally:
++        await _cleanup(db, user_ids=[sid, other_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_reopen_is_credited_to_the_teacher_who_answered(db, client):
++    """Возврат начисляется тому, чей ответ не помог, а не назначенному.
++
++    По ACL заявку может закрыть не только назначенный преподаватель (методист
++    по роли, преподаватель по связи с учеником). Ровно поэтому история
++    возвратов — таблица со ссылкой на человека, а не счётчик на заявке:
++    счётчик повесил бы чужой промах на `assigned_teacher_id`.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    assigned_id, _ = await _user(db, "t303 назначенный")
++    answered_id, _ = await _user(db, "t303 ответивший")
++    tid = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=tid, assigned_teacher_id=assigned_id,
++        status="closed", closed_by=answered_id,
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["reopen_count"] == 1
++
++        credited = (
++            await db.execute(
++                text("SELECT teacher_id FROM help_request_reopens WHERE request_id=:r"),
++                {"r": rid},
++            )
++        ).scalar_one()
++        assert credited == answered_id, "возврат обязан достаться ответившему, а не назначенному"
++
++        row = await _row(db, rid)
++        assert row["status"] == "open"
++        assert row["closed_by"] is None, "поля закрытия обязаны очиститься при возврате"
++        assert row["resolution_comment"] is None
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, assigned_id, answered_id], task_ids=[tid], request_ids=[rid]
++        )
++
++
++async def test_reopen_falls_back_to_assigned_teacher(db, client):
++    """Заявку закрыли системно (`closed_by IS NULL`) — возврат идёт назначенному."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    assigned_id, _ = await _user(db, "t303 назначенный")
++    tid = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=tid, assigned_teacher_id=assigned_id, status="closed",
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token)
++        )
++        assert resp.status_code == 200, resp.text
++        credited = (
++            await db.execute(
++                text("SELECT teacher_id FROM help_request_reopens WHERE request_id=:r"),
++                {"r": rid},
++            )
++        ).scalar_one()
++        assert credited == assigned_id
++    finally:
++        await _cleanup(db, user_ids=[sid, assigned_id], task_ids=[tid], request_ids=[rid])
++
++
++# ── уровень 2: индивидуальный разбор ─────────────────────────────────────────
++
++async def test_individual_review_requires_a_prior_reopen(db, client):
++    """Без возврата разбор недоступен — это и есть «повторная заявка»."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid)
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 409, resp.text
++        assert (await _row(db, rid))["request_type"] == "manual_help"
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_second_help_request_on_same_task_also_opens_review(db, client):
++    """Повтор бывает не только через кнопку «Вернуть заявку».
++
++    `request-help` дедуплицирует обращения лишь коротким окном, поэтому ученик
++    достижимо заводит по тому же заданию ВТОРУЮ заявку. Оператор задал гейт как
++    «повторная заявка по тому же `task_id`» — засчитывать надо и этот путь,
++    иначе разбор не откроется именно тому, кто просил помощь дважды.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    first = await _help_request(db, student_id=sid, task_id=tid, status="closed")
++    second = await _help_request(db, student_id=sid, task_id=tid)
++    await db.commit()
++    try:
++        state = (
++            await client.get(
++                f"/api/v1/learning/tasks/{tid}/help-request?student_id={sid}",
++                headers=_bearer(token),
++            )
++        ).json()
++        assert state["request_id"] == second, "показываем последнюю заявку"
++        assert state["reopen_count"] == 0, "эту заявку не возвращали"
++        assert state["can_request_individual_review"] is True, (
++            "вторая заявка по тому же заданию — это и есть повторное обращение"
++        )
++
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{second}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        assert (await _row(db, second))["request_type"] == "individual_review"
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[first, second])
++
++
++async def test_individual_review_is_idempotent(db, client):
++    """Повторный клик по кнопке — не ошибка: заявка уже в нужном классе."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t303 учитель")
++    tid = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id,
++        status="closed", closed_by=teacher_id,
++    )
++    await db.commit()
++    try:
++        await client.post(f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token))
++        first = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert first.status_code == 200, first.text
++        assert first.json()["already"] is False
++
++        second = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert second.status_code == 200, second.text
++        assert second.json()["already"] is True
++    finally:
++        await _cleanup(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
++
++
++# ── уровень 3: оценка разбора ────────────────────────────────────────────────
++
++async def test_rate_review_rejected_without_webinar_link(db, client):
++    """Оценивать нечего, пока преподаватель не прислал ссылку."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": True},
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 409, resp.text
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_positive_rating_closes_request_and_clears_link(db, client):
++    """«Понятно» закрывает заявку, ссылка на комнату не остаётся жить вечно.
++
++    TTL ссылки — решение оператора: она живёт, пока заявка открыта. Оценка при
++    этом сохраняется: она история разбора, а ссылка ведёт в уже несуществующую
++    комнату.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++        {"l": _WEBINAR, "r": rid},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": True},
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["status"] == "closed" and body["escalated"] is False
++
++        row = await _row(db, rid)
++        assert row["status"] == "closed"
++        assert row["review_understood"] is True, "оценка обязана пережить закрытие"
++        assert row["webinar_link"] is None, "ссылка обязана обнулиться при закрытии (TTL)"
++        assert row["closed_by"] is None, "закрыл не учитель — не выдумываем автора"
++        assert row["escalated_at"] is None
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_negative_rating_escalates_to_methodist(db, client):
++    """«Непонятно» уводит заявку методисту и оставляет её ОТКРЫТОЙ.
++
++    Заявка не закрывается: методисту с ней ещё работать, он и закроет её через
++    существующий `/teacher/help-requests/{id}/close`. Эскалация обязана быть
++    видна в очереди методиста — иначе уведомление создано, а показать его негде.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    m_id, m_token = await _user(db, "t303 методист", role="methodist", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++        {"l": _WEBINAR, "r": rid},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": False},
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["escalated"] is True and body["status"] == "open"
++
++        row = await _row(db, rid)
++        assert row["status"] == "open", "методисту ещё работать с этой заявкой"
++        assert row["escalated_at"] is not None
++        assert row["review_understood"] is False
++
++        queue = await client.get(
++            "/api/v1/methodist/escalations/pending", headers=_bearer(m_token)
++        )
++        assert queue.status_code == 200, queue.text
++        mine = [
++            i for i in queue.json()["items"]
++            if i["kind"] == "help_request_escalated"
++            and i["payload"].get("request_id") == rid
++        ]
++        assert len(mine) == 1, "эскалация обязана быть видна методисту в его очереди"
++    finally:
++        await _cleanup(db, user_ids=[sid, m_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_rating_is_accepted_only_once(db, client):
++    """Оценка — развилка маршрута, а не мнение: второй ответ отбивается.
++
++    Иначе «понятно» после «непонятно» закрыло бы заявку, которую уже забрал
++    методист, а обратный порядок дёрнул бы методистов повторно.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=tid, request_type="individual_review")
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++        {"l": _WEBINAR, "r": rid},
++    )
++    await db.commit()
++    try:
++        first = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": False},
++            headers=_bearer(token),
++        )
++        assert first.status_code == 200, first.text
++        second = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": True},
++            headers=_bearer(token),
++        )
++        assert second.status_code == 409, second.text
++        assert (await _row(db, rid))["review_understood"] is False, "первая оценка не переписывается"
++    finally:
++        await _cleanup(db, user_ids=[sid], task_ids=[tid], request_ids=[rid])
++
++
++async def test_individual_review_of_foreign_request_forbidden(db, client):
++    """Проверка владельца — своя в каждой операции, а не общая на все три."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    other_id, _ = await _user(db, "t303 чужой")
++    tid = await _task(db)
++    rid = await _help_request(db, student_id=other_id, task_id=tid)
++    await db.execute(
++        text("INSERT INTO help_request_reopens (request_id, teacher_id) VALUES (:r, NULL)"),
++        {"r": rid},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 403, resp.text
++        assert (await _row(db, rid))["request_type"] == "manual_help"
++    finally:
++        await _cleanup(db, user_ids=[sid, other_id], task_ids=[tid], request_ids=[rid])
++
++
++async def test_rate_review_of_foreign_request_forbidden(db, client):
++    """Оценить чужой разбор нельзя — иначе посторонний уводил бы заявку методисту."""
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    other_id, _ = await _user(db, "t303 чужой")
++    tid = await _task(db)
++    rid = await _help_request(
++        db, student_id=other_id, task_id=tid, request_type="individual_review"
++    )
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++        {"l": _WEBINAR, "r": rid},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": False},
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 403, resp.text
++        row = await _row(db, rid)
++        assert row["review_understood"] is None and row["escalated_at"] is None
++    finally:
++        await _cleanup(db, user_ids=[sid, other_id], task_ids=[tid], request_ids=[rid])
++
++
++# ── сквозной путь ────────────────────────────────────────────────────────────
++
++async def test_full_ladder_flow_visible_to_student(db, client):
++    """Весь путь глазами ученика: признаки can_* ведут его по лестнице.
++
++    Клиент не считает гейты сам — он читает их отсюда. Тест фиксирует именно
++    эту последовательность, потому что рассинхрон признаков и операций даст
++    кнопку, которая при нажатии отдаёт 409.
++    """
++    sid, token = await _user(db, "t303 ученик", with_session=True)
++    teacher_id, _ = await _user(db, "t303 учитель")
++    tid = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=tid, assigned_teacher_id=teacher_id,
++        status="closed", closed_by=teacher_id,
++    )
++    await db.commit()
++    url = f"/api/v1/learning/tasks/{tid}/help-request?student_id={sid}"
++    try:
++        state = (await client.get(url, headers=_bearer(token))).json()
++        assert state["can_reopen"] is True
++        assert state["can_request_individual_review"] is False
++        assert state["reopen_count"] == 0
++
++        await client.post(f"/api/v1/learning/help-requests/{rid}/reopen", headers=_bearer(token))
++        state = (await client.get(url, headers=_bearer(token))).json()
++        assert state["status"] == "open"
++        assert state["reopen_count"] == 1
++        assert state["can_reopen"] is False, "открытую заявку возвращать нельзя"
++        assert state["can_request_individual_review"] is True
++
++        await client.post(
++            f"/api/v1/learning/help-requests/{rid}/request-individual-review",
++            headers=_bearer(token),
++        )
++        # Ссылку присылает преподаватель — его эндпоинт появится в фазе 3,
++        # здесь подставляем её напрямую, чтобы проверить оценку.
++        await db.execute(
++            text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++            {"l": _WEBINAR, "r": rid},
++        )
++        await db.commit()
++
++        state = (await client.get(url, headers=_bearer(token))).json()
++        assert state["request_type"] == "individual_review"
++        assert state["webinar_link"] == _WEBINAR
++        assert state["can_rate_review"] is True
++
++        await client.post(
++            f"/api/v1/learning/help-requests/{rid}/rate-review",
++            json={"understood": True},
++            headers=_bearer(token),
++        )
++        state = (await client.get(url, headers=_bearer(token))).json()
++        assert state["status"] == "closed"
++        assert state["review_understood"] is True
++        assert state["webinar_link"] is None
++        assert state["can_rate_review"] is False
++        assert state["can_reopen"] is False, "разбор возвращать нельзя — у него своя оценка"
++    finally:
++        await _cleanup(db, user_ids=[sid, teacher_id], task_ids=[tid], request_ids=[rid])
+diff --git a/tests/test_help_ladder_teacher_tsk303.py b/tests/test_help_ladder_teacher_tsk303.py
+new file mode 100644
+index 0000000..3070efe
+--- /dev/null
++++ b/tests/test_help_ladder_teacher_tsk303.py
+@@ -0,0 +1,409 @@
++"""tsk-303 Фаза 3: лестница помощи, сторона преподавателя.
++
++Два продуктовых правила и их последствия для уже существующего кода:
++
++1. **Текстовый ответ на `manual_help` закрывает заявку** — это решение
++   оператора, и держит его сервер, а не каждый клиент по-своему. Дальше ход за
++   учеником: не помогло — «Вернуть заявку», возврат попадёт в KPI.
++   Проверяется и обратное: `individual_review` и `blocked_limit` ответ НЕ
++   закрывает, у них своё закрытие.
++2. **Ссылку на разбор присылает преподаватель вручную** — заявку это не
++   закрывает, разбор ещё впереди.
++
++Отдельный блок — про то, что новый класс заявки не должен «провалиться» в уже
++написанном коде: он обязан считаться в панели нагрузки и переживать
++сериализацию карточки. И то и другое ломалось бы молча.
++"""
++from __future__ import annotations
++
++import json
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_settings = Settings()
++_WEBINAR = "https://meet.example/tsk303"
++
++
++def _svc() -> dict[str, str]:
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
++
++async def _user(db, name: str, *, role: str | None = None, with_session: bool = False):
++    u = Users(
++        email=f"t303t-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=name, tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    if role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": u.id, "role": role},
++        )
++    if not with_session:
++        return u.id, None
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    return u.id, token
++
++
++async def _task(db) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++                "course_id, difficulty_id) "
++                "VALUES (:e, 10, CAST(:c AS jsonb), CAST(:r AS jsonb), 1, 1) RETURNING id"
++            ),
++            {
++                "e": f"t303t-{random.randint(10**8, 10**10)}",
++                "c": json.dumps({"type": "SA", "stem": "x"}),
++                "r": json.dumps({"max_score": 10}),
++            },
++        )
++    ).scalar_one()
++
++
++async def _help_request(db, *, student_id, task_id, teacher_id, request_type="manual_help") -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO help_requests (status, student_id, task_id, request_type, "
++                "assigned_teacher_id, auto_created, context_json, priority, message, "
++                "created_at, updated_at) "
++                "VALUES ('open', :s, :t, :rt, :at, false, '{}'::jsonb, 100, 'не понимаю', "
++                "        now(), now()) RETURNING id"
++            ),
++            {"s": student_id, "t": task_id, "rt": request_type, "at": teacher_id},
++        )
++    ).scalar_one()
++
++
++async def _row(db, rid: int) -> dict:
++    r = (
++        await db.execute(
++            text(
++                "SELECT status, request_type, webinar_link, closed_by FROM help_requests "
++                "WHERE id = :id"
++            ),
++            {"id": rid},
++        )
++    ).fetchone()
++    return {"status": r[0], "request_type": r[1], "webinar_link": r[2], "closed_by": r[3]}
++
++
++async def _cleanup(db, *, user_ids=(), task_ids=(), request_ids=()):
++    for rid in request_ids:
++        await db.execute(text("DELETE FROM help_request_reopens WHERE request_id=:r"), {"r": rid})
++        await db.execute(text("DELETE FROM help_request_replies WHERE request_id=:r"), {"r": rid})
++        await db.execute(text("DELETE FROM help_requests WHERE id=:r"), {"r": rid})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM notifications WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    for tid in task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id=:t"), {"t": tid})
++    await db.commit()
++
++
++# ── правило: ответ закрывает заявку ──────────────────────────────────────────
++
++async def test_text_reply_closes_manual_help_even_when_client_says_otherwise(db, client):
++    """Клиент прислал `close_after_reply=false` — заявка всё равно закрывается.
++
++    Это ядро решения оператора. Если бы правило жило в клиентах, веб и бот
++    закрывали бы заявки по-разному, и KPI возвратов считался бы по разным
++    основаниям.
++    """
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=task_id, teacher_id=tid_user)
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": tid_user, "message": "Смотри формулу X", "close_after_reply": False},
++            headers=_svc(),
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["request_status"] == "closed"
++        row = await _row(db, rid)
++        assert row["status"] == "closed"
++        assert row["closed_by"] == tid_user, "закрыл ответивший преподаватель"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_reply_does_not_close_individual_review(db, client):
++    """У разбора своё закрытие — оценка ученика. Ответ текстом его не закрывает."""
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": tid_user, "message": "Давай разберём", "close_after_reply": False},
++            headers=_svc(),
++        )
++        assert resp.status_code == 200, resp.text
++        assert (await _row(db, rid))["status"] == "open"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_reply_does_not_close_blocked_limit(db, client):
++    """Регресс: заявка по лимиту попыток закрывается выдачей лимита, не ответом."""
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user, request_type="blocked_limit",
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": tid_user, "message": "Продлил", "close_after_reply": False},
++            headers=_svc(),
++        )
++        assert resp.status_code == 200, resp.text
++        assert (await _row(db, rid))["status"] == "open"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_second_reply_to_closed_request_is_rejected_clearly(db, client):
++    """Второй ответ подряд отбивается — и это про закрытие, а не про блокировку.
++
++    Именно на это опирается парная правка бота TG_LMS: он раскладывал ЛЮБОЙ 409
++    как «кейс занят другим преподавателем», что после введения авто-закрытия
++    стало неправдой.
++    """
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=task_id, teacher_id=tid_user)
++    await db.commit()
++    try:
++        await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": tid_user, "message": "Первый ответ"},
++            headers=_svc(),
++        )
++        second = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={"teacher_id": tid_user, "message": "Дополнение"},
++            headers=_svc(),
++        )
++        assert second.status_code == 409, second.text
++        assert "закрыт" in second.json()["detail"].lower(), (
++            "текст ошибки — опора клиента: по нему бот отличает закрытие от блокировки"
++        )
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++# ── ссылка на разбор ─────────────────────────────────────────────────────────
++
++async def test_webinar_link_delivered_without_closing(db, client):
++    """Ссылка уходит ученику, заявка остаётся открытой — разбор впереди."""
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/webinar-link",
++            json={"teacher_id": tid_user, "webinar_link": _WEBINAR},
++            headers=_svc(),
++        )
++        assert resp.status_code == 200, resp.text
++        row = await _row(db, rid)
++        assert row["webinar_link"] == _WEBINAR
++        assert row["status"] == "open", "ссылка не закрывает заявку"
++
++        note = (
++            await db.execute(
++                text(
++                    "SELECT COUNT(*) FROM notifications WHERE user_id=:u "
++                    "AND kind='individual_review_scheduled'"
++                ),
++                {"u": sid},
++            )
++        ).scalar_one()
++        assert note == 1, "ученик обязан узнать о ссылке, иначе она бесполезна"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_webinar_link_rejected_for_wrong_request_type(db, client):
++    """Ссылка по обычной заявке — 409: ученик её там не увидит."""
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(db, student_id=sid, task_id=task_id, teacher_id=tid_user)
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/webinar-link",
++            json={"teacher_id": tid_user, "webinar_link": _WEBINAR},
++            headers=_svc(),
++        )
++        assert resp.status_code == 409, resp.text
++        assert (await _row(db, rid))["webinar_link"] is None
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++@pytest.mark.parametrize("bad_link", ["", "   ", "смотри в телеграме", "meet.example/room"])
++async def test_webinar_link_must_be_a_real_url(db, client, bad_link):
++    """Не-ссылка даёт ученику кнопку в никуда при формально отвеченной заявке."""
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/webinar-link",
++            json={"teacher_id": tid_user, "webinar_link": bad_link},
++            headers=_svc(),
++        )
++        assert resp.status_code == 422, resp.text
++        assert (await _row(db, rid))["webinar_link"] is None
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_reply_with_close_clears_webinar_link(db, client):
++    """Второй путь закрытия (ответ с закрытием) тоже обязан снимать ссылку.
++
++    Закрытие заявки живёт в двух местах: `close_help_request` и ветка внутри
++    `reply_help_request`. Делегировать одно в другое нельзя (получилось бы два
++    уведомления на одно действие), поэтому TTL продублирован — и это ровно тот
++    случай, который тихо разъезжается без теста.
++    """
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, _ = await _user(db, "t303t учитель")
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.execute(
++        text("UPDATE help_requests SET webinar_link = :l WHERE id = :r"),
++        {"l": _WEBINAR, "r": rid},
++    )
++    await db.commit()
++    try:
++        resp = await client.post(
++            f"/api/v1/teacher/help-requests/{rid}/reply",
++            json={
++                "teacher_id": tid_user,
++                "message": "Разобрали, закрываю",
++                "close_after_reply": True,
++            },
++            headers=_svc(),
++        )
++        assert resp.status_code == 200, resp.text
++        row = await _row(db, rid)
++        assert row["status"] == "closed"
++        assert row["webinar_link"] is None, "TTL ссылки обязан работать и на этом пути закрытия"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++# ── новый класс заявки в уже существующем коде ───────────────────────────────
++
++async def test_individual_review_counted_in_teacher_workload(db, client):
++    """Заявка на разбор обязана быть видна в панели нагрузки.
++
++    Итог `open_help_requests_total` складывался из двух типов поимённо — новый
++    класс выпал бы из панели целиком, и преподаватель не заметил бы ученика,
++    ждущего ссылку. А это самый срочный случай лестницы.
++    """
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, token = await _user(db, "t303t учитель", role="teacher", with_session=True)
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/workload?teacher_id={tid_user}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["open_individual_review_total"] == 1
++        assert body["open_help_requests_total"] >= 1, "новый тип обязан попадать в общий итог"
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
++
++
++async def test_individual_review_detail_survives_serialization(db, client):
++    """Карточка заявки нового класса открывается, а не падает на типе.
++
++    `HelpRequestType` — закрытый литерал: пока в нём не было
++    `individual_review`, карточка и список у преподавателя роняли бы 500 ровно
++    в тот момент, когда ученик поднялся на уровень 2.
++    """
++    sid, _ = await _user(db, "t303t ученик")
++    tid_user, token = await _user(db, "t303t учитель", role="teacher", with_session=True)
++    task_id = await _task(db)
++    rid = await _help_request(
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++        request_type="individual_review",
++    )
++    await db.execute(
++        text("INSERT INTO help_request_reopens (request_id, teacher_id) VALUES (:r, :t)"),
++        {"r": rid, "t": tid_user},
++    )
++    await db.commit()
++    try:
++        detail = await client.get(
++            f"/api/v1/teacher/help-requests/{rid}?teacher_id={tid_user}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert detail.status_code == 200, detail.text
++        body = detail.json()
++        assert body["request_type"] == "individual_review"
++        assert body["reopen_count"] == 1, "преподаватель должен видеть, что заявку возвращали"
++
++        listing = await client.get(
++            f"/api/v1/teacher/help-requests?teacher_id={tid_user}"
++            "&request_type=individual_review",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert listing.status_code == 200, listing.text
++        assert any(i["request_id"] == rid for i in listing.json()["items"])
++    finally:
++        await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
+diff --git a/tests/test_help_requests_pending_count_tsk348.py b/tests/test_help_requests_pending_count_tsk348.py
+index b207bd5..28bbb2f 100644
+--- a/tests/test_help_requests_pending_count_tsk348.py
++++ b/tests/test_help_requests_pending_count_tsk348.py
+@@ -224,10 +224,20 @@ async def test_explicit_close_notifies_student_but_system_close_does_not(db, cli
+ 
+ @pytest.mark.asyncio
+ async def test_pending_count_excludes_after_teacher_reply_includes_again_after_student_reply(db, client):
+-    """tsk-415: колокольчик светит только заявки, ждущие ОТВЕТА УЧИТЕЛЯ. После
+-    того как учитель ответил, заявка остаётся open (ученик её не закрыл), но
+-    бейдж должен погаснуть — а если ученик написал в ответ (follow-up в том же
+-    треде), бейдж должен снова зажечься."""
++    """tsk-415 + tsk-303: колокольчик светит только заявки, ждущие ОТВЕТА УЧИТЕЛЯ.
++
++    **Семантика изменена в tsk-303** (решение оператора 2026-08-06). Раньше
++    ответ учителя оставлял заявку открытой, и вернуть на себя внимание ученик
++    мог, просто написав в тред. Теперь ответ на `manual_help` ЗАКРЫВАЕТ заявку,
++    а сказать «не помогло» ученик должен явной кнопкой «Вернуть заявку» — и
++    только этот возврат идёт в KPI преподавателя.
++
++    Почему не оставили и прежний путь: сообщение в треде бывает и «спасибо,
++    понял», и «всё равно не понимаю». Считать любое из них возвратом значило бы
++    портить показатель, которым ОЦЕНИВАЮТ людей. Само сообщение ученика не
++    теряется — оно приходит в раздел «Сообщения» преподавателя, просто не
++    зажигает бейдж заявок.
++    """
+     teacher_id, token = await _setup_teacher(db)
+     student_id, student_token = await _create_student_with_session(db)
+     task_id = await _pick_task(db)
+@@ -258,11 +268,13 @@ async def test_pending_count_excludes_after_teacher_reply_includes_again_after_s
+             f"/api/v1/teacher/help-requests/{rid}?teacher_id={teacher_id}",
+             headers={"Authorization": f"Bearer {token}"},
+         )
+-        assert detail_resp.json()["status"] == "open", "бейдж гаснет, но заявка остаётся открытой в списке"
++        assert detail_resp.json()["status"] == "closed", (
++            "tsk-303: ответ текстом закрывает заявку помощи — дальше ход за учеником"
++        )
+ 
+-        # follow-up ученика — реальный SPW-путь для живого пользователя
+-        # (POST /messages/{id}/reply — legacy сервисный эндпоинт под X-API-Key
+-        # для TG_LMS-бота, обычной сессии ученика недостаточно).
++        # Сообщение ученика в тред больше НЕ зажигает бейдж заявок: оно уходит
++        # в раздел «Сообщения» преподавателя, а сигнал «не помогло» подаётся
++        # отдельной кнопкой (иначе «спасибо, понял» портило бы KPI).
+         follow_up_resp = await client.post(
+             "/api/v1/messages/send",
+             json={
+@@ -279,7 +291,22 @@ async def test_pending_count_excludes_after_teacher_reply_includes_again_after_s
+             f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
+             headers={"Authorization": f"Bearer {token}"},
+         )
+-        assert resp.json()["count"] == 1, "ответ ученика после реплики учителя должен снова зажечь бейдж"
++        assert resp.json()["count"] == 0, (
++            "сообщение в переписке — не сигнал «верните заявку»; бейдж молчит"
++        )
++
++        # А вот явный возврат заявки учеником обязан зажечь бейдж снова.
++        reopen_resp = await client.post(
++            f"/api/v1/learning/help-requests/{rid}/reopen",
++            headers={"Authorization": f"Bearer {student_token}"},
++        )
++        assert reopen_resp.status_code == 200, reopen_resp.text
++
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/pending-count?teacher_id={teacher_id}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.json()["count"] == 1, "возврат заявки учеником обязан зажечь бейдж"
+     finally:
+         await _cleanup(db, teacher_id=teacher_id, student_id=student_id, request_ids=[rid])
+ 

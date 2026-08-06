@@ -16753,6 +16753,469 @@
         }
       }
     },
+    "/api/v1/learning/tasks/{task_id}/help-request": {
+      "get": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Текущая заявка помощи ученика по заданию (tsk-303)",
+        "description": "Состояние лестницы помощи для страницы задания.\n\nДо tsk-303 ученик вообще не мог увидеть на странице задания, что с его\nзаявкой: ответ учителя долетал только уведомлением в общей ленте, а сама\nстраница о заявке не знала. Без этого чтения кнопкам «Вернуть заявку» и\n«Запросить разбор» негде появиться.\n\nГейт оплаты здесь НЕ применяется: читать состояние собственного обращения\nдолжник вправе — закрыт учебный контент, а не поддержка.",
+        "operationId": "student_help_request_state_api_v1_learning_tasks__task_id__help_request_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID задания",
+              "title": "Task Id"
+            },
+            "description": "ID задания"
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Заявка или null, если ученик помощь не запрашивал",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/StudentHelpRequestResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Student Help Request State Api V1 Learning Tasks  Task Id  Help Request Get"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Чужой student_id"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/help-requests/{request_id}/reopen": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Вернуть заявку: ответ преподавателя не помог (tsk-303)",
+        "description": "Уровень 1 → повтор: ученик отмечает, что после ответа не разобрался.\n\nВозврат начисляется преподавателю, чей ответ не помог, — это KPI\n(`help_request_reopens`). Владелец заявки берётся из самой заявки, а не из\nтела запроса: подставить чужой `student_id` тут физически нечем.",
+        "operationId": "reopen_student_help_request_api_v1_learning_help_requests__request_id__reopen_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelpRequestReopenResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "403": {
+            "description": "Чужая заявка"
+          },
+          "409": {
+            "description": "Заявка не закрыта или не того типа"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/help-requests/{request_id}/request-individual-review": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Запросить индивидуальный разбор (tsk-303, уровень 2)",
+        "description": "Доступно только по заявке, которую ученик уже возвращал.",
+        "operationId": "request_individual_review_endpoint_api_v1_learning_help_requests__request_id__request_individual_review_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndividualReviewResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "403": {
+            "description": "Чужая заявка"
+          },
+          "409": {
+            "description": "Заявка закрыта, не того типа или не возвращалась"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/help-requests/{request_id}/rate-review": {
+      "post": {
+        "tags": [
+          "learning"
+        ],
+        "summary": "Оценить индивидуальный разбор (tsk-303, уровень 3)",
+        "description": "«Понятно» закрывает заявку, «непонятно» уводит её методисту.\n\nГейт оплаты здесь НЕ применяется намеренно: это ответ на уже оказанную\nпомощь. Заблокировать его значило бы оставить заявку висеть открытой без\nоценки и без маршрута дальше.",
+        "operationId": "rate_individual_review_endpoint_api_v1_learning_help_requests__request_id__rate_review_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RateReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateReviewResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "403": {
+            "description": "Чужая заявка"
+          },
+          "409": {
+            "description": "Нет ссылки на разбор, заявка закрыта или уже оценена"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/learning/tasks/{task_id}/hint-events": {
       "post": {
         "tags": [
@@ -17261,6 +17724,136 @@
         }
       }
     },
+    "/api/v1/teacher/help-requests/kpi/reopens": {
+      "get": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Возвраты заявок: свой показатель или сводка по всем (tsk-303)",
+        "description": "Две поверхности одного агрегата (решение оператора: KPI видят оба).\n\nПреподаватель смотрит СВОЙ показатель — для самоконтроля. Методист и админ\nвидят сводку по всем — это оценка преподавателей, поэтому чужой показатель\nбез такой роли не отдаётся. Считает один и тот же\n`help_requests_service.get_reopen_kpi`, чтобы две панели не разъехались в\nцифрах.",
+        "operationId": "help_request_reopen_kpi_api_v1_teacher_help_requests_kpi_reopens_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "teacher_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ID преподавателя. Не задан — сводка по всем (только методист/админ).",
+              "title": "Teacher Id"
+            },
+            "description": "ID преподавателя. Не задан — сводка по всем (только методист/админ)."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Считать возвраты с этого момента (ISO8601)",
+              "title": "Since"
+            },
+            "description": "Считать возвраты с этого момента (ISO8601)"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сводка возвратов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReopenKpiResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Чужой teacher_id без роли методиста/админа"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/help-requests": {
       "get": {
         "tags": [
@@ -17306,11 +17899,11 @@
             "required": false,
             "schema": {
               "type": "string",
-              "description": "manual_help | blocked_limit | all",
+              "description": "manual_help | blocked_limit | individual_review | all",
               "default": "all",
               "title": "Request Type"
             },
-            "description": "manual_help | blocked_limit | all"
+            "description": "manual_help | blocked_limit | individual_review | all"
           },
           {
             "name": "sort",
@@ -17780,6 +18373,119 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/help-requests/{request_id}/webinar-link": {
+      "post": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Прислать ученику ссылку на индивидуальный разбор (tsk-303, уровень 2)",
+        "description": "Заявку не закрывает: разбор впереди, закроет её оценка ученика.",
+        "operationId": "help_request_webinar_link_api_v1_teacher_help_requests__request_id__webinar_link_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebinarLinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebinarLinkResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "403": {
+            "description": "Нет доступа"
+          },
+          "409": {
+            "description": "Заявка не того типа, закрыта или токен блокировки невалиден"
+          },
+          "422": {
+            "description": "Ссылка пустая или не http/https"
           }
         }
       }
@@ -22948,7 +23654,7 @@
           "methodist_escalations"
         ],
         "summary": "Список эскалаций для методиста (Phase Y-6)",
-        "description": "Возвращает свежее из того, что требует внимания методиста, для\ncurrent_user. Используется кабинетом методиста и TG_LMS methodist-поллером.\n\nВиды: `review_escalated` и `course_pending_review` (обе — про зависшие\nпроверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на\nфайлы, которых нет; ученик видит на их месте пустоту).\n\ntsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в\n`require_role(\"methodist\")` (service-token — bypass, как и раньше);\nповедение эндпоинта не изменилось.",
+        "description": "Возвращает свежее из того, что требует внимания методиста, для\ncurrent_user. Используется кабинетом методиста и TG_LMS methodist-поллером.\n\nВиды: `review_escalated` и `course_pending_review` (обе — про зависшие\nпроверки) плюс `broken_media_links` (tsk-521 — проверка нашла ссылки на\nфайлы, которых нет; ученик видит на их месте пустоту) и\n`help_request_escalated` (tsk-303, уровень 3 лестницы помощи — ученику не\nпомог даже индивидуальный разбор с преподавателем; заявка остаётся\nоткрытой, методист закрывает её через\n`POST /teacher/help-requests/{id}/close`).\n\ntsk-298: проверка НАЛИЧИЯ роли `methodist` централизована в\n`require_role(\"methodist\")` (service-token — bypass, как и раньше);\nповедение эндпоинта не изменилось.",
         "operationId": "list_pending_escalations_api_v1_methodist_escalations_pending_get",
         "security": [
           {
@@ -23055,6 +23761,354 @@
           },
           "403": {
             "description": "У пользователя нет роли methodist"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feedback-reports": {
+      "post": {
+        "tags": [
+          "feedback_reports"
+        ],
+        "summary": "Создать обращение о проблеме или идею фичи (tsk-303)",
+        "description": "Автор берётся из сессии — подставить чужого нельзя.",
+        "operationId": "create_feedback_report_api_v1_feedback_reports_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackReportCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Обращение создано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReportCreateResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Нет роли преподавателя/методиста/админа"
+          },
+          "422": {
+            "description": "Неизвестный тип или пустой текст"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "feedback_reports"
+        ],
+        "summary": "Список обращений: свои или все (tsk-303)",
+        "description": "Методист и админ видят все обращения, остальные — только свои.\n\nСужение делается ЗДЕСЬ, параметром запроса к БД, а не фильтрацией уже\nвыбранной страницы: постфильтр по узкому ключу поверх общего `limit` молча\nтеряет строки (класс уже ловился в tsk-473).",
+        "operationId": "list_feedback_reports_api_v1_feedback_reports_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "open | closed | all",
+              "default": "open",
+              "title": "Status"
+            },
+            "description": "open | closed | all"
+          },
+          {
+            "name": "report_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "bug | content | feature_idea | all",
+              "default": "all",
+              "title": "Report Type"
+            },
+            "description": "bug | content | feature_idea | all"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReportListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/feedback-reports/{report_id}/close": {
+      "post": {
+        "tags": [
+          "feedback_reports"
+        ],
+        "summary": "Закрыть обращение (tsk-303)",
+        "description": "Закрывает автор или методист/админ; повтор идемпотентен.",
+        "operationId": "close_feedback_report_api_v1_feedback_reports__report_id__close_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID обращения",
+              "title": "Report Id"
+            },
+            "description": "ID обращения"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackReportCloseRequest",
+                "default": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackReportCloseResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Обращение не найдено"
+          },
+          "403": {
+            "description": "Не автор и не методист/админ"
           },
           "422": {
             "description": "Validation Error",
@@ -36389,6 +37443,316 @@
         "title": "EscalationListResponse",
         "description": "Ответ /escalations/pending."
       },
+      "FeedbackReportCloseRequest": {
+        "properties": {
+          "resolution_comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Comment"
+          }
+        },
+        "type": "object",
+        "title": "FeedbackReportCloseRequest",
+        "description": "Тело закрытия обращения."
+      },
+      "FeedbackReportCloseResponse": {
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "title": "Report Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "closed"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "already_closed": {
+            "type": "boolean",
+            "title": "Already Closed",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_id"
+        ],
+        "title": "FeedbackReportCloseResponse",
+        "description": "Ответ закрытия обращения."
+      },
+      "FeedbackReportCreateRequest": {
+        "properties": {
+          "report_type": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "content",
+              "feature_idea"
+            ],
+            "title": "Report Type",
+            "description": "bug — проблема системы; content — проблема контента; feature_idea — идея"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Body",
+            "description": "Описание"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id",
+            "description": "К какому курсу относится, если известно"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id",
+            "description": "К какому материалу, если известно"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "К какому заданию, если известно"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_type",
+          "body"
+        ],
+        "title": "FeedbackReportCreateRequest",
+        "description": "Тело POST /feedback-reports.\n\nАвтор не передаётся: он берётся из сессии, иначе обращение можно было бы\nподписать чужим именем."
+      },
+      "FeedbackReportCreateResponse": {
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "title": "Report Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "open"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_id",
+          "created_at"
+        ],
+        "title": "FeedbackReportCreateResponse",
+        "description": "Ответ создания обращения."
+      },
+      "FeedbackReportItem": {
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "title": "Report Id"
+          },
+          "report_type": {
+            "type": "string",
+            "title": "Report Type"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
+          "resolution_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Comment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_id",
+          "report_type",
+          "status",
+          "body",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "FeedbackReportItem",
+        "description": "Обращение в списке инбокса."
+      },
+      "FeedbackReportListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedbackReportItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "description": "all — инбокс методиста/админа (все обращения); own — только свои",
+            "default": "own"
+          }
+        },
+        "type": "object",
+        "title": "FeedbackReportListResponse",
+        "description": "Список обращений."
+      },
       "GatewayPaymentStart": {
         "properties": {
           "payment_id": {
@@ -36728,6 +38092,7 @@
             "enum": [
               "manual_help",
               "blocked_limit",
+              "individual_review",
               "all"
             ],
             "title": "Request Type",
@@ -36931,7 +38296,8 @@
             "type": "string",
             "enum": [
               "manual_help",
-              "blocked_limit"
+              "blocked_limit",
+              "individual_review"
             ],
             "title": "Request Type",
             "description": "Тип заявки (этап 3.8.1)",
@@ -37133,6 +38499,49 @@
             "type": "array",
             "title": "History",
             "description": "Ответы преподавателей"
+          },
+          "reopen_count": {
+            "type": "integer",
+            "title": "Reopen Count",
+            "description": "Сколько раз ученик возвращал заявку",
+            "default": 0
+          },
+          "webinar_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webinar Link",
+            "description": "Ссылка на разбор (пока заявка открыта)"
+          },
+          "review_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Understood",
+            "description": "Оценка ученика после разбора; false — заявка ушла методисту"
+          },
+          "escalated_to_methodist_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalated To Methodist At",
+            "description": "Когда заявка эскалирована методисту (уровень 3)"
           }
         },
         "type": "object",
@@ -37166,7 +38575,8 @@
             "type": "string",
             "enum": [
               "manual_help",
-              "blocked_limit"
+              "blocked_limit",
+              "individual_review"
             ],
             "title": "Request Type",
             "description": "Тип заявки (этап 3.8.1)",
@@ -37400,6 +38810,35 @@
         ],
         "title": "HelpRequestReleaseResponse",
         "description": "Ответ release для help-request."
+      },
+      "HelpRequestReopenResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "open"
+          },
+          "reopen_count": {
+            "type": "integer",
+            "title": "Reopen Count"
+          },
+          "can_request_individual_review": {
+            "type": "boolean",
+            "title": "Can Request Individual Review",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "reopen_count"
+        ],
+        "title": "HelpRequestReopenResponse",
+        "description": "Ответ POST /learning/help-requests/{id}/reopen."
       },
       "HelpRequestReplyItem": {
         "properties": {
@@ -37993,6 +39432,31 @@
           "items"
         ],
         "title": "InboxResponse"
+      },
+      "IndividualReviewResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "request_type": {
+            "type": "string",
+            "title": "Request Type",
+            "default": "individual_review"
+          },
+          "already": {
+            "type": "boolean",
+            "title": "Already",
+            "description": "true — разбор был запрошен ранее (повторный клик)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "IndividualReviewResponse",
+        "description": "Ответ POST /learning/help-requests/{id}/request-individual-review."
       },
       "LastPositionRead": {
         "properties": {
@@ -42880,6 +44344,52 @@
         "title": "QuizRules",
         "description": "Правила квиз-вопросов со шкалами (SC_Qw/MC_Qw, tsk-122, ADR-0003).\n\nБез `correct_options`: вместо проверки «верно/неверно» движок считает вклад\nпо шкалам из выбранных вариантов и пишет `task_result.scale_scores`."
       },
+      "RateReviewRequest": {
+        "properties": {
+          "understood": {
+            "type": "boolean",
+            "title": "Understood",
+            "description": "true — после разбора всё понятно"
+          }
+        },
+        "type": "object",
+        "required": [
+          "understood"
+        ],
+        "title": "RateReviewRequest",
+        "description": "Тело POST /learning/help-requests/{id}/rate-review."
+      },
+      "RateReviewResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "understood": {
+            "type": "boolean",
+            "title": "Understood"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "closed при understood=true, иначе open"
+          },
+          "escalated": {
+            "type": "boolean",
+            "title": "Escalated",
+            "description": "true — заявка ушла методисту",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "understood",
+          "status"
+        ],
+        "title": "RateReviewResponse",
+        "description": "Ответ на оценку разбора."
+      },
       "RecalculateResult": {
         "properties": {
           "period": {
@@ -42912,6 +44422,88 @@
           "refresh_token"
         ],
         "title": "RefreshRequest"
+      },
+      "ReopenKpiItem": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "reopens": {
+            "type": "integer",
+            "title": "Reopens",
+            "description": "Сколько раз ученики возвращали заявки этого преподавателя"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "description": "По скольким разным заявкам это было"
+          },
+          "last_reopened_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reopened At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "reopens",
+          "requests"
+        ],
+        "title": "ReopenKpiItem",
+        "description": "Возвраты заявок на одного преподавателя (tsk-303, KPI)."
+      },
+      "ReopenKpiResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReopenKpiItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total_reopens": {
+            "type": "integer",
+            "title": "Total Reopens",
+            "description": "Сумма возвратов по всем строкам выборки",
+            "default": 0
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since",
+            "description": "Начало окна, если задано"
+          }
+        },
+        "type": "object",
+        "title": "ReopenKpiResponse",
+        "description": "Сводка возвратов. Одна и та же для кабинета преподавателя и методиста."
       },
       "RequestHelpRequest": {
         "properties": {
@@ -44776,6 +46368,163 @@
         ],
         "title": "StudentGroupPricing",
         "description": "Что насчиталось ученику по одной тарифной группе."
+      },
+      "StudentHelpReplyItem": {
+        "properties": {
+          "body": {
+            "type": "string",
+            "title": "Body"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "body",
+          "created_at"
+        ],
+        "title": "StudentHelpReplyItem",
+        "description": "Ответ преподавателя в заявке — так, как его видит ученик."
+      },
+      "StudentHelpRequestResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "open | closed"
+          },
+          "request_type": {
+            "type": "string",
+            "title": "Request Type",
+            "description": "manual_help | individual_review"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Текст исходного вопроса ученика"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "resolution_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Comment"
+          },
+          "reopen_count": {
+            "type": "integer",
+            "title": "Reopen Count",
+            "description": "Сколько раз ученик возвращал заявку",
+            "default": 0
+          },
+          "webinar_link": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webinar Link",
+            "description": "Ссылка на разбор; живёт, пока заявка открыта"
+          },
+          "review_understood": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Understood",
+            "description": "Оценка после разбора: None — ещё не оценивал"
+          },
+          "escalated_to_methodist_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Escalated To Methodist At"
+          },
+          "replies": {
+            "items": {
+              "$ref": "#/components/schemas/StudentHelpReplyItem"
+            },
+            "type": "array",
+            "title": "Replies"
+          },
+          "can_reopen": {
+            "type": "boolean",
+            "title": "Can Reopen",
+            "default": false
+          },
+          "can_request_individual_review": {
+            "type": "boolean",
+            "title": "Can Request Individual Review",
+            "default": false
+          },
+          "can_rate_review": {
+            "type": "boolean",
+            "title": "Can Rate Review",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "status",
+          "request_type",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "StudentHelpRequestResponse",
+        "description": "Текущая заявка помощи ученика по заданию.\n\nПризнаки `can_*` считает сервер: гейты уровней лестницы — часть правил, и\nвторой их экземпляр в клиенте неизбежно с ними разъедется."
       },
       "StudentPaymentRead": {
         "properties": {
@@ -49027,6 +50776,12 @@
             "description": "Открытых заявок типа manual_help",
             "default": 0
           },
+          "open_individual_review_total": {
+            "type": "integer",
+            "title": "Open Individual Review Total",
+            "description": "Открытых заявок на индивидуальный разбор (tsk-303, уровень 2)",
+            "default": 0
+          },
           "pending_manual_reviews_total": {
             "type": "integer",
             "title": "Pending Manual Reviews Total",
@@ -50303,6 +52058,66 @@
           "device_id"
         ],
         "title": "VkCallbackRequest"
+      },
+      "WebinarLinkRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя"
+          },
+          "webinar_link": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Webinar Link",
+            "description": "Ссылка на комнату разбора (http/https), вводится вручную"
+          },
+          "lock_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Token",
+            "description": "Токен блокировки; при невалидном/просроченном — 409"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "webinar_link"
+        ],
+        "title": "WebinarLinkRequest",
+        "description": "Тело запроса ссылки на индивидуальный разбор (tsk-303, уровень 2)."
+      },
+      "WebinarLinkResponse": {
+        "properties": {
+          "request_id": {
+            "type": "integer",
+            "title": "Request Id"
+          },
+          "webinar_link": {
+            "type": "string",
+            "title": "Webinar Link"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "Заявка остаётся открытой — разбор впереди"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "webinar_link",
+          "status"
+        ],
+        "title": "WebinarLinkResponse",
+        "description": "Ответ на отправку ссылки на разбор."
       },
       "app__api__v1__messages_extra__UnreadCountResponse": {
         "properties": {
