@@ -44280,16 +44280,6 @@
           "attendance": {
             "$ref": "#/components/schemas/StudentDashboardAttendanceRead"
           },
-          "between_lessons_activity_level": {
-            "type": "string",
-            "enum": [
-              "worse",
-              "average",
-              "better",
-              "insufficient_data"
-            ],
-            "title": "Between Lessons Activity Level"
-          },
           "student_full_name": {
             "anyOf": [
               {
@@ -44311,8 +44301,7 @@
           "period_total",
           "in_class_hours",
           "between_lessons",
-          "attendance",
-          "between_lessons_activity_level"
+          "attendance"
         ],
         "title": "PublicParentDashboardRead",
         "description": "Дашборд, открытый по ссылке. Тот же состав, что у привилегированных\nзрителей (контракт tsk-494 — без `solution_rules` и текста заявок помощи),\nплюс имя ученика: родитель по ссылке не имеет профиля и иначе не увидел\nбы, чей это дашборд."
@@ -46144,16 +46133,6 @@
               }
             ],
             "title": "Discrepancy"
-          },
-          "missed_level": {
-            "type": "string",
-            "enum": [
-              "worse",
-              "average",
-              "better",
-              "insufficient_data"
-            ],
-            "title": "Missed Level"
           }
         },
         "type": "object",
@@ -46161,8 +46140,7 @@
           "planned",
           "attended",
           "missed",
-          "upcoming",
-          "missed_level"
+          "upcoming"
         ],
         "title": "StudentDashboardAttendanceRead",
         "description": "Посещение за период по нормативу (tsk-556).\n\nИнвариант, на который опирается вывод: ``planned == attended + missed +\nupcoming``. Показывать `planned` без остальных трёх нельзя — цифра\n«пропущено» без нормы рядом не читается."
@@ -46180,16 +46158,6 @@
           "percent_complete": {
             "type": "integer",
             "title": "Percent Complete"
-          },
-          "pace_level": {
-            "type": "string",
-            "enum": [
-              "worse",
-              "average",
-              "better",
-              "insufficient_data"
-            ],
-            "title": "Pace Level"
           },
           "current_section_title": {
             "anyOf": [
@@ -46235,7 +46203,6 @@
           "course_id",
           "title",
           "percent_complete",
-          "pace_level",
           "is_completed"
         ],
         "title": "StudentDashboardCourseRead"
@@ -46302,16 +46269,6 @@
           },
           "attendance": {
             "$ref": "#/components/schemas/StudentDashboardAttendanceRead"
-          },
-          "between_lessons_activity_level": {
-            "type": "string",
-            "enum": [
-              "worse",
-              "average",
-              "better",
-              "insufficient_data"
-            ],
-            "title": "Between Lessons Activity Level"
           }
         },
         "type": "object",
@@ -46323,8 +46280,7 @@
           "period_total",
           "in_class_hours",
           "between_lessons",
-          "attendance",
-          "between_lessons_activity_level"
+          "attendance"
         ],
         "title": "StudentDashboardRead"
       },
