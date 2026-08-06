@@ -575,3 +575,26 @@ async def _stop_course_dependency_state_scheduler() -> None:
         _course_dep_state_cron.stop_scheduler()
     except Exception:
         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
+
+
+# tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак ИИ-авторства).
+# Приём ответа только помечает работу `pending`, считает этот тик — вызов модели
+# слишком долгий для пользовательского пути. Тот же multi-worker-safe паттерн
+# (PG advisory lock), отдельный lock-ключ.
+from app.services import code_review_cron_service as _code_review_cron
+
+
+@app.on_event("startup")
+async def _start_code_review_scheduler() -> None:
+    try:
+        _code_review_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-302: failed to start code_review scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_code_review_scheduler() -> None:
+    try:
+        _code_review_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-302: failed to stop code_review scheduler")

@@ -36,13 +36,16 @@ from app.schemas.checking import (
     CheckResult,
     CheckFeedback,
 )
+from app.schemas.solution_rules import SolutionRules
 from app.schemas.task_content import TaskContent, QUIZ_TASK_TYPES, COMMENT_TASK_TYPES
 
 from app.services.attempts_service import AttemptsService
 from app.services.task_results_service import TaskResultsService
 from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
-from app.services.code_quality_service import analyze_student_code_quality
+# tsk-302 этап 3: сам анализ переехал в фоновый тик
+# (`code_review_cron_service`), здесь работа только помечается к оценке.
+from app.services.code_review_service import pick_code_for_review
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
 from app.services import (
@@ -74,6 +77,31 @@ def _safe_upload_filename(filename: str | None) -> str:
     base = os.path.basename(filename or "attachment")
     safe = SAFE_FILENAME_RE.sub("_", base).strip("._")
     return safe or "attachment"
+
+
+def _needs_code_review(solution_rules: SolutionRules) -> bool:
+    """
+    Нужна ли машинной оценке эта работа (tsk-302 этап 3).
+
+    Охват намеренно шире, чем `turtle_sim` этапа 0: на проде уже есть 51 задание
+    на Python и 40 на Arduino/C++, и оценивает их одна и та же модель — язык она
+    определяет сама.
+
+    Два признака, оба берутся из самого задания, а не из содержимого ответа:
+
+    - `turtle_sim` — рисование черепахой, ответ всегда программа;
+    - `code_ast` в шагах нормализации — явная пометка «ответ сравнивается как
+      код» (tsk-262). ВАЖНО: она НЕ гарантирует именно Python (20 заданий «МАМ»
+      с ней содержат Arduino/C++), но для нас это неважно — оценка язык-агностична.
+
+    Угадывать «похоже на код» по тексту ответа не пытаемся: цена ошибки —
+    вызов модели на сочинении или числе, а пометка у задания и так есть.
+    """
+    if getattr(solution_rules, "turtle_sim", None) is not None:
+        return True
+    short_answer = getattr(solution_rules, "short_answer", None)
+    steps = getattr(short_answer, "normalization", None) or []
+    return "code_ast" in steps
 
 
 def _attempt_attachment_files(attempt_id: int) -> list[os.PathLike]:
@@ -639,42 +667,26 @@ async def submit_attempt_answers(
         # `metrics` уже 13.8K записей чужой семантики (comment/manual_grant/
         # escalated_at). Отдельная колонка снимает спор за одно поле.
         #
-        # review-gate (2026-08-06) находка Б1: анализ идёт в отдельном процессе со
-        # СВОИМ семафором (`executor._LINT_SEMAPHORE`, лимит 2 — он не конкурирует
-        # с исполнением turtle-кода), но синхронно занимает слот на время
-        # POST-запроса; уже просроченная попытка (attempt.time_expired == True ДО
-        # этого ответа) гарантированно обнуляется гейтом 2.3c ниже — анализ стиля
-        # заведомо мёртвого кода только тратит слот в ущерб другим ученикам. Гейт по
-        # свежей просрочке (task_deadline_sec, вычисляется НИЖЕ) не форсится здесь —
-        # это дало бы дублирование логики дедлайна; остаточный риск задокументирован
-        # в reviews/2026-08-06-tsk302-dir1-code-quality-review.md (У3/остаточные).
+        # ЭТАП 3 (2026-08-07): здесь больше НЕ считаем, а только СТАВИМ В ОЧЕРЕДЬ.
+        # Раньше на этом месте синхронно работал pylint (+3-5 с к ответу), теперь
+        # оценку делает модель — это внешний сетевой вызов, и держать на нём приём
+        # ответа нельзя. Ученик оценку всё равно не видит, а преподаватель открывает
+        # работу позже, поэтому фон ничего не теряет (решение оператора 2026-08-06).
+        # Разбирает очередь `app/services/code_review_cron_service.py`.
         #
-        # Б2: сбой subprocess вне timeout (OSError и т.п.) не должен ронять приём
-        # ответа — check_result уже посчитан на строке 620 и не должен пропасть
-        # из-за побочной метрики. executor.run_code_quality_check сам не бросает
-        # (см. её докстринг), но try/except здесь — то же defense-in-depth, что и
-        # у soft-fail гейтов 2.4b/2.4c/2.4d ниже.
-        # Отчёт секционирован сразу: `code_quality` — то, что умеем сейчас; секции
-        # `ai_authorship` и `timing` добавятся этапом 3, когда появится LLM-транспорт
-        # и телеметрия времени. Читатель (кабинет преподавателя) написан под секции,
-        # поэтому их появление не сломает разбор.
+        # Просроченную попытку не оцениваем: балл уже обнулён гейтом 2.3c ниже,
+        # тратить на неё вызов модели незачем.
+        # Ставим в очередь, только если есть ЧТО оценивать и есть КОМУ: пометка
+        # без работающего обработчика оставила бы преподавателю вечное «оценка
+        # готовится» (находка ревью Н1). Порог `pick_code_for_review` отсекает
+        # ответы-однострочники вида «допиши строку» — оценивать чистоту кода
+        # одного слова бессмысленно (находка ревью Б2).
         code_review_report: Optional[dict] = None
-        if solution_rules.turtle_sim is not None and not attempt.time_expired:
-            student_code = answer.response.value or ""
-            if student_code.strip():
-                try:
-                    quality = await asyncio.to_thread(
-                        analyze_student_code_quality, student_code,
-                    )
-                except Exception:
-                    logger.warning(
-                        "tsk-302: анализ качества кода упал (attempt=%s task=%s), "
-                        "приём ответа продолжается без code_review",
-                        attempt.id, task.id, exc_info=True,
-                    )
-                else:
-                    if quality is not None:
-                        code_review_report = {"code_quality": quality}
+        if not attempt.time_expired and _needs_code_review(solution_rules):
+            if settings.code_review_cron_enabled and pick_code_for_review(
+                answer.response.value, answer.response.comment
+            ):
+                code_review_report = {"status": "pending"}
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)

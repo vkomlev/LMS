@@ -169,6 +169,31 @@ class Settings:
             os.getenv("COURSE_DEPENDENCY_STATE_CRON_INTERVAL_MIN", "15")
         )
 
+        # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак
+        # ИИ-авторства). Синхронно её делать нельзя — это внешний вызов модели
+        # в пользовательском пути приёма ответа; ученик ждать не должен, а к
+        # моменту, когда работу откроет преподаватель, оценка уже готова.
+        # Выключатель нужен на случай проблем с провайдером: приём ответов
+        # продолжает работать, просто отчёты копятся в статусе pending.
+        self.code_review_cron_enabled: bool = os.getenv(
+            "CODE_REVIEW_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.code_review_cron_interval_min: int = int(
+            os.getenv("CODE_REVIEW_CRON_INTERVAL_MIN", "2")
+        )
+        # За тик берём немного: оценка одной работы — сетевой вызов на секунды,
+        # а очередь всё равно разгребётся следующими тиками. Заодно это потолок
+        # расхода на провайдера при внезапном наплыве сдач.
+        self.code_review_batch_size: int = int(
+            os.getenv("CODE_REVIEW_BATCH_SIZE", "10")
+        )
+        # Сколько раз пробуем повторно при временной ошибке (сеть, таймаут,
+        # остывание провайдера). Постоянные ошибки (неверный ключ, битый ответ)
+        # не ретраятся вовсе — см. `retryable` в таксономии клиента.
+        self.code_review_max_attempts: int = int(
+            os.getenv("CODE_REVIEW_MAX_ATTEMPTS", "3")
+        )
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )
