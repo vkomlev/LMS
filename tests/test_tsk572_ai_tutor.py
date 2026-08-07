@@ -454,3 +454,69 @@ def test_prompt_keeps_student_in_his_own_environment():
     assert "Работай ТОЛЬКО в той среде" in flat
     assert "не «запусти python»" in flat.lower() or "не «запусти python»" in flat
     assert "СПРОСИ, где он работает" in flat
+
+
+# ─────────────── Режим практической миссии (первый реальный ученик) ─────────
+
+
+def test_mission_task_gets_mission_mode():
+    """Задание, которое сдаётся артефактом, не разбирают как алгоритм.
+
+    Живой случай: ученик открыл наставника на миссии «настрой агента, приложи
+    скрин», получил вопрос «как ты рассуждал», закрыл окно и сдал сам с третьей
+    попытки. Разбирать ход мысли там было нечего.
+    """
+    stem = (
+        "МИССИЯ 1 «Рабочая среда». Настрой агента и получи результат. "
+        "Приложи скрин, где агент ответил.\nПринято, если:\n"
+        "1. Приложен указанный артефакт: скрин, файл или ссылка."
+    )
+    view = TutorTaskView(task_id=1, stem=stem, task_type="SA_COM")
+    assert pick_mode(view, has_student_code=False) == "mission"
+
+
+def test_mission_beats_other_modes():
+    """Миссия проверяется ПЕРВОЙ: иначе любой другой режим начнёт искать
+    несуществующий алгоритм."""
+    stem = "Миссия: приложи скрин и впиши команду.\nПринято, если: приложен артефакт."
+    view = TutorTaskView(task_id=1, stem=stem, task_type="SC", is_single_construct=True)
+    assert pick_mode(view, has_student_code=True) == "mission"
+
+
+def test_ordinary_task_is_not_mistaken_for_mission():
+    """Обычная задача миссией не считается — иначе режим съест всё подряд."""
+    view = TutorTaskView(
+        task_id=1,
+        stem="Напиши программу: считай 10 чисел и выведи сумму чётных.",
+        task_type="SA_COM",
+    )
+    assert pick_mode(view, has_student_code=False) == "concept"
+
+
+def test_mission_mode_allows_step_by_step_setup():
+    """В миссии пошаговость РАЗРЕШЕНА: настройка не учебная задача.
+
+    Общий запрет на пошаговый план существует, чтобы ученик думал сам. Но
+    угадывание, где кнопка, ничему не учит — учебная цель здесь результат
+    миссии, а не поиск настроек.
+    """
+    view = TutorTaskView(task_id=1, stem="s", task_type="SA_COM")
+    flat = " ".join(build_system_prompt(view, "mission").split())
+    assert "пошаговость РАЗРЕШЕНА" in flat
+    assert "не выполняешь миссию за ученика" in flat
+    assert "критериям приёмки" in flat
+
+
+def test_opening_does_not_ask_what_he_tried_before_first_submission():
+    """Ученику без единой сдачи не задают вопрос «что уже попробовал».
+
+    Ответить на него нечего, кроме «ничего», и разговор на этом кончается —
+    ровно так ушёл первый реальный ученик.
+    """
+    view = TutorTaskView(task_id=1, stem="Задание", task_type="SA")
+    opening = build_opening_user_message(view, None)
+    assert "не спрашивай, что он уже пробовал" in opening
+    assert "где он застрял" in opening
+
+    with_answer = build_opening_user_message(view, "мой ответ")
+    assert "что уже попробовал" in with_answer
