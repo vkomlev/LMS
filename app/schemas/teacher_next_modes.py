@@ -6,6 +6,8 @@ from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.code_review import CodeReviewReport
+
 
 # ----- Help Request Claim Next -----
 
@@ -92,7 +94,7 @@ class ReviewClaimItem(BaseModel):
     # включения оценки, и у не-кодовых заданий поле остаётся null, клиент просто
     # не рисует блок. Ученику это поле не уходит — оно только здесь и в
     # `TaskResultRead`, обе поверхности доступны лишь персоналу.
-    code_review: Optional[Dict[str, Any]] = Field(
+    code_review: Optional[CodeReviewReport] = Field(
         None,
         description=(
             "Машинная оценка работы: секции `code_quality`, далее `ai_authorship` и "

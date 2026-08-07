@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.code_review import CodeReviewReport
+
 
 class TaskHistoryAttempt(BaseModel):
     """Одна попытка ученика по заданию (строка ``task_results`` неотменённой попытки)."""
@@ -44,6 +46,16 @@ class TaskHistoryAttempt(BaseModel):
     comment: Optional[str] = Field(
         default=None,
         description="Комментарий преподавателя (ручная проверка / regrade), из metrics.comment",
+    )
+    code_review: Optional[CodeReviewReport] = Field(
+        default=None,
+        description=(
+            "tsk-302: машинная оценка кода этой попытки — отчёт ЦЕЛИКОМ (замечания, "
+            "обоснование вердикта об авторстве, разбор линтера). В отличие от ленты и "
+            "прогресса, где показывается только значок, здесь преподаватель смотрит "
+            "одну работу и подробности уместны. ТОЛЬКО преподавательский путь: "
+            "ученическая сборка этот ключ не кладёт вовсе (см. task_history_service)"
+        ),
     )
     checked_at: Optional[datetime] = Field(
         default=None, description="Когда преподаватель проверил (у авто-типов null)"

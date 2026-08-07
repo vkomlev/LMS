@@ -433,3 +433,108 @@ async def test_service_gates_solution_by_flag(hgraph):
     )
     assert with_sol is not None and with_sol["solution"] is not None
     assert with_sol["solution"]["accepted_answers"] == [{"value": "42", "score": 10}]
+
+
+# ─── Машинная оценка кода: только персоналу (tsk-302) ───────────────────────
+
+
+async def _stamp_code_review(db, *, user_id: int, task_id: int) -> dict:
+    """Записать отчёт машинной оценки на попытки ученика по заданию."""
+    report = {
+        "status": "done",
+        "language": "Python",
+        "code_quality": {"score": 4, "notes": ["магические числа"]},
+        "ai_authorship": {
+            "verdict": "ai_likely",
+            "reasoning": "равномерный стиль и docstring не по уровню курса",
+        },
+    }
+    await db.execute(
+        text(
+            "UPDATE task_results SET code_review = CAST(:r AS jsonb) "
+            "WHERE user_id = :u AND task_id = :t"
+        ),
+        {"r": json.dumps(report), "u": user_id, "t": task_id},
+    )
+    await db.commit()
+    return report
+
+
+async def test_student_history_never_carries_code_review(hgraph, client):
+    """
+    Ученику отчёт не уходит ПО СЕТИ, даже когда он есть в базе.
+
+    Проверяем не схему и не экран, а тело реального ответа: прятать вердикт
+    «похоже на код от ИИ» на клиенте бессмысленно — ученик открывает F12 и
+    читает его сам. Ревью 2026-08-07 нашло ровно такую утечку: поле клали в
+    каждую попытку безусловно, а ученический эндпоинт собирает те же попытки.
+    """
+    ids = hgraph["ids"]
+    await _stamp_code_review(hgraph["db"], user_id=ids["student1"], task_id=ids["task_sa"])
+
+    resp = await client.get(
+        f"/api/v1/me/tasks/{ids['task_sa']}/history",
+        headers={"Authorization": f"Bearer {hgraph['tokens']['student1']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["attempts"]) == 2, "история ученика на месте, режем только оценку"
+
+    for attempt in body["attempts"]:
+        assert not attempt.get("code_review"), "оценка не должна доезжать до ученика"
+
+    # Грубая страховка от обхода через любое другое поле: вердикта нет нигде
+    # в теле ответа, как бы его ни переименовали.
+    raw = resp.text
+    assert "ai_likely" not in raw and "authorship" not in raw
+    assert "магические числа" not in raw
+
+
+async def test_teacher_history_shows_full_code_review(hgraph, client):
+    """Обратная сторона: преподаватель получает отчёт целиком, с обоснованием."""
+    ids = hgraph["ids"]
+    report = await _stamp_code_review(
+        hgraph["db"], user_id=ids["student1"], task_id=ids["task_sa"]
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/students/{ids['student1']}/tasks/{ids['task_sa']}/history",
+        headers={"Authorization": f"Bearer {hgraph['tokens']['teacher']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    attempts = resp.json()["attempts"]
+    for a in attempts:
+        got = a["code_review"]
+        # Сверяем по значащим полям, а не целиком: отчёт отдаётся схемой, и
+        # незаполненные разделы приезжают как null — сравнение со словарём из
+        # базы ловило бы это как расхождение, которым оно не является.
+        assert got["status"] == report["status"]
+        assert got["code_quality"] == report["code_quality"]
+        assert got["ai_authorship"] == report["ai_authorship"]
+
+
+async def test_service_gates_code_review_by_same_flag(hgraph):
+    """
+    Сборка режет оценку тем же флагом, что и эталон.
+
+    Флаг один намеренно: это одна граница «видит только персонал». Тест
+    сторожит именно связку — если оценку когда-нибудь отвяжут от неё
+    отдельным параметром, у границы появится вторая половина, про которую
+    забудут при следующей правке.
+    """
+    ids, db = hgraph["ids"], hgraph["db"]
+    await _stamp_code_review(db, user_id=ids["student1"], task_id=ids["task_sa"])
+
+    student_view = await task_history_service.build_task_history(
+        db, user_id=ids["student1"], task_id=ids["task_sa"], include_solution=False
+    )
+    assert student_view is not None
+    assert all("code_review" not in a for a in student_view["attempts"]), (
+        "на ученическом пути ключ не кладётся вовсе, а не выставляется в None"
+    )
+
+    staff_view = await task_history_service.build_task_history(
+        db, user_id=ids["student1"], task_id=ids["task_sa"], include_solution=True
+    )
+    assert staff_view is not None
+    assert all(a["code_review"]["status"] == "done" for a in staff_view["attempts"])

@@ -33631,6 +33631,351 @@
           }
         }
       }
+    },
+    "/api/v1/ai-tutor/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "ai_tutor"
+        ],
+        "summary": "Открыть разговор с наставником по заданию",
+        "description": "Состояние разговора текущего ученика по заданию (создаёт при первом входе).\n\nСессия жёстко привязана к `current_user`: чужой разговор по чужому заданию\nнедостижим — идентификатор сессии в запрос вообще не передаётся.",
+        "operationId": "get_session_api_v1_ai_tutor_tasks__task_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TutorSessionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai-tutor/tasks/{task_id}/ask": {
+      "post": {
+        "tags": [
+          "ai_tutor"
+        ],
+        "summary": "Спросить наставника (поток server-sent events)",
+        "description": "Отправить реплику и получить ответ потоком.\n\nОшибка ДО первого куска превращается в понятную деградацию, а не в 5xx:\nученику незачем видеть код ошибки, ему нужен следующий шаг. Ошибка ПОСЛЕ\nпервого куска приходит как `truncated` — написанное не стирается.",
+        "operationId": "ask_api_v1_ai_tutor_tasks__task_id__ask_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TutorAskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ai-tutor/tasks/{task_id}/close": {
+      "post": {
+        "tags": [
+          "ai_tutor"
+        ],
+        "summary": "Закрыть разговор",
+        "operationId": "close_session_api_v1_ai_tutor_tasks__task_id__close_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Task Id"
+            }
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -34045,6 +34390,17 @@
             ],
             "title": "Outcome",
             "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null"
+          },
+          "code_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewBadge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-302: машинная оценка кода в компактном виде — только у событий task_solved по заданиям с кодом. Null у остальных типов событий и у работ, где оценки нет. Ученику лента недоступна"
           }
         },
         "type": "object",
@@ -36095,6 +36451,401 @@
           "period"
         ],
         "title": "ClosePeriodRequest"
+      },
+      "CodeReviewAuthorship": {
+        "properties": {
+          "verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict",
+            "description": "ai_likely | ambiguous | student_likely",
+            "examples": [
+              "student_likely"
+            ]
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reasoning",
+            "description": "Почему модель так решила"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewAuthorship",
+        "description": "Признак ИИ-авторства. Эвристика и повод присмотреться, а не вывод."
+      },
+      "CodeReviewBadge": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "pending — оценка готовится; done — готова; failed — не вышла; skipped — оценивать нечего",
+            "examples": [
+              "done",
+              "pending"
+            ]
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "Чистота кода, 0–10. None, если оценка ещё не готова или не удалась",
+            "examples": [
+              8,
+              null
+            ]
+          },
+          "ai_suspected": {
+            "type": "boolean",
+            "title": "Ai Suspected",
+            "description": "Модель сочла стиль похожим на код от ИИ. Это эвристика и повод присмотреться, а не вывод о списывании",
+            "default": false
+          },
+          "degraded": {
+            "type": "boolean",
+            "title": "Degraded",
+            "description": "Оценка неполная: модель была недоступна, есть только разбор линтера",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "CodeReviewBadge",
+        "description": "Машинная оценка кода в объёме, достаточном для значка в списке."
+      },
+      "CodeReviewComplexity": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "complexity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complexity"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewComplexity"
+      },
+      "CodeReviewLintMessage": {
+        "properties": {
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Symbol",
+            "examples": [
+              "magic-value-comparison"
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewLintMessage",
+        "description": "Одно замечание линтера."
+      },
+      "CodeReviewPylint": {
+        "properties": {
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "Оценка pylint, 0–10",
+            "examples": [
+              8.75
+            ]
+          },
+          "messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CodeReviewLintMessage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewPylint"
+      },
+      "CodeReviewQuality": {
+        "properties": {
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score",
+            "description": "Чистота кода, 0–10",
+            "examples": [
+              7
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Замечания человеческим языком, без номенклатуры линтера"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewQuality",
+        "description": "Чистота кода глазами модели."
+      },
+      "CodeReviewRadon": {
+        "properties": {
+          "complexity": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/CodeReviewComplexity"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Complexity"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewRadon"
+      },
+      "CodeReviewReport": {
+        "properties": {
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status",
+            "examples": [
+              "done",
+              "pending",
+              "failed",
+              "skipped"
+            ]
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language",
+            "examples": [
+              "Python",
+              "C++ (Arduino)"
+            ]
+          },
+          "code_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ai_authorship": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewAuthorship"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "static": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewStatic"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Разбор линтера (pylint/radon) — только для Python"
+          },
+          "degraded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded",
+            "description": "Модель была недоступна, в отчёте только статический анализ"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "backfill": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backfill",
+            "description": "Работа попала в очередь пересчётом задним числом"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewReport",
+        "description": "Полный отчёт машинной оценки — то, что лежит в ``task_results.code_review``.\n\nСхема описана явно, а не отдана «просто словарём», чтобы клиент получал\nтипы, а не приведения: без неё в SPW приходилось в каждом месте писать\n``as CodeReview``, и опечатка в имени поля не ловилась ничем.\n\n``extra=\"allow\"`` намеренно: отчёт пишет фоновый тик, и появление в нём\nнового раздела не должно молча обрезать данные на выдаче."
+      },
+      "CodeReviewStatic": {
+        "properties": {
+          "pylint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewPylint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "radon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewRadon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "CodeReviewStatic",
+        "description": "Разбор линтера — только для Python; для прочих языков секции нет."
       },
       "CourseCardPatch": {
         "properties": {
@@ -44548,6 +45299,17 @@
             "title": "Needs Attention",
             "description": "Требует внимания: BLOCKED_LIMIT, открытая заявка помощи, ожидает ручной проверки, или возвращено на доработку (tsk-336). У узла course — OR по всему поддереву",
             "default": false
+          },
+          "code_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewBadge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-302: машинная оценка кода по ПОСЛЕДНЕЙ попытке — компактный вид для значка в списке. Только у узлов task с кодовым заданием; у курсов, материалов и обычных заданий null. Ученику этот экран недоступен"
           }
         },
         "type": "object",
@@ -45054,14 +45816,12 @@
           "code_review": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/CodeReviewReport"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Code Review",
             "description": "Машинная оценка работы: секции `code_quality`, далее `ai_authorship` и `timing`. Null — оценки нет (не код, старая работа, сбой анализа)."
           }
         },
@@ -48379,6 +49139,17 @@
             ],
             "title": "Comment",
             "description": "Комментарий преподавателя (ручная проверка / regrade), из metrics.comment"
+          },
+          "code_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeReviewReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "tsk-302: машинная оценка кода этой попытки — отчёт ЦЕЛИКОМ (замечания, обоснование вердикта об авторстве, разбор линтера). В отличие от ленты и прогресса, где показывается только значок, здесь преподаватель смотрит одну работу и подробности уместны. ТОЛЬКО преподавательский путь: ученическая сборка этот ключ не кладёт вовсе (см. task_history_service)"
           },
           "checked_at": {
             "anyOf": [
@@ -51711,6 +52482,78 @@
         ],
         "title": "TurtleTrace",
         "description": "Полная трасса исполнения программы в песочнице turtle (tsk-412)."
+      },
+      "TutorAskRequest": {
+        "properties": {
+          "message": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message",
+            "description": "Реплика ученика. Пусто на первом обращении — наставник начинает сам."
+          }
+        },
+        "type": "object",
+        "title": "TutorAskRequest"
+      },
+      "TutorSessionRead": {
+        "properties": {
+          "session_id": {
+            "type": "integer",
+            "title": "Session Id"
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "mode": {
+            "type": "string",
+            "title": "Mode"
+          },
+          "turns": {
+            "type": "integer",
+            "title": "Turns"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "soft_limit_reached": {
+            "type": "boolean",
+            "title": "Soft Limit Reached"
+          },
+          "visibility_notice": {
+            "type": "string",
+            "title": "Visibility Notice",
+            "description": "Показывается ДО первой реплики: ученик должен знать, кто это прочитает",
+            "default": "Этот разговор видят твой преподаватель и методист — они помогают, а не проверяют."
+          },
+          "messages": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "task_id",
+          "mode",
+          "turns",
+          "status",
+          "soft_limit_reached"
+        ],
+        "title": "TutorSessionRead",
+        "description": "Состояние разговора. Плашка о видимости — обязательное поле, не опция."
       },
       "UnreadBySenderItem": {
         "properties": {

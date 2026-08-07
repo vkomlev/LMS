@@ -76,7 +76,9 @@ def test_trigger_ignores_plain_text_tasks() -> None:
 
 # ---------- Фоновый тик ----------
 
-async def _seed_pending(db, *, code: str | None, stem: str = "напиши программу") -> int:
+async def _seed_pending(
+    db, *, code: str | None, stem: str = "напиши программу", backfill: bool = False
+) -> int:
     """Создаёт работу, помеченную к оценке, и возвращает её id."""
     course_id = (await db.execute(text(
         "INSERT INTO courses (title, access_level) VALUES ('tsk302 stage3', 'auto_check') RETURNING id"
@@ -99,7 +101,8 @@ async def _seed_pending(db, *, code: str | None, stem: str = "напиши пр�
         "VALUES (0, :u, :t, :now, 0, :now, 10, 'test', CAST(:a AS jsonb), CAST(:cr AS jsonb)) RETURNING id"
     ), {
         "u": user_id, "t": task_id, "now": now,
-        "a": json.dumps(answer), "cr": json.dumps({"status": "pending"}),
+        "a": json.dumps(answer),
+        "cr": json.dumps({"status": "pending", **({"backfill": True} if backfill else {})}),
     })).scalar_one()
     await db.commit()
     return result_id
@@ -302,6 +305,26 @@ async def test_static_analysis_survives_model_failure(
         await _cleanup(db, result_id)
 
 
+def test_user_message_contains_lowercase_json_keyword() -> None:
+    """
+    Слово «json» строчными обязано быть в ПОЛЬЗОВАТЕЛЬСКОМ сообщении.
+
+    Требование OpenAI-совместимых провайдеров при `response_format=json_object`:
+    без него приходит HTTP 400 «Response input messages must contain the word
+    'json' in some form». Поймано живым прогоном на проде 2026-08-07 — в промпте
+    было «объектом JSON» заглавными, и 4 работы из 7 в пересчёте отвалились с
+    `LLMMalformed`. Проверка именно на user-сообщении: наличия слова в системном
+    промпте провайдеру НЕ хватает, это тоже проверено живьём.
+    """
+    from app.services.code_review_service import _build_user_message
+
+    message = _build_user_message("x = 1\nprint(x)", task_stem="условие")
+    assert "json" in message, (
+        "провайдер отвергнет запрос с response_format=json_object, если в "
+        "пользовательском сообщении нет слова 'json' строчными"
+    )
+
+
 def test_parse_verdict_survives_model_quirks() -> None:
     """
     Н8: разбор ответа модели не должен падать на предсказуемых причудах.
@@ -347,3 +370,49 @@ def test_stage3_report_still_hidden_from_student() -> None:
                 f"{schema.__name__}.{field_name} утекает признак ИИ-авторства ученику"
             )
             assert "code_review" not in lowered
+
+
+async def test_backfill_marker_survives_the_report(
+    db, db_session_factory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Работа, попавшая в очередь пересчётом, остаётся помеченной и после оценки.
+
+    Отчёт пишется целиком, поэтому без явного переноса метка терялась бы на
+    первом же тике — и потом нечем было бы отделить оценки старых работ от
+    оценок живых сдач (находка ревью 2026-08-07).
+    """
+    result_id = await _seed_pending(db, code="x = 1\nprint(x)\n", backfill=True)
+
+    async def _fake_review(code, *, task_stem=None, student_id=None):
+        return {"language": "Python", "code_quality": {"score": 7}, "model": "test-model"}
+
+    monkeypatch.setattr(code_review_cron_service, "review_student_code", _fake_review)
+    monkeypatch.setattr(code_review_cron_service, "analyze_student_code_quality", lambda code: None)
+
+    try:
+        await code_review_cron_service.code_review_cron_tick(db_session_factory)
+        review = await _read_review(db, result_id)
+        assert review["status"] == "done"
+        assert review["backfill"] is True
+    finally:
+        await _cleanup(db, result_id)
+
+
+async def test_live_submission_is_not_marked_as_backfill(
+    db, db_session_factory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Обратная сторона: живой сдаче метка не приписывается ни при каких условиях."""
+    result_id = await _seed_pending(db, code="x = 1\nprint(x)\n")
+
+    async def _fake_review(code, *, task_stem=None, student_id=None):
+        return {"language": "Python", "code_quality": {"score": 7}, "model": "test-model"}
+
+    monkeypatch.setattr(code_review_cron_service, "review_student_code", _fake_review)
+    monkeypatch.setattr(code_review_cron_service, "analyze_student_code_quality", lambda code: None)
+
+    try:
+        await code_review_cron_service.code_review_cron_tick(db_session_factory)
+        assert "backfill" not in (await _read_review(db, result_id))
+    finally:
+        await _cleanup(db, result_id)

@@ -8,9 +8,10 @@
 * заявки помощи по этому заданию + диалог ответов (``help_requests`` +
   ``help_request_replies``);
 * подсказки — счётчики из ``learning_events`` (``get_hint_open_counts``);
-* правило проверки / эталон (``solution_rules``) — ТОЛЬКО когда
-  ``include_solution=True`` (преподавательский путь). Ученический путь блок не
-  собирает вовсе: разграничение видимости структурное, а не фильтрацией на выходе.
+* правило проверки / эталон (``solution_rules``) и машинная оценка кода
+  (``code_review``, tsk-302) — ТОЛЬКО когда ``include_solution=True``
+  (преподавательский путь). Ученический путь их не собирает вовсе: разграничение
+  видимости структурное, а не фильтрацией на выходе и не прятанием на клиенте.
 
 ACL здесь НЕ проверяется — это делает вызывающий эндпоинт (учитель — ACL портала
 ``ensure_can_edit_progress``; ученик — только своя история, ``current_user.id``).
@@ -105,12 +106,18 @@ async def _load_task_meta(db: AsyncSession, task_id: int) -> Optional[Dict[str, 
 
 
 async def _load_attempts(
-    db: AsyncSession, *, user_id: int, task_id: int
+    db: AsyncSession, *, user_id: int, task_id: int, include_code_review: bool
 ) -> List[Dict[str, Any]]:
     """Попытки ученика по заданию (неотменённые), в хронологическом порядке.
 
     Один запрос независимо от числа попыток. ``attempt_no`` — 1-based порядковый
     номер по времени сдачи. ``manual`` — синтетическая попытка ручного зачёта.
+
+    :param include_code_review: True (преподаватель) — добавить машинную оценку
+        кода. На ученическом пути ключ НЕ кладётся вовсе — ровно как блок
+        ``solution`` выше: разграничение видимости структурное, а не прятанием
+        на клиенте. Иначе ученик увидел бы вердикт об ИИ-авторстве в теле
+        ответа, даже если экран его не рисует (найдено ревью 2026-08-07).
     """
     rows = (
         await db.execute(
@@ -118,7 +125,7 @@ async def _load_attempts(
                 "SELECT tr.id AS task_result_id, tr.attempt_id, tr.submitted_at, "
                 "       tr.score, COALESCE(tr.max_score, 0) AS max_score, "
                 "       tr.is_correct, tr.answer_json, tr.metrics->>'comment' AS comment, "
-                "       tr.checked_at, tr.source_system "
+                "       tr.checked_at, tr.source_system, tr.code_review "
                 "FROM task_results tr "
                 "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                 "WHERE tr.user_id = :user_id AND tr.task_id = :task_id "
@@ -130,22 +137,26 @@ async def _load_attempts(
 
     attempts: List[Dict[str, Any]] = []
     for idx, r in enumerate(rows, start=1):
-        attempts.append(
-            {
-                "task_result_id": int(r["task_result_id"]),
-                "attempt_id": int(r["attempt_id"]) if r["attempt_id"] is not None else None,
-                "attempt_no": idx,
-                "submitted_at": r["submitted_at"],
-                "score": int(r["score"] or 0),
-                "max_score": int(r["max_score"] or 0),
-                "is_correct": r["is_correct"],
-                "status": _attempt_status(r["is_correct"]),
-                "answer_json": r["answer_json"],
-                "comment": r["comment"],
-                "checked_at": r["checked_at"],
-                "manual": (r["source_system"] == _MANUAL_SOURCE),
-            }
-        )
+        attempt: Dict[str, Any] = {
+            "task_result_id": int(r["task_result_id"]),
+            "attempt_id": int(r["attempt_id"]) if r["attempt_id"] is not None else None,
+            "attempt_no": idx,
+            "submitted_at": r["submitted_at"],
+            "score": int(r["score"] or 0),
+            "max_score": int(r["max_score"] or 0),
+            "is_correct": r["is_correct"],
+            "status": _attempt_status(r["is_correct"]),
+            "answer_json": r["answer_json"],
+            "comment": r["comment"],
+            "checked_at": r["checked_at"],
+            "manual": (r["source_system"] == _MANUAL_SOURCE),
+        }
+        if include_code_review:
+            # tsk-302: отчёт целиком — карточка показывает одну работу, и
+            # преподавателю нужны замечания с обоснованием, а не значок.
+            # Ученику ключ не кладётся вовсе (см. докстринг функции).
+            attempt["code_review"] = r["code_review"]
+        attempts.append(attempt)
     return attempts
 
 
@@ -249,13 +260,18 @@ async def build_task_history(
     """Собрать историю по паре (ученик, задание). None — задания нет (404 у вызова).
 
     :param include_solution: True (преподаватель) — добавить блок ``solution``
-        (правило проверки/эталон). False (ученик) — блок не собирается вовсе.
+        (правило проверки/эталон) и машинную оценку кода. False (ученик) — ни то,
+        ни другое не собирается вовсе. Флаг один на обе вещи намеренно: это одна
+        и та же граница «видит только персонал», и раздвоение её со временем
+        разъедется.
     """
     task_meta = await _load_task_meta(db, task_id)
     if task_meta is None:
         return None
 
-    attempts = await _load_attempts(db, user_id=user_id, task_id=task_id)
+    attempts = await _load_attempts(
+        db, user_id=user_id, task_id=task_id, include_code_review=include_solution
+    )
     help_requests = await _load_help_requests(db, user_id=user_id, task_id=task_id)
     hints_total, hints_text, hints_video = await get_hint_open_counts(
         db, user_id=user_id, task_id=task_id

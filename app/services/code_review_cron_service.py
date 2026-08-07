@@ -57,7 +57,8 @@ _PENDING_SQL = """
            tr.answer_json->'response'->>'value'   AS value,
            tr.answer_json->'response'->>'comment' AS comment,
            t.task_content->>'stem'                AS stem,
-           COALESCE((tr.code_review->>'attempts')::int, 0) AS attempts
+           COALESCE((tr.code_review->>'attempts')::int, 0) AS attempts,
+           COALESCE((tr.code_review->>'backfill')::bool, false) AS backfill
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
@@ -95,13 +96,13 @@ async def code_review_cron_tick(
             return summary
 
         for row in rows:
-            result_id, student_id, value, comment, stem, attempts = row
+            result_id, student_id, value, comment, stem, attempts, backfill = row
             code = pick_code_for_review(value, comment)
             if not code:
                 # Программы в ответе нет (одно вложение, ответ-однострочник) —
                 # оценивать нечего. Снимаем пометку, чтобы работа не крутилась
                 # в очереди вечно.
-                await _write(db, result_id, {"status": "skipped", "reason": "no_code"})
+                await _write(db, result_id, {"status": "skipped", "reason": "no_code"}, backfill=backfill)
                 summary["skipped"] += 1
                 continue
 
@@ -125,7 +126,7 @@ async def code_review_cron_tick(
                 payload: Dict[str, Any] = {"status": "done", **verdict}
                 if static_ok:
                     payload["static"] = static
-                await _write(db, result_id, payload)
+                await _write(db, result_id, payload, backfill=backfill)
                 summary["reviewed"] += 1
                 continue
 
@@ -137,7 +138,7 @@ async def code_review_cron_tick(
                     "status": "pending",
                     "attempts": attempts_done,
                     "last_error": error,
-                })
+                }, backfill=backfill)
                 summary["retried"] += 1
             else:
                 # Модель недоступна окончательно — но статический анализ мог
@@ -152,7 +153,7 @@ async def code_review_cron_tick(
                 if static_ok:
                     payload["static"] = static
                     payload["degraded"] = True
-                await _write(db, result_id, payload)
+                await _write(db, result_id, payload, backfill=backfill)
                 # Считаем раздельно: в БД у деградированной работы `done`, и
                 # называть её в логе провалом — врать самому себе при разборе.
                 summary["degraded" if static_ok else "failed"] += 1
@@ -168,8 +169,18 @@ async def code_review_cron_tick(
     return summary
 
 
-async def _write(db: AsyncSession, result_id: int, payload: Dict[str, Any]) -> None:
-    """Записывает отчёт целиком: он самодостаточен, сливать со старым нечего."""
+async def _write(
+    db: AsyncSession, result_id: int, payload: Dict[str, Any], *, backfill: bool = False
+) -> None:
+    """Записывает отчёт целиком: он самодостаточен, сливать со старым нечего.
+
+    :param backfill: работа попала в очередь пересчётом задним числом. Метку
+        переносим в новый отчёт: запись идёт целиком, и иначе она потерялась бы
+        на первом же тике — а потом нечем было бы отделить оценки старых работ
+        от оценок живых сдач.
+    """
+    if backfill:
+        payload = {**payload, "backfill": True}
     await db.execute(
         text("UPDATE task_results SET code_review = CAST(:payload AS jsonb) WHERE id = :id"),
         {"payload": _json(payload), "id": result_id},

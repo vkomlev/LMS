@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.current_user import CurrentUser
+from app.schemas.code_review import build_code_review_badge
 from app.services import roles_service
 from app.services.teacher_queue_service import teacher_course_acl
 from app.utils.task_title import humanize_task_title
@@ -97,7 +98,8 @@ async def _fetch_task_solved(
                 SELECT tr.user_id AS student_id, u.full_name AS student_name,
                        tr.task_id, t.course_id, t.external_uid,
                        t.task_content->>'title' AS title_raw, t.task_content->>'stem' AS stem,
-                       tr.is_correct, tr.submitted_at AS event_at
+                       tr.is_correct, tr.submitted_at AS event_at,
+                       tr.code_review
                 FROM task_results tr
                 JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL
                 JOIN tasks t ON t.id = tr.task_id
@@ -129,6 +131,11 @@ async def _fetch_task_solved(
             "timestamp": r["event_at"],
             "summary": f"{student} — {verb} задание «{title}» ({verdict})",
             "outcome": outcome,
+            # tsk-302: компактный значок машинной оценки. Полный отчёт в ленту не
+            # тащим — на сотне событий это лишний вес ради данных, которые в
+            # строку списка всё равно не поместятся; подробности преподаватель
+            # смотрит в карточке задания.
+            "code_review": build_code_review_badge(r["code_review"]),
         })
     return events
 

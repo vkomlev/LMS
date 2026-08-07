@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, require_role
 from app.auth.current_user import CurrentUser
+from app.schemas.code_review import CodeReviewBadge
 from app.services import manual_progress_service
 
 logger = logging.getLogger("api.teacher_progress")
@@ -157,6 +158,14 @@ class ProgressTreeItem(BaseModel):
             "Требует внимания: BLOCKED_LIMIT, открытая заявка помощи, ожидает "
             "ручной проверки, или возвращено на доработку (tsk-336). У узла "
             "course — OR по всему поддереву"
+        ),
+    )
+    code_review: Optional[CodeReviewBadge] = Field(
+        default=None,
+        description=(
+            "tsk-302: машинная оценка кода по ПОСЛЕДНЕЙ попытке — компактный вид "
+            "для значка в списке. Только у узлов task с кодовым заданием; у курсов, "
+            "материалов и обычных заданий null. Ученику этот экран недоступен"
         ),
     )
 

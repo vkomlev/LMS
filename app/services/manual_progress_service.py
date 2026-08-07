@@ -70,6 +70,7 @@ from app.services import audit_service
 from app.services.checking_service import CheckingService
 from app.services.learning_engine_service import LearningEngineService
 from app.services.teacher_queue_service import teacher_course_acl
+from app.schemas.code_review import build_code_review_badge
 from app.utils.task_title import HINT_MAX_LEN, humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -1014,7 +1015,7 @@ async def get_student_progress(
                     "SELECT DISTINCT ON (tr.task_id) "
                     "       tr.task_id, tr.source_system, tr.checked_by, tr.checked_at, "
                     "       a.id AS attempt_id, tr.submitted_at, tr.score, tr.max_score, "
-                    "       tr.answer_json, tr.is_correct "
+                    "       tr.answer_json, tr.is_correct, tr.code_review "
                     "FROM task_results tr "
                     "JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:task_ids) "
@@ -1243,6 +1244,10 @@ async def get_student_progress(
                 "pending_review": pending_review,
                 "returned_for_rework": returned_for_rework,
                 "needs_attention": needs_attention,
+                # tsk-302: значок машинной оценки по последней попытке. Берётся из
+                # той же батч-выборки `last_results`, что и остальные её поля, —
+                # отдельного запроса на задание не появляется.
+                "code_review": build_code_review_badge((last or {}).get("code_review")),
             })
             own_total[cid] += 1
             if state.state == "PASSED" or tid in skipped_task_ids:

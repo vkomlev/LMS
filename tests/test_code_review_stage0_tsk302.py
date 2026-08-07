@@ -211,8 +211,15 @@ async def test_claim_returns_code_review(db, client) -> None:
         )
         assert resp.status_code == 200, resp.text
         item = resp.json()["item"]
-        assert item["code_review"] == _SAMPLE_REPORT
-        assert item["code_review"]["code_quality"]["pylint"]["score"] == 8.75
+        # Отчёт отдаётся описанной схемой (tsk-302, находка ревью про приведения
+        # типов на клиенте), поэтому в ответе появляются явные null у полей,
+        # которых в этой записи нет. Сравнивать словари целиком нельзя — но
+        # ГЛАВНОЕ обязано выполняться: старый формат этапа 0 (pylint/radon
+        # внутри code_quality) доезжает без потерь, его держит extra="allow".
+        got = item["code_review"]["code_quality"]
+        assert got["pylint"] == _SAMPLE_REPORT["code_quality"]["pylint"]
+        assert got["radon"] == _SAMPLE_REPORT["code_quality"]["radon"]
+        assert got["pylint"]["score"] == 8.75
     finally:
         await _cleanup(db, ids=[methodist_id, student_id], task_ids=[task_id], rids=[rid])
 

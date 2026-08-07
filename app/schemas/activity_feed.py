@@ -10,6 +10,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.code_review import CodeReviewBadge
+
 ActivityEventType = Literal["task_solved", "help_requested", "material_studied"]
 
 
@@ -29,6 +31,14 @@ class ActivityFeedEvent(BaseModel):
         description=(
             "task_solved: correct|incorrect|pending_review; "
             "help_requested: open|closed; material_studied: всегда null"
+        ),
+    )
+    code_review: Optional[CodeReviewBadge] = Field(
+        default=None,
+        description=(
+            "tsk-302: машинная оценка кода в компактном виде — только у событий "
+            "task_solved по заданиям с кодом. Null у остальных типов событий и у "
+            "работ, где оценки нет. Ученику лента недоступна"
         ),
     )
 
