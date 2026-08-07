@@ -12,11 +12,15 @@ tsk-302: поставить в очередь на оценку работы, с
 учётом расхода. Иначе пришлось бы держать вторую копию логики оценки, которая
 неминуемо разъедется с основной.
 
-Отбор — те же два правила, что и у живого приёма ответа, чтобы история и
-новые сдачи оценивались одинаково:
-  • задание помечено как кодовое (`turtle_sim` либо `code_ast`);
-  • в ответе есть ПРОГРАММА, а не однострочник «допиши строку»
-    (`pick_code_for_review`, см. находку ревью Б2).
+Отбор — то же правило, что и у живого приёма ответа, чтобы история и новые
+сдачи оценивались одинаково: **удалось ли достать из работы программу**
+(`pick_code_for_review`). Она смотрит вложение-исходник, поле ответа и
+комментарий; однострочники «допиши строку» и прозу отсекает сама.
+
+По пометке задания (`turtle_sim` / `code_ast`) отбирать НЕЛЬЗЯ — так было в
+первой редакции, и на прод-данных это отсекло почти всё: у заданий реального
+курса пометки нет, а код лежит во вложении (101 работа) или в комментарии
+(370 работ). Оценку из них получили 5.
 
 Работы, у которых `code_review` уже заполнен, не трогаются: повторная оценка
 стоила бы денег и перезаписала бы вердикт, на который преподаватель мог уже
@@ -55,16 +59,25 @@ logger = logging.getLogger("tsk302.backfill")
 _CANDIDATES_SQL = """
     SELECT tr.id,
            tr.user_id,
+           tr.attempt_id,
+           tr.task_id,
            t.external_uid,
            tr.answer_json->'response'->>'value'   AS value,
-           tr.answer_json->'response'->>'comment' AS comment
+           tr.answer_json->'response'->>'comment' AS comment,
+           tr.answer_json->'response'->'meta'->'attachments' AS attachments
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     LEFT JOIN attempts a ON a.id = tr.attempt_id
     WHERE (tr.code_review IS NULL OR tr.code_review = 'null'::jsonb)
       AND t.is_active
-      AND (t.solution_rules->'turtle_sim' IS NOT NULL
-           OR t.solution_rules->'short_answer'->'normalization' ? 'code_ast')
+      -- Дешёвый предфильтр: работа хоть чем-то похожа на кодовую. Настоящий
+      -- разбор («код это или проза») делает `pick_code_for_review` в Python —
+      -- повторять его логику на SQL значит завести вторую копию, которая
+      -- разъедется. По пометке задания фильтровать НЕЛЬЗЯ: у заданий реального
+      -- курса её нет, и именно так из пересчёта выпадали сотни работ.
+      AND (jsonb_typeof(tr.answer_json->'response'->'meta'->'attachments') = 'array'
+           OR COALESCE(TRIM(tr.answer_json->'response'->>'comment'), '') <> ''
+           OR tr.answer_json->'response'->>'value' LIKE '%' || CHR(10) || '%')
       AND (a.id IS NULL OR (a.cancelled_at IS NULL AND a.time_expired IS NOT TRUE))
     ORDER BY tr.submitted_at DESC
 """
@@ -78,16 +91,26 @@ async def collect(limit: int | None) -> Dict[str, Any]:
     async with async_session_factory() as db:
         rows = (await db.execute(text(_CANDIDATES_SQL))).fetchall()
 
-    for result_id, user_id, external_uid, value, comment in rows:
+    for (result_id, user_id, attempt_id, task_id, external_uid,
+         value, comment, attachments) in rows:
         # `--limit` режет только запись, а не разбор: иначе счётчики в отчёте
         # оказались бы из разных множеств (кандидаты — по всей базе, пропуски —
         # до места обрыва) и «пропущено» читалось бы как доля от всего корпуса.
-        code = pick_code_for_review(value, comment)
+        # `allow_untagged=True` — только здесь: у исторических файлов метки
+        # задания нет, а задним числом ученик их уже не перезальёт.
+        code = pick_code_for_review(
+            value, comment, attachments,
+            attempt_id=attempt_id, task_id=task_id, allow_untagged=True,
+        )
         if not code:
             skipped_no_program += 1
             continue
         picked.append({
             "id": result_id,
+            # Снимок кода: файл вложения изменяем — повторная загрузка по той
+            # же паре (попытка, задание) вытесняет прежний. Читай тик файл
+            # позже, он мог бы взять уже другую редакцию решения.
+            "code": code,
             "user_id": user_id,
             # external_uid nullable: у заданий, заведённых руками, его нет.
             "task": external_uid or f"task#{result_id}",
@@ -103,24 +126,28 @@ async def collect(limit: int | None) -> Dict[str, Any]:
     }
 
 
-async def apply(ids: List[int]) -> int:
-    """Помечает работы к оценке. Возвращает число обновлённых строк."""
-    if not ids:
+async def apply(rows: List[Dict[str, Any]]) -> int:
+    """Помечает работы к оценке, сохраняя снимок кода. Возвращает число строк."""
+    if not rows:
         return 0
+    updated = 0
     async with async_session_factory() as db:
-        res = await db.execute(
-            text(
-                "UPDATE task_results SET code_review = CAST(:payload AS jsonb) "
-                "WHERE id = ANY(:ids) "
-                # Условие ТО ЖЕ, что в отборе. Разойдись они — работа попала бы
-                # в список «к постановке в очередь», была бы посчитана в отчёте
-                # и молча не обновилась.
-                "AND (code_review IS NULL OR code_review = 'null'::jsonb)"
-            ),
-            {"payload": json.dumps({"status": "pending", "backfill": True}), "ids": ids},
-        )
+        for row in rows:
+            payload = {"status": "pending", "backfill": True, "code": row["code"]}
+            res = await db.execute(
+                text(
+                    "UPDATE task_results SET code_review = CAST(:payload AS jsonb) "
+                    "WHERE id = :id "
+                    # Условие ТО ЖЕ, что в отборе. Разойдись они — работа попала
+                    # бы в список «к постановке в очередь», была бы посчитана в
+                    # отчёте и молча не обновилась.
+                    "AND (code_review IS NULL OR code_review = 'null'::jsonb)"
+                ),
+                {"payload": json.dumps(payload, ensure_ascii=False), "id": row["id"]},
+            )
+            updated += res.rowcount or 0
         await db.commit()
-        return res.rowcount or 0
+    return updated
 
 
 async def main() -> None:
@@ -132,7 +159,7 @@ async def main() -> None:
     report = await collect(args.limit)
     to_queue = report["to_queue"]
 
-    print(f"Кандидатов (кодовые задания без отчёта): {report['candidates']}")
+    print(f"Кандидатов (работы без отчёта):          {report['candidates']}")
     print(f"Пропущено — нет программы в ответе:      {report['skipped_no_program']}")
     print(f"С программой в ответе:                   {report['with_program']}")
     if len(to_queue) != report["with_program"]:
@@ -150,7 +177,7 @@ async def main() -> None:
         print("\nЭто предпросмотр. Для записи добавьте --apply")
         return
 
-    updated = await apply([row["id"] for row in to_queue])
+    updated = await apply(to_queue)
     print(f"\nПомечено к оценке: {updated}")
     print("Дальше их разберёт фоновый тик (интервал — CODE_REVIEW_CRON_INTERVAL_MIN).")
 

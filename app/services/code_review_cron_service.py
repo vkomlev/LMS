@@ -38,7 +38,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services.code_quality_service import analyze_student_code_quality
-from app.services.code_review_service import pick_code_for_review, review_student_code
+from app.services.code_review_service import (
+    pick_code_attachment,
+    pick_code_for_review,
+    review_student_code,
+)
 
 logger = logging.getLogger("app.code_review_cron")
 
@@ -54,11 +58,15 @@ _scheduler: Optional[AsyncIOScheduler] = None
 _PENDING_SQL = """
     SELECT tr.id,
            tr.user_id,
+           tr.attempt_id,
+           tr.task_id,
            tr.answer_json->'response'->>'value'   AS value,
            tr.answer_json->'response'->>'comment' AS comment,
            t.task_content->>'stem'                AS stem,
+           tr.answer_json->'response'->'meta'->'attachments' AS attachments,
            COALESCE((tr.code_review->>'attempts')::int, 0) AS attempts,
-           COALESCE((tr.code_review->>'backfill')::bool, false) AS backfill
+           COALESCE((tr.code_review->>'backfill')::bool, false) AS backfill,
+           tr.code_review->>'code'                AS code_snapshot
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
@@ -96,13 +104,25 @@ async def code_review_cron_tick(
             return summary
 
         for row in rows:
-            result_id, student_id, value, comment, stem, attempts, backfill = row
-            code = pick_code_for_review(value, comment)
+            (result_id, student_id, attempt_id, task_id, value, comment, stem,
+             attachments, attempts, backfill, code_snapshot) = row
+            # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
+            # файл-вложение мог быть удалён следующей загрузкой ученика в этой
+            # же попытке (см. комментарий в `attempts.py`).
+            code = code_snapshot or pick_code_for_review(
+                value, comment, attachments, attempt_id=attempt_id, task_id=task_id
+            )
             if not code:
                 # Программы в ответе нет (одно вложение, ответ-однострочник) —
                 # оценивать нечего. Снимаем пометку, чтобы работа не крутилась
                 # в очереди вечно.
-                await _write(db, result_id, {"status": "skipped", "reason": "no_code"}, backfill=backfill)
+                #
+                # Причину различаем: работа с вложением, из которой код достать
+                # не вышло, — это не то же самое, что честное «программы нет».
+                # Со сваленными в одну кучу такие работы уже не найти и не
+                # пересчитать после починки разбора.
+                reason = "extract_failed" if pick_code_attachment(attachments) else "no_code"
+                await _write(db, result_id, {"status": "skipped", "reason": reason}, backfill=backfill)
                 summary["skipped"] += 1
                 continue
 
@@ -133,12 +153,15 @@ async def code_review_cron_tick(
             attempts_done = int(attempts) + 1
             can_retry = bool(verdict.get("retryable")) and attempts_done < settings.code_review_max_attempts
             if can_retry:
-                # Остаёмся в очереди: следующий тик попробует снова.
+                # Остаёмся в очереди: следующий тик попробует снова. Переносим
+                # ФАКТИЧЕСКИ использованный код, а не то, что лежало в снимке:
+                # если снимка не было и код прочитан из файла, повтор иначе
+                # остался бы ни с чем — файл к тому времени мог исчезнуть.
                 await _write(db, result_id, {
                     "status": "pending",
                     "attempts": attempts_done,
                     "last_error": error,
-                }, backfill=backfill)
+                }, backfill=backfill, code_snapshot=code)
                 summary["retried"] += 1
             else:
                 # Модель недоступна окончательно — но статический анализ мог
@@ -170,7 +193,12 @@ async def code_review_cron_tick(
 
 
 async def _write(
-    db: AsyncSession, result_id: int, payload: Dict[str, Any], *, backfill: bool = False
+    db: AsyncSession,
+    result_id: int,
+    payload: Dict[str, Any],
+    *,
+    backfill: bool = False,
+    code_snapshot: Optional[str] = None,
 ) -> None:
     """Записывает отчёт целиком: он самодостаточен, сливать со старым нечего.
 
@@ -178,9 +206,15 @@ async def _write(
         переносим в новый отчёт: запись идёт целиком, и иначе она потерялась бы
         на первом же тике — а потом нечем было бы отделить оценки старых работ
         от оценок живых сдач.
+    :param code_snapshot: копия кода из вложения. Переносим её только в
+        промежуточные записи (`pending` при повторе): иначе повтор потерял бы
+        код, файл которого уже удалён. В готовый отчёт копия не идёт — она
+        временная и в результате не нужна.
     """
     if backfill:
         payload = {**payload, "backfill": True}
+    if code_snapshot and payload.get("status") == "pending":
+        payload = {**payload, "code": code_snapshot}
     await db.execute(
         text("UPDATE task_results SET code_review = CAST(:payload AS jsonb) WHERE id = :id"),
         {"payload": _json(payload), "id": result_id},

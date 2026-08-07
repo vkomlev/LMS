@@ -79,29 +79,13 @@ checking_service = CheckingService()
 learning_engine_service = LearningEngineService()
 
 
-def _needs_code_review(solution_rules: SolutionRules) -> bool:
-    """
-    Нужна ли машинной оценке эта работа (tsk-302 этап 3).
-
-    Охват намеренно шире, чем `turtle_sim` этапа 0: на проде уже есть 51 задание
-    на Python и 40 на Arduino/C++, и оценивает их одна и та же модель — язык она
-    определяет сама.
-
-    Два признака, оба берутся из самого задания, а не из содержимого ответа:
-
-    - `turtle_sim` — рисование черепахой, ответ всегда программа;
-    - `code_ast` в шагах нормализации — явная пометка «ответ сравнивается как
-      код» (tsk-262). ВАЖНО: она НЕ гарантирует именно Python (20 заданий «МАМ»
-      с ней содержат Arduino/C++), но для нас это неважно — оценка язык-агностична.
-
-    Угадывать «похоже на код» по тексту ответа не пытаемся: цена ошибки —
-    вызов модели на сочинении или числе, а пометка у задания и так есть.
-    """
-    if getattr(solution_rules, "turtle_sim", None) is not None:
-        return True
-    short_answer = getattr(solution_rules, "short_answer", None)
-    steps = getattr(short_answer, "normalization", None) or []
-    return "code_ast" in steps
+# tsk-302: отбор работ на машинную оценку раньше шёл от ПОМЕТКИ у задания
+# (`turtle_sim` / `code_ast`) — функция `_needs_code_review`. На прод-данных это
+# оказалось неверным решением: у заданий реального курса пометки нет, а код
+# ученик сдаёт вложением (101 работа) или комментарием (370 работ) — оценку из
+# них получили 5. Признак теперь берётся из САМОЙ РАБОТЫ
+# (`code_review_service.pick_code_for_review`), а пометка задания больше ни на
+# что не влияет.
 
 
 def _task_attachment_files(attempt_id: int, task_id: int) -> list[os.PathLike]:
@@ -690,11 +674,39 @@ async def submit_attempt_answers(
         # ответы-однострочники вида «допиши строку» — оценивать чистоту кода
         # одного слова бессмысленно (находка ревью Б2).
         code_review_report: Optional[dict] = None
-        if not attempt.time_expired and _needs_code_review(solution_rules):
-            if settings.code_review_cron_enabled and pick_code_for_review(
-                answer.response.value, answer.response.comment
-            ):
-                code_review_report = {"status": "pending"}
+        # Признак кодовой работы — САМА РАБОТА, а не пометка у задания. Первая
+        # редакция шла от пометки (`code_ast`/`turtle_sim`), и на проде это
+        # отсекло почти всё: у заданий реального курса пометки нет, а код лежит
+        # либо во вложении (101 работа, формат «приложи файл, впиши вывод»),
+        # либо в комментарии (370 работ). Оценку из них получили 5.
+        # Поэтому условие одно: удалось ли достать из работы программу —
+        # `pick_code_for_review` сам решает, код это или проза.
+        #
+        # Вместе с пометкой кладём КОПИЮ кода. Причина — файл вложения
+        # ИЗМЕНЯЕМ: повторная загрузка по той же паре (попытка, задание)
+        # вытесняет предыдущий (`files_replaced_by_upload`, tsk-575). Прочитай
+        # фоновый тик файл позже — он взял бы уже другую редакцию решения и
+        # приписал её этой сдаче. Снимок прибивает ровно то, что сдали сейчас.
+        #
+        # (До tsk-575 загрузка стирала файлы ВСЕЙ попытки, и снимок спасал ещё
+        # и от этого; тот дефект починен, но изменяемость файла осталась.
+        # Историю он не воскрешает: из 101 работы со ссылкой на `.py` файлы
+        # уцелели у 8 — они потеряны до починки.)
+        #
+        # Копия временная: тик перезапишет `code_review` отчётом.
+        if not attempt.time_expired and settings.code_review_cron_enabled:
+            # Чтение файла — синхронный ввод-вывод, и теперь оно случается на
+            # КАЖДОЙ сдаче с вложением, а не изредка. Уносим с петли событий.
+            picked_code = await asyncio.to_thread(
+                pick_code_for_review,
+                answer.response.value,
+                answer.response.comment,
+                (answer.response.meta or {}).get("attachments"),
+                attempt_id=attempt_id,
+                task_id=task.id,
+            )
+            if picked_code:
+                code_review_report = {"status": "pending", "code": picked_code}
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
