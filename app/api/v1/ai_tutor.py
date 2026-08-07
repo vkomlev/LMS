@@ -17,9 +17,10 @@ from typing import AsyncIterator, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, get_current_user
+from app.api.deps import get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.services.ai_tutor import session_service
@@ -249,3 +250,52 @@ async def close_session(
     )
     await session_service.close(db, session.id)
     await db.commit()
+
+
+# ─────────────── Чтение разговоров персоналом (tsk-572) ─────────────────────
+
+_STAFF_GATE = require_role("teacher", "methodist", "admin")
+
+
+@router.get(
+    "/students/{student_id}/sessions",
+    summary="Разговоры ученика с наставником (преподавателю и методисту)",
+)
+async def student_sessions(
+    student_id: int,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STAFF_GATE),
+) -> list[dict]:
+    """Разговоры ученика — то, что обещано ему плашкой.
+
+    Ученику ДО первой реплики говорится: «этот разговор видят твой преподаватель
+    и методист». Без этой ручки обещание было ложным — экрана не существовало
+    вовсе. Ложное обещание в интерфейсе хуже отсутствующей функции: подросток
+    пишет откровенно, полагаясь на то, что взрослые прочитают и помогут.
+
+    Системный промпт наружу не отдаём: это инструкция наставнику, а не часть
+    разговора, и в карточке ученика она только мешает.
+    """
+    rows = (await db.execute(text("""
+        SELECT s.id, s.task_id, s.mode, s.status, s.turns, s.created_at,
+               s.task_stem_snapshot, s.student_answer_snapshot, c.title AS course_title
+        FROM ai_tutor_session s
+        LEFT JOIN courses c ON c.id = s.course_id
+        WHERE s.student_id = :sid
+        ORDER BY s.created_at DESC
+        LIMIT :limit
+    """), {"sid": student_id, "limit": limit})).mappings().all()
+
+    out: list[dict] = []
+    for r in rows:
+        msgs = (await db.execute(text("""
+            SELECT role, content, created_at, truncated
+            FROM ai_tutor_message
+            WHERE session_id = :sid AND role <> 'system'
+            ORDER BY id
+        """), {"sid": r["id"]})).mappings().all()
+        item = dict(r)
+        item["messages"] = [dict(m) for m in msgs]
+        out.append(item)
+    return out
