@@ -440,3 +440,17 @@ def test_service_caller_gets_the_named_student():
     from app.auth.current_user import CurrentUser
 
     assert _resolve_student(CurrentUser(id=0, is_service=True), 4513) == 4513
+
+
+def test_prompt_keeps_student_in_his_own_environment():
+    """Наставник не отправляет ученика в чужую среду.
+
+    Живой прогон: в задании сказано «в IDLE», а наставник отправил запускать
+    Python. Для новичка чужой инструмент — стена: он не знает, где его взять и
+    как вернуться, и бросает задание не из-за темы, а из-за среды.
+    """
+    view = TutorTaskView(task_id=1, stem="Запустите IDLE и выполните программу", task_type="SA")
+    flat = " ".join(build_system_prompt(view, "concept").split())
+    assert "Работай ТОЛЬКО в той среде" in flat
+    assert "не «запусти python»" in flat.lower() or "не «запусти python»" in flat
+    assert "СПРОСИ, где он работает" in flat
