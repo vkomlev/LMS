@@ -65,6 +65,33 @@ class TutorAskRequest(BaseModel):
     )
 
 
+def _resolve_student(current_user: CurrentUser, student_id: Optional[int]) -> int:
+    """Кому принадлежит разговор.
+
+    Ботам (TG_LMS) сессии ученика взять неоткуда: они ходят по сервисному ключу,
+    и `get_current_user` отдаёт им `CurrentUser(id=0, is_service=True)`. Без
+    явного параметра все разговоры всех учеников слились бы в одного
+    несуществующего пользователя 0.
+
+    Страж: параметр читается ТОЛЬКО у сервисного вызывающего. Обычный ученик,
+    подставивший `?student_id=`, получает 403 — иначе это сквозная дыра, дающая
+    читать чужие разговоры с наставником, а там ученик пишет откровенно.
+    """
+    if student_id is None:
+        if current_user.is_service:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "сервисный вызов обязан указать student_id — иначе разговор ничей",
+            )
+        return current_user.id
+    if not current_user.is_service:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "student_id доступен только сервисному вызову",
+        )
+    return student_id
+
+
 def _enabled() -> bool:
     """Рубильник: выключенный наставник не ломает ничего остального."""
     return getattr(settings, "ai_tutor_enabled", True)
@@ -77,6 +104,7 @@ def _enabled() -> bool:
 )
 async def get_session(
     task_id: int,
+    student_id: Optional[int] = None,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> TutorSessionRead:
@@ -88,8 +116,9 @@ async def get_session(
     if not _enabled():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Наставник выключен")
     try:
+        owner = _resolve_student(current_user, student_id)
         session, _ = await session_service.get_or_create(
-            db, student_id=current_user.id, task_id=task_id
+            db, student_id=owner, task_id=task_id
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
@@ -119,6 +148,7 @@ def _sse(event: str, payload: dict) -> str:
 async def ask(
     task_id: int,
     body: TutorAskRequest,
+    student_id: Optional[int] = None,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> StreamingResponse:
@@ -131,9 +161,10 @@ async def ask(
     if not _enabled():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Наставник выключен")
 
+    owner = _resolve_student(current_user, student_id)
     try:
         session, _ = await session_service.get_or_create(
-            db, student_id=current_user.id, task_id=task_id
+            db, student_id=owner, task_id=task_id
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
@@ -161,7 +192,7 @@ async def ask(
         truncated = False
         try:
             async for chunk in stream(
-                messages, purpose="tutor", student_id=current_user.id,
+                messages, purpose="tutor", student_id=owner,
                 budget=Budget.INTERACTIVE, max_tokens=900,
             ):
                 if chunk.done:
@@ -174,7 +205,7 @@ async def ask(
             # Деградация: наставник молчит, но ученик не в тупике.
             logger.warning(
                 "ai_tutor: сбой наставника session=%s student=%s: %s",
-                session.id, current_user.id, exc,
+                session.id, owner, exc,
             )
             yield _sse("delta", {"text": _DEGRADED_TEXT})
             yield _sse("done", {"offer_teacher": True, "degraded": True})
@@ -208,11 +239,13 @@ async def ask(
 )
 async def close_session(
     task_id: int,
+    student_id: Optional[int] = None,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> None:
-    session, created = await session_service.get_or_create(
-        db, student_id=current_user.id, task_id=task_id
+    owner = _resolve_student(current_user, student_id)
+    session, _created = await session_service.get_or_create(
+        db, student_id=owner, task_id=task_id
     )
     await session_service.close(db, session.id)
     await db.commit()

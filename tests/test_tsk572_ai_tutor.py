@@ -392,3 +392,51 @@ async def test_manual_teacher_answer_is_not_taken_as_student_text(db):
         )
     finally:
         await _cleanup(db, user_ids=[student], course_ids=[course])
+
+
+# ──────────── Сервисный вход для бота и страж от подмены ученика ────────────
+
+
+def test_service_caller_must_name_the_student():
+    """Сервисный вызов без ученика — ошибка, а не разговор пользователя 0.
+
+    Боты ходят по сервисному ключу, и `get_current_user` отдаёт им
+    `CurrentUser(id=0, is_service=True)`. Без явного параметра разговоры ВСЕХ
+    учеников слились бы в одного несуществующего пользователя — и каждый видел
+    бы переписку остальных.
+    """
+    from fastapi import HTTPException
+
+    from app.api.v1.ai_tutor import _resolve_student
+    from app.auth.current_user import CurrentUser
+
+    with pytest.raises(HTTPException) as exc:
+        _resolve_student(CurrentUser(id=0, is_service=True), None)
+    assert exc.value.status_code == 400
+
+
+def test_student_cannot_impersonate_another_student():
+    """Обычный ученик с `?student_id=` получает 403.
+
+    Это главный страж всей фазы 5: без него параметр, добавленный ради бота,
+    стал бы сквозной дырой — любой ученик читал бы чужие разговоры с
+    наставником, где пишут откровенно.
+    """
+    from fastapi import HTTPException
+
+    from app.api.v1.ai_tutor import _resolve_student
+    from app.auth.current_user import CurrentUser
+
+    with pytest.raises(HTTPException) as exc:
+        _resolve_student(CurrentUser(id=142, is_service=False), 999)
+    assert exc.value.status_code == 403
+
+    # А без параметра тот же ученик работает как обычно.
+    assert _resolve_student(CurrentUser(id=142, is_service=False), None) == 142
+
+
+def test_service_caller_gets_the_named_student():
+    from app.api.v1.ai_tutor import _resolve_student
+    from app.auth.current_user import CurrentUser
+
+    assert _resolve_student(CurrentUser(id=0, is_service=True), 4513) == 4513
