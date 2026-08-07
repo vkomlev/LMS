@@ -201,7 +201,12 @@ async def list_signals(
     if for_student is True:
         where.append("s.student_id IS NOT NULL")
     elif for_student is False:
-        where.append("s.student_id IS NULL")
+        # НЕ просто «темы». На столе у методиста лежат две разные вещи: темы,
+        # которые нашёл датчик, И ученические сигналы, которые ему ПЕРЕДАЛ
+        # преподаватель. Живая проверка показала, чем оборачивается фильтр
+        # только по темам: преподаватель нажимает «передать методисту», а у того
+        # пусто. Оба считают, что дело сделано, — и не делает никто.
+        where.append("(s.student_id IS NULL OR s.status = 'escalated')")
     clause = " AND ".join(where)
     rows = (await db.execute(text(f"""
         SELECT s.id, s.course_id, c.title AS course_title, s.student_id,

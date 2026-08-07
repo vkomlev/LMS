@@ -203,3 +203,36 @@ async def test_scan_reports_counters_even_when_empty(db):
     for key in ("topics_found", "topic_signals_created",
                 "students_found", "student_signals_created"):
         assert key in res and isinstance(res[key], int)
+
+
+@pytest.mark.asyncio
+async def test_escalated_student_signal_reaches_the_methodist(db):
+    """Переданный сигнал обязан появиться у методиста.
+
+    Дефект, найденный живой проверкой: список методиста фильтровал только темы,
+    и ученический сигнал, который преподаватель нажатием «передать методисту»
+    отправил ему, не появлялся нигде. Преподаватель считал, что передал;
+    методист не видел ничего. Молчаливая потеря целого действия.
+    """
+    course = await _course(db, "Эскалация доезжает")
+    student = await _user(db, "esc-reach-student")
+    teacher = await _user(db, "esc-reach-teacher")
+    try:
+        sid = await sig.upsert_signal(db, course_id=course, student_id=student,
+                                      submissions=10, students=1, wrong_rate=0.8)
+        await db.commit()
+        await sig.acknowledge_signal(
+            db, signal_id=sid, teacher_id=teacher,
+            comment="Разбирали дважды, не идёт", escalate=True,
+        )
+
+        desk = await sig.list_signals(
+            db, for_student=False, statuses=("new", "acknowledged", "escalated"),
+        )
+        mine = [r for r in desk if r["id"] == sid]
+        assert mine, "переданный сигнал не доехал до методиста"
+        assert "не идёт" in (mine[0]["teacher_comment"] or ""), (
+            "комментарий преподавателя потерялся по дороге"
+        )
+    finally:
+        await _cleanup(db, [student, teacher], [course])

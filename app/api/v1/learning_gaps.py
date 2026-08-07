@@ -90,8 +90,15 @@ async def list_topic_signals(
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_METHODIST_GATE),
 ) -> list[dict]:
-    """Темы, на которых спотыкается сразу несколько учеников."""
-    return _view(await signals.list_signals(db, for_student=False))
+    """Что лежит на столе у методиста.
+
+    Не только темы: сюда же попадают ученические сигналы, которые ПЕРЕДАЛ
+    преподаватель. Иначе эскалация уходит в никуда — он нажал «передать», а у
+    методиста пусто, и оба считают, что дело сделано.
+    """
+    return _view(await signals.list_signals(
+        db, for_student=False, statuses=("new", "acknowledged", "escalated"),
+    ))
 
 
 @router.post("/{signal_id}/acknowledge", summary="Принять к сведению")
