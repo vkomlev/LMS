@@ -476,6 +476,10 @@ app.include_router(media_router, prefix=API_PREFIX)
 app.include_router(ai_tutor_router, prefix=API_PREFIX)  # tsk-572: ИИ-наставник
 app.include_router(learning_gaps_router, prefix=API_PREFIX)  # tsk-572: сигналы повторения
 
+# tsk-577: обзор освоения по ВСЕМ темам для методиста (не только провалы).
+from app.api.v1.topic_mastery import router as topic_mastery_router
+app.include_router(topic_mastery_router, prefix=API_PREFIX)
+
 
 # Phase Y-6: APScheduler для escalation cron (review-loop).
 # Multi-worker safe через PG advisory lock внутри tick'а.
