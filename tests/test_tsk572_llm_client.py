@@ -383,6 +383,12 @@ async def test_budgets_differ_by_profile():
     """Интерактив не повторяет таймаут: ученик не ждёт второй круг."""
     assert Budget.INTERACTIVE.timeout_retries == 0
     assert Budget.BATCH.timeout_retries == 1
-    assert Budget.INTERACTIVE.first_token_timeout == 5.0
+    # 12 c, а не 5: стенд дал медиану первого токена 4.4-4.6 c, и бюджет,
+    # равный медиане, обрывал бы примерно половину живых ответов. Проверено
+    # регресс-прогоном — наставник отваливался посреди нормального разговора.
+    assert Budget.INTERACTIVE.first_token_timeout == 12.0
+    assert Budget.INTERACTIVE.first_token_timeout > 4.6 * 2, (
+        "бюджет первого токена должен быть с запасом к медиане, а не равен ей"
+    )
     assert Budget.BATCH.first_token_timeout is None
     assert Budget.INTERACTIVE.total_timeout < Budget.BATCH.total_timeout

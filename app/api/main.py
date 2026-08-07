@@ -34,6 +34,7 @@ from app.api.v1.teacher_help_requests import router as teacher_help_requests_rou
 from app.api.v1.teacher_reviews import router as teacher_reviews_router
 from app.api.v1.teacher_workload import router as teacher_workload_router
 from app.api.v1.media import router as media_router  # tsk-110 ADR-0040
+from app.api.v1.ai_tutor import router as ai_tutor_router  # tsk-572 этап 2
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -470,6 +471,7 @@ app.include_router(methodist_breaks_router, prefix=API_PREFIX)
 
 # tsk-110 ADR-0040: CAS media endpoint (публичный, без auth)
 app.include_router(media_router, prefix=API_PREFIX)
+app.include_router(ai_tutor_router, prefix=API_PREFIX)  # tsk-572: ИИ-наставник
 
 
 # Phase Y-6: APScheduler для escalation cron (review-loop).

@@ -212,6 +212,11 @@ class Settings:
         self.prepend_input_link: bool = os.getenv("PREPEND_INPUT_LINK", "true").lower() == "true"
         self.input_link_label: str = os.getenv("INPUT_LINK_LABEL", "Входные данные")
 
+        # tsk-572: рубильник ИИ-наставника. Выключение убирает кнопку у ученика и
+        # закрывает эндпоинты, всё остальное продолжает работать как сегодня —
+        # откат без развёртывания, если наставник поведёт себя не так.
+        self.ai_tutor_enabled: bool = os.getenv("AI_TUTOR_ENABLED", "true").lower() in ("true", "1", "yes")
+
         # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
         self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
 
