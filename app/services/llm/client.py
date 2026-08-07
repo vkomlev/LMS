@@ -256,6 +256,28 @@ def _sse_lines_to_payloads(chunk_text: str) -> Iterable[dict]:
             logger.debug("LLM: пропущен неразбираемый SSE-кадр: %.120s", data)
 
 
+
+def sse_payloads_from_chunks(chunks: Iterable[str], carry: dict) -> Iterable[dict]:
+    """Разобрать сетевые куски SSE, НЕ теряя кадр на границе чтения.
+
+    Сеть режет поток произвольно, и кадр запросто приходит разорванным пополам
+    между двумя чтениями. Разбор каждого куска по отдельности молча выбрасывал
+    такой кадр — ответ выходил слегка неправильным («что ужеовал сделать»
+    вместо «что уже попробовал»). Это не ловится ничем, кроме чтения глазами:
+    ни ошибки, ни лога, просто кривая фраза.
+
+    `carry` — изменяемый словарь с ключом `buf`: незавершённый хвост переносится
+    между вызовами. Вынесено функцией, чтобы проверялось тестом без сети.
+    """
+    separator = "\n\n"
+    buffer = carry.get("buf", "") + "".join(chunks)
+    head, sep, tail = buffer.rpartition(separator)
+    carry["buf"] = tail
+    if not sep:
+        return []
+    return list(_sse_lines_to_payloads(head + separator))
+
+
 async def stream(
     messages: Sequence[LLMMessage],
     *,
@@ -300,8 +322,20 @@ async def stream(
                         body = (await resp.aread()).decode("utf-8", "ignore")
                         _raise_for_status(resp.status_code, body)
 
+                    # Хвост НЕЛЬЗЯ терять: сеть режет поток произвольно, и кадр
+                    # запросто приходит разорванным пополам между двумя
+                    # чтениями. Разбор каждого куска по отдельности молча
+                    # выбрасывал такой кадр — ответ выходил слегка неправильным
+                    # («что ужеовал сделать» вместо «что уже попробовал»),
+                    # и это не ловится ничем, кроме чтения глазами.
+                    buffer = ""
                     async for raw in resp.aiter_text():
-                        for payload in _sse_lines_to_payloads(raw):
+                        buffer += raw
+                        head, sep, tail = buffer.rpartition("\n\n")
+                        if not sep:
+                            continue
+                        buffer = tail
+                        for payload in _sse_lines_to_payloads(head + "\n\n"):
                             # Ошибка внутри HTTP 200 — главная ловушка провайдера.
                             _check_payload_error(payload)
 

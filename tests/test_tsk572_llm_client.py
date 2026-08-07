@@ -392,3 +392,38 @@ async def test_budgets_differ_by_profile():
     )
     assert Budget.BATCH.first_token_timeout is None
     assert Budget.INTERACTIVE.total_timeout < Budget.BATCH.total_timeout
+
+
+def test_frame_split_across_network_chunks_is_not_lost():
+    """Кадр, разорванный между чтениями, обязан доехать целиком.
+
+    Найдено ЖИВОЙ проверкой, а не тестом: наставник ответил «что ужеовал
+    сделать» вместо «что уже попробовал сделать» — кусок текста пропал. Разбор
+    каждого сетевого чанка по отдельности выбрасывал незавершённый хвост, и
+    потеря была МОЛЧАЛИВОЙ: ни ошибки, ни лога, просто чуть кривая фраза,
+    которую замечаешь, только если читаешь глазами.
+    """
+    from app.services.llm.client import sse_payloads_from_chunks
+
+    # Второй кадр разорван ровно посередине JSON — так и режет сеть.
+    d = chr(10)
+    frame1 = 'event: delta' + d + '{"text": "что уже "}'
+    # Кадры собираем через chr(10), чтобы перенос не зависел от того,
+    # как файл прошёл через оболочку при правке.
+    f = lambda t: 'event: delta' + d + 'data: ' + t + d + d
+    whole = f('{"text": "что уже "}') + f('{"text": "попробовал"}') + f('{"text": " сделать"}')
+    # Режем поток посередине второго кадра — так и делает сеть.
+    cut = whole.index('попроб') + 3
+    pieces = [whole[:cut], whole[cut:]]
+    carry: dict = {"buf": ""}
+    text_out = ""
+    for piece in pieces:
+        for payload in sse_payloads_from_chunks([piece], carry):
+            for choice in payload.get("choices") or []:
+                text_out += (choice.get("delta") or {}).get("content") or ""
+            if isinstance(payload.get("text"), str):
+                text_out += payload["text"]
+
+    assert text_out == "что уже попробовал сделать", (
+        f"кусок потерялся на границе чтения: {text_out!r}"
+    )
