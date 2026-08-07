@@ -103,6 +103,25 @@ alembic-версию под собой; оба задетых файла — и�
 (без моих правок), и с ними. Третий прогон был запущен в окне тишины (чужих
 pytest-процессов нет) и прошёл полностью зелёным.
 
+## Живая проверка на проде (2026-08-07)
+
+Развёрнуто `deploy/vps/deploy.sh` → `23f1a00`. `alembic upgrade head` — пусто
+(head `tsk572_llm_usage` уже был на проде), `/health` → ok.
+
+Проверен ровно тот запрос из инцидента — на **уже существующей** паре
+`(user_id=3, course_id=1455)`, поэтому проверка ничего не создаёт:
+
+```
+POST /api/v1/user-courses/  {"user_id":3,"course_id":1455,"is_active":true}
+HTTP 409
+{"error":"domain_error","detail":"Курс уже назначен этому ученику",
+ "payload":{"user_id":3,"course_id":1455}}
+```
+
+В `logs/app.log` вместо прежнего `Unhandled exception ... UniqueViolationError`
+теперь `WARNING DomainError at /api/v1/user-courses/ ... (status=409)` — то есть
+ошибка перешла из «неизвестный сбой» в штатный отказ и в логе, и в ответе.
+
 ## Риски / follow-ups
 
 - FK-нарушение на этом эндпоинте (несуществующий `user_id`/`course_id`) по-прежнему
