@@ -357,3 +357,74 @@ async def escalate_course_completion(
         },
     )
     return created
+
+
+async def escalate_learning_gap(
+    db: AsyncSession,
+    *,
+    signal_id: int,
+    course_id: int,
+    course_title: str,
+    student_id: int | None,
+    student_name: str | None,
+    teacher_id: int,
+    wrong_percent: int,
+    comment: str | None,
+) -> int:
+    """tsk-572: преподаватель передал методисту сигнал «нужно повторение».
+
+    Rate-limit НЕ применяется — сознательно, по тому же основанию, что и в
+    `escalate_help_request`: это осознанное действие человека, а не выстрел
+    cron'а. Преподаватель нажал кнопку один раз по конкретному ученику, и
+    придержать это письмо значит потерять единственный момент, когда он был
+    готов рассказать, что видел на занятии.
+
+    Комментарий преподавателя идёт ПЕРВЫМ абзацем, а не примечанием внизу:
+    долю ошибок методист и так видит на своём экране, а вот «болел две недели»
+    или «путает ввод и вывод, а не циклы» — это и есть причина, по которой
+    письмо вообще имеет смысл.
+    """
+    methodist_ids = await _list_methodist_user_ids(db)
+    if not methodist_ids:
+        logger.warning(
+            "tsk-572: некому передать сигнал %s — методистов в системе нет", signal_id
+        )
+        return 0
+
+    who = student_name or (f"ученик #{student_id}" if student_id else "несколько учеников")
+    lines = []
+    if comment:
+        lines.append(f"Преподаватель: {comment}")
+    lines.append(f"{who} — «{course_title}», ошибок {wrong_percent}%.")
+    lines.append("Преподаватель считает, что нужен мини-курс повторения.")
+
+    payload = {
+        "signal_id": int(signal_id),
+        "course_id": int(course_id),
+        "student_id": int(student_id) if student_id is not None else None,
+        "teacher_id": int(teacher_id),
+        "wrong_percent": int(wrong_percent),
+        "trigger": "learning_gap_escalated",
+    }
+    for mid in methodist_ids:
+        await inbox_service.create_for_user(
+            db,
+            user_id=mid,
+            kind="learning_gap_escalated",
+            title="Преподаватель просит мини-курс повторения",
+            content="\n".join(lines),
+            payload=payload,
+            created_by=teacher_id,
+        )
+
+    await audit_service.log_event(
+        db,
+        audit_service.METHODIST_ESCALATION_TRIGGERED,
+        user_id=teacher_id,
+        details={**payload, "methodist_count": len(methodist_ids)},
+    )
+    logger.info(
+        "tsk-572: сигнал %s передан методистам (%s), ученик=%s, курс=%s",
+        signal_id, len(methodist_ids), student_id, course_id,
+    )
+    return len(methodist_ids)

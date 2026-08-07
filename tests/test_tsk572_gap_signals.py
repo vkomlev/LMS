@@ -39,11 +39,29 @@ async def _course(db, title: str) -> int:
 
 
 async def _cleanup(db, users: list[int], courses: list[int]) -> None:
+    await db.execute(text("DELETE FROM notifications WHERE user_id = ANY(:u)"),
+                     {"u": users})
     await db.execute(text("DELETE FROM learning_gap_signal WHERE course_id = ANY(:c)"),
                      {"c": courses})
-    await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": users})
-    await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": users})
-    await db.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
+    await db.commit()
+
+    # Учётки удаляем ОТДЕЛЬНОЙ транзакцией и прощаем отказ: эскалация пишет в
+    # журнал аудита, а он только на дозапись — каскад от users в него упирается.
+    # Это защита журнала, а не дефект теста, и ронять из-за неё уборку нельзя:
+    # иначе не удалится и курс, а следующий прогон споткнётся о чужой мусор.
+    if users:
+        try:
+            await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"),
+                             {"u": users})
+            await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"),
+                             {"u": users})
+            await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"),
+                             {"u": users})
+            await db.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
     await db.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": courses})
     await db.commit()
 
@@ -234,5 +252,81 @@ async def test_escalated_student_signal_reaches_the_methodist(db):
         assert "не идёт" in (mine[0]["teacher_comment"] or ""), (
             "комментарий преподавателя потерялся по дороге"
         )
+    finally:
+        await _cleanup(db, [student, teacher], [course])
+
+
+@pytest.mark.asyncio
+async def test_escalation_notifies_methodists_with_the_comment(db):
+    """Методист получает письмо, и комментарий преподавателя в нём есть.
+
+    Без письма он узнаёт о просьбе, только если сам откроет экран, — то есть
+    срочность теряется ровно там, где преподаватель её обозначил.
+    """
+    course = await _course(db, "Уведомление методисту")
+    student = await _user(db, "notif-student")
+    teacher = await _user(db, "notif-teacher")
+    methodist = await _user(db, "notif-methodist")
+    try:
+        # Роль методиста нужна, иначе адресатов нет и письмо никуда не уйдёт.
+        rid = (await db.execute(text(
+            "SELECT id FROM roles WHERE name = 'methodist' LIMIT 1"
+        ))).scalar()
+        if rid is None:
+            pytest.skip("в базе нет роли methodist")
+        await db.execute(text(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (:u, :r) "
+            "ON CONFLICT DO NOTHING"
+        ), {"u": methodist, "r": rid})
+        await db.commit()
+
+        sid = await sig.upsert_signal(db, course_id=course, student_id=student,
+                                      submissions=10, students=1, wrong_rate=0.8)
+        await db.commit()
+        assert await sig.acknowledge_signal(
+            db, signal_id=sid, teacher_id=teacher,
+            comment="Болел две недели, пропустил тему", escalate=True,
+        )
+
+        msgs = (await db.execute(text(
+            "SELECT title, content FROM notifications "
+            "WHERE user_id = :u AND kind = 'learning_gap_escalated'"
+        ), {"u": methodist})).mappings().all()
+        assert msgs, "методист не получил уведомления об эскалации"
+        assert "Болел две недели" in msgs[0]["content"], (
+            "комментарий преподавателя не доехал до письма — осталась голая цифра"
+        )
+    finally:
+        await db.execute(text("DELETE FROM notifications WHERE user_id = ANY(:u)"),
+                         {"u": [methodist]})
+        await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"),
+                         {"u": [methodist]})
+        await db.commit()
+        await _cleanup(db, [student, teacher], [course])
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_does_not_undo_the_decision(db):
+    """Сбой уведомления не отменяет решение преподавателя.
+
+    Иначе нажатие кнопки выглядело бы как «ничего не произошло»: сигнал
+    вернулся бы в исходное состояние из-за почты, к которой преподаватель
+    отношения не имеет.
+    """
+    course = await _course(db, "Сбой уведомления")
+    student = await _user(db, "fail-student")
+    teacher = await _user(db, "fail-teacher")
+    try:
+        sid = await sig.upsert_signal(db, course_id=course, student_id=student,
+                                      submissions=10, students=1, wrong_rate=0.8)
+        await db.commit()
+        # Методистов в базе может не быть вовсе — сервис это переживает.
+        assert await sig.acknowledge_signal(
+            db, signal_id=sid, teacher_id=teacher, comment="проверка", escalate=True
+        )
+        row = (await db.execute(text(
+            "SELECT status FROM learning_gap_signal WHERE id = :i"
+        ), {"i": sid})).mappings().first()
+        assert row["status"] == "escalated", "решение откатилось из-за уведомления"
     finally:
         await _cleanup(db, [student, teacher], [course])

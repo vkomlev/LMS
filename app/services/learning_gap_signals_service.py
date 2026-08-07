@@ -160,9 +160,53 @@ async def acknowledge_signal(
     """), {"sid": signal_id, "tid": teacher_id, "comment": comment,
            "st": status, "is_escalation": escalate})
     ok = res.first() is not None
-    if ok:
+    if not ok:
+        return False
+    await db.commit()
+
+    if escalate:
+        await _notify_methodist(db, signal_id=signal_id, teacher_id=teacher_id)
+    return True
+
+
+async def _notify_methodist(db: AsyncSession, *, signal_id: int, teacher_id: int) -> None:
+    """Сообщить методистам о переданном сигнале.
+
+    Вызывается ПОСЛЕ коммита решения преподавателя и не имеет права его
+    отменить: если письмо не ушло, сигнал всё равно лежит у методиста на экране,
+    а вот откат решения означал бы, что нажатие кнопки ничего не сделало.
+    Поэтому исключение сюда не выпускается — только след в логе.
+    """
+    from app.services import methodist_notify_service
+
+    try:
+        row = (await db.execute(text("""
+            SELECT s.id, s.course_id, c.title AS course_title, s.student_id,
+                   u.full_name AS student_name, s.wrong_rate, s.teacher_comment
+            FROM learning_gap_signal s
+            JOIN courses c ON c.id = s.course_id
+            LEFT JOIN users u ON u.id = s.student_id
+            WHERE s.id = :sid
+        """), {"sid": signal_id})).mappings().first()
+        if row is None:
+            return
+        await methodist_notify_service.escalate_learning_gap(
+            db,
+            signal_id=int(row["id"]),
+            course_id=int(row["course_id"]),
+            course_title=str(row["course_title"]),
+            student_id=row["student_id"],
+            student_name=row["student_name"],
+            teacher_id=teacher_id,
+            wrong_percent=round(float(row["wrong_rate"]) * 100),
+            comment=row["teacher_comment"],
+        )
         await db.commit()
-    return ok
+    except Exception:
+        logger.exception(
+            "learning_gaps: сигнал %s передан, но уведомить методистов не удалось — "
+            "он всё равно виден у них на экране", signal_id,
+        )
 
 
 async def dismiss_signal(
