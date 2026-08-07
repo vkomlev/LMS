@@ -39,6 +39,7 @@ from app.services.learning_engine_service import LearningEngineService
 from app.services.learning_events_service import (
     record_help_requested,
     record_hint_open,
+    record_task_opened,
     set_material_completed,
     set_material_skipped,
     set_task_skipped,
@@ -392,6 +393,13 @@ async def start_or_get_attempt(
     existing = r.scalar_one_or_none()
     if existing is not None:
         existing = await attempts_service.ensure_attempt_task_ids(db, existing, task_id)
+        # tsk-578: телеметрия открытия — тот же вызов ученик делает при КАЖДОМ
+        # заходе на страницу задания (см. record_task_opened), включая повторное
+        # открытие в рамках уже начатой попытки.
+        await record_task_opened(
+            db, student_id=body.student_id, task_id=task_id,
+            attempt_id=existing.id, is_new_attempt=False,
+        )
         await db.commit()
         return StartOrGetAttemptResponse(
             attempt_id=existing.id,
@@ -412,6 +420,11 @@ async def start_or_get_attempt(
         meta={"task_ids": [task_id]},
     )
     attempt = await attempts_service.ensure_attempt_task_ids(db, attempt, task_id)
+    # tsk-578: первое открытие задания в новой попытке.
+    await record_task_opened(
+        db, student_id=body.student_id, task_id=task_id,
+        attempt_id=attempt.id, is_new_attempt=True,
+    )
     await db.commit()
     logger.info(
         "start-or-get-attempt: student_id=%s task_id=%s attempt_id=%s root_course_id=%s",

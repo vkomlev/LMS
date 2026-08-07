@@ -19,15 +19,18 @@
 превратил бы обзор в тот же экран «Повторение». Поэтому пороги здесь работают
 как признак `reliable`, а не как условие отбора.
 
-**Времени решения в системе нет.** События «задание открыто» не существует
-(пробел зафиксирован в tsk-302), поэтому темп считается прокси: медиана
-промежутка между последовательными сдачами одного ученика внутри темы.
-Промежутки длиннее часа выброшены — это перерыв между занятиями, а не
-размышление над задачей. Прокси заведомо грубее настоящего времени решения: он
-завышает первое действие после паузы и ничего не знает о том, сколько ученик
-думал до первой сдачи. Точный сигнал требует отдельной телеметрии — она заведена
-задачей tsk-578, и пороги темпа при переходе на неё придётся считать заново:
-здешние откалиброваны под промежутки между сдачами.
+**Темп: реальное событие с прокси-фолбэком (tsk-578).** LMS пишет `task_opened`
+в `learning_events` при каждом `start-or-get-attempt` (показ формы ответа) —
+темп темы/задания считается как медиана реального времени «открыл → сдал» по
+ближайшей ПЕРЕД сдачей паре событий. Пока таких пар у темы/задания меньше
+`MIN_REAL_PACE_SAMPLES`, используется прежний прокси: медиана промежутка между
+последовательными сдачами одного ученика внутри темы (промежутки длиннее часа
+выброшены — перерыв между занятиями, не размышление). На момент деплоя
+телеметрии реальных пар — 0 у всех тем, поведение экрана не меняется; переход
+происходит постепенно и виден в ответе API полем `pace_source` ("real" |
+"proxy" | null). Пороги `FAST_PACE_SECONDS`/`SLOW_PACE_SECONDS` пока общие для
+обоих источников и откалиброваны под прокси — пересчёт на живых данных
+реального сигнала является отдельным follow-up после накопления телеметрии.
 """
 from __future__ import annotations
 
@@ -57,12 +60,26 @@ PACE_OUTLIER_CAP_SECONDS = 3600
 EASY_WRONG_RATE = 0.05
 
 # Пороги темпа. Опорные цифры с прода (окно 90 дней, 1 923 промежутка):
-# медиана 26 с, десятый процентиль 7 с, девяностый 386 с.
-# 20 секунд — меньше, чем нужно прочитать условие и набрать ответ: тема,
-# у которой медиана ниже, проходится не думая.
+# медиана 26 с, десятый процентиль 7 с, девяностый 386 с. Пороги откалиброваны
+# под ПРОКСИ (промежуток между соседними сдачами) и временно наследуются
+# реальным сигналом (tsk-578, см. MIN_REAL_PACE_SAMPLES ниже) — единица
+# измерения та же (секунды от показа задания до сдачи), а прокси
+# систематически не меньше реального времени: он включает ещё и переход между
+# заданиями. Значит настоящий порог, вероятно, чуть ниже нынешнего, но не
+# выше. Пересчёт на живых данных реального сигнала — отдельный follow-up
+# после накопления телеметрии, не блокирует переход на реальный источник.
 FAST_PACE_SECONDS = 20
 # 120 секунд — вчетверо выше общей медианы: на этой теме заметно застревают.
 SLOW_PACE_SECONDS = 120
+
+# tsk-578: с скольки парами «открыл → сдал» (событие task_opened сопоставлено
+# сдаче) тема/задание переходят с прокси на реальный темп. Ниже, чем
+# MIN_SUBMISSIONS (20) у прокси: каждая реальная пара — это подлинное время
+# думания над ИМЕННО этим заданием, а не шумный промежуток между сдачами
+# двух разных заданий, поэтому для той же достоверности хватает меньшей
+# выборки. При деплое реальных пар — 0 у всех тем: поведение не меняется,
+# переход происходит постепенно по мере накопления телеметрии.
+MIN_REAL_PACE_SAMPLES = 8
 
 # Признак темы.
 SIGNAL_HARD = "hard"
@@ -112,6 +129,7 @@ class TopicMastery:
     correct_rate: float
     wrong_rate: float
     median_pace_seconds: float | None
+    pace_source: str | None
     reliable: bool
     signal: str
 
@@ -156,14 +174,51 @@ pace AS (
 )
 """
 
+# tsk-578: реальное время «показали задание → ответил», а не промежуток между
+# соседними сдачами. Для каждой сдачи LATERAL-подзапрос берёт БЛИЖАЙШЕЕ ПЕРЕД
+# ней событие task_opened той же пары (user_id, task_id) — не первое открытие
+# вообще, а последнее перед ЭТОЙ конкретной сдачей: повторный визит после
+# перерыва не должен превращаться в промежуток «со вчерашнего дня». Пары без
+# события task_opened (сдача раньше деплоя телеметрии) в выборку не попадают —
+# gap_seconds отсутствует, а не считается нулём или прокси-суррогатом.
+_REAL_PACE_CTE = """
+real_pace AS (
+    SELECT rs.course_id, rs.task_id,
+           EXTRACT(EPOCH FROM (rs.received_at - opened.opened_at)) AS gap_seconds
+    FROM real_subs rs
+    CROSS JOIN LATERAL (
+        SELECT le.created_at AS opened_at
+        FROM learning_events le
+        WHERE le.event_type = 'task_opened'
+          AND le.student_id = rs.user_id
+          AND (le.payload->>'task_id')::int = rs.task_id
+          AND le.created_at <= rs.received_at
+        ORDER BY le.created_at DESC
+        LIMIT 1
+    ) opened
+)
+"""
+
+PACE_SOURCE_REAL = "real"
+PACE_SOURCE_PROXY = "proxy"
+
 _OVERVIEW_SQL = """
 WITH {real_subs},
 {pace},
+{real_pace},
 topic_pace AS (
     SELECT course_id,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace
     FROM pace
     WHERE gap_seconds IS NOT NULL AND gap_seconds < :pace_cap
+    GROUP BY course_id
+),
+topic_real_pace AS (
+    SELECT course_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace,
+           COUNT(*) AS real_samples
+    FROM real_pace
+    WHERE gap_seconds < :pace_cap
     GROUP BY course_id
 ),
 topic_tasks AS (
@@ -196,18 +251,37 @@ SELECT b.course_id,
        COALESCE(ts.students_reached, 0) AS students_reached,
        COALESCE(ts.students_mastered, 0) AS students_mastered,
        COALESCE(tt.tasks_total, 0) AS tasks_total,
-       tp.median_pace
+       tp.median_pace AS proxy_median_pace,
+       trp.median_pace AS real_median_pace,
+       COALESCE(trp.real_samples, 0) AS real_samples
 FROM topic_base b
 JOIN courses c ON c.id = b.course_id
 LEFT JOIN topic_students ts ON ts.course_id = b.course_id
 LEFT JOIN topic_tasks tt ON tt.course_id = b.course_id
 LEFT JOIN topic_pace tp ON tp.course_id = b.course_id
+LEFT JOIN topic_real_pace trp ON trp.course_id = b.course_id
 """
+
+
+def _resolve_pace(row) -> tuple[float | None, str | None]:
+    """Выбрать источник темпа: реальный при достаточной выборке, иначе прокси.
+
+    tsk-578: реальные пары «открыл → сдал» точнее прокси и достаточны меньшим
+    числом (`MIN_REAL_PACE_SAMPLES` < `MIN_SUBMISSIONS`), поэтому при их
+    достатке они полностью вытесняют прокси, а не усредняются с ним — смешивать
+    точный сигнал с грубым значило бы портить первый вторым.
+    """
+    real_samples = int(row["real_samples"])
+    if real_samples >= MIN_REAL_PACE_SAMPLES and row["real_median_pace"] is not None:
+        return float(row["real_median_pace"]), PACE_SOURCE_REAL
+    if row["proxy_median_pace"] is not None:
+        return float(row["proxy_median_pace"]), PACE_SOURCE_PROXY
+    return None, None
 
 
 def _build_topic(row) -> TopicMastery:
     wrong_rate = float(row["wrong_rate"])
-    pace = None if row["median_pace"] is None else float(row["median_pace"])
+    pace, pace_source = _resolve_pace(row)
     submissions = int(row["submissions"])
     students_reached = int(row["students_reached"])
     return TopicMastery(
@@ -220,6 +294,7 @@ def _build_topic(row) -> TopicMastery:
         correct_rate=1.0 - wrong_rate,
         wrong_rate=wrong_rate,
         median_pace_seconds=pace,
+        pace_source=pace_source,
         reliable=submissions >= MIN_SUBMISSIONS and students_reached >= MIN_STUDENTS,
         signal=classify_topic(wrong_rate, pace),
     )
@@ -239,6 +314,7 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
             real_student=real_student_results_filter("tr"), course_filter=""
         ),
         pace=_PACE_CTE,
+        real_pace=_REAL_PACE_CTE,
     )
     rows = (await db.execute(text(sql), {
         "days": days, "pace_cap": PACE_OUTLIER_CAP_SECONDS,
@@ -270,6 +346,7 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
             "easy_wrong_rate": EASY_WRONG_RATE,
             "fast_pace_seconds": FAST_PACE_SECONDS,
             "slow_pace_seconds": SLOW_PACE_SECONDS,
+            "min_real_pace_samples": MIN_REAL_PACE_SAMPLES,
         },
     }
 
@@ -277,11 +354,20 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
 _TOPIC_TASKS_SQL = """
 WITH {real_subs},
 {pace},
+{real_pace},
 task_pace AS (
     SELECT task_id,
            percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace
     FROM pace
     WHERE gap_seconds IS NOT NULL AND gap_seconds < :pace_cap
+    GROUP BY task_id
+),
+task_real_pace AS (
+    SELECT task_id,
+           percentile_cont(0.5) WITHIN GROUP (ORDER BY gap_seconds) AS median_pace,
+           COUNT(*) AS real_samples
+    FROM real_pace
+    WHERE gap_seconds < :pace_cap
     GROUP BY task_id
 ),
 task_base AS (
@@ -299,10 +385,13 @@ SELECT t.id AS task_id,
        COALESCE(b.submissions, 0) AS submissions,
        COALESCE(b.students, 0) AS students,
        b.wrong_rate,
-       tp.median_pace
+       tp.median_pace AS proxy_median_pace,
+       trp.median_pace AS real_median_pace,
+       COALESCE(trp.real_samples, 0) AS real_samples
 FROM tasks t
 LEFT JOIN task_base b ON b.task_id = t.id
 LEFT JOIN task_pace tp ON tp.task_id = t.id
+LEFT JOIN task_real_pace trp ON trp.task_id = t.id
 WHERE t.course_id = :course_id AND t.is_active
 ORDER BY t.order_position NULLS LAST, t.id
 """
@@ -321,6 +410,7 @@ async def topic_tasks(db: AsyncSession, *, course_id: int, days: int = 90) -> li
             course_filter="AND t.course_id = :course_id",
         ),
         pace=_PACE_CTE,
+        real_pace=_REAL_PACE_CTE,
     )
     rows = (await db.execute(text(sql), {
         "days": days, "course_id": course_id, "pace_cap": PACE_OUTLIER_CAP_SECONDS,
@@ -330,7 +420,7 @@ async def topic_tasks(db: AsyncSession, *, course_id: int, days: int = 90) -> li
     for r in rows:
         submissions = int(r["submissions"])
         wrong_rate = None if r["wrong_rate"] is None else float(r["wrong_rate"])
-        pace = None if r["median_pace"] is None else float(r["median_pace"])
+        pace, pace_source = _resolve_pace(r)
         out.append({
             "task_id": int(r["task_id"]),
             "order_position": r["order_position"],
@@ -342,6 +432,7 @@ async def topic_tasks(db: AsyncSession, *, course_id: int, days: int = 90) -> li
             "wrong_rate": wrong_rate,
             "wrong_percent": None if wrong_rate is None else round(wrong_rate * 100),
             "median_pace_seconds": pace,
+            "pace_source": pace_source,
             "signal": (
                 SIGNAL_UNTOUCHED if wrong_rate is None
                 else classify_topic(wrong_rate, pace)

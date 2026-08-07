@@ -86,6 +86,41 @@ async def record_help_requested(
     return (int(event_id), False)
 
 
+async def record_task_opened(
+    db: AsyncSession,
+    student_id: int,
+    task_id: int,
+    attempt_id: int,
+    is_new_attempt: bool,
+) -> None:
+    """
+    Записать событие task_opened (tsk-578) — ученику показана форма ответа задания.
+
+    Пишется из ``start_or_get_attempt`` при КАЖДОМ вызове (не только при создании
+    новой попытки): повторное открытие — ценный сигнал, а не шум. Метрика темпа в
+    ``topic_mastery_service`` берёт ближайшее ПЕРЕД сдачей событие этой пары
+    (student_id, task_id), поэтому свежая строка на каждый заход даёт точное
+    время «открыл → ответил» вместо промежутка со вчерашнего дня.
+
+    Без advisory-lock и без дедуп-SELECT (в отличие от ``record_help_requested``/
+    ``record_hint_open``): дубли в пределах секунд (двойной рендер клиента) не
+    искажают расчёт — ``MAX(created_at)`` в pace-CTE их поглощает бесплатно, а
+    лишний round-trip на горячем учебном пути того не стоит.
+    """
+    payload: dict[str, Any] = {
+        "task_id": task_id,
+        "attempt_id": attempt_id,
+        "is_new_attempt": is_new_attempt,
+    }
+    await db.execute(
+        text("""
+            INSERT INTO learning_events (student_id, event_type, payload, created_at)
+            VALUES (:student_id, 'task_opened', CAST(:payload AS jsonb), now())
+        """),
+        {"student_id": student_id, "payload": json.dumps(payload)},
+    )
+
+
 async def record_hint_open(
     db: AsyncSession,
     student_id: int,
