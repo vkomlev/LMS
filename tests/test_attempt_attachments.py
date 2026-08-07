@@ -102,8 +102,10 @@ async def test_upload_attempt_attachment_replaces_previous_file(db, client):
         assert not (settings.attempt_attachments_upload_dir / first_id).exists()
         assert (settings.attempt_attachments_upload_dir / second_id).exists()
 
+        # tsk-575: файла нет на диске → 410 «утрачен», а не 404. Имя разобрано и
+        # попытка та самая, значит файл БЫЛ; 404 читался как «его и не было».
         old_download = await client.get(f"/api/v1/attempts/{attempt_id}/attachments/{first_id}?api_key={api_key}")
-        assert old_download.status_code == 404
+        assert old_download.status_code == 410
     finally:
         _delete_attempt_files(attempt_id)
 

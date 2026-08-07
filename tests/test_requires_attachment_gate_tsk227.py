@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import Settings
-from app.api.v1.attempts import _attempt_attachment_files
+from app.services.attempt_attachments import attempt_attachment_files
 
 pytestmark = pytest.mark.asyncio
 
@@ -116,7 +116,7 @@ async def _create_attempt(client, *, student_id: int, course_id: int) -> int:
 
 
 def _cleanup_attachments(attempt_id: int) -> None:
-    for path in _attempt_attachment_files(attempt_id):
+    for path in attempt_attachment_files(attempt_id):
         try:
             os.remove(path)
         except FileNotFoundError:

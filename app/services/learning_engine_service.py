@@ -32,6 +32,7 @@ from app.repos.courses_repo import CoursesRepository
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
 from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.schemas.course_sampling import CourseSamplingConfig
+from app.services.attempt_attachments import mark_missing_attachments
 from app.services.task_sampling import sample_task_ids
 from app.utils.exceptions import DomainError
 from pydantic import ValidationError
@@ -409,7 +410,8 @@ class LearningEngineService:
             int(row[3]) if row[3] is not None else 0,
         )
         # answer_json (JSONB) драйвер отдаёт уже как dict; is_correct/checked_at — как есть.
-        last_answer_json = row[4] if isinstance(row[4], dict) else None
+        # tsk-575: ученик тоже не должен видеть живую ссылку на утраченный файл.
+        last_answer_json = mark_missing_attachments(row[4]) if isinstance(row[4], dict) else None
         last_is_correct = row[5]
         last_checked_at = row[6]
 
@@ -582,7 +584,10 @@ class LearningEngineService:
 
             last_score = int(row["score"]) if row["score"] is not None else 0
             last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
-            last_answer_json = row["answer_json"] if isinstance(row["answer_json"], dict) else None
+            last_answer_json = (
+                mark_missing_attachments(row["answer_json"])
+                if isinstance(row["answer_json"], dict) else None
+            )
             common = dict(
                 last_attempt_id=int(row["attempt_id"]),
                 last_score=last_score,

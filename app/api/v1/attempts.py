@@ -3,12 +3,10 @@ from __future__ import annotations
 import asyncio
 from typing import List, Optional
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
 import mimetypes
 import os
-import re
 
-from fastapi import APIRouter, Depends, Body, File, HTTPException, status, Query, UploadFile
+from fastapi import APIRouter, Depends, Body, File, Form, HTTPException, status, Query, UploadFile
 from starlette.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
@@ -46,6 +44,16 @@ from app.services.checking_service import CheckingService
 # tsk-302 этап 3: сам анализ переехал в фоновый тик
 # (`code_review_cron_service`), здесь работа только помечается к оценке.
 from app.services.code_review_service import pick_code_for_review
+# tsk-575: раскладка файлов-вложений и разбор их имён — в одном модуле,
+# потому что читают её ещё и teacher/history-пути (пометка «файл утрачен»).
+from app.services.attempt_attachments import (
+    attachment_file_path,
+    attempt_attachment_files,
+    build_attachment_id,
+    files_replaced_by_upload,
+    parse_attachment_id,
+    safe_upload_filename,
+)
 from app.services.learning_engine_service import LearningEngineService
 from app.services.tasks_acl_service import assert_task_access
 from app.services import (
@@ -63,20 +71,12 @@ import logging
 router = APIRouter(tags=["attempts"])
 logger = logging.getLogger("api.attempts")
 settings = Settings()
-SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
-ATTEMPT_ATTACHMENT_ID_RE = re.compile(r"^(?P<attempt_id>\d+)_[a-f0-9]{32}_[A-Za-z0-9._-]+$")
 
 attempts_service = AttemptsService()
 task_results_service = TaskResultsService()
 tasks_service = TasksService()
 checking_service = CheckingService()
 learning_engine_service = LearningEngineService()
-
-
-def _safe_upload_filename(filename: str | None) -> str:
-    base = os.path.basename(filename or "attachment")
-    safe = SAFE_FILENAME_RE.sub("_", base).strip("._")
-    return safe or "attachment"
 
 
 def _needs_code_review(solution_rules: SolutionRules) -> bool:
@@ -104,18 +104,26 @@ def _needs_code_review(solution_rules: SolutionRules) -> bool:
     return "code_ast" in steps
 
 
-def _attempt_attachment_files(attempt_id: int) -> list[os.PathLike]:
-    prefix = f"{attempt_id}_"
-    upload_dir = settings.attempt_attachments_upload_dir
-    if not upload_dir.exists():
-        return []
-    return sorted(path for path in upload_dir.iterdir() if path.is_file() and path.name.startswith(prefix))
+def _task_attachment_files(attempt_id: int, task_id: int) -> list[os.PathLike]:
+    """
+    Файлы-вложения, которые считаются приложенными К ЭТОМУ заданию попытки (tsk-575).
+
+    Гейты ниже (tsk-227 «требуется вложение», tsk-419 «комментарий или файл»)
+    раньше смотрели ЛЮБОЙ файл попытки. Попытка охватывает много заданий,
+    поэтому один приложенный к заданию 1 скриншот открывал зачёт заданиям
+    2..N без единого файла — форс держался только на том, что ученик не
+    догадается. Теперь ищем файл этого задания; файлы без метки задания
+    (старый клиент, ещё не присылающий `task_id`) засчитываются по-прежнему —
+    иначе обновление сервера в одиночку сломало бы приём ответов из бота.
+    """
+    return list(attempt_attachment_files(attempt_id, task_id, include_untagged=True))
 
 
 def _validate_attempt_attachment_id(attempt_id: int, attachment_id: str) -> str:
-    safe_id = _safe_upload_filename(attachment_id)
-    match = ATTEMPT_ATTACHMENT_ID_RE.fullmatch(attachment_id)
-    if safe_id != attachment_id or match is None or int(match.group("attempt_id")) != attempt_id:
+    safe_id = safe_upload_filename(attachment_id)
+    scope = attachment_file_path(attachment_id)
+    parsed = parse_attachment_id(attachment_id)
+    if safe_id != attachment_id or scope is None or parsed is None or parsed[0] != attempt_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
     return safe_id
 
@@ -747,15 +755,19 @@ async def submit_attempt_answers(
         # оптимистичного пасса, поэтому перекрывает его (см. R4 спека tsk-227).
         #
         # БЕЗОПАСНОСТЬ: детект ТОЛЬКО по реально загруженному файлу
-        # (_attempt_attachment_files: {attempt_id}_* в upload-dir, кладётся
+        # (_task_attachment_files: файлы этого задания в upload-dir, кладётся
         # эндпоинтом POST /attempts/{id}/attachments). answer.response.meta.attachments
         # НЕ используется — это клиентские данные из тела запроса, их можно подделать
         # (`meta:{attachments:[{}]}`) и обойти форс без единого файла. Оба клиента
         # (SPW, TG_LMS) грузят реальный файл до сдачи, поэтому доверие только диску
         # честные пути не ломает. При истёкшем времени попытка уже завершена и
         # провалена (score=0 выше) — гейт не трогаем, вложить файл уже нельзя.
+        #
+        # tsk-575: файл ищем У ЭТОГО ЗАДАНИЯ, а не по всей попытке. Раньше хватало
+        # любого файла попытки — приложил скриншот к заданию 1, и задания 2..N
+        # проходили форс без вложения.
         if solution_rules.requires_attachment and not attempt.time_expired:
-            has_attachment = bool(_attempt_attachment_files(attempt.id))
+            has_attachment = bool(_task_attachment_files(attempt.id, task.id))
             if not has_attachment:
                 logger.info(
                     "POST /attempts/%s/answers: requires_attachment task_id=%s без вложения → не зачёт (tsk-227)",
@@ -784,10 +796,13 @@ async def submit_attempt_answers(
         if (
             task_content.type in COMMENT_TASK_TYPES
             and not attempt.time_expired
-            and not (solution_rules.requires_attachment and not bool(_attempt_attachment_files(attempt.id)))
+            and not (
+                solution_rules.requires_attachment
+                and not bool(_task_attachment_files(attempt.id, task.id))
+            )
         ):
             has_comment = bool((answer.response.comment or "").strip())
-            has_attachment = bool(_attempt_attachment_files(attempt.id))
+            has_attachment = bool(_task_attachment_files(attempt.id, task.id))
             if not has_comment and not has_attachment:
                 logger.info(
                     "POST /attempts/%s/answers: task_id=%s (%s) без комментария и вложения → не зачёт (tsk-419)",
@@ -979,6 +994,14 @@ async def submit_attempt_answers(
 async def upload_attempt_attachment(
     attempt_id: int,
     file: UploadFile = File(..., description="Файл для прикрепления к ответу"),
+    task_id: Optional[int] = Form(
+        None,
+        description=(
+            "Задание, к ответу на которое прикладывается файл. Определяет, что именно "
+            "заменит повторная загрузка (tsk-575). Не передан — файл считается "
+            "вложением попытки целиком, как до tsk-575."
+        ),
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
 ) -> AttemptAttachmentRead:
@@ -987,8 +1010,15 @@ async def upload_attempt_attachment(
 
     Клиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.
     Это не меняет scoring: вложение только хранится рядом с `answer_json`.
-    В рамках одной попытки хранится одно актуальное вложение; повторная успешная загрузка
-    заменяет предыдущий файл. Загрузка разрешена только для активной попытки.
+
+    Актуальное вложение — ОДНО НА ПАРУ «попытка + задание» (`task_id`), а не одно на
+    попытку: попытка охватывает много заданий, и до tsk-575 загрузка файла к заданию 2
+    стирала файл задания 1 вместе со ссылкой в уже сданной работе. Повторная загрузка
+    по тому же заданию заменяет прежний файл, по другому — не трогает его.
+
+    `task_id` необязателен ради клиентов, которые его ещё не шлют: такая загрузка
+    заменяет только прежние файлы попытки БЕЗ метки задания. Загрузка разрешена
+    только для активной попытки.
     """
     attempt = await attempts_service.get_by_id(db, attempt_id)
     if attempt is None:
@@ -1003,9 +1033,17 @@ async def upload_attempt_attachment(
 
     settings.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
 
-    existing_files = _attempt_attachment_files(attempt_id)
-    original_name = _safe_upload_filename(file.filename)
-    attachment_id = f"{attempt_id}_{uuid4().hex}_{original_name}"
+    if task_id is not None and task_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="task_id должен быть положительным",
+        )
+
+    # Список того, что вытесняет эта загрузка, снимаем ДО записи нового файла:
+    # так в него заведомо не попадёт он сам.
+    existing_files = files_replaced_by_upload(attempt_id, task_id)
+    original_name = safe_upload_filename(file.filename)
+    attachment_id = build_attachment_id(attempt_id, task_id, original_name)
     file_path = settings.attempt_attachments_upload_dir / attachment_id
 
     total = 0
@@ -1038,18 +1076,21 @@ async def upload_attempt_attachment(
                 pass
             except Exception:
                 logger.warning(
-                    "Не удалось удалить старое вложение attempt_id=%s path=%s",
+                    "Не удалось удалить старое вложение attempt_id=%s task_id=%s path=%s",
                     attempt_id,
+                    task_id,
                     old_file,
                     exc_info=True,
                 )
 
     attachment_url = f"/api/v1/attempts/{attempt_id}/attachments/{attachment_id}"
     logger.info(
-        "POST /attempts/%s/attachments: файл загружен filename=%s size=%s",
+        "POST /attempts/%s/attachments: файл загружен task_id=%s filename=%s size=%s заменено=%s",
         attempt_id,
+        task_id,
         original_name,
         total,
+        len(existing_files),
     )
     return AttemptAttachmentRead(
         attachment_id=attachment_id,
@@ -1063,6 +1104,17 @@ async def upload_attempt_attachment(
 @router.get(
     "/attempts/{attempt_id}/attachments/{attachment_id}",
     summary="Скачать вложение ответа в рамках попытки",
+    responses={
+        200: {"description": "Файл вложения"},
+        403: {"description": "Не владелец попытки и не преподаватель-ревьюер"},
+        404: {"description": "Попытка не найдена либо имя вложения некорректно/чужое"},
+        410: {
+            "description": (
+                "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575) "
+                "или вытеснен перезаливкой того же задания. Восстановлению не подлежит."
+            )
+        },
+    },
 )
 async def download_attempt_attachment(
     attempt_id: int,
@@ -1086,7 +1138,22 @@ async def download_attempt_attachment(
     safe_attachment_id = _validate_attempt_attachment_id(attempt_id, attachment_id)
     file_path = settings.attempt_attachments_upload_dir / safe_attachment_id
     if not file_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment file missing on server")
+        # 410, а не 404: имя разобрано, попытка та самая — файл БЫЛ и его больше
+        # нет. Различать «утрачен дефектом хранения (tsk-575)» и «вытеснен
+        # перезаливкой того же задания» по диску нельзя, поэтому текст говорит о
+        # факте, а не о причине. 404 здесь врал: он читается как «такого файла и
+        # не было», и преподаватель шёл искать ошибку у себя.
+        logger.warning(
+            "GET /attempts/%s/attachments/%s: файла нет на диске (tsk-575)",
+            attempt_id, safe_attachment_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail=(
+                "Файл вложения утрачен на сервере и восстановлению не подлежит. "
+                "Попросите ученика приложить файл заново."
+            ),
+        )
 
     media_type = mimetypes.guess_type(safe_attachment_id)[0] or "application/octet-stream"
     return FileResponse(

@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.attempt_attachments import mark_missing_attachments
 from app.services.checking_service import CheckingService
 from app.services.learning_events_service import get_hint_open_counts
 
@@ -146,7 +147,8 @@ async def _load_attempts(
             "max_score": int(r["max_score"] or 0),
             "is_correct": r["is_correct"],
             "status": _attempt_status(r["is_correct"]),
-            "answer_json": r["answer_json"],
+            # tsk-575: пометка «файл утрачен» вместо ссылки в никуда.
+            "answer_json": mark_missing_attachments(r["answer_json"]),
             "comment": r["comment"],
             "checked_at": r["checked_at"],
             "manual": (r["source_system"] == _MANUAL_SOURCE),

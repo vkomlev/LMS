@@ -15383,7 +15383,7 @@
           "attempts"
         ],
         "summary": "Загрузить файл к ответу в рамках попытки",
-        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.\nВ рамках одной попытки хранится одно актуальное вложение; повторная успешная загрузка\nзаменяет предыдущий файл. Загрузка разрешена только для активной попытки.",
+        "description": "Загружает файл в контексте попытки.\n\nКлиент сохраняет возвращённые метаданные в `StudentAnswer.response.meta.attachments`.\nЭто не меняет scoring: вложение только хранится рядом с `answer_json`.\n\nАктуальное вложение — ОДНО НА ПАРУ «попытка + задание» (`task_id`), а не одно на\nпопытку: попытка охватывает много заданий, и до tsk-575 загрузка файла к заданию 2\nстирала файл задания 1 вместе со ссылкой в уже сданной работе. Повторная загрузка\nпо тому же заданию заменяет прежний файл, по другому — не трогает его.\n\n`task_id` необязателен ради клиентов, которые его ещё не шлют: такая загрузка\nзаменяет только прежние файлы попытки БЕЗ метки задания. Загрузка разрешена\nтолько для активной попытки.",
         "operationId": "upload_attempt_attachment_api_v1_attempts__attempt_id__attachments_post",
         "security": [
           {
@@ -15571,12 +15571,21 @@
         ],
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Файл вложения",
             "content": {
               "application/json": {
                 "schema": {}
               }
             }
+          },
+          "403": {
+            "description": "Не владелец попытки и не преподаватель-ревьюер"
+          },
+          "404": {
+            "description": "Попытка не найдена либо имя вложения некорректно/чужое"
+          },
+          "410": {
+            "description": "Имя вложения разобрано, но файла на сервере нет: утрачен (tsk-575) или вытеснен перезаливкой того же задания. Восстановлению не подлежит."
           },
           "422": {
             "description": "Validation Error",
@@ -33976,6 +33985,418 @@
           }
         }
       }
+    },
+    "/api/v1/learning-gaps/students": {
+      "get": {
+        "tags": [
+          "learning_gaps"
+        ],
+        "summary": "Кому нужно повторение (преподавателю)",
+        "description": "Ученики, которым датчик предлагает повторение.\n\nПоказываются только открытые сигналы: разобранные уходят из списка, иначе\nон копится и его перестают читать.",
+        "operationId": "list_student_signals_api_v1_learning_gaps_students_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Student Signals Api V1 Learning Gaps Students Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning-gaps/topics": {
+      "get": {
+        "tags": [
+          "learning_gaps"
+        ],
+        "summary": "Темы под мини-курс (методисту)",
+        "description": "Что лежит на столе у методиста.\n\nНе только темы: сюда же попадают ученические сигналы, которые ПЕРЕДАЛ\nпреподаватель. Иначе эскалация уходит в никуда — он нажал «передать», а у\nметодиста пусто, и оба считают, что дело сделано.",
+        "operationId": "list_topic_signals_api_v1_learning_gaps_topics_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Topic Signals Api V1 Learning Gaps Topics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning-gaps/{signal_id}/acknowledge": {
+      "post": {
+        "tags": [
+          "learning_gaps"
+        ],
+        "summary": "Принять к сведению",
+        "description": "Преподаватель разобрался с сигналом.\n\nБез эскалации — «беру на себя, разберём на занятии». С эскалацией сигнал\nуходит методисту ВМЕСТЕ с комментарием: цифру он и так видит, ценность в\nтом, что преподаватель знает про ученика живьём.",
+        "operationId": "acknowledge_api_v1_learning_gaps__signal_id__acknowledge_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Signal Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Acknowledge Api V1 Learning Gaps  Signal Id  Acknowledge Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning-gaps/{signal_id}/dismiss": {
+      "post": {
+        "tags": [
+          "learning_gaps"
+        ],
+        "summary": "Повторение не нужно",
+        "description": "Отклонить сигнал.\n\nПричина сохраняется намеренно: по отклонениям видно, что датчик шумит\n(ученик болел, сломан эталон), и это основание пересмотреть пороги, а не\nмолча терпеть ложные срабатывания.",
+        "operationId": "dismiss_api_v1_learning_gaps__signal_id__dismiss_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Signal Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Dismiss Api V1 Learning Gaps  Signal Id  Dismiss Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -35836,6 +36257,18 @@
             "format": "binary",
             "title": "File",
             "description": "Файл для прикрепления к ответу"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id",
+            "description": "Задание, к ответу на которое прикладывается файл. Определяет, что именно заменит повторная загрузка (tsk-575). Не передан — файл считается вложением попытки целиком, как до tsk-575."
           }
         },
         "type": "object",
@@ -46421,6 +46854,32 @@
         "type": "object",
         "title": "ShortAnswerRules",
         "description": "Правила проверки короткого ответа (SA/SA_COM).\n\ntsk-366: тот же блок обслуживает табличный ответ TBL_COM — эталон лежит в\n`accepted_answers` строкой (ячейки через пробел, ряды через перевод строки),\nа шаги нормализации применяются к КАЖДОЙ ячейке отдельно."
+      },
+      "SignalDecision": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Что преподаватель знает про ученика сверх цифр — он видел его вживую. Уезжает вместе с эскалацией методисту."
+          },
+          "escalate": {
+            "type": "boolean",
+            "title": "Escalate",
+            "description": "False — «разберусь сам на занятии» (нормальный исход: живой канал есть только у преподавателя). True — передать методисту.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "SignalDecision",
+        "description": "Ответ преподавателя на сигнал."
       },
       "SingleCheckRequest": {
         "properties": {
