@@ -19,8 +19,17 @@ PROVIDER_NAME = "closerouter"
 
 # Цепочки по умолчанию — по стенду 2026-08-06 (docs/qa/2026-08-06-llm-model-bakeoff.md),
 # а не по вендору: цена на этой задаче качества не предсказывает.
-_DEFAULT_TUTOR_MODELS = "x-ai/grok-4.1-fast,openai/gpt-5.5,openai/gpt-5.4-mini"
-_DEFAULT_JUDGE_MODELS = "openai/gpt-5.4-mini,x-ai/grok-4.1-fast,google/gemini-3.1-flash-lite"
+_DEFAULT_TUTOR_MODELS = (
+    "x-ai/grok-4.1-fast,openai/gpt-5.5,"
+    "anthropic/claude-sonnet-4.5,openai/gpt-5.4-mini"
+)
+# deepseek стоит в судьях, но НЕ в наставниках: он сливал эталон 1 раз на ~9
+# прогонов. Судья с учеником не разговаривает, там слив не критерий; в чате
+# это означало бы, что каждый девятый получает ответ в руки.
+_DEFAULT_JUDGE_MODELS = (
+    "openai/gpt-5.4-mini,x-ai/grok-4.1-fast,"
+    "deepseek/deepseek-v3.2,google/gemini-3.1-flash-lite"
+)
 
 
 def normalize_base_url(raw: str) -> str:
