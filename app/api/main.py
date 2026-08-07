@@ -35,6 +35,7 @@ from app.api.v1.teacher_reviews import router as teacher_reviews_router
 from app.api.v1.teacher_workload import router as teacher_workload_router
 from app.api.v1.media import router as media_router  # tsk-110 ADR-0040
 from app.api.v1.ai_tutor import router as ai_tutor_router  # tsk-572 этап 2
+from app.services import learning_gaps_cron_service as _learning_gaps_cron  # tsk-572 фаза 7
 
 # Схемы и сервисы
 from app.schemas.users import UserCreate, UserRead, UserUpdate
@@ -501,6 +502,23 @@ from app.services import lesson_occurrence_generator_service as _lesson_calendar
 
 
 @app.on_event("startup")
+@app.on_event("startup")
+async def _start_learning_gaps_scheduler() -> None:
+    """tsk-572: суточный проход датчика учебных пробелов."""
+    try:
+        _learning_gaps_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-572: не удалось запустить проход датчика пробелов")
+
+
+@app.on_event("shutdown")
+async def _stop_learning_gaps_scheduler() -> None:
+    try:
+        _learning_gaps_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-572: не удалось остановить проход датчика пробелов")
+
+
 async def _start_lesson_occurrence_generator_scheduler() -> None:
     try:
         _lesson_calendar_service.start_scheduler()

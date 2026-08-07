@@ -217,6 +217,11 @@ class Settings:
         # откат без развёртывания, если наставник поведёт себя не так.
         self.ai_tutor_enabled: bool = os.getenv("AI_TUTOR_ENABLED", "true").lower() in ("true", "1", "yes")
 
+        # tsk-572: суточный проход датчика учебных пробелов. Влияет на то, что
+        # видят преподаватель и методист, поэтому выключается без развёртывания.
+        self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
+        self.learning_gaps_cron_interval_hours: int = int(os.getenv("LEARNING_GAPS_CRON_INTERVAL_HOURS", "24"))
+
         # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
         self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
 
