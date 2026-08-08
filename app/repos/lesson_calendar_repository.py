@@ -381,6 +381,23 @@ class LessonOccurrenceRepository:
             names_by_occurrence.setdefault(occurrence_id, []).append(full_name or "")
         return names_by_occurrence
 
+    async def get_by_slot_and_time(
+        self, db: AsyncSession, *, slot_id: int, scheduled_at: datetime,
+    ) -> Optional[LessonOccurrence]:
+        """Занятие конкретного слота ровно на это время.
+
+        tsk-587: точка «посадить ученика в занятие ЭТОГО слота». Пара
+        (slot_id, scheduled_at) уникальна по индексу — тому же, на который
+        опирается ON CONFLICT в генераторе, поэтому строка здесь не более одной.
+        """
+        res = await db.execute(
+            select(LessonOccurrence).where(
+                LessonOccurrence.slot_id == slot_id,
+                LessonOccurrence.scheduled_at == scheduled_at,
+            )
+        )
+        return res.scalar_one_or_none()
+
     async def list_for_slot(
         self, db: AsyncSession, slot_id: int, *, from_dt: Optional[datetime] = None,
     ) -> list[LessonOccurrence]:

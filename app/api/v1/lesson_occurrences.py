@@ -6,10 +6,11 @@ Student-эндпоинты явки и переноса (tsk-429/430/435, Кал
 - `GET  /me/lesson-occurrences` — список занятий текущего ученика (свой
   статус участия, без списка остальных участников группы — приватность).
 - `GET  /lesson-occurrences/available-slots?occurrence_id=` — кандидаты для
-  переноса СВОЕГО участия.
+  переноса СВОЕГО участия (времена реальных слотов расписания, tsk-587).
 - `POST /lesson-occurrences/{id}/reschedule` — перенести своё участие (не
   трогает остальных участников группового occurrence).
-- `POST /lesson-occurrences/ad-hoc` — отработка вне расписания.
+- `POST /lesson-occurrences/ad-hoc` — запись на отработку; время обязано
+  совпадать с началом слота расписания (tsk-587).
 
 Гейт: `require_authenticated` (реальный пользователь, не сервисный токен) —
 ownership (наличие своей строки участника) проверяется в сервисе, роутер
@@ -157,7 +158,10 @@ async def get_available_slots(
         403: {"description": "Ученик не входит в число участников этого занятия"},
         404: {"description": "Занятие не найдено"},
         409: {"description": "Участие уже закрыто или новое время занято"},
-        422: {"description": "Новое время вне часов работы школы"},
+        422: {
+            "description": "Новое время вне часов работы школы либо не совпадает "
+            "ни с одним слотом расписания"
+        },
     },
 )
 async def post_reschedule(
@@ -179,6 +183,13 @@ async def post_reschedule(
     "/lesson-occurrences/ad-hoc",
     response_model=MyLessonOccurrenceRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        409: {"description": "Время занято другим активным занятием ученика"},
+        422: {
+            "description": "Время вне часов работы школы либо не совпадает "
+            "ни с одним слотом расписания"
+        },
+    },
 )
 async def post_ad_hoc(
     body: AdHocRequest = Body(...),

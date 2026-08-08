@@ -1,7 +1,7 @@
 """tsk-428/435 (Календарь LMS): генератор occurrence + admin API, групповые слоты.
 
 Покрывает:
-- `_iter_occurrence_datetimes`: конвенция weekday (0=понедельник), горизонт,
+- `iter_occurrence_datetimes`: конвенция weekday (0=понедельник), горизонт,
   пропуск уже прошедшего сегодня времени слота.
 - `lesson_occurrence_generator_tick`: генерация occurrence + СИНК участников
   из `lesson_slot_student` в `lesson_occurrence_participant`, идемпотентность
@@ -28,7 +28,7 @@ from app.models.lesson_slot_student import LessonSlotStudent
 from app.models.users import Users
 from app.services.auth.session_service import create_session
 from app.services.lesson_occurrence_generator_service import (
-    _iter_occurrence_datetimes,
+    iter_occurrence_datetimes,
     lesson_occurrence_generator_tick,
 )
 
@@ -93,7 +93,7 @@ class _FakeSlot:
         self.timezone = timezone_name
 
 
-# ============================== _iter_occurrence_datetimes ==============================
+# ============================== iter_occurrence_datetimes ==============================
 
 
 def test_weekday_convention_monday_is_zero():
@@ -106,7 +106,7 @@ def test_iter_occurrence_datetimes_basic_conversion():
     """Слот пн 10:00 MSK → первое будущее вхождение переведено в UTC (MSK=UTC+3, без DST)."""
     slot = _FakeSlot(weekday=0, start_time=time(10, 0))
     now_utc = datetime(2026, 7, 20, 5, 0, tzinfo=dt_timezone.utc)  # понедельник, 08:00 MSK
-    results = _iter_occurrence_datetimes(slot, horizon_days=14, now_utc=now_utc)
+    results = iter_occurrence_datetimes(slot, horizon_days=14, now_utc=now_utc)
     assert results[0] == datetime(2026, 7, 20, 7, 0, tzinfo=dt_timezone.utc)
     # Следующее вхождение — через 7 дней
     assert results[1] == datetime(2026, 7, 27, 7, 0, tzinfo=dt_timezone.utc)
@@ -117,7 +117,7 @@ def test_iter_occurrence_datetimes_skips_already_passed_today():
     slot = _FakeSlot(weekday=0, start_time=time(10, 0))
     # Понедельник, 12:00 MSK = 09:00 UTC — время слота (10:00 MSK) уже прошло
     now_utc = datetime(2026, 7, 20, 9, 0, tzinfo=dt_timezone.utc)
-    results = _iter_occurrence_datetimes(slot, horizon_days=14, now_utc=now_utc)
+    results = iter_occurrence_datetimes(slot, horizon_days=14, now_utc=now_utc)
     assert results[0] == datetime(2026, 7, 27, 7, 0, tzinfo=dt_timezone.utc)
 
 
@@ -125,7 +125,7 @@ def test_iter_occurrence_datetimes_respects_horizon():
     """Горизонт в 3 дня от понедельника не должен включать вхождение через 7 дней."""
     slot = _FakeSlot(weekday=0, start_time=time(10, 0))
     now_utc = datetime(2026, 7, 20, 5, 0, tzinfo=dt_timezone.utc)
-    results = _iter_occurrence_datetimes(slot, horizon_days=3, now_utc=now_utc)
+    results = iter_occurrence_datetimes(slot, horizon_days=3, now_utc=now_utc)
     assert len(results) == 1
     assert results[0] == datetime(2026, 7, 20, 7, 0, tzinfo=dt_timezone.utc)
 

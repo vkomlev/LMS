@@ -6,6 +6,10 @@ occurrence, tsk-435).
 Модель и границы — docs/specs/2026-07-26-plan-kalendar-lms.md § «Фаза 3» +
 tsk-435 (rework на группы). Переиспользует `ensure_user_has_role` и
 `is_within_operating_hours` из `lesson_calendar_service`.
+
+tsk-587: время для переноса и записи берётся из активных слотов расписания
+(`lesson_slot`), а не из часов работы школы, нарезанных по полчаса; выдача
+вариантов и приём проверяют одно и то же.
 """
 from __future__ import annotations
 
@@ -19,28 +23,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
+from app.models.lesson_slot import LessonSlot
 from app.repos.lesson_calendar_repository import (
     LessonOccurrenceParticipantRepository,
     LessonOccurrenceRepository,
     LessonOccurrenceTeacherRepository,
-    OperatingHoursRepository,
+    LessonSlotRepository,
+    LessonSlotTeacherRepository,
 )
 from app.services import audit_service, lesson_calendar_service
+from app.services.lesson_occurrence_generator_service import iter_occurrence_datetimes
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
 
 _occurrence_repo = LessonOccurrenceRepository()
 _participant_repo = LessonOccurrenceParticipantRepository()
-_operating_hours_repo = OperatingHoursRepository()
 _occurrence_teacher_repo = LessonOccurrenceTeacherRepository()
+_lesson_slot_repo = LessonSlotRepository()
+_slot_teacher_repo = LessonSlotTeacherRepository()
 
 # Статусы, при которых участие уже структурно закрыто для reschedule/ownership-операций.
 _LOCKED_STATUSES = frozenset({"no_show", "completed", "rescheduled"})
 
-# Шаг перебора кандидатов для available-slots — компромисс между точностью
-# и объёмом кандидатов; занятия обычно начинаются на круглые полчаса.
-_SLOT_STEP_MINUTES = 30
+# На сколько дней вперёд подбираются варианты переноса. Совпадает с дефолтом
+# горизонта генератора занятий (LESSON_OCCURRENCE_HORIZON_DAYS): дальше него
+# занятий ещё нет, и присоединяться было бы не к чему.
+_RESCHEDULE_HORIZON_DAYS = 14
 
 
 # ─── Teacher panel ──────────────────────────────────────────────────────────
@@ -181,6 +190,217 @@ async def record_teacher_attendance(
     return participant
 
 
+# ─── Расписание как источник времён (tsk-587) ──────────────────────────────
+#
+# До tsk-587 и подбор времени, и приём переноса опирались только на часы работы
+# школы (`operating_hours`), нарезанные шагом в полчаса. Часы работы — это когда
+# школа В ПРИНЦИПЕ открыта, а не когда у преподавателя есть занятие: на проде
+# среда открыта с 13:00 до 19:00, а слоты в ней — 10:00, 11:00, 12:00 и 18:00.
+# Ученик выбирал 17:00, система соглашалась, и занятие вставало мимо расписания
+# (занятия 4640 и 1422 на проде). Теперь времена берутся из активных слотов, а
+# часы работы остаются внешней рамкой поверх них.
+
+
+async def _leading_teacher_ids(db: AsyncSession, occurrence: LessonOccurrence) -> list[int]:
+    """Кто ведёт это занятие: активные строки M2M, иначе основной по колонке."""
+    links = await _occurrence_teacher_repo.list_for_occurrence(db, occurrence.id)
+    return [link.teacher_id for link in links] or [occurrence.teacher_id]
+
+
+async def _active_slots_of(
+    db: AsyncSession, teacher_ids: list[int], *, duration_minutes: int
+) -> list[LessonSlot]:
+    """Активные слоты этих преподавателей ТОЙ ЖЕ длительности.
+
+    Длительность сверяется точно, а не «слот вместит»: занятие, созданное на
+    время слота, генератор потом подтянет к этому слоту по (slot_id,
+    scheduled_at) и выровняет длительность по слоту — то есть 90-минутное
+    занятие в часовом слоте всё равно стало бы часовым, только молча.
+    """
+    by_id: dict[int, LessonSlot] = {}
+    for teacher_id in teacher_ids:
+        for slot in await _lesson_slot_repo.list_active(db, teacher_id=teacher_id):
+            if slot.duration_minutes == duration_minutes:
+                by_id[slot.id] = slot
+    return list(by_id.values())
+
+
+def _slot_starts_at(slot: LessonSlot, scheduled_at: datetime) -> bool:
+    """Слот начинается ровно в это время (день недели + время в зоне слота)."""
+    local = scheduled_at.astimezone(ZoneInfo(slot.timezone))
+    return local.weekday() == slot.weekday and local.time() == slot.start_time
+
+
+async def _find_slot_at(
+    db: AsyncSession, *, teacher_ids: list[int], scheduled_at: datetime, duration_minutes: int
+) -> Optional[LessonSlot]:
+    """Слот расписания, начинающийся ровно в это время, или ``None``."""
+    for slot in await _active_slots_of(db, teacher_ids, duration_minutes=duration_minutes):
+        if _slot_starts_at(slot, scheduled_at):
+            return slot
+    return None
+
+
+async def _list_slot_candidates(
+    db: AsyncSession,
+    *,
+    teacher_ids: list[int],
+    duration_minutes: int,
+    student_id: int,
+    exclude_occurrence_id: Optional[int] = None,
+    limit: int = 10,
+    horizon_days: int = _RESCHEDULE_HORIZON_DAYS,
+) -> list[datetime]:
+    """Ближайшие времена активных слотов этих преподавателей, свободные у
+    ученика и попадающие в часы работы школы. Отсортированы по возрастанию.
+
+    Времена считает `iter_occurrence_datetimes` — та же функция, что и у
+    генератора занятий. Поэтому выбранный кандидат гарантированно совпадает
+    с временем уже созданного занятия слота, и ученик попадает в него, а не
+    в параллельное.
+    """
+    now_utc = datetime.now(timezone.utc)
+    moments: set[datetime] = set()
+    for slot in await _active_slots_of(db, teacher_ids, duration_minutes=duration_minutes):
+        moments.update(
+            iter_occurrence_datetimes(slot, horizon_days=horizon_days, now_utc=now_utc)
+        )
+
+    candidates: list[datetime] = []
+    for moment in sorted(moments):
+        if moment <= now_utc:
+            continue
+        within_hours = await lesson_calendar_service.is_within_operating_hours(
+            db, scheduled_at=moment, duration_minutes=duration_minutes,
+        )
+        if within_hours is False:
+            continue
+        overlap = await _participant_repo.has_student_overlap(
+            db,
+            student_id=student_id,
+            scheduled_at=moment,
+            duration_minutes=duration_minutes,
+            exclude_occurrence_id=exclude_occurrence_id,
+        )
+        if overlap:
+            continue
+        candidates.append(moment)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
+async def _find_occurrence_at(
+    db: AsyncSession,
+    *,
+    slot: Optional[LessonSlot],
+    teacher_ids: list[int],
+    scheduled_at: datetime,
+    duration_minutes: int,
+    exclude_occurrence_id: Optional[int] = None,
+) -> Optional[LessonOccurrence]:
+    """Уже существующее занятие на это время, к которому надо присоединять.
+
+    Две дороги. Первая — занятие ЭТОГО слота (tsk-587): именно оно и есть
+    «урок по расписанию». Вторая — занятие этих же преподавателей ровно на это
+    время и той же длительности (tsk-464): слота у него может не быть, но
+    второе занятие в тот же час всё равно не нужно.
+    """
+    if slot is not None:
+        existing = await _occurrence_repo.get_by_slot_and_time(
+            db, slot_id=slot.id, scheduled_at=scheduled_at,
+        )
+        if existing is not None and existing.id != exclude_occurrence_id:
+            return existing
+
+    for teacher_id in teacher_ids:
+        same_time = await _occurrence_repo.list_for_teacher(
+            db, teacher_id=teacher_id, from_dt=scheduled_at, to_dt=scheduled_at, limit=5,
+        )
+        match = next(
+            (
+                o for o in same_time
+                if o.id != exclude_occurrence_id and o.duration_minutes == duration_minutes
+            ),
+            None,
+        )
+        if match is not None:
+            return match
+    return None
+
+
+async def _seat_student_at(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    scheduled_at: datetime,
+    duration_minutes: int,
+    slot: Optional[LessonSlot],
+    teacher_ids: list[int],
+    exclude_occurrence_id: Optional[int] = None,
+) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
+    """Посадить ученика на занятие в это время: в уже существующее, если оно
+    есть, иначе в новое. Без commit — границы транзакции задаёт вызывающий.
+
+    Новое занятие при попадании в слот создаётся ПРИВЯЗАННЫМ к нему
+    (`slot_id`), а не отдельным: тогда генератор подхватит его как занятие
+    этого слота и досыпет остальных участников и преподавателей. Раньше
+    занятие всегда рождалось с `slot_id=NULL` — и в кабинете преподавателя
+    рядом с групповым уроком появлялся второй, на одного человека.
+    """
+    existing = await _find_occurrence_at(
+        db,
+        slot=slot,
+        teacher_ids=teacher_ids,
+        scheduled_at=scheduled_at,
+        duration_minutes=duration_minutes,
+        exclude_occurrence_id=exclude_occurrence_id,
+    )
+    if existing is not None:
+        participant = await _participant_repo.get(
+            db, occurrence_id=existing.id, student_id=student_id,
+        )
+        if participant is None:
+            participant = await _participant_repo.create(
+                db, occurrence_id=existing.id, student_id=student_id, status="scheduled",
+            )
+        await db.flush()
+        return existing, participant
+
+    if slot is not None:
+        # Ровно то же, что сделал бы генератор занятий на своём тике.
+        slot_teachers = await _slot_teacher_repo.list_for_slot(db, slot.id)
+        new_teacher_ids = [t.teacher_id for t in slot_teachers] or [slot.teacher_id]
+        occurrence = await _occurrence_repo.create(
+            db,
+            slot_id=slot.id,
+            teacher_id=slot.teacher_id,
+            scheduled_at=scheduled_at,
+            duration_minutes=slot.duration_minutes,
+        )
+    else:
+        new_teacher_ids = teacher_ids
+        occurrence = await _occurrence_repo.create(
+            db,
+            slot_id=None,
+            teacher_id=teacher_ids[0],
+            scheduled_at=scheduled_at,
+            duration_minutes=duration_minutes,
+        )
+    await db.flush()
+
+    participant = await _participant_repo.create(
+        db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
+    )
+    # tsk-443: без строк M2M занятие невидимо в кабинете преподавателя.
+    for teacher_id in dict.fromkeys(new_teacher_ids):
+        await _occurrence_teacher_repo.create(
+            db, occurrence_id=occurrence.id, teacher_id=teacher_id,
+        )
+    await db.flush()
+    return occurrence, participant
+
+
 # ─── Ad-hoc creation + add-participant (teacher/student) ───────────────────
 
 
@@ -191,18 +411,32 @@ async def create_ad_hoc_occurrence(
     teacher_id: int,
     scheduled_at: datetime,
     duration_minutes: int,
+    require_scheduled_slot: bool = True,
 ) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
-    """Создать occurrence вне регулярного расписания (`slot_id=NULL`) с одним
-    начальным участником. Используется двумя путями: ученик сам записывается
-    на отработку (`POST /lesson-occurrences/ad-hoc`) и преподаватель добавляет
-    ученика вручную (`POST /teacher/lesson-occurrences/add-student`).
+    """Записать ученика на занятие в указанное время. Используется двумя
+    путями: ученик сам записывается на отработку
+    (`POST /lesson-occurrences/ad-hoc`) и преподаватель добавляет ученика
+    вручную (`POST /teacher/lesson-occurrences/add-student`).
+
+    Если время попадает в слот расписания или в уже существующее занятие
+    этого преподавателя — ученик садится в НЕГО. Новое занятие заводится
+    только когда садиться не во что (tsk-587: раньше занятие заводилось
+    всегда, и на проде рядом с групповым уроком висели три одиночных
+    занятия-двойника — 917, 4207, 5674).
+
+    `require_scheduled_slot` — требовать, чтобы время совпадало с началом
+    активного слота. Ученику это обязательно: он выбирает из готового
+    списка, и приём обязан проверять ровно то же, что показала выдача.
+    Преподавателю (методисту) — нет: назначить отработку вне сетки
+    расписания это его штатное право, и списка вариантов у него нет.
 
     Коллизия проверяется только по УЧЕНИКУ (не по преподавателю — групповое
     occurrence по design допускает несколько параллельных occurrence у одного
     преподавателя).
 
     :raises DomainError: 404/422 — участник не найден/без нужной роли;
-        422 — вне часов работы школы (если `operating_hours` настроены);
+        422 — вне часов работы школы (если `operating_hours` настроены) либо
+        время не совпадает ни с одним слотом расписания;
         409 — пересечение по времени с другим активным участием ученика.
     """
     await lesson_calendar_service.ensure_user_has_role(db, student_id, "student")
@@ -214,6 +448,18 @@ async def create_ad_hoc_occurrence(
     if within_hours is False:
         raise DomainError(
             "Время вне часов работы школы (operating_hours)", status_code=422
+        )
+
+    slot = await _find_slot_at(
+        db,
+        teacher_ids=[teacher_id],
+        scheduled_at=scheduled_at,
+        duration_minutes=duration_minutes,
+    )
+    if slot is None and require_scheduled_slot:
+        raise DomainError(
+            "В это время занятий по расписанию нет — выберите время из списка",
+            status_code=422,
         )
 
     overlap = await _participant_repo.has_student_overlap(
@@ -228,28 +474,20 @@ async def create_ad_hoc_occurrence(
             status_code=409,
         )
 
-    occurrence = await _occurrence_repo.create(
+    occurrence, participant = await _seat_student_at(
         db,
-        slot_id=None,
-        teacher_id=teacher_id,
+        student_id=student_id,
         scheduled_at=scheduled_at,
         duration_minutes=duration_minutes,
-    )
-    await db.flush()
-    participant = await _participant_repo.create(
-        db, occurrence_id=occurrence.id, student_id=student_id, status="scheduled",
-    )
-    # tsk-443: get_occurrence_for_teacher/list_for_teacher идут через M2M —
-    # без этой строки ad-hoc occurrence был бы невидим самому создателю.
-    await _occurrence_teacher_repo.create(
-        db, occurrence_id=occurrence.id, teacher_id=teacher_id,
+        slot=slot,
+        teacher_ids=[teacher_id],
     )
     await db.commit()
     await db.refresh(occurrence)
     await db.refresh(participant)
     logger.info(
-        "lesson_occurrence ad-hoc создан: id=%s student=%s teacher=%s at=%s",
-        occurrence.id, student_id, teacher_id, scheduled_at,
+        "lesson_occurrence запись: id=%s slot=%s student=%s teacher=%s at=%s",
+        occurrence.id, occurrence.slot_id, student_id, teacher_id, scheduled_at,
     )
     return occurrence, participant
 
@@ -412,52 +650,36 @@ async def list_available_slots(
     occurrence_id: int,
     student_id: int,
     limit: int = 10,
-    horizon_days: int = 14,
+    horizon_days: int = _RESCHEDULE_HORIZON_DAYS,
 ) -> list[datetime]:
-    """Кандидаты для переноса: в рамках `operating_hours`, без коллизий у
-    ЭТОГО ученика (преподаватель по design может вести несколько occurrence
-    одновременно — групповое расписание). Пустой список — `operating_hours`
-    не настроены либо кандидатов не нашлось в пределах горизонта."""
-    participant, occurrence = await _get_own_participant_for_reschedule(
+    """Кандидаты для переноса — времена РЕАЛЬНЫХ слотов расписания тех же
+    преподавателей, что ведут это занятие: в рамках `operating_hours`, без
+    коллизий у ЭТОГО ученика (преподаватель по design может вести несколько
+    occurrence одновременно — групповое расписание).
+
+    Почему только свои преподаватели, а не любой слот школы: перенос
+    сохраняет преподавателя. Предложи мы слот чужого преподавателя — ученик
+    выбрал бы время, в которое ведёт не его человек, а занятие всё равно
+    досталось бы прежнему; тот же разрыв между показанным и полученным, что
+    и чинит эта задача. На проде все активные слоты и так у одного
+    преподавателя, так что выбор ничего не сужает.
+
+    Пустой список — у преподавателей нет активных слотов подходящей
+    длительности либо все ближайшие заняты у самого ученика.
+    """
+    _participant, occurrence = await _get_own_participant_for_reschedule(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
 
-    hours_rows = await _operating_hours_repo.list_all(db)
-    if not hours_rows:
-        return []
-
-    duration = occurrence.duration_minutes
-    now_utc = datetime.now(timezone.utc)
-    candidates: list[datetime] = []
-
-    for day_offset in range(1, horizon_days + 1):
-        if len(candidates) >= limit:
-            break
-        day = (now_utc + timedelta(days=day_offset)).date()
-        for hours_row in hours_rows:
-            tz = ZoneInfo(hours_row.timezone)
-            cursor_local = datetime.combine(day, hours_row.start_time, tzinfo=tz)
-            if cursor_local.weekday() != hours_row.weekday:
-                continue
-
-            end_local = datetime.combine(day, hours_row.end_time, tzinfo=tz)
-            while cursor_local + timedelta(minutes=duration) <= end_local:
-                candidate_utc = cursor_local.astimezone(timezone.utc)
-                if candidate_utc > now_utc:
-                    overlap = await _participant_repo.has_student_overlap(
-                        db,
-                        student_id=student_id,
-                        scheduled_at=candidate_utc,
-                        duration_minutes=duration,
-                        exclude_occurrence_id=occurrence.id,
-                    )
-                    if not overlap:
-                        candidates.append(candidate_utc)
-                        if len(candidates) >= limit:
-                            break
-                cursor_local += timedelta(minutes=_SLOT_STEP_MINUTES)
-
-    return candidates[:limit]
+    return await _list_slot_candidates(
+        db,
+        teacher_ids=await _leading_teacher_ids(db, occurrence),
+        duration_minutes=occurrence.duration_minutes,
+        student_id=student_id,
+        exclude_occurrence_id=occurrence.id,
+        limit=limit,
+        horizon_days=horizon_days,
+    )
 
 
 async def reschedule_occurrence(
@@ -468,11 +690,16 @@ async def reschedule_occurrence(
     new_scheduled_at: datetime,
 ) -> tuple[LessonOccurrence, LessonOccurrenceParticipant]:
     """Перенести УЧАСТИЕ этого ученика: старая строка участника →
-    `status=rescheduled` + `rescheduled_to_occurrence_id`, создаётся НОВЫЙ
-    occurrence (`slot_id=NULL`, тот же teacher/duration, новое время) с
-    новой строкой участника (`status=scheduled`). Остальные участники
-    старого (группового) occurrence не затрагиваются — их перенос
-    независим (см. модель tsk-435).
+    `status=rescheduled` + `rescheduled_to_occurrence_id`, ученик садится в
+    занятие на новое время с новой строкой участника (`status=scheduled`).
+    Остальные участники старого (группового) occurrence не затрагиваются —
+    их перенос независим (см. модель tsk-435).
+
+    Новое время обязано совпадать с началом активного слота расписания тех
+    же преподавателей — ровно с тем, что вернул `list_available_slots`
+    (tsk-587). До этого приём был мягче выдачи и пропускал время, которого
+    в списке не было: так занятие 4640 встало на среду 17:00, когда слотов
+    в среду четыре и ни одного в 17:00.
 
     Без `attendance_event` для самого переноса — CHECK-constraint
     `attendance_event.action` не включает `rescheduled` (это состояние
@@ -483,12 +710,30 @@ async def reschedule_occurrence(
         db, occurrence_id=occurrence_id, student_id=student_id
     )
 
+    if new_scheduled_at == occurrence.scheduled_at:
+        raise DomainError(
+            "Новое время совпадает с текущим — переносить некуда", status_code=409,
+        )
+
     within_hours = await lesson_calendar_service.is_within_operating_hours(
         db, scheduled_at=new_scheduled_at, duration_minutes=occurrence.duration_minutes
     )
     if within_hours is False:
         raise DomainError(
             "Новое время вне часов работы школы (operating_hours)", status_code=422
+        )
+
+    teacher_ids = await _leading_teacher_ids(db, occurrence)
+    slot = await _find_slot_at(
+        db,
+        teacher_ids=teacher_ids,
+        scheduled_at=new_scheduled_at,
+        duration_minutes=occurrence.duration_minutes,
+    )
+    if slot is None:
+        raise DomainError(
+            "В это время занятий по расписанию нет — выберите время из списка",
+            status_code=422,
         )
 
     overlap = await _participant_repo.has_student_overlap(
@@ -504,60 +749,20 @@ async def reschedule_occurrence(
             status_code=409,
         )
 
-    # tsk-464: если на новое время уже есть occurrence у этого преподавателя
-    # (тот же teacher_id + точное совпадение scheduled_at/duration) —
-    # присоединиться к нему, а не плодить отдельный ad-hoc occurrence.
-    # Живой инцидент: ученик перенёс занятие на 10:00, а в это время уже
-    # шёл групповой урок того же преподавателя — вместо присоединения
-    # создался ВТОРОЙ параллельный occurrence на то же время. Тот же класс
-    # бага, что чинили в tsk-443 для `create_ad_hoc_occurrence`/
-    # `BookLessonSection` (первичная запись); путь "перенос" тогда не
-    # трогали, и он рецидивировал отдельно.
-    same_time_candidates = await _occurrence_repo.list_for_teacher(
-        db, teacher_id=occurrence.teacher_id,
-        from_dt=new_scheduled_at, to_dt=new_scheduled_at, limit=5,
+    # tsk-464 + tsk-587: если на новое время занятие уже есть (по слоту или
+    # просто у тех же преподавателей) — присоединиться к нему, а не плодить
+    # параллельное. Живой инцидент tsk-464: ученик перенёс занятие на 10:00,
+    # а в это время уже шёл групповой урок того же преподавателя — вместо
+    # присоединения создался ВТОРОЙ occurrence на то же время.
+    new_occurrence, new_participant = await _seat_student_at(
+        db,
+        student_id=student_id,
+        scheduled_at=new_scheduled_at,
+        duration_minutes=occurrence.duration_minutes,
+        slot=slot,
+        teacher_ids=teacher_ids,
+        exclude_occurrence_id=occurrence.id,
     )
-    existing_occurrence = next(
-        (
-            o for o in same_time_candidates
-            if o.id != occurrence.id and o.duration_minutes == occurrence.duration_minutes
-        ),
-        None,
-    )
-
-    if existing_occurrence is not None:
-        new_occurrence = existing_occurrence
-        new_participant = await _participant_repo.get(
-            db, occurrence_id=new_occurrence.id, student_id=student_id,
-        )
-        if new_participant is None:
-            new_participant = await _participant_repo.create(
-                db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
-            )
-        await db.flush()
-    else:
-        new_occurrence = await _occurrence_repo.create(
-            db,
-            slot_id=None,
-            teacher_id=occurrence.teacher_id,
-            scheduled_at=new_scheduled_at,
-            duration_minutes=occurrence.duration_minutes,
-        )
-        await db.flush()
-        new_participant = await _participant_repo.create(
-            db, occurrence_id=new_occurrence.id, student_id=student_id, status="scheduled",
-        )
-        # tsk-443: переносим ВСЕХ преподавателей старого occurrence (не
-        # только основного) — все, кто видел этого ученика на старом
-        # времени, видят его и на новом; заодно без этого new_occurrence
-        # был бы невидим создателю. Только для НОВОГО occurrence —
-        # присоединённый существующий уже имеет свой список преподавателей.
-        old_teachers = await _occurrence_teacher_repo.list_for_occurrence(db, occurrence.id)
-        for link in old_teachers:
-            await _occurrence_teacher_repo.create(
-                db, occurrence_id=new_occurrence.id, teacher_id=link.teacher_id,
-            )
-        await db.flush()
 
     old_participant.status = "rescheduled"
     old_participant.rescheduled_to_occurrence_id = new_occurrence.id

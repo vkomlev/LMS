@@ -13,7 +13,7 @@ advisory-lock ключами проекта (Y-6 `0x59365453`, Фаза 2
 Таймзона: Europe/Moscow не наблюдает переход на летнее время (Россия
 зафиксировала постоянное время в 2014); DST-fold/gap для этой зоны не
 возникает. Если горизонт когда-либо расширится на зоны с DST — пересмотреть
-`_iter_occurrence_datetimes` (сейчас `datetime.combine(...).replace(tzinfo=tz)`
+`iter_occurrence_datetimes` (сейчас `datetime.combine(...).replace(tzinfo=tz)`
 не обрабатывает неоднозначные локальные времена перехода).
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ _LESSON_CALENDAR_LOCK_KEY = 0x4C534E43
 _scheduler: Optional[AsyncIOScheduler] = None
 
 
-def _iter_occurrence_datetimes(
+def iter_occurrence_datetimes(
     slot: LessonSlot,
     *,
     horizon_days: int,
@@ -54,6 +54,12 @@ def _iter_occurrence_datetimes(
     хранит состояние — повторный вызов с тем же `now_utc` даёт тот же список.
     Уже прошедшее сегодня время слота не включается (следующее вхождение —
     через 7 дней).
+
+    tsk-587: функция публичная, потому что этими же временами
+    `lesson_occurrence_service` подбирает кандидатов для переноса. Общий
+    расчёт — не удобство, а требование: занятие, к которому присоединяют
+    ученика, ищется по ТОЧНОМУ совпадению времени: разойдись два расчёта хоть
+    на минуту — вместо места в группе появилось бы параллельное занятие.
     """
     tz = ZoneInfo(slot.timezone)
     now_local = now_utc.astimezone(tz)
@@ -124,7 +130,7 @@ async def lesson_occurrence_generator_tick(
             )
             slot_teacher_ids = [row[0] for row in teachers_res.fetchall()] or [slot.teacher_id]
 
-            occurrence_datetimes = _iter_occurrence_datetimes(
+            occurrence_datetimes = iter_occurrence_datetimes(
                 slot, horizon_days=horizon_days, now_utc=now_utc
             )
             for scheduled_at in occurrence_datetimes:

@@ -166,12 +166,18 @@ async def add_student_to_schedule(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> LessonOccurrenceRead:
     await _ensure_self_or_service(db, current_user, body.teacher_id)
+    # tsk-587: преподавателю/методисту оставлена свобода назначить время вне
+    # сетки расписания — это штатная «отработка вне расписания», и списка
+    # готовых вариантов у него нет (в отличие от ученика, где выдача и приём
+    # обязаны совпадать). Присоединение к уже существующему занятию на это
+    # время работает и здесь — второе занятие в тот же час не появится.
     occurrence, _participant = await lesson_occurrence_service.create_ad_hoc_occurrence(
         db,
         student_id=body.student_id,
         teacher_id=body.teacher_id,
         scheduled_at=body.scheduled_at,
         duration_minutes=body.duration_minutes,
+        require_scheduled_slot=False,
     )
     return LessonOccurrenceRead.model_validate(occurrence)
 

@@ -24,6 +24,8 @@ from sqlalchemy import text
 
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
+from app.models.lesson_slot import LessonSlot
+from app.models.lesson_slot_teacher import LessonSlotTeacher
 from app.models.operating_hours import OperatingHours
 from app.models.users import Users
 from app.services.auth.session_service import create_session
@@ -89,6 +91,30 @@ async def _set_operating_hours_for_weekday_of(db, day: date, *, start=time(9, 0)
 def _next_day_with_operating_hours_seeded() -> date:
     """Ближайший день (>= завтра), для которого удобно ставить operating_hours."""
     return (datetime.now(dt_timezone.utc) + timedelta(days=1)).date()
+
+
+async def _create_slot_at(
+    db, *, teacher_id: int, moment_local: datetime, duration_minutes: int = 60,
+) -> int:
+    """Активный слот расписания ровно на день недели и время этого момента.
+
+    tsk-587: перенос и запись ученика принимают только времена реальных
+    слотов, поэтому тесту мало настроить часы работы школы — нужен слот.
+    """
+    slot = LessonSlot(
+        teacher_id=teacher_id,
+        weekday=moment_local.weekday(),
+        start_time=moment_local.time(),
+        duration_minutes=duration_minutes,
+        timezone="Europe/Moscow",
+        is_active=True,
+    )
+    db.add(slot)
+    await db.flush()
+    db.add(LessonSlotTeacher(slot_id=slot.id, teacher_id=teacher_id, is_active=True))
+    slot_id = slot.id
+    await db.commit()
+    return slot_id
 
 
 # ============================== Teacher list + is_overdue ==============================
@@ -467,10 +493,15 @@ async def test_add_participant_to_existing_occurrence(db, client):
 
 
 @pytest.mark.asyncio
-async def test_available_slots_empty_without_operating_hours(db, client):
+async def test_available_slots_empty_without_schedule_slots(db, client):
+    """tsk-587: часов работы школы мало — без активных слотов предлагать
+    нечего (раньше выдавалась получасовая сетка по всему рабочему дню)."""
     student_id = await _create_user(db, role="student", prefix="tsk430-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
     token, _, _ = await create_session(db, user_id=student_id)
+
+    target_day = _next_day_with_operating_hours_seeded()
+    await _set_operating_hours_for_weekday_of(db, target_day)
 
     occ_id = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
@@ -487,13 +518,20 @@ async def test_available_slots_empty_without_operating_hours(db, client):
 
 
 @pytest.mark.asyncio
-async def test_available_slots_within_operating_hours_no_collision(db, client):
+async def test_available_slots_are_schedule_slot_times_only(db, client):
+    """tsk-587, главный регресс: в списке только времена реальных слотов.
+
+    Школа открыта с 09:00 до 21:00, слот один — 11:00. Старая сетка шагом в
+    полчаса вернула бы 09:00, 09:30, … 20:00; теперь ровно 11:00.
+    """
     student_id = await _create_user(db, role="student", prefix="tsk430-stud")
     teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
     token, _, _ = await create_session(db, user_id=student_id)
 
     target_day = _next_day_with_operating_hours_seeded()
     await _set_operating_hours_for_weekday_of(db, target_day)
+    slot_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
+    await _create_slot_at(db, teacher_id=teacher_id, moment_local=slot_local)
 
     occ_id = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
@@ -510,10 +548,9 @@ async def test_available_slots_within_operating_hours_no_collision(db, client):
     candidates = resp.json()
     assert len(candidates) > 0
     for item in candidates:
-        dt = datetime.fromisoformat(item["scheduled_at"])
-        local = dt.astimezone(MSK)
+        local = datetime.fromisoformat(item["scheduled_at"]).astimezone(MSK)
         assert local.weekday() == target_day.weekday()
-        assert time(9, 0) <= local.time() < time(21, 0)
+        assert local.time() == time(11, 0), "предложено время, которого нет в расписании"
 
 
 @pytest.mark.asyncio
@@ -525,14 +562,15 @@ async def test_reschedule_creates_new_marks_old_participant_rescheduled(db, clie
     target_day = _next_day_with_operating_hours_seeded()
     await _set_operating_hours_for_weekday_of(db, target_day)
 
+    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
+    new_utc = new_local.astimezone(dt_timezone.utc)
+    slot_id = await _create_slot_at(db, teacher_id=teacher_id, moment_local=new_local)
+
     old_id = await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id,
         scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
         duration_minutes=60,
     )
-
-    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
-    new_utc = new_local.astimezone(dt_timezone.utc)
 
     resp = await client.post(
         f"/api/v1/lesson-occurrences/{old_id}/reschedule",
@@ -543,6 +581,8 @@ async def test_reschedule_creates_new_marks_old_participant_rescheduled(db, clie
     new_occ = resp.json()
     assert new_occ["my_status"] == "scheduled"
     assert new_occ["id"] != old_id
+    # tsk-587: занятие принадлежит слоту, а не висит отдельно с slot_id=NULL.
+    assert new_occ["slot_id"] == slot_id
 
     old_row = (
         await db.execute(
@@ -572,14 +612,15 @@ async def test_reschedule_joins_existing_occurrence_at_same_time(db, client):
     target_day = _next_day_with_operating_hours_seeded()
     await _set_operating_hours_for_weekday_of(db, target_day)
 
+    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
+    new_utc = new_local.astimezone(dt_timezone.utc)
+    await _create_slot_at(db, teacher_id=teacher_id, moment_local=new_local)
+
     old_id = await _create_occurrence_with_participant(
         db, student_id=student_a, teacher_id=teacher_id,
         scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
         duration_minutes=60,
     )
-
-    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
-    new_utc = new_local.astimezone(dt_timezone.utc)
 
     # Уже существующий групповой occurrence того же преподавателя ровно на
     # это же время — student_b уже в нём.
@@ -642,6 +683,9 @@ async def test_reschedule_does_not_affect_other_group_participants(db, client):
     target_day = _next_day_with_operating_hours_seeded()
     await _set_operating_hours_for_weekday_of(db, target_day)
 
+    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
+    await _create_slot_at(db, teacher_id=teacher_id, moment_local=new_local)
+
     old_id = await _create_occurrence_with_participant(
         db, student_id=student_a, teacher_id=teacher_id,
         scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
@@ -650,7 +694,6 @@ async def test_reschedule_does_not_affect_other_group_participants(db, client):
     db.add(LessonOccurrenceParticipant(occurrence_id=old_id, student_id=student_b, status="scheduled"))
     await db.commit()
 
-    new_local = datetime.combine(target_day, time(11, 0), tzinfo=MSK)
     resp = await client.post(
         f"/api/v1/lesson-occurrences/{old_id}/reschedule",
         json={"new_scheduled_at": new_local.astimezone(dt_timezone.utc).isoformat()},
@@ -696,7 +739,7 @@ async def test_reschedule_422_outside_operating_hours(db, client):
 
 
 @pytest.mark.asyncio
-async def test_ad_hoc_creates_occurrence_within_operating_hours(db, client):
+async def test_ad_hoc_creates_occurrence_at_schedule_slot(db, client):
     teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
     student_id = await _create_user(db, role="student", prefix="tsk430-stud")
     token, _, _ = await create_session(db, user_id=student_id)
@@ -704,6 +747,7 @@ async def test_ad_hoc_creates_occurrence_within_operating_hours(db, client):
     target_day = _next_day_with_operating_hours_seeded()
     await _set_operating_hours_for_weekday_of(db, target_day)
     scheduled_local = datetime.combine(target_day, time(12, 0), tzinfo=MSK)
+    slot_id = await _create_slot_at(db, teacher_id=teacher_id, moment_local=scheduled_local)
 
     resp = await client.post(
         "/api/v1/lesson-occurrences/ad-hoc",
@@ -718,7 +762,36 @@ async def test_ad_hoc_creates_occurrence_within_operating_hours(db, client):
     body = resp.json()
     assert body["my_status"] == "scheduled"
     assert body["teacher_id"] == teacher_id
-    assert body["slot_id"] is None
+    # tsk-587: запись идёт в занятие слота, а не в отдельное с slot_id=NULL.
+    assert body["slot_id"] == slot_id
+
+
+@pytest.mark.asyncio
+async def test_ad_hoc_422_time_without_schedule_slot(db, client):
+    """tsk-587: ученик не может протолкнуть время, которого нет в списке."""
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk430-teach")
+    student_id = await _create_user(db, role="student", prefix="tsk430-stud")
+    token, _, _ = await create_session(db, user_id=student_id)
+
+    target_day = _next_day_with_operating_hours_seeded()
+    await _set_operating_hours_for_weekday_of(db, target_day)
+    # Слот есть, но в другое время — школа открыта, занятия в 17:00 нет.
+    await _create_slot_at(
+        db, teacher_id=teacher_id,
+        moment_local=datetime.combine(target_day, time(12, 0), tzinfo=MSK),
+    )
+    off_grid_local = datetime.combine(target_day, time(17, 0), tzinfo=MSK)
+
+    resp = await client.post(
+        "/api/v1/lesson-occurrences/ad-hoc",
+        json={
+            "teacher_id": teacher_id,
+            "scheduled_at": off_grid_local.astimezone(dt_timezone.utc).isoformat(),
+            "duration_minutes": 60,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422, resp.text
 
 
 @pytest.mark.asyncio
@@ -727,10 +800,20 @@ async def test_ad_hoc_409_collision(db, client):
     student_id = await _create_user(db, role="student", prefix="tsk430-stud")
     token, _, _ = await create_session(db, user_id=student_id)
 
-    scheduled_at = datetime.now(dt_timezone.utc) + timedelta(hours=2)
+    # Секунды обнулены: слот хранит время начала, и сверка идёт точная.
+    scheduled_at = (datetime.now(dt_timezone.utc) + timedelta(hours=2)).replace(
+        second=0, microsecond=0,
+    )
     await _create_occurrence_with_participant(
         db, student_id=student_id, teacher_id=teacher_id, scheduled_at=scheduled_at,
         duration_minutes=60,
+    )
+
+    # Слот на пересекающееся время есть — значит отказ будет именно из-за
+    # занятости ученика (409), а не из-за отсутствия слота (422).
+    busy_local = (scheduled_at + timedelta(minutes=15)).astimezone(MSK)
+    await _create_slot_at(
+        db, teacher_id=teacher_id, moment_local=busy_local, duration_minutes=30,
     )
 
     resp = await client.post(
