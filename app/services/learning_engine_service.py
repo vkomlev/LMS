@@ -34,6 +34,11 @@ from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.schemas.course_sampling import CourseSamplingConfig
 from app.services.attempt_attachments import mark_missing_attachments
 from app.services.task_sampling import sample_task_ids
+# tsk-598: единый предикат обязательной очереди (tsk-247). Импортируется, а не
+# копируется словами: копия здесь уже разъехалась с очередью и дала 823 ложных
+# «курса с неоценёнными работами» из 824. Цикла нет — `teacher_queue_service`
+# учебный движок не тянет.
+from app.services.teacher_queue_service import mandatory_review_sql
 from app.utils.exceptions import DomainError
 from pydantic import ValidationError
 
@@ -749,6 +754,24 @@ class LearningEngineService:
         # → notify методиста (idempotent через `task_results.metrics.completion_escalated_at`).
         if state == "COMPLETED":
             try:
+                # tsk-598: ТОТ ЖЕ предикат обязательной очереди, что у списка
+                # проверки, claim-next и таймаут-эскалации (tsk-247/tsk-597).
+                # Здесь была своя ось — «по типу задания», — и она давала ровно
+                # тот же дефект: `SA_COM`/`TBL_COM` с
+                # `manual_review_required=false` проверяет автомат, `checked_at`
+                # у них не проставляется НИКОГДА, и любой завершённый курс
+                # выглядел «с неоценёнными работами». Замер на проде
+                # 2026-08-08: 824 pending по старой оси, настоящая из них ОДНА.
+                #
+                # Прежний комментарий здесь ссылался на `escalation_service.py`
+                # как на образец — а образец был неверный (tsk-597). Ошибка
+                # разошлась копированием, поэтому оба места теперь зовут ОДНУ
+                # функцию, а не повторяют условие словами.
+                #
+                # Суть гейта прежняя и остаётся верной: обычный авто-проверяемый
+                # SA (`checked_at` не проставляется в принципе) сюда попасть не
+                # должен — просто теперь это выражено через `mrr` для всех
+                # четырёх типов сразу, а не только для SA.
                 pending_res = await db.execute(
                     text(
                         """
@@ -757,28 +780,11 @@ class LearningEngineService:
                         WHERE tr.user_id = :sid
                           AND t.course_id = ANY(:cids)
                           AND tr.checked_at IS NULL
-                          AND (
-                              t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
-                              -- tsk-438: SA (не входит в COMMENT_TASK_TYPES/optimistic-
-                              -- pass, attempts.py) обычно не даёт course дойти до
-                              -- COMPLETED, пока required-элемент pending (score=0 держит
-                              -- done_items < total_tasks, compute_course_state выше). Но
-                              -- total_tasks считает только is_active=true задания —
-                              -- деактивация задания уже ПОСЛЕ pending-ответа убирает его
-                              -- из знаменателя и снимает блокировку COMPLETED, а
-                              -- checked_at здесь всё ещё NULL. Гейт по
-                              -- manual_review_required — тот же паттерн, что и в
-                              -- escalation_service.py, иначе обычный авто-проверяемый SA
-                              -- (checked_at не проставляется никогда) ложно попал бы сюда.
-                              OR (
-                                  t.task_content->>'type' = 'SA'
-                                  AND COALESCE(
-                                      (t.solution_rules->>'manual_review_required')::boolean,
-                                      false
-                                  )
-                              )
-                          )
-                        """
+                          AND """
+                        # nosec B608 — подставляется SQL-фрагмент из
+                        # `teacher_queue_service` (два литеральных алиаса),
+                        # пользовательского ввода здесь нет.
+                        + mandatory_review_sql("t", "tr")
                     ),
                     {"sid": student_id, "cids": tree_ids},
                 )

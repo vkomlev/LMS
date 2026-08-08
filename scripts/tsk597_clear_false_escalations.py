@@ -1,24 +1,28 @@
-"""tsk-597: погасить ложные уведомления «Эскалация: проверка зависла».
+"""tsk-597 / tsk-598: погасить ложные эскалации проверки у методиста.
 
-Крон эскалации отбирал кандидатов по ТИПУ задания, а очередь проверки — по
-`manual_review_required`. Оси разъехались, и методисту приходили уведомления по
-работам, которых в его очереди нет и быть не может: `SA_COM`/`TBL_COM` с
-`manual_review_required=false` проверяет автомат, `checked_at` у них не
-проставляется никогда. Замер на проде 2026-08-08: 502 кандидата, из них 502
-ложных; накоплено 72 уведомления (36 работ × 2 методиста).
+Два уведомления с ОДНИМ дефектом: и таймаут-эскалация
+(`escalation_service`, kind `review_escalated`), и эскалация завершения курса
+(`learning_engine_service`, kind `course_pending_review`) отбирали работы по
+ТИПУ задания, а очередь проверки — по `manual_review_required`. Оси
+разъехались, и методиста звали к работам, которых в его очереди нет и быть не
+может: `SA_COM`/`TBL_COM` с `manual_review_required=false` проверяет автомат,
+`checked_at` у них не проставляется никогда.
 
-Предикат крона исправлен в `escalation_service.py` — этот скрипт убирает то,
-что он успел создать до починки.
+Замер на проде 2026-08-08: у таймаут-эскалации 502 кандидата из 502 ложные
+(72 уведомления), у завершения курса — 824 «pending», настоящая из них ОДНА
+(26 уведомлений).
 
-**Запускать ТОЛЬКО после выката исправленного крона.** Иначе очередь
-наполнится заново в ближайший тик (5 минут).
+Оба предиката исправлены (`escalation_service.py`, `learning_engine_service.py`)
+— этот скрипт убирает то, что они успели создать до починки.
 
-Условие удаления сознательно НЕ «все `review_escalated`», а «работа НЕ требует
-ручной проверки» — тот же предикат, что у обязательной очереди. Если между
-чтением и удалением крон успеет создать НАСТОЯЩУЮ эскалацию, она уцелеет.
+**Запускать ТОЛЬКО после выката исправлений.** Иначе очередь наполнится заново
+в ближайший тик крона (5 минут).
 
-Перед удалением строки выгружаются в JSON рядом со скриптом — удаление
-обратимо.
+Условие удаления сознательно НЕ «все эскалации», а «ни одна работа не требует
+обязательной ручной проверки» — тот же предикат, что у очереди. Если между
+чтением и удалением появится НАСТОЯЩАЯ эскалация, она уцелеет.
+
+Перед удалением строки выгружаются в JSON — удаление обратимо.
 
 Запуск на сервере (под app, не под root — tsk-394):
     sudo -u app bash -lc "cd /opt/lms && venv/bin/python scripts/tsk597_clear_false_escalations.py --dry-run"
@@ -54,27 +58,57 @@ from app.db.session import async_session_factory  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger("tsk597")
 
-# «Работа НЕ требует обязательной ручной проверки» — отрицание того же
-# предиката, по которому живёт очередь преподавателя
-# (`teacher_queue_service.mandatory_review_sql`). Держим здесь копией
-# осознанно: скрипт разовый и обязан отработать на той форме предиката,
+# «Работа требует обязательной ручной проверки» — то же, по чему живёт очередь
+# преподавателя (`teacher_queue_service.mandatory_review_sql`). Держим здесь
+# копией осознанно: скрипт разовый и обязан отработать на той форме предиката,
 # которая действовала в момент разбора, даже если сам предикат позже изменят.
-_FALSE_ESCALATION_WHERE = """
-    n.kind = 'review_escalated'
-    AND EXISTS (
-        SELECT 1
-        FROM task_results tr
-        JOIN tasks t ON t.id = tr.task_id
-        WHERE tr.id = (n.payload->>'result_id')::int
-          AND NOT (
-              t.task_content->>'type' = 'TA'
-              OR (t.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
-                  AND COALESCE(
-                      (t.solution_rules->>'manual_review_required')::boolean, false
-                  ) IS TRUE)
-          )
+_IS_MANDATORY = """
+    t.task_content->>'type' = 'TA'
+    OR (t.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
+        AND COALESCE(
+            (t.solution_rules->>'manual_review_required')::boolean, false
+        ) IS TRUE)
+"""
+
+# Два вида уведомлений с ОДНИМ дефектом оси, поэтому и гасятся вместе:
+#   `review_escalated`      — таймаут-эскалация (tsk-597), одна работа в
+#                             `payload.result_id`;
+#   `course_pending_review` — эскалация завершения курса (tsk-598), СПИСОК
+#                             работ в `payload.pending_result_ids`.
+# Второе уведомление считается ложным, только если ложны ВСЕ работы списка:
+# если среди них есть хоть одна, реально ждущая преподавателя, методиста
+# позвали по делу и трогать уведомление нельзя.
+_FALSE_ESCALATION_WHERE = (
+    """
+
+    (
+        n.kind = 'review_escalated'
+        AND EXISTS (
+            SELECT 1
+            FROM task_results tr
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE tr.id = (n.payload->>'result_id')::int
+              AND NOT (__MANDATORY__)
+        )
+    )
+    OR (
+        n.kind = 'course_pending_review'
+        AND jsonb_typeof(n.payload->'pending_result_ids') = 'array'
+        AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(n.payload->'pending_result_ids') AS x(rid)
+            JOIN task_results tr ON tr.id = x.rid::int
+            JOIN tasks t ON t.id = tr.task_id
+            WHERE __MANDATORY__
+        )
     )
 """
+    # Плейсхолдер, а не f-строка: bandit помечает динамическую сборку SQL
+    # (B608), а `# nosec` на многострочном литерале некуда поставить, не
+    # уронив комментарий ВНУТРЬ самого SQL. Подстановка одной константы
+    # модуля — не ввод, поэтому обходимся заменой без форматирования.
+    .replace("__MANDATORY__", _IS_MANDATORY)
+)
 
 
 async def main(apply: bool) -> int:
@@ -96,13 +130,19 @@ async def main(apply: bool) -> int:
         """))).mappings().all()  # nosec B608
 
         total = (await db.execute(text(
-            "SELECT COUNT(*) FROM notifications WHERE kind = 'review_escalated'"
+            "SELECT COUNT(*) FROM notifications "
+            "WHERE kind IN ('review_escalated','course_pending_review')"
         ))).scalar_one()
 
         logger.info(
-            "уведомлений «проверка зависла» всего: %s, из них ложных: %s",
+            "эскалаций проверки всего: %s, из них ложных: %s",
             total, len(rows),
         )
+        by_kind: dict[str, int] = {}
+        for r in rows:
+            by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+        for kind, n in sorted(by_kind.items()):
+            logger.info("  %s: %s", kind, n)
         if len(rows) != total:
             logger.warning(
                 "НЕ все уведомления ложные — %s останутся нетронутыми "
@@ -127,9 +167,12 @@ async def main(apply: bool) -> int:
         backup_path.write_text(
             json.dumps(
                 {
-                    "task": "tsk-597",
+                    "task": "tsk-597 + tsk-598",
                     "taken_at": datetime.now(timezone.utc).isoformat(),
-                    "reason": "ложные эскалации: работа не требует ручной проверки",
+                    "reason": (
+                        "ложные эскалации проверки: ни одна работа не требует "
+                        "обязательной ручной проверки"
+                    ),
                     "rows": backup,
                 },
                 ensure_ascii=False, indent=2,
@@ -142,8 +185,10 @@ async def main(apply: bool) -> int:
             logger.info("сухой прогон: удаления НЕ было (нужен --apply)")
             for r in rows[:5]:
                 logger.info(
-                    "  пример: id=%s методист=%s работа=%s",
-                    r["id"], r["user_id"], r["payload"].get("result_id"),
+                    "  пример: id=%s вид=%s методист=%s работа(ы)=%s",
+                    r["id"], r["kind"], r["user_id"],
+                    r["payload"].get("result_id")
+                    or r["payload"].get("pending_result_ids"),
                 )
             return 0
 
@@ -160,7 +205,8 @@ async def main(apply: bool) -> int:
             SELECT COUNT(*) FROM notifications n WHERE {_FALSE_ESCALATION_WHERE}
         """))).scalar_one()  # nosec B608
         left_total = (await db.execute(text(
-            "SELECT COUNT(*) FROM notifications WHERE kind = 'review_escalated'"
+            "SELECT COUNT(*) FROM notifications "
+            "WHERE kind IN ('review_escalated','course_pending_review')"
         ))).scalar_one()
 
         if left_false != 0 or len(deleted) != len(rows):
@@ -173,7 +219,7 @@ async def main(apply: bool) -> int:
 
         await db.commit()
         logger.info(
-            "удалено %s ложных уведомлений; «проверка зависла» осталось %s "
+            "удалено %s ложных уведомлений; эскалаций проверки осталось %s "
             "(это настоящие или ноль)",
             len(deleted), left_total,
         )

@@ -948,3 +948,104 @@ async def test_y6_course_completion_escalation_skips_auto_sa(db):
         await _cleanup_tasks_and_course(
             db, task_ids=[task_id], course_id=course_id, result_ids=[]
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type", ["SA_COM", "TBL_COM"])
+async def test_y6_course_completion_escalation_skips_auto_comment_types(db, task_type):
+    """tsk-598: авто-проверяемые SA_COM/TBL_COM тоже не зовут методиста.
+
+    Прежний negative control покрывал только `SA` — а дыра была именно в
+    типах-комментариях: старая ось брала `SA_COM`/`TBL_COM` по ТИПУ, не глядя
+    на `manual_review_required`. Такая работа проверена автоматом,
+    `is_correct=TRUE` ей ставит оптимистичный зачёт на сдаче, а `checked_at` не
+    проставляется никогда — то есть КАЖДЫЙ завершённый курс выглядел «с
+    неоценёнными работами». Замер на проде 2026-08-08: 824 pending по старой
+    оси, настоящая из них одна.
+    """
+    from app.services.learning_engine_service import LearningEngineService
+
+    svc = LearningEngineService()
+
+    course_id = await _create_course(db, title_prefix="y6-complete-auto-com")
+    task_id = await _create_task(
+        db, course_id=course_id, type_=task_type,
+        manual=False, requirement_level="recommended",
+    )
+    student_id = await _create_user(db, prefix="y6-stud-com-auto")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-com-auto")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=True, score=10, max_score=10,
+    )
+
+    try:
+        cs = await svc.compute_course_state(db, student_id, course_id, update_state_table=False)
+        assert cs.state == "COMPLETED"
+
+        n = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE kind='course_pending_review' "
+                "  AND payload->'pending_result_ids' @> CAST(:rid_json AS jsonb)"
+            ),
+            {"rid_json": json.dumps([rid])},
+        )).scalar()
+        assert int(n or 0) == 0, (
+            f"авто-проверяемый {task_type} позвал методиста на завершении курса — "
+            "отбор снова идёт по типу задания, а не по обязательности проверки"
+        )
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
+
+
+@pytest.mark.asyncio
+async def test_y6_course_completion_escalation_catches_manual_sa_com(db):
+    """tsk-598, положительная сторона: SA_COM с ручной проверкой доходит.
+
+    Правка сужает отбор — надо убедиться, что вместе с ложными не отсеклись
+    настоящие: `SA_COM` с `manual_review_required=true` держит `is_correct=NULL`
+    до вердикта преподавателя и обязан попасть в completion-эскалацию.
+    """
+    from app.services.learning_engine_service import LearningEngineService
+
+    svc = LearningEngineService()
+
+    course_id = await _create_course(db, title_prefix="y6-complete-man-com")
+    task_id = await _create_task(
+        db, course_id=course_id, type_="SA_COM",
+        manual=True, requirement_level="recommended",
+    )
+    student_id = await _create_user(db, prefix="y6-stud-com-man")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-com-man")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=None, score=0, max_score=10,
+    )
+
+    try:
+        cs = await svc.compute_course_state(db, student_id, course_id, update_state_table=False)
+        assert cs.state == "COMPLETED"
+
+        n = (await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE user_id=:m AND kind='course_pending_review' "
+                "  AND payload->'pending_result_ids' @> CAST(:rid_json AS jsonb)"
+            ),
+            {"m": methodist_id, "rid_json": json.dumps([rid])},
+        )).scalar()
+        assert int(n or 0) == 1, (
+            f"SA_COM с ручной проверкой не дошёл до методиста, got {n}: "
+            "вместе с ложными отсеклись настоящие"
+        )
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
