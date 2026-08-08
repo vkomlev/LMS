@@ -47,4 +47,5 @@ import app.models.parent_access_link
 import app.models.pricing            # тарифы курсов (tsk-505)
 import app.models.lead               # лиды кабинета маркетолога (tsk-506)
 import app.models.charge             # начисления, перерывы, ручная цена (tsk-511/512/513)
+import app.models.subscription       # права тарифа, квота и пакеты наставника (tsk-301)
 

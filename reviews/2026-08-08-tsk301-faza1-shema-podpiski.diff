@@ -1,0 +1,1119 @@
+diff --git a/app/db/base.py b/app/db/base.py
+index 06af3d2..df555cc 100644
+--- a/app/db/base.py
++++ b/app/db/base.py
+@@ -47,4 +47,5 @@ import app.models.parent_access_link
+ import app.models.pricing            # тарифы курсов (tsk-505)
+ import app.models.lead               # лиды кабинета маркетолога (tsk-506)
+ import app.models.charge             # начисления, перерывы, ручная цена (tsk-511/512/513)
++import app.models.subscription       # права тарифа, квота и пакеты наставника (tsk-301)
+ 
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index 4e8654f..0f96fcb 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -198,6 +198,13 @@ RETURNING …`. Читать-сравнивать-записывать запр
+ 
+ `pricing_group_id IS NULL` → начисления **не создаются вовсе** (Test, Demo, Выпускник).
+ 
++**`starts_on` считает приложение, а не БД.** Серверный `CURRENT_DATE` оставлен как
++значение по умолчанию, но полагаться на него нельзя: покупка в 23:30 по Москве 20-го
++числа при другой таймзоне сервера даст 21-е — и порог первого месяца сработает не в ту
++сторону. Дату начала подписки вычисляет приложение в таймзоне школы
++(`operating_hours.timezone`, глобальная — tsk-021). То же касается сравнения с порогом
++`FIRST_MONTH_CHARGE_CUTOFF_DAY`.
++
+ Правка резолва цены точечная: `charge_service._base_price_minor` и
+ `pricing_service.list_student_pricing` берут группу из подписки, если она задана; курс
+ остаётся источником по умолчанию для тех, у кого подписки ещё нет. Пропорция по занятиям
+
+=== НОВЫЕ ФАЙЛЫ (untracked) ===
+
+--- app/models/subscription.py ---
+index 0000000..bebad73
+--- /dev/null
++++ b/app/models/subscription.py
+@@ -0,0 +1,280 @@
++"""Подписка ученика: права, квота наставника, купленные пакеты (tsk-301).
++
++**Несущий принцип, который нельзя «починить»: тариф даёт ПРАВА, расписание
++порождает ДЕНЬГИ.** Подписка счётом не является. Строка `student_subscription`
++указывает лишь, ПО КАКОЙ тарифной группе считать месяц (`pricing_group_id`);
++сколько именно насчитать — по-прежнему решают занятия (`charge_service`).
++`pricing_group_id IS NULL` означает «денег нет вовсе» — так устроены Test, Demo
++и Выпускник.
++
++Обычно подписка и есть счёт, поэтому соблазн добавить сюда цену велик. Данные
++прода говорят обратное: у 15 из 52 активных учеников ноль занятий и ноль
++начислений, при этом права на материалы они сохраняют (закончил обучение —
++перестал платить, доступ остался). Подробности и отклонённые альтернативы —
++[ADR-0006](../../docs/ai/adr/0006-subscription-rights-vs-money.md).
++
++Контракт: `docs/specs/2026-08-08-contract-entitlements.md`.
++"""
++from __future__ import annotations
++
++from datetime import date, datetime
++from typing import Optional
++
++from sqlalchemy import (
++    Boolean,
++    CheckConstraint,
++    Date,
++    DateTime,
++    ForeignKeyConstraint,
++    Index,
++    Integer,
++    PrimaryKeyConstraint,
++    Text,
++    UniqueConstraint,
++    text,
++)
++from sqlalchemy.orm import Mapped, mapped_column
++
++from app.db.base import Base
++
++#: Уровни доступа к материалам. `demo` — курс с лимитом заданий (tsk-423).
++CONTENT_LEVELS = ("full", "demo")
++
++#: Коды девяти планов сетки. Порядок — как в матрице контракта §2.
++PLAN_CODES = (
++    "test", "demo", "self", "ai", "base", "base_legacy", "adults", "flagship", "alumni",
++)
++
++
++class SubscriptionPlan(Base):
++    """Тариф как набор ПРАВ. Цены здесь нет — она живёт в тарифной группе.
++
++    `ai_tutor_limit`: NULL — безлимит, 0 — наставник недоступен, N — N обращений
++    в календарный месяц. Единица лимита — **обращение к модели (реплика)**, а не
++    разговор целиком: именно так бриф считал экономику (40 × 2 194 токена, где
++    2 194 — средний размер одного вызова), и только при поштучном счёте вообще
++    возможна ситуация «лимит исчерпан посреди диалога», ради которой принято
++    решение «дать закончить начатый разговор».
++    """
++
++    __tablename__ = "subscription_plan"
++    __table_args__ = (
++        PrimaryKeyConstraint("id", name="subscription_plan_pkey"),
++        UniqueConstraint("code", name="uq_subscription_plan_code"),
++        ForeignKeyConstraint(
++            ["pricing_group_id"], ["pricing_group.id"], ondelete="RESTRICT",
++            name="subscription_plan_pricing_group_id_fkey",
++        ),
++        CheckConstraint(
++            "ai_tutor_limit IS NULL OR ai_tutor_limit >= 0",
++            name="ck_subscription_plan_ai_limit_non_negative",
++        ),
++        CheckConstraint(
++            "content IN ('full', 'demo')", name="ck_subscription_plan_content",
++        ),
++        # «Непустая строка» в PG — это `~ '\\S'`, а не `length(btrim(x)) > 0`:
++        # btrim без второго аргумента срезает только пробелы и пропускает
++        # табуляцию с переводом строки (ошибка tsk-303 от 2026-08-06).
++        CheckConstraint("code ~ '\\S'", name="ck_subscription_plan_code_not_blank"),
++        CheckConstraint("name ~ '\\S'", name="ck_subscription_plan_name_not_blank"),
++        {"comment": "Тарифы как наборы прав; цена — в тарифной группе (tsk-301)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    code: Mapped[str] = mapped_column(
++        Text, nullable=False, comment="Машинный код плана: test | demo | self | ai | …"
++    )
++    name: Mapped[str] = mapped_column(Text, nullable=False, comment="Имя для человека")
++    ai_tutor_limit: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="NULL — безлимит, 0 — нет доступа, N — N обращений в месяц"
++    )
++    code_review: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("false"),
++        comment="ИИ-оценка кода. Без лимита: себестоимость ~6 ₽/ученик/мес (замер брифа)",
++    )
++    teacher_escalation: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("false"),
++        comment="Ручной запрос помощи преподавателю. Авто-заявка blocked_limit не гейтится",
++    )
++    lessons: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("false"),
++        comment="Есть ли занятия. Признак для расписания и денег, доступ им не гейтится",
++    )
++    content: Mapped[str] = mapped_column(
++        Text, nullable=False, server_default=text("'full'"), comment="full | demo"
++    )
++    pricing_group_id: Mapped[Optional[int]] = mapped_column(
++        Integer,
++        comment="Группа для расчёта месяца. NULL = начисления не создаются вовсе",
++    )
++    upgrade_hint: Mapped[Optional[str]] = mapped_column(
++        Text,
++        comment="Что даёт апгрейд — текст для заблокированной кнопки вместо «недоступно»",
++    )
++    is_active: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("true")
++    )
++    sort_order: Mapped[int] = mapped_column(
++        Integer, nullable=False, server_default=text("0")
++    )
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), server_default=text("now()"), nullable=False
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), server_default=text("now()"), nullable=False
++    )
++
++
++class StudentSubscription(Base):
++    """Присвоение тарифа ученику. История — строками, а не полем «предыдущий».
++
++    Права берутся из строки, действующей СЕГОДНЯ; деньги — из строки,
++    действовавшей на ПЕРВОЕ ЧИСЛО расчётного месяца. Из этой пары правил само
++    собой выходит решение оператора «права при апгрейде сразу, деньги со
++    следующего месяца» — отдельного механизма отсрочки не требуется.
++
++    `pricing_group_id` — снимок на момент присвоения: он перекрывает группу
++    курса (`course_pricing`). Курс остаётся источником по умолчанию для тех, у
++    кого подписки ещё нет. Причина, по которой группы курса не хватает: «Базовый
++    3000», «Базовый 2750», «Self 1000» и «AI 1500» продают ОДИН И ТОТ ЖЕ курс.
++    """
++
++    __tablename__ = "student_subscription"
++    __table_args__ = (
++        PrimaryKeyConstraint("id", name="student_subscription_pkey"),
++        ForeignKeyConstraint(
++            ["student_id"], ["users.id"], ondelete="CASCADE",
++            name="student_subscription_student_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["plan_id"], ["subscription_plan.id"], ondelete="RESTRICT",
++            name="student_subscription_plan_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["pricing_group_id"], ["pricing_group.id"], ondelete="RESTRICT",
++            name="student_subscription_pricing_group_id_fkey",
++        ),
++        ForeignKeyConstraint(
++            ["changed_by"], ["users.id"], ondelete="SET NULL",
++            name="student_subscription_changed_by_fkey",
++        ),
++        CheckConstraint(
++            "ends_on IS NULL OR ends_on >= starts_on",
++            name="ck_student_subscription_period_order",
++        ),
++        # Инвариант «не более одной действующей подписки» держит БД, а не код:
++        # код проверял бы его гонкой между SELECT и INSERT.
++        Index(
++            "uq_student_subscription_active",
++            "student_id",
++            unique=True,
++            postgresql_where=text("ends_on IS NULL"),
++        ),
++        Index("ix_student_subscription_student", "student_id", "starts_on"),
++        {"comment": "Действующий и прошлые тарифы ученика (tsk-301)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    student_id: Mapped[int] = mapped_column(Integer, nullable=False)
++    plan_id: Mapped[int] = mapped_column(Integer, nullable=False)
++    pricing_group_id: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Перекрывает группу курса. NULL = начислений нет"
++    )
++    starts_on: Mapped[date] = mapped_column(
++        Date, nullable=False, server_default=text("CURRENT_DATE")
++    )
++    ends_on: Mapped[Optional[date]] = mapped_column(
++        Date, comment="NULL — строка действующая"
++    )
++    changed_by: Mapped[Optional[int]] = mapped_column(
++        Integer, comment="Кто присвоил: admin или marketer (преподавателю нельзя)"
++    )
++    reason: Mapped[Optional[str]] = mapped_column(Text)
++    created_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), server_default=text("now()"), nullable=False
++    )
++
++
++class StudentAiQuota(Base):
++    """Расход месячной квоты наставника. Одна строка на ученика и месяц.
++
++    Отдельная таблица, а не подсчёт по `llm_usage_event`: списание обязано быть
++    атомарным (`UPDATE … WHERE used < limit RETURNING`), иначе две вкладки
++    ученика съедают одну единицу дважды. По журналу расхода такое не выразить.
++
++    Квота **не переносится** между месяцами — в отличие от купленного пакета.
++    """
++
++    __tablename__ = "student_ai_quota"
++    __table_args__ = (
++        PrimaryKeyConstraint("id", name="student_ai_quota_pkey"),
++        ForeignKeyConstraint(
++            ["student_id"], ["users.id"], ondelete="CASCADE",
++            name="student_ai_quota_student_id_fkey",
++        ),
++        UniqueConstraint("student_id", "period", name="uq_student_ai_quota_period"),
++        CheckConstraint("used >= 0", name="ck_student_ai_quota_used_non_negative"),
++        {"comment": "Расход месячной квоты ИИ-наставника (tsk-301)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    student_id: Mapped[int] = mapped_column(Integer, nullable=False)
++    period: Mapped[date] = mapped_column(
++        Date, nullable=False, comment="Первое число месяца"
++    )
++    used: Mapped[int] = mapped_column(
++        Integer, nullable=False, server_default=text("0")
++    )
++    updated_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), server_default=text("now()"), nullable=False
++    )
++
++
++class StudentAiGrant(Base):
++    """Купленный пакет обращений к наставнику. Остаток переносится бессрочно.
++
++    Порядок списания: **сначала месячная квота, потом пакеты** (FIFO по дате
++    покупки). Иначе оплаченный пакет сгорает раньше бесплатной квоты, и человек
++    теряет деньги в месяц, когда мог не тратить ничего.
++
++    `gateway_payment_id` уникален: повторная доставка уведомления от ЮKassa не
++    должна удваивать пакет. Нарушение уникальности маппится на 409, а не на 500
++    (урок tsk-574) — и ранняя проверка существования этот перехват не отменяет,
++    между ними гонка.
++    """
++
++    __tablename__ = "student_ai_grant"
++    __table_args__ = (
++        PrimaryKeyConstraint("id", name="student_ai_grant_pkey"),
++        ForeignKeyConstraint(
++            ["student_id"], ["users.id"], ondelete="CASCADE",
++            name="student_ai_grant_student_id_fkey",
++        ),
++        UniqueConstraint(
++            "gateway_payment_id", name="uq_student_ai_grant_gateway_payment"
++        ),
++        CheckConstraint("granted > 0", name="ck_student_ai_grant_granted_positive"),
++        CheckConstraint(
++            "used >= 0 AND used <= granted", name="ck_student_ai_grant_used_in_range"
++        ),
++        Index("ix_student_ai_grant_fifo", "student_id", "purchased_at"),
++        {"comment": "Докупленные пакеты обращений к наставнику (tsk-301)"},
++    )
++
++    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
++    student_id: Mapped[int] = mapped_column(Integer, nullable=False)
++    granted: Mapped[int] = mapped_column(
++        Integer, nullable=False, comment="Сколько обращений куплено"
++    )
++    used: Mapped[int] = mapped_column(
++        Integer, nullable=False, server_default=text("0")
++    )
++    purchased_at: Mapped[datetime] = mapped_column(
++        DateTime(timezone=True), server_default=text("now()"), nullable=False,
++        comment="Порядок списания — по возрастанию этой даты (FIFO)",
++    )
++    gateway_payment_id: Mapped[Optional[str]] = mapped_column(
++        Text, comment="Номер платежа ЮKassa. NULL — пакет выдан персоналом вручную"
++    )
++    granted_by: Mapped[Optional[int]] = mapped_column(Integer)
++    note: Mapped[Optional[str]] = mapped_column(Text)
+
+--- app/db/migrations/versions/20260808_030000_tsk301_subscription.py ---
+index 0000000..ebf09a2
+--- /dev/null
++++ b/app/db/migrations/versions/20260808_030000_tsk301_subscription.py
+@@ -0,0 +1,389 @@
++"""tsk-301 Фаза 1: схема подписной модели и досев тарифной сетки.
++
++Четыре таблицы (`subscription_plan`, `student_subscription`, `student_ai_quota`,
++`student_ai_grant`) и сид девяти планов. Ни одна точка кода к ним ещё не
++обращается — гейт появляется только в Фазе 2 и включается в Фазе 6. Поэтому
++миграция поведения не меняет вообще.
++
++**Что досеивается в тарифную сетку и почему это безопасно.** Проверено на проде
++2026-08-08 (`/db-check` до миграции): максимум занятий в неделю у действующих
++учеников — **два** (23 человека по 2, 10 по 1, 18 без расписания). Значит
++добавление ступени «3 раза в неделю» не сдвигает ничью цену: ни через точное
++совпадение (таких нет), ни через `fallback_lower` (он берёт ближайшую МЕНЬШУЮ
++ступень, а новая — больше всех существующих). Новые группы (Self, AI, Базовый
++2026) на существующих учеников не влияют вовсе: на них никто не ссылается, пока
++Фаза 2 не научит расчёт брать группу из подписки.
++
++**Существующая группа «Базовый» (id=1) не переименовывается и не трогается** —
++на ней 37 живых начислений. В новой сетке она играет роль «Base (старая цена)»,
++новые клиенты пойдут в отдельную группу «Базовый 2026».
++
++Сид идемпотентен и ищет группы **по имени**, а не по жёстко вписанному id:
++на чистой dev-базе групп может не быть вовсе, и такой сид отработает и там.
++
++Rollback: `alembic downgrade tsk578_task_opened_idx` — четыре таблицы удаляются
++вместе с присвоенными тарифами. Данные на момент отката справочные (планы) либо
++ещё не используемые (подписки появятся в Фазе 5), ручной труд в них не хранится.
++
++Откат по сетке **намеренно несимметричен досеву**: удаляются только заведомо
++новые группы («Базовый 2026», «Self», «AI») и ступень «3 раза в неделю» в
++«Базовом». Строки, существующие на проде до миграции, не трогаются никогда —
++даже если на dev их создал наш же досев: там это выравнивание с продом, и снос
++вернул бы расхождение. Группа, на которую успели повесить курс, тоже остаётся:
++это уже рабочая настройка, а не наша строка.
++
++Revision ID: tsk301_subscription
++Revises: tsk578_task_opened_idx
++Create Date: 2026-08-08
++"""
++
++from __future__ import annotations
++
++import logging
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++logger = logging.getLogger("alembic.runtime.migration")
++
++revision: str = "tsk301_subscription"
++down_revision: Union[str, None] = "tsk578_task_opened_idx"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++#: ПОЛНЫЙ ожидаемый состав сетки: (имя группы, описание,
++#: [(имя варианта, ₽, ось, значение, порядок)]).
++#:
++#: Объявляется целиком, а не «чего не хватает на проде»: dev и прод разошлись
++#: (на dev нет группы «Обучение взрослых» вовсе), и сид, написанный от прод-снимка,
++#: создал бы там пустую группу. Существующие строки ищутся ПО ИМЕНИ и не трогаются —
++#: досев только добавляет недостающее и тем сводит базы к одному состоянию.
++_GRID: tuple[tuple[str, str, tuple[tuple[str, int, str | None, str | None, int], ...]], ...] = (
++    (
++        "Базовый",
++        "Старая цена для давних клиентов (tsk-301: план base_legacy)",
++        (
++            ("1 раз в неделю", 2750, "attendance_frequency", "1", 1),
++            ("2 раза в неделю", 5500, "attendance_frequency", "2", 2),
++            ("3 раза в неделю", 7750, "attendance_frequency", "3", 3),
++        ),
++    ),
++    (
++        "Базовый 2026",
++        "Цена для новых клиентов (tsk-301: план base)",
++        (
++            ("1 раз в неделю", 3000, "attendance_frequency", "1", 1),
++            ("2 раза в неделю", 6000, "attendance_frequency", "2", 2),
++            ("3 раза в неделю", 9000, "attendance_frequency", "3", 3),
++        ),
++    ),
++    (
++        "Обучение взрослых",
++        "Взрослая группа (tsk-301: план adults)",
++        (
++            ("1 раз в неделю", 3500, "attendance_frequency", "1", 1),
++            ("2 раза в неделю", 7000, "attendance_frequency", "2", 2),
++        ),
++    ),
++    (
++        "ИИ-предприниматель",
++        "Флагман (tsk-301: план flagship)",
++        (
++            ("Для своих", 10000, "segment", "insider", 1),
++            ("Улица", 20000, "segment", "street", 2),
++        ),
++    ),
++    (
++        "Self",
++        "Самостоятельное прохождение без занятий и без ИИ (tsk-301)",
++        (("Самостоятельно", 1000, None, None, 1),),
++    ),
++    (
++        "AI",
++        "Самостоятельное прохождение с ИИ-наставником (tsk-301)",
++        (("С наставником", 1500, None, None, 1),),
++    ),
++)
++
++#: Что откат удаляет. **Только заведомо наше.** Группы и ступени, живущие на
++#: проде до этой миграции («Базовый» 1-2 раза, «ИИ-предприниматель», «Обучение
++#: взрослых»), не удаляются никогда — даже если на dev их создал наш же досев:
++#: там это выравнивание с продом, и снос вернул бы расхождение.
++_DOWNGRADE_GROUPS: tuple[str, ...] = ("Базовый 2026", "Self", "AI")
++_DOWNGRADE_TARIFFS: tuple[tuple[str, str], ...] = (("Базовый", "3 раза в неделю"),)
++
++#: Девять планов из матрицы контракта §2.
++#: (code, name, ai_tutor_limit, code_review, teacher_escalation, lessons, content,
++#:  имя тарифной группы или None, подсказка апгрейда, порядок)
++_PLANS: tuple[
++    tuple[str, str, int | None, bool, bool, bool, str, str | None, str | None, int], ...
++] = (
++    ("test", "Test", None, True, True, False, "full", None,
++     None, 1),
++    ("demo", "Demo", 0, False, False, False, "demo", None,
++     "Полный доступ к курсу, без лимита заданий — от 1000 ₽ в месяц", 2),
++    ("self", "Self", 0, False, False, False, "full", "Self",
++     "ИИ-наставник и проверка кода — на тарифе AI, 1500 ₽ в месяц", 3),
++    ("ai", "AI", 40, True, False, False, "full", "AI",
++     "Занятия с преподавателем и разбор заданий — на тарифе Base", 4),
++    ("base", "Base", 100, True, True, True, "full", "Базовый 2026",
++     None, 5),
++    ("base_legacy", "Base (старая цена)", 100, True, True, True, "full", "Базовый",
++     None, 6),
++    ("adults", "Обучение взрослых", 100, True, True, True, "full", "Обучение взрослых",
++     None, 7),
++    ("flagship", "Флагман", None, True, True, True, "full", "ИИ-предприниматель",
++     None, 8),
++    ("alumni", "Выпускник", 0, False, False, False, "full", None,
++     "Вернуться к занятиям и наставнику — на любом тарифе с обучением", 9),
++)
++
++
++def _seed_grid(conn: sa.engine.Connection) -> None:
++    """Досеять группы и недостающие ступени. Существующие строки не трогаются."""
++    for group_name, description, tariffs in _GRID:
++        group_id = conn.execute(
++            sa.text("SELECT id FROM pricing_group WHERE name = :n"), {"n": group_name}
++        ).scalar()
++        if group_id is None:
++            group_id = conn.execute(
++                sa.text(
++                    "INSERT INTO pricing_group (name, description) "
++                    "VALUES (:n, :d) RETURNING id"
++                ),
++                {"n": group_name, "d": description},
++            ).scalar()
++        for name, rub, kind, value, order in tariffs:
++            # Ступень уже есть (например, при повторном прогоне) — пропускаем.
++            exists = conn.execute(
++                sa.text(
++                    "SELECT 1 FROM pricing_tariff "
++                    " WHERE group_id = :g AND name = :n"
++                ),
++                {"g": group_id, "n": name},
++            ).scalar()
++            if exists:
++                continue
++            conn.execute(
++                sa.text(
++                    "INSERT INTO pricing_tariff "
++                    "  (group_id, name, price_minor, match_kind, match_value, sort_order) "
++                    "VALUES (:g, :n, :p, :k, :v, :o)"
++                ),
++                {"g": group_id, "n": name, "p": rub * 100,
++                 "k": kind, "v": value, "o": order},
++            )
++
++
++def _seed_plans(conn: sa.engine.Connection) -> None:
++    """Засеять девять планов, связав их с группами по имени."""
++    for (code, name, limit, review, escalation, lessons, content,
++         group_name, hint, order) in _PLANS:
++        group_id = None
++        if group_name is not None:
++            group_id = conn.execute(
++                sa.text("SELECT id FROM pricing_group WHERE name = :n"),
++                {"n": group_name},
++            ).scalar()
++            if group_id is None:
++                # План засеивается без денежной привязки, чтобы миграция не падала
++                # на нестандартной базе. Молчать нельзя: `pricing_group_id IS NULL`
++                # — валидное состояние для Test/Demo/Выпускника, и без предупреждения
++                # опечатка в имени группы неотличима от замысла.
++                logger.warning(
++                    "tsk-301: группа «%s» не найдена — план %s остался без денежной "
++                    "привязки", group_name, code,
++                )
++        conn.execute(
++            sa.text(
++                "INSERT INTO subscription_plan "
++                "  (code, name, ai_tutor_limit, code_review, teacher_escalation, "
++                "   lessons, content, pricing_group_id, upgrade_hint, sort_order) "
++                "VALUES (:c, :n, :l, :r, :e, :s, :ct, :g, :h, :o) "
++                "ON CONFLICT (code) DO NOTHING"
++            ),
++            {"c": code, "n": name, "l": limit, "r": review, "e": escalation,
++             "s": lessons, "ct": content, "g": group_id, "h": hint, "o": order},
++        )
++
++
++def upgrade() -> None:
++    op.create_table(
++        "subscription_plan",
++        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
++        sa.Column("code", sa.Text(), nullable=False,
++                  comment="Машинный код плана: test | demo | self | ai | …"),
++        sa.Column("name", sa.Text(), nullable=False, comment="Имя для человека"),
++        sa.Column("ai_tutor_limit", sa.Integer(), nullable=True,
++                  comment="NULL — безлимит, 0 — нет доступа, N — N обращений в месяц"),
++        sa.Column("code_review", sa.Boolean(), server_default=sa.text("false"),
++                  nullable=False),
++        sa.Column("teacher_escalation", sa.Boolean(), server_default=sa.text("false"),
++                  nullable=False),
++        sa.Column("lessons", sa.Boolean(), server_default=sa.text("false"),
++                  nullable=False),
++        sa.Column("content", sa.Text(), server_default=sa.text("'full'"),
++                  nullable=False),
++        sa.Column("pricing_group_id", sa.Integer(), nullable=True,
++                  comment="Группа для расчёта месяца. NULL = начисления не создаются"),
++        sa.Column("upgrade_hint", sa.Text(), nullable=True),
++        sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"),
++                  nullable=False),
++        sa.Column("sort_order", sa.Integer(), server_default=sa.text("0"),
++                  nullable=False),
++        sa.Column("created_at", sa.DateTime(timezone=True),
++                  server_default=sa.text("now()"), nullable=False),
++        sa.Column("updated_at", sa.DateTime(timezone=True),
++                  server_default=sa.text("now()"), nullable=False),
++        sa.PrimaryKeyConstraint("id", name="subscription_plan_pkey"),
++        sa.UniqueConstraint("code", name="uq_subscription_plan_code"),
++        sa.ForeignKeyConstraint(["pricing_group_id"], ["pricing_group.id"],
++                                ondelete="RESTRICT",
++                                name="subscription_plan_pricing_group_id_fkey"),
++        sa.CheckConstraint("ai_tutor_limit IS NULL OR ai_tutor_limit >= 0",
++                           name="ck_subscription_plan_ai_limit_non_negative"),
++        sa.CheckConstraint("content IN ('full', 'demo')",
++                           name="ck_subscription_plan_content"),
++        # Непустая строка в PG — `~ '\S'`. `length(btrim(x)) > 0` пропускает
++        # табуляцию и перевод строки (урок tsk-303).
++        sa.CheckConstraint("code ~ '\\S'", name="ck_subscription_plan_code_not_blank"),
++        sa.CheckConstraint("name ~ '\\S'", name="ck_subscription_plan_name_not_blank"),
++        comment="Тарифы как наборы прав; цена — в тарифной группе (tsk-301)",
++    )
++
++    op.create_table(
++        "student_subscription",
++        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
++        sa.Column("student_id", sa.Integer(), nullable=False),
++        sa.Column("plan_id", sa.Integer(), nullable=False),
++        sa.Column("pricing_group_id", sa.Integer(), nullable=True,
++                  comment="Перекрывает группу курса. NULL = начислений нет"),
++        sa.Column("starts_on", sa.Date(), server_default=sa.text("CURRENT_DATE"),
++                  nullable=False),
++        sa.Column("ends_on", sa.Date(), nullable=True,
++                  comment="NULL — строка действующая"),
++        sa.Column("changed_by", sa.Integer(), nullable=True),
++        sa.Column("reason", sa.Text(), nullable=True),
++        sa.Column("created_at", sa.DateTime(timezone=True),
++                  server_default=sa.text("now()"), nullable=False),
++        sa.PrimaryKeyConstraint("id", name="student_subscription_pkey"),
++        sa.ForeignKeyConstraint(["student_id"], ["users.id"], ondelete="CASCADE",
++                                name="student_subscription_student_id_fkey"),
++        sa.ForeignKeyConstraint(["plan_id"], ["subscription_plan.id"],
++                                ondelete="RESTRICT",
++                                name="student_subscription_plan_id_fkey"),
++        sa.ForeignKeyConstraint(["pricing_group_id"], ["pricing_group.id"],
++                                ondelete="RESTRICT",
++                                name="student_subscription_pricing_group_id_fkey"),
++        sa.ForeignKeyConstraint(["changed_by"], ["users.id"], ondelete="SET NULL",
++                                name="student_subscription_changed_by_fkey"),
++        sa.CheckConstraint("ends_on IS NULL OR ends_on >= starts_on",
++                           name="ck_student_subscription_period_order"),
++        comment="Действующий и прошлые тарифы ученика (tsk-301)",
++    )
++    # Инвариант «не более одной действующей подписки на ученика» держит БД:
++    # код проверял бы его гонкой между SELECT и INSERT.
++    op.create_index(
++        "uq_student_subscription_active", "student_subscription", ["student_id"],
++        unique=True, postgresql_where=sa.text("ends_on IS NULL"),
++    )
++    op.create_index(
++        "ix_student_subscription_student", "student_subscription",
++        ["student_id", "starts_on"],
++    )
++
++    op.create_table(
++        "student_ai_quota",
++        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
++        sa.Column("student_id", sa.Integer(), nullable=False),
++        sa.Column("period", sa.Date(), nullable=False, comment="Первое число месяца"),
++        sa.Column("used", sa.Integer(), server_default=sa.text("0"), nullable=False),
++        sa.Column("updated_at", sa.DateTime(timezone=True),
++                  server_default=sa.text("now()"), nullable=False),
++        sa.PrimaryKeyConstraint("id", name="student_ai_quota_pkey"),
++        sa.ForeignKeyConstraint(["student_id"], ["users.id"], ondelete="CASCADE",
++                                name="student_ai_quota_student_id_fkey"),
++        sa.UniqueConstraint("student_id", "period", name="uq_student_ai_quota_period"),
++        sa.CheckConstraint("used >= 0", name="ck_student_ai_quota_used_non_negative"),
++        comment="Расход месячной квоты ИИ-наставника (tsk-301)",
++    )
++
++    op.create_table(
++        "student_ai_grant",
++        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
++        sa.Column("student_id", sa.Integer(), nullable=False),
++        sa.Column("granted", sa.Integer(), nullable=False),
++        sa.Column("used", sa.Integer(), server_default=sa.text("0"), nullable=False),
++        sa.Column("purchased_at", sa.DateTime(timezone=True),
++                  server_default=sa.text("now()"), nullable=False,
++                  comment="Порядок списания — по возрастанию этой даты (FIFO)"),
++        sa.Column("gateway_payment_id", sa.Text(), nullable=True,
++                  comment="Номер платежа ЮKassa. NULL — выдан персоналом вручную"),
++        sa.Column("granted_by", sa.Integer(), nullable=True),
++        sa.Column("note", sa.Text(), nullable=True),
++        sa.PrimaryKeyConstraint("id", name="student_ai_grant_pkey"),
++        sa.ForeignKeyConstraint(["student_id"], ["users.id"], ondelete="CASCADE",
++                                name="student_ai_grant_student_id_fkey"),
++        sa.UniqueConstraint("gateway_payment_id",
++                            name="uq_student_ai_grant_gateway_payment"),
++        sa.CheckConstraint("granted > 0", name="ck_student_ai_grant_granted_positive"),
++        sa.CheckConstraint("used >= 0 AND used <= granted",
++                           name="ck_student_ai_grant_used_in_range"),
++        comment="Докупленные пакеты обращений к наставнику (tsk-301)",
++    )
++    op.create_index(
++        "ix_student_ai_grant_fifo", "student_ai_grant", ["student_id", "purchased_at"]
++    )
++
++    conn = op.get_bind()
++    _seed_grid(conn)
++    _seed_plans(conn)
++
++
++def downgrade() -> None:
++    conn = op.get_bind()
++
++    # Таблицы сносятся раньше зачистки сетки: и `subscription_plan`, и
++    # `student_subscription` ссылаются на `pricing_group` через RESTRICT.
++    op.drop_index("ix_student_ai_grant_fifo", table_name="student_ai_grant")
++    op.drop_table("student_ai_grant")
++    op.drop_table("student_ai_quota")
++    op.drop_index("ix_student_subscription_student", table_name="student_subscription")
++    op.drop_index("uq_student_subscription_active", table_name="student_subscription")
++    op.drop_table("student_subscription")
++    op.drop_table("subscription_plan")
++
++    # Точечные ступени, добавленные в уже существовавшие группы.
++    for group_name, tariff_name in _DOWNGRADE_TARIFFS:
++        conn.execute(
++            sa.text(
++                "DELETE FROM pricing_tariff t "
++                " USING pricing_group g "
++                " WHERE g.id = t.group_id AND g.name = :g AND t.name = :n"
++            ),
++            {"g": group_name, "n": tariff_name},
++        )
++
++    # Целиком новые группы — вместе с их вариантами. Группа, на которую успели
++    # повесить курс, не удаляется: это уже не наша строка, а рабочая настройка.
++    for group_name in _DOWNGRADE_GROUPS:
++        conn.execute(
++            sa.text(
++                "DELETE FROM pricing_tariff t "
++                " USING pricing_group g "
++                " WHERE g.id = t.group_id AND g.name = :g "
++                "   AND NOT EXISTS (SELECT 1 FROM course_pricing c WHERE c.group_id = g.id)"
++            ),
++            {"g": group_name},
++        )
++    conn.execute(
++        sa.text(
++            "DELETE FROM pricing_group pg "
++            " WHERE pg.name = ANY(:names) "
++            "   AND NOT EXISTS (SELECT 1 FROM pricing_tariff t WHERE t.group_id = pg.id) "
++            "   AND NOT EXISTS (SELECT 1 FROM course_pricing c WHERE c.group_id = pg.id)"
++        ),
++        {"names": list(_DOWNGRADE_GROUPS)},
++    )
+
+--- tests/test_tsk301_schema.py ---
+index 0000000..91543ca
+--- /dev/null
++++ b/tests/test_tsk301_schema.py
+@@ -0,0 +1,402 @@
++"""tsk-301 Фаза 1: инварианты схемы подписной модели и полнота тарифной сетки.
++
++Проверяется не наличие таблиц (это видно и глазами), а ровно то, что легко
++сломать незаметно:
++
++1. **Матрица прав.** Девять планов сверяются по ЗНАЧЕНИЯМ с матрицей контракта
++   §2. Тест на «таблица существует» пропустил бы перепутанные права — например
++   `code_review` у Demo, что нарушает обещание «токены не расходуем».
++2. **Полнота сетки.** У каждого платного плана обязана быть тарифная группа, а
++   у группы — ступень под нужную частоту. Сид ищет группы по имени; опечатка в
++   имени оставила бы план без денег молча (`pricing_group_id IS NULL` — это
++   валидное состояние для Test/Demo/Выпускник, и отличить его от опечатки может
++   только явная проверка).
++3. **Один действующий тариф на ученика.** Инвариант держит частичный уникальный
++   индекс, а не код: код проверял бы его гонкой между SELECT и INSERT.
++4. **Пустые строки.** Набор «пустых» значений включает табуляцию и перевод
++   строки — `length(btrim(x)) > 0` их пропускает, потому что `btrim` без второго
++   аргумента срезает только пробелы (урок tsk-303 от 2026-08-06).
++5. **Идемпотентность пакета.** Повторный номер платежа ЮKassa не создаёт второй
++   грант — иначе повторная доставка уведомления удваивала бы купленное.
++
++Тесты идут внутри общей откатываемой транзакции (savepoint'ы для нарушений
++ограничений), поэтому за собой ничего не чистят.
++"""
++from __future__ import annotations
++
++import uuid
++from datetime import date
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
++from sqlalchemy.ext.asyncio import AsyncSession
++
++pytestmark = pytest.mark.asyncio
++
++
++#: Матрица контракта §2: code → (лимит наставника, оценка кода, эскалация,
++#: занятия, контент, имя тарифной группы или None).
++_MATRIX: dict[str, tuple[int | None, bool, bool, bool, str, str | None]] = {
++    "test":        (None, True,  True,  False, "full", None),
++    "demo":        (0,    False, False, False, "demo", None),
++    "self":        (0,    False, False, False, "full", "Self"),
++    "ai":          (40,   True,  False, False, "full", "AI"),
++    "base":        (100,  True,  True,  True,  "full", "Базовый 2026"),
++    "base_legacy": (100,  True,  True,  True,  "full", "Базовый"),
++    "adults":      (100,  True,  True,  True,  "full", "Обучение взрослых"),
++    "flagship":    (None, True,  True,  True,  "full", "ИИ-предприниматель"),
++    "alumni":      (0,    False, False, False, "full", None),
++}
++
++#: Ступени, которые обязаны быть в сетке после досева: группа → частота → ₽.
++_GRID_EXPECTED: dict[str, dict[str, int]] = {
++    "Базовый":        {"1": 2750, "2": 5500, "3": 7750},
++    "Базовый 2026":   {"1": 3000, "2": 6000, "3": 9000},
++    "Обучение взрослых": {"1": 3500, "2": 7000},
++}
++
++#: Группы с единственным вариантом без оси: имя → ₽.
++_FLAT_EXPECTED: dict[str, int] = {"Self": 1000, "AI": 1500}
++
++
++@pytest_asyncio.fixture(scope="function")
++async def student_id(db: AsyncSession) -> int:
++    """Ученик под FK. Почта уникальна — иначе тест ловит чужой partial unique."""
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO users (full_name, email, is_active) "
++                "VALUES ('tsk301 ученик подписки', :email, true) RETURNING id"
++            ),
++            {"email": f"tsk301-{uuid.uuid4().hex[:12]}@example.test"},
++        )
++    ).scalar_one()
++
++
++@pytest_asyncio.fixture(scope="function")
++async def plan_id(db: AsyncSession) -> int:
++    """Любой засеянный план — для строк подписки."""
++    value = (
++        await db.execute(text("SELECT id FROM subscription_plan WHERE code = 'self'"))
++    ).scalar()
++    assert value is not None, "план self не засеян — миграция tsk301 не применена"
++    return int(value)
++
++
++# ─────────────────────────── 1. Матрица прав ────────────────────────────────
++
++
++async def test_all_nine_plans_seeded(db: AsyncSession) -> None:
++    codes = {
++        row[0]
++        for row in (
++            await db.execute(text("SELECT code FROM subscription_plan"))
++        ).all()
++    }
++    assert codes == set(_MATRIX), "состав планов разошёлся с матрицей контракта §2"
++
++
++@pytest.mark.parametrize("code", sorted(_MATRIX))
++async def test_plan_rights_match_contract_matrix(db: AsyncSession, code: str) -> None:
++    """Права сверяются по значениям, а не по факту существования строки."""
++    row = (
++        await db.execute(
++            text(
++                "SELECT p.ai_tutor_limit, p.code_review, p.teacher_escalation, "
++                "       p.lessons, p.content, g.name "
++                "  FROM subscription_plan p "
++                "  LEFT JOIN pricing_group g ON g.id = p.pricing_group_id "
++                " WHERE p.code = :c"
++            ),
++            {"c": code},
++        )
++    ).first()
++    assert row is not None, f"план {code} не засеян"
++    assert tuple(row) == _MATRIX[code], f"права плана {code} разошлись с матрицей"
++
++
++async def test_demo_and_self_do_not_spend_tokens(db: AsyncSession) -> None:
++    """Обещание Demo «токены не расходуем» — отдельным тестом, не только матрицей.
++
++    Это не дубль предыдущего: матрицу можно поправить целиком и «согласовать»
++    дефект. Здесь зафиксировано само обещание из брифа.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT code, ai_tutor_limit, code_review FROM subscription_plan "
++                " WHERE code IN ('demo', 'self', 'alumni')"
++            )
++        )
++    ).all()
++    assert len(rows) == 3
++    for code, limit, review in rows:
++        assert limit == 0, f"{code}: наставник обязан быть недоступен"
++        assert review is False, f"{code}: оценка кода обязана быть недоступна"
++
++
++# ─────────────────────────── 2. Полнота сетки ───────────────────────────────
++
++
++@pytest.mark.parametrize("code", sorted(c for c, m in _MATRIX.items() if m[5]))
++async def test_paid_plan_has_pricing_group(db: AsyncSession, code: str) -> None:
++    """У платного плана обязана быть группа: NULL здесь неотличим от опечатки."""
++    group_id = (
++        await db.execute(
++            text("SELECT pricing_group_id FROM subscription_plan WHERE code = :c"),
++            {"c": code},
++        )
++    ).scalar()
++    assert group_id is not None, (
++        f"план {code} остался без тарифной группы — вероятно, имя группы в сиде "
++        f"не совпало с фактическим"
++    )
++
++
++@pytest.mark.parametrize("group_name", sorted(_GRID_EXPECTED))
++async def test_frequency_steps_complete(db: AsyncSession, group_name: str) -> None:
++    rows = (
++        await db.execute(
++            text(
++                "SELECT t.match_value, t.price_minor "
++                "  FROM pricing_tariff t JOIN pricing_group g ON g.id = t.group_id "
++                " WHERE g.name = :n AND t.is_active "
++                "   AND t.match_kind = 'attendance_frequency'"
++            ),
++            {"n": group_name},
++        )
++    ).all()
++    actual = {value: minor // 100 for value, minor in rows}
++    assert actual == _GRID_EXPECTED[group_name], (
++        f"ступени группы «{group_name}» разошлись с матрицей контракта"
++    )
++
++
++@pytest.mark.parametrize("group_name", sorted(_FLAT_EXPECTED))
++async def test_flat_group_has_single_axisless_tariff(
++    db: AsyncSession, group_name: str
++) -> None:
++    """Self и AI — один вариант без оси.
++
++    Это не косметика: `_resolve_group_price` отдаёт цену безусловно только для
++    единственного варианта с `match_kind IS NULL`. Появись рядом второй вариант
++    или ось частоты — ученик без расписания получил бы `below_grid`, то есть
++    начисление за подписку без занятий вообще не создалось бы.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT t.match_kind, t.price_minor "
++                "  FROM pricing_tariff t JOIN pricing_group g ON g.id = t.group_id "
++                " WHERE g.name = :n AND t.is_active"
++            ),
++            {"n": group_name},
++        )
++    ).all()
++    assert len(rows) == 1, f"в группе «{group_name}» обязан быть ровно один вариант"
++    match_kind, price_minor = rows[0]
++    assert match_kind is None, "вариант обязан быть без оси, иначе цена не подберётся"
++    assert price_minor // 100 == _FLAT_EXPECTED[group_name]
++
++
++async def test_legacy_group_untouched(db: AsyncSession) -> None:
++    """Существующие ступени группы «Базовый» не переписаны досевом.
++
++    На них 37 живых начислений; сдвиг любой из них — молчаливое изменение денег.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT t.match_value, t.price_minor "
++                "  FROM pricing_tariff t JOIN pricing_group g ON g.id = t.group_id "
++                " WHERE g.name = 'Базовый' AND t.match_value IN ('1', '2')"
++            )
++        )
++    ).all()
++    assert {v: m // 100 for v, m in rows} == {"1": 2750, "2": 5500}
++
++
++# ──────────────────── 3. Один действующий тариф на ученика ──────────────────
++
++
++async def test_second_active_subscription_rejected(
++    db: AsyncSession, student_id: int, plan_id: int
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
++            "VALUES (:s, :p, CURRENT_DATE)"
++        ),
++        {"s": student_id, "p": plan_id},
++    )
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
++                    "VALUES (:s, :p, CURRENT_DATE)"
++                ),
++                {"s": student_id, "p": plan_id},
++            )
++
++
++async def test_closed_subscription_allows_new_one(
++    db: AsyncSession, student_id: int, plan_id: int
++) -> None:
++    """Смена тарифа: закрыли прежнюю строку — новая проходит.
++
++    Без этого теста «один действующий» мог бы оказаться «один за всю жизнь»,
++    и смена тарифа падала бы на проде при первой же попытке.
++    """
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id, starts_on, ends_on) "
++            "VALUES (:s, :p, CURRENT_DATE - 30, CURRENT_DATE - 1)"
++        ),
++        {"s": student_id, "p": plan_id},
++    )
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
++            "VALUES (:s, :p, CURRENT_DATE)"
++        ),
++        {"s": student_id, "p": plan_id},
++    )
++    active = (
++        await db.execute(
++            text(
++                "SELECT count(*) FROM student_subscription "
++                " WHERE student_id = :s AND ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).scalar()
++    assert active == 1
++
++
++async def test_end_before_start_rejected(
++    db: AsyncSession, student_id: int, plan_id: int
++) -> None:
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_subscription "
++                    "  (student_id, plan_id, starts_on, ends_on) "
++                    "VALUES (:s, :p, CURRENT_DATE, CURRENT_DATE - 1)"
++                ),
++                {"s": student_id, "p": plan_id},
++            )
++
++
++# ─────────────────────────── 4. Пустые строки ───────────────────────────────
++
++
++@pytest.mark.parametrize("blank", ["", "   ", "\t\n", "\r"])
++async def test_blank_plan_code_rejected(db: AsyncSession, blank: str) -> None:
++    """Набор пустых значений включает табуляцию и перевод строки.
++
++    `length(btrim(x)) > 0` пропустил бы `E'\\t\\n'`: btrim без второго аргумента
++    срезает только пробелы. Ограничение написано как `~ '\\S'` (урок tsk-303).
++    """
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO subscription_plan (code, name) VALUES (:c, 'x')"
++                ),
++                {"c": blank},
++            )
++
++
++@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
++async def test_blank_plan_name_rejected(db: AsyncSession, blank: str) -> None:
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO subscription_plan (code, name) VALUES (:c, :n)"
++                ),
++                {"c": f"tsk301-blank-{uuid.uuid4().hex[:8]}", "n": blank},
++            )
++
++
++# ───────────────────── 5. Квота и пакеты наставника ─────────────────────────
++
++
++async def test_duplicate_gateway_payment_rejected(
++    db: AsyncSession, student_id: int
++) -> None:
++    """Повторная доставка уведомления ЮKassa не удваивает пакет."""
++    payment_id = f"tsk301-{uuid.uuid4().hex[:16]}"
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_grant (student_id, granted, gateway_payment_id) "
++            "VALUES (:s, 40, :p)"
++        ),
++        {"s": student_id, "p": payment_id},
++    )
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_ai_grant "
++                    "  (student_id, granted, gateway_payment_id) "
++                    "VALUES (:s, 40, :p)"
++                ),
++                {"s": student_id, "p": payment_id},
++            )
++
++
++async def test_manual_grants_allow_many_nulls(
++    db: AsyncSession, student_id: int
++) -> None:
++    """Пакеты, выданные персоналом вручную, номера платежа не имеют.
++
++    UNIQUE в PG не считает NULL дублями — фиксируем это как требование, иначе
++    вторая ручная выдача упала бы, и дефект нашёлся бы только у оператора.
++    """
++    for _ in range(2):
++        await db.execute(
++            text("INSERT INTO student_ai_grant (student_id, granted) VALUES (:s, 10)"),
++            {"s": student_id},
++        )
++    count = (
++        await db.execute(
++            text("SELECT count(*) FROM student_ai_grant WHERE student_id = :s"),
++            {"s": student_id},
++        )
++    ).scalar()
++    assert count == 2
++
++
++async def test_grant_used_cannot_exceed_granted(
++    db: AsyncSession, student_id: int
++) -> None:
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_ai_grant (student_id, granted, used) "
++                    "VALUES (:s, 10, 11)"
++                ),
++                {"s": student_id},
++            )
++
++
++async def test_quota_unique_per_month(db: AsyncSession, student_id: int) -> None:
++    period = date(2026, 8, 1)
++    await db.execute(
++        text("INSERT INTO student_ai_quota (student_id, period) VALUES (:s, :p)"),
++        {"s": student_id, "p": period},
++    )
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_ai_quota (student_id, period) VALUES (:s, :p)"
++                ),
++                {"s": student_id, "p": period},
++            )
