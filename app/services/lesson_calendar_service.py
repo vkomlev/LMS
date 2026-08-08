@@ -437,9 +437,25 @@ async def _recalculate_money_for(db: AsyncSession, *student_ids: int) -> None:
     Импорт локальный: `charge_service` тянет за собой прайс, а расписание
     грузится раньше него.
     """
-    from app.services import charge_service
+    from app.services import charge_service, subscription_service
 
     for student_id in dict.fromkeys(student_ids):
+        # tsk-301: появление занятий и есть признак того, что человек стал
+        # учеником по-настоящему — переводим с demo на base. Повышение идёт
+        # ТОЛЬКО с demo (см. `UPGRADABLE_FROM`): на base_legacy держится старая
+        # цена 37 действующих учеников, и правило без этой оговорки поднимало бы
+        # её каждому, кому меняют расписание.
+        #
+        # Строго ДО пересчёта: иначе месяц посчитается по прежней группе, а новая
+        # применится только со следующего изменения расписания.
+        try:
+            await subscription_service.upgrade_on_schedule(db, student_id)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.exception(
+                "tsk-301: автоперевод на base не удался, ученик %s", student_id
+            )
         await charge_service.recalculate_open_months_for_student(db, student_id=student_id)
 
 

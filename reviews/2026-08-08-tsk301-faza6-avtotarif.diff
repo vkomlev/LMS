@@ -1,0 +1,477 @@
+diff --git a/app/services/auth/role_assign_service.py b/app/services/auth/role_assign_service.py
+index 4d0a377..d1161d4 100644
+--- a/app/services/auth/role_assign_service.py
++++ b/app/services/auth/role_assign_service.py
+@@ -98,6 +98,23 @@ async def ensure_student_role(
+             event_type, user_id, channel,
+         )
+ 
++    # tsk-301: тариф по умолчанию выдаётся ЗДЕСЬ ЖЕ, а не отдельным шагом.
++    # «Зарегистрировался» и «получил права» обязаны быть одним событием: при
++    # включённом гейте ученик без тарифа в первый же день теряет ИИ-наставника и
++    # кнопку помощи преподавателю, и заметить это можно только по жалобе.
++    # Импорт локальный — `subscription_service` не нужен остальным путям этого
++    # модуля, а auth-цепочка грузится раньше прайса.
++    try:
++        from app.services import subscription_service  # noqa: PLC0415
++
++        await subscription_service.ensure_default_plan(db, user_id, channel=channel)
++    except Exception:
++        # Тем же принципом, что и audit ниже: сбой выдачи тарифа не должен
++        # ломать вход. Человек войдёт без тарифа, это чинится присвоением.
++        logger.exception(
++            "tsk-301: не удалось выдать тариф по умолчанию user_id=%s", user_id
++        )
++
+     logger.info(
+         "Y-4 pre-S5: student role assigned to user_id=%s (channel=%s, origin=%s)",
+         user_id, channel, origin,
+diff --git a/app/services/lesson_calendar_service.py b/app/services/lesson_calendar_service.py
+index 5807fe0..5ec6f4a 100644
+--- a/app/services/lesson_calendar_service.py
++++ b/app/services/lesson_calendar_service.py
+@@ -437,9 +437,25 @@ async def _recalculate_money_for(db: AsyncSession, *student_ids: int) -> None:
+     Импорт локальный: `charge_service` тянет за собой прайс, а расписание
+     грузится раньше него.
+     """
+-    from app.services import charge_service
++    from app.services import charge_service, subscription_service
+ 
+     for student_id in dict.fromkeys(student_ids):
++        # tsk-301: появление занятий и есть признак того, что человек стал
++        # учеником по-настоящему — переводим с demo на base. Повышение идёт
++        # ТОЛЬКО с demo (см. `UPGRADABLE_FROM`): на base_legacy держится старая
++        # цена 37 действующих учеников, и правило без этой оговорки поднимало бы
++        # её каждому, кому меняют расписание.
++        #
++        # Строго ДО пересчёта: иначе месяц посчитается по прежней группе, а новая
++        # применится только со следующего изменения расписания.
++        try:
++            await subscription_service.upgrade_on_schedule(db, student_id)
++            await db.commit()
++        except Exception:
++            await db.rollback()
++            logger.exception(
++                "tsk-301: автоперевод на base не удался, ученик %s", student_id
++            )
+         await charge_service.recalculate_open_months_for_student(db, student_id=student_id)
+ 
+ 
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+new file mode 100644
+index 0000000..e86a06d
+--- /dev/null
++++ b/app/services/subscription_service.py
+@@ -0,0 +1,159 @@
++"""Автоприсвоение тарифа (tsk-301, решение оператора 2026-08-08).
++
++Два правила, оба выведены из живого прогона Фазы 6:
++
++1. **Регистрация → `demo`.** Без этого каждый новый ученик остаётся без тарифа, а
++   при включённом гейте это означает отказ: человек в первый же день теряет
++   ИИ-наставника и кнопку помощи преподавателю. Регистраций примерно одна в день,
++   и узнать о такой потере можно было бы только по жалобе.
++2. **Добавили в расписание → `base`.** Появление занятий и есть признак того, что
++   человек стал учеником по-настоящему.
++
++**Второе правило срабатывает ТОЛЬКО с `demo` (или при полном отсутствии тарифа).**
++Это не перестраховка: на `base_legacy` сидят 37 действующих учеников со СТАРОЙ ценой
++(2750/5500), а `base` — это «Базовый 2026» (3000/6000). Правило без такой оговорки
++поднимало бы цену каждому, кому меняют расписание, — молча и задним числом, потому
++что смена расписания и так зовёт пересчёт открытого месяца (tsk-548).
++
++Понижения нет: снятие с расписания тариф не трогает. Отобрать права автоматически
++опаснее, чем выдать, и «перестал ходить» ≠ «перестал учиться».
++"""
++from __future__ import annotations
++
++import logging
++from typing import Optional
++
++from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
++from sqlalchemy.ext.asyncio import AsyncSession
++
++logger = logging.getLogger(__name__)
++
++#: Тариф по умолчанию при регистрации.
++DEFAULT_PLAN_CODE = "demo"
++
++#: Тариф, на который переводит появление занятий в расписании.
++SCHEDULED_PLAN_CODE = "base"
++
++#: С каких тарифов расписание повышает. Пустой набор означал бы «с любого», а это
++#: и есть тот случай, когда давнему клиенту молча меняют цену.
++UPGRADABLE_FROM: frozenset[str] = frozenset({DEFAULT_PLAN_CODE})
++
++
++async def _current_plan_code(db: AsyncSession, student_id: int) -> Optional[str]:
++    return (
++        await db.execute(
++            text(
++                "SELECT p.code FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                " WHERE s.student_id = :sid AND s.ends_on IS NULL"
++            ),
++            {"sid": student_id},
++        )
++    ).scalar()
++
++
++async def _assign(
++    db: AsyncSession, student_id: int, plan_code: str, *, reason: str
++) -> bool:
++    """Открыть подписку на план. Возвращает False, если план не найден.
++
++    Гонка двух одновременных входов закрывается частичным уникальным индексом
++    «одна действующая подписка», а не проверкой в коде: между `SELECT` и `INSERT`
++    успевает пройти второй запрос.
++    """
++    row = (
++        await db.execute(
++            text(
++                "SELECT id, pricing_group_id FROM subscription_plan "
++                " WHERE code = :c AND is_active"
++            ),
++            {"c": plan_code},
++        )
++    ).first()
++    if row is None:
++        logger.error(
++            "tsk-301: тариф %s не найден — ученик %s остался без автоприсвоения",
++            plan_code, student_id,
++        )
++        return False
++
++    try:
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_subscription "
++                    "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
++                    "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
++                ),
++                {"s": student_id, "p": row.id, "g": row.pricing_group_id, "r": reason},
++            )
++    except IntegrityError:
++        # Подписка появилась параллельно — это не ошибка, а именно то, чего мы
++        # хотели. Savepoint не даёт откату отравить внешнюю транзакцию (урок Y-1.5).
++        logger.info(
++            "tsk-301: подписка ученика %s создана параллельно, автоприсвоение пропущено",
++            student_id,
++        )
++        return False
++
++    logger.info(
++        "tsk-301: ученику %s присвоен тариф %s (%s)", student_id, plan_code, reason
++    )
++    return True
++
++
++async def ensure_default_plan(
++    db: AsyncSession, student_id: int, *, channel: str
++) -> bool:
++    """Дать тариф по умолчанию, если тарифа нет. Идемпотентно.
++
++    Вызывается там же, где проставляется роль `student` — чтобы «зарегистрировался»
++    и «получил права» были одним событием, а не двумя, между которыми человек
++    видит отказ.
++    """
++    if await _current_plan_code(db, student_id) is not None:
++        return False
++    return await _assign(
++        db, student_id, DEFAULT_PLAN_CODE, reason=f"tsk-301 авто: регистрация ({channel})"
++    )
++
++
++async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
++    """Перевести на `base`, если ученика добавили в расписание.
++
++    Повышает **только** с `demo` и с «тарифа нет». Любой другой тариф остаётся как
++    есть: на `base_legacy` держится старая цена 37 действующих учеников, и молча
++    переводить их на новую нельзя. `test`, `flagship`, `adults`, `alumni` тоже
++    назначены осознанно — расписание не повод их переписывать.
++    """
++    current = await _current_plan_code(db, student_id)
++    if current is not None and current not in UPGRADABLE_FROM:
++        return False
++
++    has_slot = (
++        await db.execute(
++            text(
++                "SELECT 1 FROM lesson_slot_student lss "
++                "  JOIN lesson_slot ls ON ls.id = lss.slot_id "
++                " WHERE lss.student_id = :sid AND lss.is_active AND ls.is_active "
++                " LIMIT 1"
++            ),
++            {"sid": student_id},
++        )
++    ).first()
++    if has_slot is None:
++        return False
++
++    if current is not None:
++        await db.execute(
++            text(
++                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
++                " WHERE student_id = :sid AND ends_on IS NULL"
++            ),
++            {"sid": student_id},
++        )
++    return await _assign(
++        db, student_id, SCHEDULED_PLAN_CODE,
++        reason="tsk-301 авто: появилось занятие в расписании",
++    )
+diff --git a/tests/test_tsk301_auto_plan.py b/tests/test_tsk301_auto_plan.py
+new file mode 100644
+index 0000000..684d7a2
+--- /dev/null
++++ b/tests/test_tsk301_auto_plan.py
+@@ -0,0 +1,247 @@
++"""tsk-301: автоприсвоение тарифа (решение оператора 2026-08-08).
++
++Два правила: регистрация даёт `demo`, появление занятий в расписании переводит на
++`base`. Оба выведены из живого прогона Фазы 6, где выяснилось, что новый ученик
++остаётся без тарифа, а при включённом гейте это сразу отказ.
++
++**Главный тест здесь — не про то, что повышение работает, а про то, что оно НЕ
++срабатывает с `base_legacy`.** На этом тарифе 37 действующих учеников со старой
++ценой 2750/5500, а `base` — это 3000/6000. Правило без оговорки поднимало бы им
++цену молча и задним числом: смена расписания и так зовёт пересчёт открытого месяца
++(tsk-548), так что новая цена уехала бы в уже названную человеку сумму.
++"""
++from __future__ import annotations
++
++import uuid
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services import subscription_service as subs
++from app.services.auth import role_assign_service
++
++pytestmark = pytest.mark.asyncio
++
++
++async def _new_user(db: AsyncSession, *, with_role: bool) -> int:
++    user_id = (
++        await db.execute(
++            text(
++                "INSERT INTO users (full_name, email, is_active) "
++                "VALUES ('tsk301 авто-тариф', :e, true) RETURNING id"
++            ),
++            {"e": f"tsk301-auto-{uuid.uuid4().hex[:12]}@example.test"},
++        )
++    ).scalar_one()
++    if with_role:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = 'student' "
++                "ON CONFLICT DO NOTHING"
++            ),
++            {"u": user_id},
++        )
++    return int(user_id)
++
++
++async def _plan_of(db: AsyncSession, student_id: int) -> str | None:
++    return (
++        await db.execute(
++            text(
++                "SELECT p.code FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                " WHERE s.student_id = :s AND s.ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).scalar()
++
++
++async def _subscribe(db: AsyncSession, student_id: int, plan_code: str) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
++            "  FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "c": plan_code},
++    )
++
++
++@pytest_asyncio.fixture(scope="function")
++async def slot_id(db: AsyncSession) -> int:
++    """Активный слот расписания — минимум для правила «появилось занятие»."""
++    teacher_id = await _new_user(db, with_role=False)
++    value = (
++        await db.execute(
++            text(
++                "INSERT INTO lesson_slot "
++                "  (teacher_id, weekday, start_time, duration_minutes, is_active) "
++                "VALUES (:t, 1, '10:00', 60, true) RETURNING id"
++            ),
++            {"t": teacher_id},
++        )
++    ).scalar_one()
++    return int(value)
++
++
++async def _put_in_schedule(db: AsyncSession, slot_id: int, student_id: int) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active) "
++            "VALUES (:s, :u, true)"
++        ),
++        {"s": slot_id, "u": student_id},
++    )
++
++
++# ───────────────────── Правило 1: регистрация → demo ────────────────────────
++
++
++async def test_registration_gives_demo(db: AsyncSession) -> None:
++    student_id = await _new_user(db, with_role=False)
++    assigned = await role_assign_service.ensure_student_role(
++        db, student_id, channel="magic_link", origin="auto_registration"
++    )
++    assert assigned is True
++    assert await _plan_of(db, student_id) == "demo", (
++        "новый ученик обязан получать тариф в том же событии, что и роль"
++    )
++
++
++async def test_default_plan_is_idempotent(db: AsyncSession) -> None:
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "base")
++
++    created = await subs.ensure_default_plan(db, student_id, channel="magic_link")
++    assert created is False, "у кого тариф есть, второй не выдаётся"
++    assert await _plan_of(db, student_id) == "base"
++
++
++async def test_default_plan_failure_does_not_break_registration(
++    db: AsyncSession, monkeypatch
++) -> None:
++    """Сбой выдачи тарифа не должен ломать вход.
++
++    Тариф чинится присвоением, а несостоявшийся вход — нет.
++    """
++
++    async def _boom(*_args, **_kwargs):
++        raise RuntimeError("тариф не выдался")
++
++    monkeypatch.setattr(subs, "ensure_default_plan", _boom)
++    student_id = await _new_user(db, with_role=False)
++    assigned = await role_assign_service.ensure_student_role(
++        db, student_id, channel="tg_init", origin="auto_registration"
++    )
++    assert assigned is True, "роль обязана назначиться даже при сбое тарифа"
++
++
++# ─────────────── Правило 2: появилось занятие → base (только с demo) ────────
++
++
++async def test_schedule_upgrades_demo_to_base(
++    db: AsyncSession, slot_id: int
++) -> None:
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "demo")
++    await _put_in_schedule(db, slot_id, student_id)
++
++    assert await subs.upgrade_on_schedule(db, student_id) is True
++    assert await _plan_of(db, student_id) == "base"
++
++
++async def test_schedule_assigns_base_when_no_plan(
++    db: AsyncSession, slot_id: int
++) -> None:
++    student_id = await _new_user(db, with_role=True)
++    await _put_in_schedule(db, slot_id, student_id)
++
++    assert await subs.upgrade_on_schedule(db, student_id) is True
++    assert await _plan_of(db, student_id) == "base"
++
++
++@pytest.mark.parametrize(
++    "plan_code", ["base_legacy", "test", "flagship", "adults", "alumni", "ai", "self"]
++)
++async def test_schedule_never_overwrites_other_plans(
++    db: AsyncSession, slot_id: int, plan_code: str
++) -> None:
++    """Расписание не переписывает осознанно назначенный тариф.
++
++    `base_legacy` здесь главный: перевод на `base` поднял бы цену с 2750 на 3000
++    у 37 действующих учеников — молча, потому что смена расписания и так зовёт
++    пересчёт открытого месяца.
++    """
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, plan_code)
++    await _put_in_schedule(db, slot_id, student_id)
++
++    assert await subs.upgrade_on_schedule(db, student_id) is False
++    assert await _plan_of(db, student_id) == plan_code
++
++
++async def test_no_schedule_no_upgrade(db: AsyncSession) -> None:
++    """Без занятия в расписании повышения нет — правило именно про занятия."""
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "demo")
++
++    assert await subs.upgrade_on_schedule(db, student_id) is False
++    assert await _plan_of(db, student_id) == "demo"
++
++
++async def test_upgrade_keeps_single_active_subscription(
++    db: AsyncSession, slot_id: int
++) -> None:
++    """После повышения действующая подписка остаётся одна, прежняя закрыта.
++
++    Инвариант держит частичный уникальный индекс; тест фиксирует, что повышение
++    его не нарушает, а история сохраняется строкой.
++    """
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "demo")
++    await _put_in_schedule(db, slot_id, student_id)
++    await subs.upgrade_on_schedule(db, student_id)
++
++    active = (
++        await db.execute(
++            text(
++                "SELECT count(*) FROM student_subscription "
++                " WHERE student_id = :s AND ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).scalar()
++    total = (
++        await db.execute(
++            text("SELECT count(*) FROM student_subscription WHERE student_id = :s"),
++            {"s": student_id},
++        )
++    ).scalar()
++    assert (active, total) == (1, 2), "история повышения обязана сохраниться строкой"
++
++
++async def test_upgrade_switches_pricing_group(
++    db: AsyncSession, slot_id: int
++) -> None:
++    """Повышение меняет и тарифную группу — иначе деньги остались бы demo-шными."""
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "demo")
++    await _put_in_schedule(db, slot_id, student_id)
++    await subs.upgrade_on_schedule(db, student_id)
++
++    group_name = (
++        await db.execute(
++            text(
++                "SELECT g.name FROM student_subscription s "
++                "  JOIN pricing_group g ON g.id = s.pricing_group_id "
++                " WHERE s.student_id = :s AND s.ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).scalar()
++    assert group_name == "Базовый 2026"

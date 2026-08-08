@@ -98,6 +98,23 @@ async def ensure_student_role(
             event_type, user_id, channel,
         )
 
+    # tsk-301: тариф по умолчанию выдаётся ЗДЕСЬ ЖЕ, а не отдельным шагом.
+    # «Зарегистрировался» и «получил права» обязаны быть одним событием: при
+    # включённом гейте ученик без тарифа в первый же день теряет ИИ-наставника и
+    # кнопку помощи преподавателю, и заметить это можно только по жалобе.
+    # Импорт локальный — `subscription_service` не нужен остальным путям этого
+    # модуля, а auth-цепочка грузится раньше прайса.
+    try:
+        from app.services import subscription_service  # noqa: PLC0415
+
+        await subscription_service.ensure_default_plan(db, user_id, channel=channel)
+    except Exception:
+        # Тем же принципом, что и audit ниже: сбой выдачи тарифа не должен
+        # ломать вход. Человек войдёт без тарифа, это чинится присвоением.
+        logger.exception(
+            "tsk-301: не удалось выдать тариф по умолчанию user_id=%s", user_id
+        )
+
     logger.info(
         "Y-4 pre-S5: student role assigned to user_id=%s (channel=%s, origin=%s)",
         user_id, channel, origin,

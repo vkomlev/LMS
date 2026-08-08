@@ -1,0 +1,159 @@
+"""Автоприсвоение тарифа (tsk-301, решение оператора 2026-08-08).
+
+Два правила, оба выведены из живого прогона Фазы 6:
+
+1. **Регистрация → `demo`.** Без этого каждый новый ученик остаётся без тарифа, а
+   при включённом гейте это означает отказ: человек в первый же день теряет
+   ИИ-наставника и кнопку помощи преподавателю. Регистраций примерно одна в день,
+   и узнать о такой потере можно было бы только по жалобе.
+2. **Добавили в расписание → `base`.** Появление занятий и есть признак того, что
+   человек стал учеником по-настоящему.
+
+**Второе правило срабатывает ТОЛЬКО с `demo` (или при полном отсутствии тарифа).**
+Это не перестраховка: на `base_legacy` сидят 37 действующих учеников со СТАРОЙ ценой
+(2750/5500), а `base` — это «Базовый 2026» (3000/6000). Правило без такой оговорки
+поднимало бы цену каждому, кому меняют расписание, — молча и задним числом, потому
+что смена расписания и так зовёт пересчёт открытого месяца (tsk-548).
+
+Понижения нет: снятие с расписания тариф не трогает. Отобрать права автоматически
+опаснее, чем выдать, и «перестал ходить» ≠ «перестал учиться».
+"""
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+#: Тариф по умолчанию при регистрации.
+DEFAULT_PLAN_CODE = "demo"
+
+#: Тариф, на который переводит появление занятий в расписании.
+SCHEDULED_PLAN_CODE = "base"
+
+#: С каких тарифов расписание повышает. Пустой набор означал бы «с любого», а это
+#: и есть тот случай, когда давнему клиенту молча меняют цену.
+UPGRADABLE_FROM: frozenset[str] = frozenset({DEFAULT_PLAN_CODE})
+
+
+async def _current_plan_code(db: AsyncSession, student_id: int) -> Optional[str]:
+    return (
+        await db.execute(
+            text(
+                "SELECT p.code FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                " WHERE s.student_id = :sid AND s.ends_on IS NULL"
+            ),
+            {"sid": student_id},
+        )
+    ).scalar()
+
+
+async def _assign(
+    db: AsyncSession, student_id: int, plan_code: str, *, reason: str
+) -> bool:
+    """Открыть подписку на план. Возвращает False, если план не найден.
+
+    Гонка двух одновременных входов закрывается частичным уникальным индексом
+    «одна действующая подписка», а не проверкой в коде: между `SELECT` и `INSERT`
+    успевает пройти второй запрос.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT id, pricing_group_id FROM subscription_plan "
+                " WHERE code = :c AND is_active"
+            ),
+            {"c": plan_code},
+        )
+    ).first()
+    if row is None:
+        logger.error(
+            "tsk-301: тариф %s не найден — ученик %s остался без автоприсвоения",
+            plan_code, student_id,
+        )
+        return False
+
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "INSERT INTO student_subscription "
+                    "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
+                    "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
+                ),
+                {"s": student_id, "p": row.id, "g": row.pricing_group_id, "r": reason},
+            )
+    except IntegrityError:
+        # Подписка появилась параллельно — это не ошибка, а именно то, чего мы
+        # хотели. Savepoint не даёт откату отравить внешнюю транзакцию (урок Y-1.5).
+        logger.info(
+            "tsk-301: подписка ученика %s создана параллельно, автоприсвоение пропущено",
+            student_id,
+        )
+        return False
+
+    logger.info(
+        "tsk-301: ученику %s присвоен тариф %s (%s)", student_id, plan_code, reason
+    )
+    return True
+
+
+async def ensure_default_plan(
+    db: AsyncSession, student_id: int, *, channel: str
+) -> bool:
+    """Дать тариф по умолчанию, если тарифа нет. Идемпотентно.
+
+    Вызывается там же, где проставляется роль `student` — чтобы «зарегистрировался»
+    и «получил права» были одним событием, а не двумя, между которыми человек
+    видит отказ.
+    """
+    if await _current_plan_code(db, student_id) is not None:
+        return False
+    return await _assign(
+        db, student_id, DEFAULT_PLAN_CODE, reason=f"tsk-301 авто: регистрация ({channel})"
+    )
+
+
+async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
+    """Перевести на `base`, если ученика добавили в расписание.
+
+    Повышает **только** с `demo` и с «тарифа нет». Любой другой тариф остаётся как
+    есть: на `base_legacy` держится старая цена 37 действующих учеников, и молча
+    переводить их на новую нельзя. `test`, `flagship`, `adults`, `alumni` тоже
+    назначены осознанно — расписание не повод их переписывать.
+    """
+    current = await _current_plan_code(db, student_id)
+    if current is not None and current not in UPGRADABLE_FROM:
+        return False
+
+    has_slot = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM lesson_slot_student lss "
+                "  JOIN lesson_slot ls ON ls.id = lss.slot_id "
+                " WHERE lss.student_id = :sid AND lss.is_active AND ls.is_active "
+                " LIMIT 1"
+            ),
+            {"sid": student_id},
+        )
+    ).first()
+    if has_slot is None:
+        return False
+
+    if current is not None:
+        await db.execute(
+            text(
+                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+                " WHERE student_id = :sid AND ends_on IS NULL"
+            ),
+            {"sid": student_id},
+        )
+    return await _assign(
+        db, student_id, SCHEDULED_PLAN_CODE,
+        reason="tsk-301 авто: появилось занятие в расписании",
+    )
