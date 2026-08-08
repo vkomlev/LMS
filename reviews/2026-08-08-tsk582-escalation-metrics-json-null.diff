@@ -1,0 +1,113 @@
+diff --git a/tests/test_y6_review_loop.py b/tests/test_y6_review_loop.py
+index d09ac9f..b1b3667 100644
+--- a/tests/test_y6_review_loop.py
++++ b/tests/test_y6_review_loop.py
+@@ -509,6 +509,108 @@ async def test_y6_escalation_cron_tick_idempotent(db, db_session_factory):
+         await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+ 
+ 
++@pytest.mark.asyncio
++@pytest.mark.parametrize(
++    "metrics_sql, label",
++    [
++        ("NULL", "SQL NULL"),
++        ("'null'::jsonb", "JSON-null (форма реальной сдачи)"),
++        ("'[null, {\"tsk210_recompute\": {}}]'::jsonb", "массив (след скрипта tsk-210)"),
++        ("'{}'::jsonb", "пустой объект"),
++        ("'{\"foo\": 1}'::jsonb", "объект без escalated_at"),
++    ],
++)
++async def test_y6_escalation_cron_sees_any_metrics_shape(
++    db, db_session_factory, metrics_sql, label
++):
++    """tsk-582: в кандидаты идёт всё, что ещё НЕ помечено `escalated_at`.
++
++    Прежний предикат (`metrics IS NULL OR (jsonb_typeof = 'object' AND ...)`)
++    видел только SQL NULL и объект. Через API в metrics ложится JSON-null
++    (Pydantic metrics=None), а прод-скрипт tsk-210 оставил массивы — обе формы
++    не проходили ни одну ветку и не эскалировались НИКОГДА (268 зависших
++    проверок на проде, снято 2026-08-08). Тесты дефект не ловили, потому что
++    фабрика вставляет строку напрямую SQL-ом, где metrics = SQL NULL.
++    """
++    from app.services import escalation_service
++
++    task_id, _course_id, _t = await _pick_root_task(db)
++    student_id = await _create_user(db, prefix="y6-shape")
++    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-shape")
++
++    rid, _, _ = await _create_pending_tr(
++        db, student_id=student_id, task_id=task_id,
++        is_correct=True, score=10, max_score=10,
++        submitted_at=datetime.now(timezone.utc) - timedelta(hours=72),
++    )
++    await db.execute(
++        text(f"UPDATE task_results SET metrics = {metrics_sql} WHERE id = :r"),
++        {"r": rid},
++    )
++    await db.commit()
++
++    try:
++        await escalation_service.escalation_cron_tick(db_session_factory)
++
++        marked = (await db.execute(
++            text("SELECT jsonb_typeof(metrics) = 'object' AND metrics ? 'escalated_at' "
++                 "FROM task_results WHERE id = :r"),
++            {"r": rid},
++        )).scalar()
++        assert marked is True, (
++            f"работа с metrics = {label} не попала в эскалацию: "
++            "предикат отбора снова сужен до одной формы metrics"
++        )
++    finally:
++        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
++
++
++@pytest.mark.asyncio
++async def test_y6_escalation_cron_skips_already_escalated(db, db_session_factory):
++    """Обратная сторона tsk-582: помеченная работа второй раз не эскалируется.
++
++    Расширение предиката не должно превратить `escalated_at` в пустышку —
++    иначе методист получал бы по одной работе push каждые 5 минут.
++    """
++    from app.services import escalation_service
++
++    task_id, _course_id, _t = await _pick_root_task(db)
++    student_id = await _create_user(db, prefix="y6-done")
++    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-done")
++
++    rid, _, _ = await _create_pending_tr(
++        db, student_id=student_id, task_id=task_id,
++        is_correct=True, score=10, max_score=10,
++        submitted_at=datetime.now(timezone.utc) - timedelta(hours=72),
++    )
++    await db.execute(
++        text("UPDATE task_results SET metrics = "
++             "'{\"escalated_at\": \"2026-01-01T00:00:00+00:00\"}'::jsonb WHERE id = :r"),
++        {"r": rid},
++    )
++    await db.commit()
++
++    try:
++        await escalation_service.escalation_cron_tick(db_session_factory)
++
++        ts = (await db.execute(
++            text("SELECT metrics->>'escalated_at' FROM task_results WHERE id = :r"),
++            {"r": rid},
++        )).scalar()
++        assert ts == "2026-01-01T00:00:00+00:00", (
++            "уже эскалированная работа взята повторно: метка перезаписана"
++        )
++        n = (await db.execute(
++            text("SELECT COUNT(*) FROM notifications "
++                 "WHERE user_id = :m AND kind = 'review_escalated' "
++                 "  AND (payload->>'result_id')::int = :r"),
++            {"m": methodist_id, "r": rid},
++        )).scalar()
++        assert int(n or 0) == 0, "повторный push по уже эскалированной работе"
++    finally:
++        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
++
++
+ # ============================== Stage 4.4: methodist endpoint ==============================
+ 
+ 
