@@ -133,6 +133,16 @@ class PendingReviewItem(BaseModel):
             "программистских заданий) или вложение (response.meta.attachments)"
         ),
     )
+    auto_checked_part_matched: bool = Field(
+        False,
+        description=(
+            "tsk-396: задание в гибридном режиме (partial_auto_check), и формализуемая "
+            "часть ответа УЖЕ сверена авто-чеком и совпала с эталоном — проверять надо "
+            "только ручную часть (например, построение диаграммы в ОГЭ-14). Работы с "
+            "несошедшейся числовой частью в обязательную очередь не попадают, поэтому "
+            "флаг здесь всегда означает «числа верны»."
+        ),
+    )
 
 
 class PendingReviewListResponse(BaseModel):

@@ -654,7 +654,9 @@ async def get_pending_review_results(
         # в работу через «Следующую проверку».
         conditions = [
             TaskResults.checked_at.is_(None),
-            sa_text(mandatory_review_sql("tasks")),
+            # tsk-396: второй алиас — таблица task_results в этом select не
+            # переименована, предикату нужен вердикт конкретной работы.
+            sa_text(mandatory_review_sql("tasks", "task_results")),
             or_(
                 TaskResults.review_claim_expires_at.is_(None),
                 TaskResults.review_claim_expires_at < now,

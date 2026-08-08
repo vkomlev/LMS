@@ -92,9 +92,26 @@ async def escalation_cron_tick(
                       -- is_correct=FALSE — честный FAILED, не pending. TA/SA_COM
                       -- получают optimistic-PASSED (is_correct=TRUE) на submit
                       -- (attempts.py optimistic_manual).
+                      -- tsk-396: в гибридном режиме (partial_auto_check) ждущая
+                      -- работа приходит с is_correct=NULL, а не TRUE:
+                      -- оптимистичного зачёта у неё нет, балл держится до
+                      -- преподавателя. Без этой ветки залежавшаяся работа
+                      -- ОГЭ-14 не эскалировалась бы методисту НИКОГДА — ровно
+                      -- тот же тихий провал, что чинил tsk-438 для SA-manual.
+                      -- is_correct=FALSE здесь по-прежнему не эскалируется:
+                      -- это законченный авто-вердикт «числа не сошлись»,
+                      -- работа к преподавателю и не шла.
                       (
                           t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
-                          AND tr.is_correct IS TRUE
+                          AND (
+                              tr.is_correct IS TRUE
+                              OR (
+                                  COALESCE(
+                                      (t.solution_rules->>'partial_auto_check')::boolean, false
+                                  )
+                                  AND tr.is_correct IS NULL
+                              )
+                          )
                       )
                       -- tsk-438: SA НЕ входит в COMMENT_TASK_TYPES → не получает
                       -- optimistic-pass (attempts.py:661-663). При
@@ -113,12 +130,28 @@ async def escalation_cron_tick(
                       )
                   )
                   AND tr.submitted_at < (now() - (:h || ' hours')::interval)
+                  -- tsk-582: пропускаем работу, только если эскалация УЖЕ была.
+                  -- Прежнее условие (`metrics IS NULL OR (typeof='object' AND
+                  -- NOT ? 'escalated_at')`) отсекало всё, что не объект, а в
+                  -- metrics при сдаче ложится НЕ SQL NULL, а JSON-null:
+                  -- Pydantic-поле metrics=None сериализуется в json null, для
+                  -- него `IS NULL` ложно, а jsonb_typeof даёт 'null'. Такие
+                  -- работы не проходили ни одну ветку и не эскалировались
+                  -- НИКОГДА (на проде 2026-08-08 — 268 зависших проверок,
+                  -- 23 курса, 0 строк с SQL NULL вообще). Тот же класс, что
+                  -- tsk-361 (solution_rules = JSON-null мимо IS NULL).
+                  -- Форма ниже ловит и SQL NULL, и JSON-null, и массив
+                  -- (`[null, {...}]` — след скрипта tsk-210, который дописывал
+                  -- metrics конкатенацией без typeof-гарда).
+                  --
+                  -- Ветка `metrics IS NULL` обязана стоять первой и явно:
+                  -- краткое `NOT (jsonb_typeof(...) = 'object' AND ... ? ...)`
+                  -- на SQL NULL даёт NULL, а не TRUE (трёхзначная логика), и
+                  -- отсекает ровно те строки, ради которых правка делалась.
                   AND (
                       tr.metrics IS NULL
-                      OR (
-                          jsonb_typeof(tr.metrics) = 'object'
-                          AND NOT (tr.metrics ? 'escalated_at')
-                      )
+                      OR jsonb_typeof(tr.metrics) <> 'object'
+                      OR NOT (tr.metrics ? 'escalated_at')
                   )
                 ORDER BY tr.submitted_at ASC
                 LIMIT 100

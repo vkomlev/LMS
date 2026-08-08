@@ -243,6 +243,7 @@ def _build_solution(task_meta: Dict[str, Any]) -> Dict[str, Any]:
         "auto_check": rules.auto_check,
         "manual_review_required": rules.manual_review_required,
         "requires_attachment": rules.requires_attachment,
+        "partial_auto_check": rules.partial_auto_check,
         "accepted_answers": accepted,
         "correct_option_ids": list(rules.correct_options),
         "row_order_matters": rules.table.row_order_matters if rules.table is not None else None,

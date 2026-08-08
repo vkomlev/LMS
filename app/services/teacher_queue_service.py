@@ -135,21 +135,40 @@ REVIEW_ACL_SQL = f"""
 #     сама ось mrr, без хрупкой опоры на is_correct.
 #   - TBL_COM (tsk-366) — табличный ответ, заведён по образцу SA_COM: та же ось
 #     обязательности, та же вторичная проверка.
+#
+# tsk-396: единственное исключение из «оси без опоры на is_correct» — гибридный
+# режим (`partial_auto_check`). Там авто-сверка формализуемой части ВЫНОСИТ
+# законченный вердикт: числа не сошлись → `is_correct=FALSE`, ученик пересдаёт
+# сам, и преподавателю такую работу не показываем (решение оператора — очередь
+# не должна наполняться заведомо неверными расчётами). Опора на `is_correct`
+# ограничена этим режимом: вне него ось остаётся task-level, как требует tsk-247.
+# Обратная сторона того же решения: присутствие работы в очереди при
+# `partial_auto_check=true` САМО означает «числа сверены автоматически» — это и
+# есть подсказка преподавателю, отдельной колонки под неё не нужно.
 MANDATORY_REVIEW_TEMPLATE = """
     ({tasks}.task_content->>'type' = 'TA'
      OR ({tasks}.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
-         AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
+         AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE
+         AND NOT (
+             COALESCE(({tasks}.solution_rules->>'partial_auto_check')::boolean, false) IS TRUE
+             AND {results}.is_correct IS FALSE
+         )))
 """
 
 
-def mandatory_review_sql(tasks_alias: str = "t") -> str:
+def mandatory_review_sql(tasks_alias: str = "t", results_alias: str = "tr") -> str:
     """SQL-фрагмент «работа требует обязательной ручной проверки».
 
     :param tasks_alias: алиас таблицы `tasks` в вызывающем запросе ('t' в
         claim-next, 'tasks' в SQLAlchemy-select списка). User-input сюда не
         попадает — только литералы из закрытого набора call-sites.
+    :param results_alias: алиас таблицы `task_results` ('tr' в raw-SQL,
+        'task_results' в SQLAlchemy-select). Нужен гибридному режиму (tsk-396):
+        предикат смотрит на вердикт КОНКРЕТНОЙ работы, а не только на задание.
     """
-    return MANDATORY_REVIEW_TEMPLATE.format(tasks=tasks_alias)  # nosec B608
+    return MANDATORY_REVIEW_TEMPLATE.format(  # nosec B608
+        tasks=tasks_alias, results=results_alias
+    )
 
 
 # ─── tsk-372: единый предикат «опциональной проверки» ────────────────────────
@@ -1194,7 +1213,13 @@ async def list_pending_reviews(
                     AND tr.review_claim_expires_at >= :now_ts) AS is_claimed,
                    t.task_content->>'title' AS task_title_raw,
                    t.task_content->>'stem' AS task_stem,
-                   {has_evidence_sql} AS has_evidence
+                   {has_evidence_sql} AS has_evidence,
+                   -- tsk-396: подсказка «числовая часть уже сверена автоматически».
+                   -- Работы с несошедшимися числами предикат очереди отсекает, поэтому
+                   -- сам факт флага + попадание в очередь означает «числа сошлись»,
+                   -- и преподавателю остаётся проверить только ручную часть (диаграмму).
+                   COALESCE((t.solution_rules->>'partial_auto_check')::boolean, false)
+                       AS partial_auto_check
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
@@ -1220,6 +1245,8 @@ async def list_pending_reviews(
             "user_name": row[10],
             "is_claimed": bool(row[11]),
             "has_evidence": bool(row[14]),
+            # tsk-396: True — числовая часть сверена авто-чеком и совпала.
+            "auto_checked_part_matched": bool(row[15]),
         }
         for row in r.fetchall()
     ]

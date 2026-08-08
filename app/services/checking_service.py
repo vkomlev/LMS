@@ -528,6 +528,55 @@ class CheckingService:
         base_score = solution_rules.max_score if is_correct else 0
         return base_score, is_correct
 
+    # ---------- Гибридный режим: авто-сверка без начисления балла ----------
+
+    @staticmethod
+    def _shape_partial_auto_check(
+        *,
+        matched: bool,
+        max_score: int,
+    ) -> CheckResult:
+        """Приводит итог авто-сверки к гибридному вердикту (tsk-396).
+
+        Единая точка для SA_COM и TBL_COM: разъехавшиеся формулировки и, тем
+        хуже, разъехавшийся `score` дали бы «в одном типе задание держится до
+        преподавателя, в другом зачитывается сразу» — ровно тот класс расхождения
+        между близнецами-типами, который уже ловили в tsk-247 и tsk-372.
+
+        Инварианты:
+          - `score=0` ВСЕГДА. Балл — единственное, по чему движок считает PASS
+            (`score/max_score >= 0.5`), поэтому авто-часть его не касается:
+            иначе задание и курс зачлись бы до проверки человеком.
+          - числа сошлись → `is_correct=None`: вердикта ещё нет, работа ждёт
+            преподавателя в обязательной очереди;
+          - не сошлись → `is_correct=False`: это законченный авто-вердикт,
+            ученик пересдаёт сам, преподавателя не тревожим (решение оператора).
+          - `details` не заполняется: `matched_short_answer` вернул бы ученику
+            эталон, а `CheckResult` эхо-возвращается ему на сдаче (tsk-302,
+            видимость полей — отдельный слой, tsk-460).
+
+        :param matched: Совпала ли формализуемая часть ответа с эталоном.
+        :param max_score: Полный балл задания (для контракта CheckResult).
+        :returns: Вердикт гибридного режима.
+        """
+        if matched:
+            general = (
+                "Числовая часть сошлась с эталоном. Задание отправлено "
+                "преподавателю — он проверит построение диаграммы и выставит балл."
+            )
+        else:
+            general = (
+                "Числовая часть не сошлась с эталоном. Проверьте расчёты в таблице "
+                "и отправьте ответ ещё раз — преподавателю работа пока не уходит."
+            )
+        return CheckResult(
+            is_correct=None if matched else False,
+            score=0,
+            max_score=max_score,
+            details=None,
+            feedback=CheckFeedback(general=general),
+        )
+
     # ---------- Проверка SA / SA_COM ----------
 
     def _check_short_answer(
@@ -551,7 +600,12 @@ class CheckingService:
         # авто-вердикт: ответ уходит в очередь преподавателя (is_correct=None), как TA.
         # score=0 намеренно — иначе оптимистичный авто-пасс (score/max_score ratio,
         # Y-6) зачёл бы студента до ручной оценки. Балл проставит преподаватель.
-        if solution_rules.manual_review_required:
+        #
+        # tsk-396: исключение — гибридный режим. Там часть ответа формализуема
+        # (числа ОГЭ-14), и авто-сверку надо ВЫПОЛНИТЬ и показать ученику сразу,
+        # не выдавая балл. Ветка ниже, а не здесь, потому что ей нужны правила
+        # `short_answer` — из-за этого короткого замыкания их и не читали.
+        if solution_rules.manual_review_required and not solution_rules.partial_auto_check:
             return CheckResult(
                 is_correct=None,
                 score=0,
@@ -576,10 +630,17 @@ class CheckingService:
             )
 
         if missing_answer:
+            # tsk-396: в гибридном режиме пустой ответ — это «числа не введены»,
+            # то есть несошедшаяся формализуемая часть. К преподавателю не идёт.
+            if solution_rules.partial_auto_check:
+                return self._shape_partial_auto_check(
+                    matched=False, max_score=solution_rules.max_score
+                )
+
             # Если ответ отсутствует, применяем штраф и возвращаем результат
             penalty = solution_rules.penalties.missing_answer
             final_score = max(0, 0 - penalty)
-            
+
             details = CheckResultDetails(
                 correct_options=None,
                 user_options=None,
@@ -633,7 +694,13 @@ class CheckingService:
                         matched_value = accepted.value
 
         is_correct = base_score == solution_rules.max_score if base_score > 0 else False
-        
+
+        # tsk-396: гибридный режим — сверка выполнена, балл не начисляем.
+        if solution_rules.partial_auto_check:
+            return self._shape_partial_auto_check(
+                matched=is_correct, max_score=solution_rules.max_score
+            )
+
         # Применение штрафов
         penalty = 0
         if solution_rules.penalties:
@@ -789,7 +856,8 @@ class CheckingService:
         missing_answer = not value_raw.strip()
 
         # Паритет с SA_COM (tsk-230): обязательная ручная проверка — без авто-вердикта.
-        if solution_rules.manual_review_required:
+        # tsk-396: тот же паритет и по гибридному режиму — сверка выполняется ниже.
+        if solution_rules.manual_review_required and not solution_rules.partial_auto_check:
             return CheckResult(
                 is_correct=None,
                 score=0,
@@ -815,6 +883,11 @@ class CheckingService:
             )
 
         if missing_answer:
+            # tsk-396: пустая таблица — несошедшаяся формализуемая часть (см. SA_COM).
+            if solution_rules.partial_auto_check:
+                return self._shape_partial_auto_check(
+                    matched=False, max_score=solution_rules.max_score
+                )
             final_score = max(0, 0 - solution_rules.penalties.missing_answer)
             return CheckResult(
                 is_correct=False,
@@ -877,6 +950,12 @@ class CheckingService:
                     matched_value = accepted.value
 
         is_correct = base_score == solution_rules.max_score if base_score > 0 else False
+
+        # tsk-396: гибридный режим — сверка выполнена, балл не начисляем.
+        if solution_rules.partial_auto_check:
+            return self._shape_partial_auto_check(
+                matched=is_correct, max_score=solution_rules.max_score
+            )
 
         penalty = 0
         if solution_rules.penalties and base_score == 0:

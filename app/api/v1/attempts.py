@@ -773,8 +773,28 @@ async def submit_attempt_answers(
         # Если попытка истекла по времени — не подменяем (overdue → честный
         # FAILED, как для остальных типов).
         #   - TBL_COM (tsk-366) — тот же тип «с комментарием», ведёт себя как SA_COM.
+        #
+        # tsk-396 (корень ложного зачёта): признаком «сверять нечем» служит
+        # ОТСУТСТВИЕ ЭТАЛОНА, а не `is_correct is None`. У SA_COM/TBL_COM
+        # `is_correct=None` возникает по ДВУМ разным причинам: эталона нет
+        # (замысел выше) и эталон есть, но включён ручной гейт (tsk-230 —
+        # `_check_short_answer` короткозамыкает ДО чтения short_answer-правил).
+        # Вторая причина попадала в условие не по замыслу, и заведомо неверный
+        # ответ получал score=max_score/is_correct=True: проба на dev показала
+        # `state=PASSED` на ответ «999 999» при эталоне «12 516,30» (45 активных
+        # заданий прода — 25 ОГЭ-14 курса 1179 и 20 «напиши программу целиком»).
+        # `has_reference_answer()` — тот же единый предикат, что у UX-сигнала
+        # клиенту (tsk-547), поэтому «сверять нечем» здесь и в форме не разъедутся.
+        #
+        # `not partial_auto_check` — защита от острого края: валидатор схемы не
+        # даёт завести гибридное задание без эталона, но правка `solution_rules`
+        # прямо в БД мимо API валидатор обходит, и такое задание получило бы
+        # оптимистичный зачёт — ровно тот обход гейта, который эта задача чинит.
         optimistic_manual = task_content.type == "TA" or (
-            task_content.type in COMMENT_TASK_TYPES and check_result.is_correct is None
+            task_content.type in COMMENT_TASK_TYPES
+            and check_result.is_correct is None
+            and not solution_rules.has_reference_answer()
+            and not solution_rules.partial_auto_check
         )
         if optimistic_manual and not attempt.time_expired:
             check_result = CheckResult(

@@ -1,0 +1,450 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 3f2f9c3..f1a5858 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -773,8 +773,28 @@ async def submit_attempt_answers(
+         # Если попытка истекла по времени — не подменяем (overdue → честный
+         # FAILED, как для остальных типов).
+         #   - TBL_COM (tsk-366) — тот же тип «с комментарием», ведёт себя как SA_COM.
++        #
++        # tsk-396 (корень ложного зачёта): признаком «сверять нечем» служит
++        # ОТСУТСТВИЕ ЭТАЛОНА, а не `is_correct is None`. У SA_COM/TBL_COM
++        # `is_correct=None` возникает по ДВУМ разным причинам: эталона нет
++        # (замысел выше) и эталон есть, но включён ручной гейт (tsk-230 —
++        # `_check_short_answer` короткозамыкает ДО чтения short_answer-правил).
++        # Вторая причина попадала в условие не по замыслу, и заведомо неверный
++        # ответ получал score=max_score/is_correct=True: проба на dev показала
++        # `state=PASSED` на ответ «999 999» при эталоне «12 516,30» (45 активных
++        # заданий прода — 25 ОГЭ-14 курса 1179 и 20 «напиши программу целиком»).
++        # `has_reference_answer()` — тот же единый предикат, что у UX-сигнала
++        # клиенту (tsk-547), поэтому «сверять нечем» здесь и в форме не разъедутся.
++        #
++        # `not partial_auto_check` — защита от острого края: валидатор схемы не
++        # даёт завести гибридное задание без эталона, но правка `solution_rules`
++        # прямо в БД мимо API валидатор обходит, и такое задание получило бы
++        # оптимистичный зачёт — ровно тот обход гейта, который эта задача чинит.
+         optimistic_manual = task_content.type == "TA" or (
+-            task_content.type in COMMENT_TASK_TYPES and check_result.is_correct is None
++            task_content.type in COMMENT_TASK_TYPES
++            and check_result.is_correct is None
++            and not solution_rules.has_reference_answer()
++            and not solution_rules.partial_auto_check
+         )
+         if optimistic_manual and not attempt.time_expired:
+             check_result = CheckResult(
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 976c8f6..a5608c1 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -500,6 +500,7 @@ async def get_task_state(
+     try:
+         rules = SolutionRules.model_validate(task.solution_rules or {})
+         requires_attachment = bool(rules.requires_attachment)
++        partial_auto_check = bool(rules.partial_auto_check)
+         task_type = (task.task_content or {}).get("type") if isinstance(task.task_content, dict) else None
+         has_reference_answer = (
+             rules.has_reference_answer()
+@@ -509,6 +510,7 @@ async def get_task_state(
+     except Exception:
+         # Некорректные solution_rules не должны ломать выдачу состояния задания.
+         requires_attachment = False
++        partial_auto_check = False
+         has_reference_answer = True
+     if state.state == "BLOCKED_LIMIT":
+         await get_or_create_blocked_limit_help_request(
+@@ -536,6 +538,7 @@ async def get_task_state(
+         last_is_correct=state.last_is_correct,
+         last_checked_at=state.last_checked_at,
+         requires_attachment=requires_attachment,
++        partial_auto_check=partial_auto_check,
+         has_reference_answer=has_reference_answer,
+     )
+ 
+diff --git a/app/api/v1/task_results_extra.py b/app/api/v1/task_results_extra.py
+index b20b475..f0557f1 100644
+--- a/app/api/v1/task_results_extra.py
++++ b/app/api/v1/task_results_extra.py
+@@ -654,7 +654,9 @@ async def get_pending_review_results(
+         # в работу через «Следующую проверку».
+         conditions = [
+             TaskResults.checked_at.is_(None),
+-            sa_text(mandatory_review_sql("tasks")),
++            # tsk-396: второй алиас — таблица task_results в этом select не
++            # переименована, предикату нужен вердикт конкретной работы.
++            sa_text(mandatory_review_sql("tasks", "task_results")),
+             or_(
+                 TaskResults.review_claim_expires_at.is_(None),
+                 TaskResults.review_claim_expires_at < now,
+diff --git a/app/schemas/learning_api.py b/app/schemas/learning_api.py
+index 2394297..e9a77f7 100644
+--- a/app/schemas/learning_api.py
++++ b/app/schemas/learning_api.py
+@@ -142,6 +142,18 @@ class TaskStateResponse(BaseModel):
+             "tsk-227). Клиент показывает обязательную загрузку файла."
+         ),
+     )
++    # tsk-396: гибридный режим проверки. Клиент по нему объясняет ученику, что
++    # числовая часть сверится сразу, а зачёт поставит преподаватель после
++    # проверки диаграммы — иначе `is_correct=null` при непустом feedback
++    # выглядит как «проверка сломалась». Как и requires_attachment — UX-сигнал,
++    # не гейт: сервер источник истины (score держится нулевым до ручной оценки).
++    partial_auto_check: bool = Field(
++        default=False,
++        description=(
++            "Гибридный режим: часть ответа проверяется автоматически сразу, финальный "
++            "зачёт — за преподавателем (solution_rules.partial_auto_check, tsk-396)."
++        ),
++    )
+     # tsk-547: есть ли у задания эталон для сверки `response.value`. Ученику
+     # `solution_rules` не отдаются (видимость полей — отдельный слой, tsk-460),
+     # поэтому «поле ответа бессмысленно» без такого сигнала на клиенте
+diff --git a/app/schemas/solution_rules.py b/app/schemas/solution_rules.py
+index d135e9b..3bdc6b1 100644
+--- a/app/schemas/solution_rules.py
++++ b/app/schemas/solution_rules.py
+@@ -351,6 +351,22 @@ class SolutionRules(BaseModel):
+         description="Требуется ли обязательная ручная дооценка (даже при автопроверке).",
+         examples=[False, True],
+     )
++    partial_auto_check: bool = Field(
++        default=False,
++        description=(
++            "Гибридный режим проверки (tsk-396): часть ответа сверяется автоматически, "
++            "финальный зачёт остаётся за преподавателем. Пример — ОГЭ-14: два числовых "
++            "ответа формализуемы (эталон в short_answer), построение диаграммы проверяет "
++            "только человек. При true авто-сверка ВЫПОЛНЯЕТСЯ и её итог сразу виден "
++            "ученику в feedback, но `score` не начисляется (score=0 до оценки "
++            "преподавателем) — иначе PASS-гейт движка (score/max_score >= 0.5) зачёл бы "
++            "задание и курс до ручной проверки. Числа сошлись → is_correct=None, работа в "
++            "обязательной очереди; не сошлись → is_correct=False, в очередь НЕ попадает "
++            "(ученик пересдаёт сам, решение оператора). Требует manual_review_required=true "
++            "и наличия эталона. Default false — задания без флага ведут себя как раньше."
++        ),
++        examples=[False, True],
++    )
+     requires_attachment: bool = Field(
+         default=False,
+         description=(
+@@ -460,6 +476,30 @@ class SolutionRules(BaseModel):
+             raise ValueError("max_score должен быть положительным числом")
+         return self
+ 
++    @model_validator(mode="after")
++    def validate_partial_auto_check(self) -> "SolutionRules":
++        """Гибридный режим (tsk-396) осмыслен только вместе с двумя предпосылками.
++
++        Без `manual_review_required` флаг обнулял бы сам себя: держать зачёт до
++        человека — вся его суть. Без эталона нечего сверять автоматически, и
++        ученик получил бы обещание мгновенной обратной связи, которой нет.
++        Обе ошибки молча выключили бы режим на импорте — как опечатка в шаге
++        нормализации до tsk-262. Лучше 422 при заведении задания.
++        """
++        if not self.partial_auto_check:
++            return self
++        if not self.manual_review_required:
++            raise ValueError(
++                "partial_auto_check=true требует manual_review_required=true: "
++                "гибридный режим держит зачёт до проверки преподавателем"
++            )
++        if not self.has_reference_answer():
++            raise ValueError(
++                "partial_auto_check=true требует эталон для авто-сверки "
++                "(short_answer.accepted_answers либо regex)"
++            )
++        return self
++
+     def has_reference_answer(self) -> bool:
+         """Есть ли эталон для авто-сверки `response.value` (SA/SA_COM/TBL_COM).
+ 
+diff --git a/app/schemas/task_history.py b/app/schemas/task_history.py
+index 72c208e..d448a33 100644
+--- a/app/schemas/task_history.py
++++ b/app/schemas/task_history.py
+@@ -156,6 +156,7 @@ class TaskHistorySolution(BaseModel):
+     auto_check: bool
+     manual_review_required: bool
+     requires_attachment: bool = False
++    partial_auto_check: bool = False
+     accepted_answers: List[TaskHistoryAcceptedAnswer] = Field(
+         ...,
+         description="SA/SA_COM/TBL_COM: допустимые эталонные ответы (для TBL_COM — строкой, ячейки через пробел, ряды через перевод строки)",
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index cf0c316..80102c6 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -133,6 +133,16 @@ class PendingReviewItem(BaseModel):
+             "программистских заданий) или вложение (response.meta.attachments)"
+         ),
+     )
++    auto_checked_part_matched: bool = Field(
++        False,
++        description=(
++            "tsk-396: задание в гибридном режиме (partial_auto_check), и формализуемая "
++            "часть ответа УЖЕ сверена авто-чеком и совпала с эталоном — проверять надо "
++            "только ручную часть (например, построение диаграммы в ОГЭ-14). Работы с "
++            "несошедшейся числовой частью в обязательную очередь не попадают, поэтому "
++            "флаг здесь всегда означает «числа верны»."
++        ),
++    )
+ 
+ 
+ class PendingReviewListResponse(BaseModel):
+diff --git a/app/services/checking_service.py b/app/services/checking_service.py
+index 91d88a8..4dbb75f 100644
+--- a/app/services/checking_service.py
++++ b/app/services/checking_service.py
+@@ -528,6 +528,55 @@ class CheckingService:
+         base_score = solution_rules.max_score if is_correct else 0
+         return base_score, is_correct
+ 
++    # ---------- Гибридный режим: авто-сверка без начисления балла ----------
++
++    @staticmethod
++    def _shape_partial_auto_check(
++        *,
++        matched: bool,
++        max_score: int,
++    ) -> CheckResult:
++        """Приводит итог авто-сверки к гибридному вердикту (tsk-396).
++
++        Единая точка для SA_COM и TBL_COM: разъехавшиеся формулировки и, тем
++        хуже, разъехавшийся `score` дали бы «в одном типе задание держится до
++        преподавателя, в другом зачитывается сразу» — ровно тот класс расхождения
++        между близнецами-типами, который уже ловили в tsk-247 и tsk-372.
++
++        Инварианты:
++          - `score=0` ВСЕГДА. Балл — единственное, по чему движок считает PASS
++            (`score/max_score >= 0.5`), поэтому авто-часть его не касается:
++            иначе задание и курс зачлись бы до проверки человеком.
++          - числа сошлись → `is_correct=None`: вердикта ещё нет, работа ждёт
++            преподавателя в обязательной очереди;
++          - не сошлись → `is_correct=False`: это законченный авто-вердикт,
++            ученик пересдаёт сам, преподавателя не тревожим (решение оператора).
++          - `details` не заполняется: `matched_short_answer` вернул бы ученику
++            эталон, а `CheckResult` эхо-возвращается ему на сдаче (tsk-302,
++            видимость полей — отдельный слой, tsk-460).
++
++        :param matched: Совпала ли формализуемая часть ответа с эталоном.
++        :param max_score: Полный балл задания (для контракта CheckResult).
++        :returns: Вердикт гибридного режима.
++        """
++        if matched:
++            general = (
++                "Числовая часть сошлась с эталоном. Задание отправлено "
++                "преподавателю — он проверит построение диаграммы и выставит балл."
++            )
++        else:
++            general = (
++                "Числовая часть не сошлась с эталоном. Проверьте расчёты в таблице "
++                "и отправьте ответ ещё раз — преподавателю работа пока не уходит."
++            )
++        return CheckResult(
++            is_correct=None if matched else False,
++            score=0,
++            max_score=max_score,
++            details=None,
++            feedback=CheckFeedback(general=general),
++        )
++
+     # ---------- Проверка SA / SA_COM ----------
+ 
+     def _check_short_answer(
+@@ -551,7 +600,12 @@ class CheckingService:
+         # авто-вердикт: ответ уходит в очередь преподавателя (is_correct=None), как TA.
+         # score=0 намеренно — иначе оптимистичный авто-пасс (score/max_score ratio,
+         # Y-6) зачёл бы студента до ручной оценки. Балл проставит преподаватель.
+-        if solution_rules.manual_review_required:
++        #
++        # tsk-396: исключение — гибридный режим. Там часть ответа формализуема
++        # (числа ОГЭ-14), и авто-сверку надо ВЫПОЛНИТЬ и показать ученику сразу,
++        # не выдавая балл. Ветка ниже, а не здесь, потому что ей нужны правила
++        # `short_answer` — из-за этого короткого замыкания их и не читали.
++        if solution_rules.manual_review_required and not solution_rules.partial_auto_check:
+             return CheckResult(
+                 is_correct=None,
+                 score=0,
+@@ -576,10 +630,17 @@ class CheckingService:
+             )
+ 
+         if missing_answer:
++            # tsk-396: в гибридном режиме пустой ответ — это «числа не введены»,
++            # то есть несошедшаяся формализуемая часть. К преподавателю не идёт.
++            if solution_rules.partial_auto_check:
++                return self._shape_partial_auto_check(
++                    matched=False, max_score=solution_rules.max_score
++                )
++
+             # Если ответ отсутствует, применяем штраф и возвращаем результат
+             penalty = solution_rules.penalties.missing_answer
+             final_score = max(0, 0 - penalty)
+-            
++
+             details = CheckResultDetails(
+                 correct_options=None,
+                 user_options=None,
+@@ -633,7 +694,13 @@ class CheckingService:
+                         matched_value = accepted.value
+ 
+         is_correct = base_score == solution_rules.max_score if base_score > 0 else False
+-        
++
++        # tsk-396: гибридный режим — сверка выполнена, балл не начисляем.
++        if solution_rules.partial_auto_check:
++            return self._shape_partial_auto_check(
++                matched=is_correct, max_score=solution_rules.max_score
++            )
++
+         # Применение штрафов
+         penalty = 0
+         if solution_rules.penalties:
+@@ -789,7 +856,8 @@ class CheckingService:
+         missing_answer = not value_raw.strip()
+ 
+         # Паритет с SA_COM (tsk-230): обязательная ручная проверка — без авто-вердикта.
+-        if solution_rules.manual_review_required:
++        # tsk-396: тот же паритет и по гибридному режиму — сверка выполняется ниже.
++        if solution_rules.manual_review_required and not solution_rules.partial_auto_check:
+             return CheckResult(
+                 is_correct=None,
+                 score=0,
+@@ -815,6 +883,11 @@ class CheckingService:
+             )
+ 
+         if missing_answer:
++            # tsk-396: пустая таблица — несошедшаяся формализуемая часть (см. SA_COM).
++            if solution_rules.partial_auto_check:
++                return self._shape_partial_auto_check(
++                    matched=False, max_score=solution_rules.max_score
++                )
+             final_score = max(0, 0 - solution_rules.penalties.missing_answer)
+             return CheckResult(
+                 is_correct=False,
+@@ -878,6 +951,12 @@ class CheckingService:
+ 
+         is_correct = base_score == solution_rules.max_score if base_score > 0 else False
+ 
++        # tsk-396: гибридный режим — сверка выполнена, балл не начисляем.
++        if solution_rules.partial_auto_check:
++            return self._shape_partial_auto_check(
++                matched=is_correct, max_score=solution_rules.max_score
++            )
++
+         penalty = 0
+         if solution_rules.penalties and base_score == 0:
+             penalty += solution_rules.penalties.wrong_answer
+diff --git a/app/services/escalation_service.py b/app/services/escalation_service.py
+index dba6d19..f3b25bf 100644
+--- a/app/services/escalation_service.py
++++ b/app/services/escalation_service.py
+@@ -92,9 +92,26 @@ async def escalation_cron_tick(
+                       -- is_correct=FALSE — честный FAILED, не pending. TA/SA_COM
+                       -- получают optimistic-PASSED (is_correct=TRUE) на submit
+                       -- (attempts.py optimistic_manual).
++                      -- tsk-396: в гибридном режиме (partial_auto_check) ждущая
++                      -- работа приходит с is_correct=NULL, а не TRUE:
++                      -- оптимистичного зачёта у неё нет, балл держится до
++                      -- преподавателя. Без этой ветки залежавшаяся работа
++                      -- ОГЭ-14 не эскалировалась бы методисту НИКОГДА — ровно
++                      -- тот же тихий провал, что чинил tsk-438 для SA-manual.
++                      -- is_correct=FALSE здесь по-прежнему не эскалируется:
++                      -- это законченный авто-вердикт «числа не сошлись»,
++                      -- работа к преподавателю и не шла.
+                       (
+                           t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
+-                          AND tr.is_correct IS TRUE
++                          AND (
++                              tr.is_correct IS TRUE
++                              OR (
++                                  COALESCE(
++                                      (t.solution_rules->>'partial_auto_check')::boolean, false
++                                  )
++                                  AND tr.is_correct IS NULL
++                              )
++                          )
+                       )
+                       -- tsk-438: SA НЕ входит в COMMENT_TASK_TYPES → не получает
+                       -- optimistic-pass (attempts.py:661-663). При
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index 602f65b..420a3c6 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -243,6 +243,7 @@ def _build_solution(task_meta: Dict[str, Any]) -> Dict[str, Any]:
+         "auto_check": rules.auto_check,
+         "manual_review_required": rules.manual_review_required,
+         "requires_attachment": rules.requires_attachment,
++        "partial_auto_check": rules.partial_auto_check,
+         "accepted_answers": accepted,
+         "correct_option_ids": list(rules.correct_options),
+         "row_order_matters": rules.table.row_order_matters if rules.table is not None else None,
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 3e037de..2864608 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -135,21 +135,40 @@ REVIEW_ACL_SQL = f"""
+ #     сама ось mrr, без хрупкой опоры на is_correct.
+ #   - TBL_COM (tsk-366) — табличный ответ, заведён по образцу SA_COM: та же ось
+ #     обязательности, та же вторичная проверка.
++#
++# tsk-396: единственное исключение из «оси без опоры на is_correct» — гибридный
++# режим (`partial_auto_check`). Там авто-сверка формализуемой части ВЫНОСИТ
++# законченный вердикт: числа не сошлись → `is_correct=FALSE`, ученик пересдаёт
++# сам, и преподавателю такую работу не показываем (решение оператора — очередь
++# не должна наполняться заведомо неверными расчётами). Опора на `is_correct`
++# ограничена этим режимом: вне него ось остаётся task-level, как требует tsk-247.
++# Обратная сторона того же решения: присутствие работы в очереди при
++# `partial_auto_check=true` САМО означает «числа сверены автоматически» — это и
++# есть подсказка преподавателю, отдельной колонки под неё не нужно.
+ MANDATORY_REVIEW_TEMPLATE = """
+     ({tasks}.task_content->>'type' = 'TA'
+      OR ({tasks}.task_content->>'type' IN ('SA','SA_COM','TBL_COM')
+-         AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE))
++         AND COALESCE(({tasks}.solution_rules->>'manual_review_required')::boolean, false) IS TRUE
++         AND NOT (
++             COALESCE(({tasks}.solution_rules->>'partial_auto_check')::boolean, false) IS TRUE
++             AND {results}.is_correct IS FALSE
++         )))
+ """
+ 
+ 
+-def mandatory_review_sql(tasks_alias: str = "t") -> str:
++def mandatory_review_sql(tasks_alias: str = "t", results_alias: str = "tr") -> str:
+     """SQL-фрагмент «работа требует обязательной ручной проверки».
+ 
+     :param tasks_alias: алиас таблицы `tasks` в вызывающем запросе ('t' в
+         claim-next, 'tasks' в SQLAlchemy-select списка). User-input сюда не
+         попадает — только литералы из закрытого набора call-sites.
++    :param results_alias: алиас таблицы `task_results` ('tr' в raw-SQL,
++        'task_results' в SQLAlchemy-select). Нужен гибридному режиму (tsk-396):
++        предикат смотрит на вердикт КОНКРЕТНОЙ работы, а не только на задание.
+     """
+-    return MANDATORY_REVIEW_TEMPLATE.format(tasks=tasks_alias)  # nosec B608
++    return MANDATORY_REVIEW_TEMPLATE.format(  # nosec B608
++        tasks=tasks_alias, results=results_alias
++    )
+ 
+ 
+ # ─── tsk-372: единый предикат «опциональной проверки» ────────────────────────
+@@ -1194,7 +1213,13 @@ async def list_pending_reviews(
+                     AND tr.review_claim_expires_at >= :now_ts) AS is_claimed,
+                    t.task_content->>'title' AS task_title_raw,
+                    t.task_content->>'stem' AS task_stem,
+-                   {has_evidence_sql} AS has_evidence
++                   {has_evidence_sql} AS has_evidence,
++                   -- tsk-396: подсказка «числовая часть уже сверена автоматически».
++                   -- Работы с несошедшимися числами предикат очереди отсекает, поэтому
++                   -- сам факт флага + попадание в очередь означает «числа сошлись»,
++                   -- и преподавателю остаётся проверить только ручную часть (диаграмму).
++                   COALESCE((t.solution_rules->>'partial_auto_check')::boolean, false)
++                       AS partial_auto_check
+             FROM task_results tr
+             JOIN tasks t ON t.id = tr.task_id
+             LEFT JOIN users u ON u.id = tr.user_id
+@@ -1220,6 +1245,8 @@ async def list_pending_reviews(
+             "user_name": row[10],
+             "is_claimed": bool(row[11]),
+             "has_evidence": bool(row[14]),
++            # tsk-396: True — числовая часть сверена авто-чеком и совпала.
++            "auto_checked_part_matched": bool(row[15]),
+         }
+         for row in r.fetchall()
+     ]

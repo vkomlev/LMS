@@ -156,6 +156,7 @@ class TaskHistorySolution(BaseModel):
     auto_check: bool
     manual_review_required: bool
     requires_attachment: bool = False
+    partial_auto_check: bool = False
     accepted_answers: List[TaskHistoryAcceptedAnswer] = Field(
         ...,
         description="SA/SA_COM/TBL_COM: допустимые эталонные ответы (для TBL_COM — строкой, ячейки через пробел, ряды через перевод строки)",

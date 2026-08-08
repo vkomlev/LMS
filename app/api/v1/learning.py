@@ -500,6 +500,7 @@ async def get_task_state(
     try:
         rules = SolutionRules.model_validate(task.solution_rules or {})
         requires_attachment = bool(rules.requires_attachment)
+        partial_auto_check = bool(rules.partial_auto_check)
         task_type = (task.task_content or {}).get("type") if isinstance(task.task_content, dict) else None
         has_reference_answer = (
             rules.has_reference_answer()
@@ -509,6 +510,7 @@ async def get_task_state(
     except Exception:
         # Некорректные solution_rules не должны ломать выдачу состояния задания.
         requires_attachment = False
+        partial_auto_check = False
         has_reference_answer = True
     if state.state == "BLOCKED_LIMIT":
         await get_or_create_blocked_limit_help_request(
@@ -536,6 +538,7 @@ async def get_task_state(
         last_is_correct=state.last_is_correct,
         last_checked_at=state.last_checked_at,
         requires_attachment=requires_attachment,
+        partial_auto_check=partial_auto_check,
         has_reference_answer=has_reference_answer,
     )
 

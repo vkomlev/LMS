@@ -351,6 +351,22 @@ class SolutionRules(BaseModel):
         description="Требуется ли обязательная ручная дооценка (даже при автопроверке).",
         examples=[False, True],
     )
+    partial_auto_check: bool = Field(
+        default=False,
+        description=(
+            "Гибридный режим проверки (tsk-396): часть ответа сверяется автоматически, "
+            "финальный зачёт остаётся за преподавателем. Пример — ОГЭ-14: два числовых "
+            "ответа формализуемы (эталон в short_answer), построение диаграммы проверяет "
+            "только человек. При true авто-сверка ВЫПОЛНЯЕТСЯ и её итог сразу виден "
+            "ученику в feedback, но `score` не начисляется (score=0 до оценки "
+            "преподавателем) — иначе PASS-гейт движка (score/max_score >= 0.5) зачёл бы "
+            "задание и курс до ручной проверки. Числа сошлись → is_correct=None, работа в "
+            "обязательной очереди; не сошлись → is_correct=False, в очередь НЕ попадает "
+            "(ученик пересдаёт сам, решение оператора). Требует manual_review_required=true "
+            "и наличия эталона. Default false — задания без флага ведут себя как раньше."
+        ),
+        examples=[False, True],
+    )
     requires_attachment: bool = Field(
         default=False,
         description=(
@@ -458,6 +474,30 @@ class SolutionRules(BaseModel):
         """
         if self.max_score <= 0:
             raise ValueError("max_score должен быть положительным числом")
+        return self
+
+    @model_validator(mode="after")
+    def validate_partial_auto_check(self) -> "SolutionRules":
+        """Гибридный режим (tsk-396) осмыслен только вместе с двумя предпосылками.
+
+        Без `manual_review_required` флаг обнулял бы сам себя: держать зачёт до
+        человека — вся его суть. Без эталона нечего сверять автоматически, и
+        ученик получил бы обещание мгновенной обратной связи, которой нет.
+        Обе ошибки молча выключили бы режим на импорте — как опечатка в шаге
+        нормализации до tsk-262. Лучше 422 при заведении задания.
+        """
+        if not self.partial_auto_check:
+            return self
+        if not self.manual_review_required:
+            raise ValueError(
+                "partial_auto_check=true требует manual_review_required=true: "
+                "гибридный режим держит зачёт до проверки преподавателем"
+            )
+        if not self.has_reference_answer():
+            raise ValueError(
+                "partial_auto_check=true требует эталон для авто-сверки "
+                "(short_answer.accepted_answers либо regex)"
+            )
         return self
 
     def has_reference_answer(self) -> bool:
