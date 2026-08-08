@@ -23,11 +23,19 @@ import argparse
 import asyncio
 import logging
 import sys
+from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import text
+project_root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(project_root))
 
-from app.db.session import async_session_factory
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
+
+from sqlalchemy import text  # noqa: E402
+
+from app.db.session import async_session_factory  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("tsk301.assign")
