@@ -225,20 +225,23 @@ async def main(argv: Iterable[str] | None = None) -> int:
             logger.info("Сухой прогон. Для записи: --apply (с префиксом DBCHECK_OK=1).")
             return 0
 
+        # Транзакция у сессии уже открыта предыдущими чтениями, поэтому
+        # `async with db.begin()` здесь падает. Вставки идут в неё же и
+        # фиксируются одним `commit` — атомарность та же.
         written = 0
-        async with db.begin():
-            for student_id, full_name, plan_code, reason in ASSIGNMENT:
-                plan_id, group_id = plans[plan_code]
-                await db.execute(
-                    text(
-                        "INSERT INTO student_subscription "
-                        "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
-                        "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
-                    ),
-                    {"s": student_id, "p": plan_id, "g": group_id,
-                     "r": f"tsk-301 Фаза 5: {reason}"},
-                )
-                written += 1
+        for student_id, full_name, plan_code, reason in ASSIGNMENT:
+            plan_id, group_id = plans[plan_code]
+            await db.execute(
+                text(
+                    "INSERT INTO student_subscription "
+                    "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
+                    "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
+                ),
+                {"s": student_id, "p": plan_id, "g": group_id,
+                 "r": f"tsk-301 Фаза 5: {reason}"},
+            )
+            written += 1
+        await db.commit()
 
         # Поштучная верификация всего затронутого множества, не агрегатом:
         # совпадение количества и суммы прячет перепутанные пары (урок tsk-317).
