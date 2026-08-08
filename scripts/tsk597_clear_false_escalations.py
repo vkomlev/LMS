@@ -112,10 +112,15 @@ _FALSE_ESCALATION_WHERE = (
 
 
 async def main(apply: bool) -> int:
+    # Имя с меткой времени, а не фиксированное. Первый прогон (tsk-597, 72
+    # строки `review_escalated`) писал в постоянный файл, и второй прогон
+    # (tsk-598, 26 строк `course_pending_review`) его затёр — обратимость
+    # первого удаления пропала молча, а именно ради неё бэкап и делается.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_path = (
         Path(__file__).resolve().parent.parent
         / "reviews"
-        / "tsk597-false-escalations-backup.json"
+        / f"tsk597-false-escalations-backup-{stamp}.json"
     )
 
     async with async_session_factory() as db:
