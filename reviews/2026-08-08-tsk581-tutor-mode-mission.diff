@@ -1,0 +1,214 @@
+diff --git a/app/db/migrations/versions/20260808_040000_tsk581_tutor_mode_mission.py b/app/db/migrations/versions/20260808_040000_tsk581_tutor_mode_mission.py
+new file mode 100644
+index 0000000..1355b16
+--- /dev/null
++++ b/app/db/migrations/versions/20260808_040000_tsk581_tutor_mode_mission.py
+@@ -0,0 +1,68 @@
++"""tsk-581: режим `mission` в CHECK-ограничении сессий ИИ-наставника.
++
++**Живой прод-дефект, а не улучшение.** `prompt.pick_mode` с коммита `2f289b2`
++возвращает режим `mission` для заданий-миссий, а ограничение
++`ck_ai_tutor_session_mode` (миграция `tsk572_ai_tutor`) знало только
++`concept | debug | deepen | thin`. Вставка сессии падала `CheckViolationError`,
++и ученик получал 500 при открытии наставника на миссии
++(`GET /api/v1/ai-tutor/tasks/6341`, курс 1095 — воспроизведено на проде
++2026-08-08). Дефект не всплывал раньше только потому, что миссии есть в одном
++курсе, где учеников мало.
++
++**Ограничение пересоздаётся под тем же именем** (drop + add), а не заводится
++второе рядом: два одноимённых ограничения PostgreSQL не даст, а разные имена
++развели бы «настоящее» и «дополняющее» ограничение — прецедент
++`help_requests_request_type_check` (tsk-303) решался так же.
++
++**Про откат.** Старое ограничение не примет строки с `mission`, поэтому
++`downgrade` сначала переводит их в `concept`. Это осознанная потеря точности:
++после отката код всё равно не умеет `mission`, а падение отката на боевых
++данных хуже, чем менее точная метка режима в семи исторических строках.
++
++Revision ID: tsk581_tutor_mission
++Revises: tsk301_subscription
++Create Date: 2026-08-08
++"""
++
++from __future__ import annotations
++
++from typing import Sequence, Union
++
++from alembic import op
++
++revision: str = "tsk581_tutor_mission"
++down_revision: Union[str, None] = "tsk301_subscription"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++_MODES_NEW = "'concept','debug','deepen','thin','mission'"
++_MODES_OLD = "'concept','debug','deepen','thin'"
++
++_COMMENT_NEW = (
++    "concept | debug | deepen | thin | mission — режим методики, выбран по заданию"
++)
++_COMMENT_OLD = "concept | debug | deepen | thin — режим методики, выбран по заданию"
++
++
++def upgrade() -> None:
++    op.execute(
++        "ALTER TABLE ai_tutor_session DROP CONSTRAINT IF EXISTS ck_ai_tutor_session_mode"
++    )
++    op.execute(
++        "ALTER TABLE ai_tutor_session ADD CONSTRAINT ck_ai_tutor_session_mode "
++        f"CHECK (mode IN ({_MODES_NEW}))"
++    )
++    op.execute(f"COMMENT ON COLUMN ai_tutor_session.mode IS '{_COMMENT_NEW}'")
++
++
++def downgrade() -> None:
++    # Строки с `mission` иначе не пройдут старое ограничение и уронят откат.
++    op.execute("UPDATE ai_tutor_session SET mode = 'concept' WHERE mode = 'mission'")
++    op.execute(
++        "ALTER TABLE ai_tutor_session DROP CONSTRAINT IF EXISTS ck_ai_tutor_session_mode"
++    )
++    op.execute(
++        "ALTER TABLE ai_tutor_session ADD CONSTRAINT ck_ai_tutor_session_mode "
++        f"CHECK (mode IN ({_MODES_OLD}))"
++    )
++    op.execute(f"COMMENT ON COLUMN ai_tutor_session.mode IS '{_COMMENT_OLD}'")
+diff --git a/app/services/ai_tutor/prompt.py b/app/services/ai_tutor/prompt.py
+index 1af9db5..eeab16e 100644
+--- a/app/services/ai_tutor/prompt.py
++++ b/app/services/ai_tutor/prompt.py
+@@ -11,8 +11,11 @@
+ формулировку, но первой репликой спрашивает про ход мысли — дух методики
+ (подсказок до попытки нет) сохранён.
+ 
+-**Четыре режима, а не три — решение оператора 12.** К A/B/C методики добавлен
+-`thin` для одноконструкционных заданий. Методика (§8) советует наставника там
++**Пять режимов, а не три — решение оператора 12 плюс живой прогон.** К A/B/C
++методики добавлен `thin` для одноконструкционных заданий, а позже `mission` —
++для заданий, которые сдаются артефактом. Набор режимов дублируется
++CHECK-ограничением `ck_ai_tutor_session_mode` в БД: новый литерал `TutorMode`
++без миграции = 500 ученику (tsk-581), сторож — `tests/test_tsk581_tutor_mode_check.py`. Методика (§8) советует наставника там
+ вообще не применять: любой конкретный пример почти равен ответу. Но большинство
+ заданий курса именно такие, и «не применять» оставило бы учеников без помощи там,
+ где она нужна чаще всего. Компромисс: режим есть, но с запретом на числовые
+diff --git a/tests/test_tsk581_tutor_mode_check.py b/tests/test_tsk581_tutor_mode_check.py
+new file mode 100644
+index 0000000..c052610
+--- /dev/null
++++ b/tests/test_tsk581_tutor_mode_check.py
+@@ -0,0 +1,116 @@
++"""tsk-581: страж синхронности режимов наставника между кодом и БД.
++
++**Почему страж, а не просто фикс.** Живой дефект был не в логике, а в
++рассинхроне: `prompt.pick_mode` научился возвращать `mission`, а
++CHECK-ограничение `ck_ai_tutor_session_mode` о нём не знало — и открытие
++наставника на задании-миссии падало 500 ученику. Ни один тест этого не поймал,
++потому что все они проверяют выбор режима в памяти, а ограничение живёт в БД.
++Следующий добавленный режим повторил бы то же самое буква в букву.
++
++Тесты сверяют ДВЕ стороны рассинхрона:
++
++1. Код знает больше БД — новый литерал `TutorMode` без миграции (исходный дефект,
++   500 ученику на первой же сессии в этом режиме).
++2. БД знает больше кода — значение разрешено ограничением, но код его не
++   производит. Молчаливее первого: ничего не падает, просто в схеме живёт
++   мёртвая метка, про которую через полгода никто не скажет, нужна она или это
++   забытый хвост.
++
++Оба класса ловятся сравнением множеств, а не перечислением значений: список
++режимов в тесте пришлось бы править ровно так же забывчиво, как и миграцию.
++"""
++from __future__ import annotations
++
++import re
++from typing import get_args
++
++import pytest
++from sqlalchemy import text
++
++from app.services.ai_tutor.prompt import TutorMode, TutorTaskView, _MODES, pick_mode
++
++# Режимы, которые описаны и разрешены, но намеренно не выдаются `pick_mode`.
++#
++# `deepen` (углубление решения) сюда попал по факту: точки входа у него нет —
++# наставник открывается только по заданию, и режим целиком выводится из
++# формулировки и присланного ответа. Список не «разрешение забыть», а место,
++# где мёртвая метка видна: если он растёт, режимы проектируются быстрее, чем
++# подключаются.
++RESERVED_MODES: frozenset[str] = frozenset({"deepen"})
++
++
++def _modes_allowed_by_db_check(definition: str) -> set[str]:
++    """Достать множество значений из текста CHECK-ограничения.
++
++    PostgreSQL печатает `mode IN ('a','b')` как сравнение с массивом, где каждый
++    элемент подписан типом. Забираем именно строковые литералы — так разбор не
++    зависит от того, каким синтаксисом ограничение было создано.
++    """
++    return set(re.findall(r"'([a-z_]+)'", definition))
++
++
++@pytest.mark.asyncio
++async def test_db_check_allows_exactly_the_modes_code_knows(db):
++    """Множество режимов в коде и в ограничении БД совпадает буква в букву."""
++    definition = (
++        await db.execute(
++            text(
++                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
++                "WHERE conname = 'ck_ai_tutor_session_mode' "
++                "  AND conrelid = 'ai_tutor_session'::regclass"
++            )
++        )
++    ).scalar_one_or_none()
++    assert definition, (
++        "ограничение ck_ai_tutor_session_mode не найдено — либо миграции не "
++        "накатаны на тестовую БД, либо ограничение переименовали, и тогда "
++        "рассинхрон снова стал невидимым"
++    )
++
++    in_db = _modes_allowed_by_db_check(definition)
++    in_code = set(get_args(TutorMode))
++
++    assert in_code - in_db == set(), (
++        f"код умеет режимы, которых нет в CHECK: {sorted(in_code - in_db)}. "
++        "Ученик получит 500 при первой же сессии в таком режиме — нужна "
++        "миграция, пересоздающая ck_ai_tutor_session_mode"
++    )
++    assert in_db - in_code == set(), (
++        f"CHECK разрешает режимы, которых нет в TutorMode: {sorted(in_db - in_code)}. "
++        "Мёртвое значение в схеме: либо подключить в коде, либо убрать миграцией"
++    )
++
++
++def test_every_declared_mode_has_a_prompt():
++    """У каждого литерала `TutorMode` есть текст инструкции.
++
++    Без этого `build_system_prompt` падал бы `KeyError` уже после успешной
++    вставки в БД — то есть режим прошёл бы ограничение и умер ходом позже.
++    """
++    assert set(_MODES) == set(get_args(TutorMode))
++
++
++def test_no_mode_is_declared_but_unreachable():
++    """Каждый режим либо достижим из `pick_mode`, либо объявлен зарезервированным."""
++    # Матрица покрывает все развилки `pick_mode`: миссия (маркеры приёмки),
++    # тонкая задача (короткий стем / выбор варианта), код ученика, всё остальное.
++    stems = {
++        "mission": "МИССИЯ 1. Настрой среду и приложи скрин. Принято, если приложен файл.",
++        "thin_short": "Что напечатает s[1:4]?",
++        "long": "x" * 400 + "\nмного строк условия\nещё строка\n",
++    }
++    reachable: set[str] = set()
++    for stem in stems.values():
++        for single in (True, False):
++            for has_code in (True, False):
++                view = TutorTaskView(
++                    task_id=1, stem=stem, task_type="SA_COM", is_single_construct=single
++                )
++                reachable.add(pick_mode(view, has_student_code=has_code))
++
++    declared = set(get_args(TutorMode))
++    unreachable = declared - reachable
++    assert unreachable == set(RESERVED_MODES), (
++        f"режимы объявлены, но не выдаются pick_mode: {sorted(unreachable)}. "
++        "Либо подключить точку входа, либо внести в RESERVED_MODES с объяснением"
++    )
