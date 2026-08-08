@@ -373,6 +373,33 @@ async def open_stream(space: str, name: str) -> Optional[Tuple[Iterator[bytes], 
     return _iter_file(path), fallback_type
 
 
+async def read_from_bucket(space: str, name: str) -> Optional[Tuple[bytes, str]]:
+    """Читает объект ТОЛЬКО из бакета: `(содержимое, тип)` или None.
+
+    Отличается от `open_stream` тем, что НЕ откатывается на диск. Именно это и
+    нужно проверке переноса: пока файл лежит на диске, обычное чтение вернёт
+    его и там, где в бакете ничего нет, — и «перенос» отрапортует успех, ничего
+    не перенеся. Так и вышло при первом прогоне переноса (46 файлов «OK» при
+    нуле объектов в бакете), это тот же класс, что и «ответ 200 — значит
+    работает».
+
+    Raises:
+        DomainError: 503, если хранилище недоступно.
+    """
+    _known(space)
+    if not s3_enabled():
+        return None
+    obj = await asyncio.to_thread(_get_object_sync, object_key(space, name))
+    if obj is None:
+        return None
+    body = obj["Body"]
+    try:
+        data = body.read()
+    finally:
+        body.close()
+    return data, (obj.get("ContentType") or "").split(";")[0].strip()
+
+
 def read_bytes_sync(space: str, name: str, *, max_bytes: int) -> Optional[bytes]:
     """Читает файл целиком, синхронно; None, если файла нет или он крупнее лимита.
 

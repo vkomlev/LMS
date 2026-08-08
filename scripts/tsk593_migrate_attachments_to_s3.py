@@ -67,12 +67,14 @@ def _sha256_file(path: Path) -> str:
 
 
 async def _download(space: str, name: str) -> Optional[tuple[bytes, str]]:
-    """Скачать файл обратно из хранилища: `(содержимое, тип)` или None."""
-    opened = await attachment_storage.open_stream(space, name)
-    if opened is None:
-        return None
-    stream, media_type = opened
-    return b"".join(stream), media_type
+    """Скачать файл ИЗ БАКЕТА (без отката на диск): `(содержимое, тип)` или None.
+
+    Именно из бакета, а не через обычное чтение. Обычное чтение откатывается на
+    диск, а исходники при переносе никуда не деваются — и проверка «уже
+    перенесено» отвечала бы «да» на файл, которого в бакете нет. Первый прогон
+    так и отрапортовал 46 «OK» при нуле объектов в бакете.
+    """
+    return await attachment_storage.read_from_bucket(space, name)
 
 
 async def _verify(space: str, name: str, source: Path, expected_sha: str) -> Dict[str, object]:

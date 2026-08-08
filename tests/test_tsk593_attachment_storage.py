@@ -347,3 +347,34 @@ async def test_name_cannot_escape_space(fake_s3):
 async def test_unknown_space_is_refused():
     with pytest.raises(ValueError):
         attachment_storage.object_key("materials", "x.png")
+
+
+# ── сверка переноса не должна принимать файл, лежащий только на диске ───────
+
+
+async def test_bucket_read_does_not_fall_back_to_disk(fake_s3):
+    """Иначе перенос отчитается об успехе, ничего не перенеся.
+
+    Ровно это и случилось при первом прогоне переноса на проде: 46 файлов
+    «OK» при нуле объектов в бакете — проверка читала через общий путь, а он
+    откатывается на диск, где исходники и лежат. Тот же класс, что «ответ 200
+    — значит работает» (tsk-536).
+    """
+    name = f"only_on_disk_{uuid.uuid4().hex}.py"
+    path = attachment_storage.local_dir(attachment_storage.ATTEMPTS) / name
+    path.write_bytes(b"print(1)")
+    try:
+        # Обычное чтение файл находит — на то и запасной путь для старых файлов.
+        assert await attachment_storage.open_stream(attachment_storage.ATTEMPTS, name)
+        # А чтение из бакета — нет, потому что в бакете его действительно нет.
+        assert await attachment_storage.read_from_bucket(attachment_storage.ATTEMPTS, name) is None
+    finally:
+        path.unlink(missing_ok=True)
+
+
+async def test_bucket_read_returns_stored_object(fake_s3):
+    """Положили в бакет — читается из бакета, байт в байт."""
+    payload = io.BytesIO(b"print(42)")
+    await attachment_storage.store_bytes(attachment_storage.ATTEMPTS, "1_x.py", payload)
+    got = await attachment_storage.read_from_bucket(attachment_storage.ATTEMPTS, "1_x.py")
+    assert got is not None and got[0] == b"print(42)"
