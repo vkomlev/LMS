@@ -134,7 +134,12 @@ async def test_upload_attempt_attachment_rejects_too_large_file(monkeypatch, db,
     api_key = settings.valid_api_keys[0]
     attempt_id = await _create_attempt(client, db)
 
-    monkeypatch.setattr("app.api.v1.attempts.settings.max_attachment_size_bytes", 4)
+    # tsk-593: предел размера проверяет слой хранилища (`attachment_storage`),
+    # а не роутер — файл теперь пишется не роутером. Подмена настройки роутера
+    # тихо перестала бы что-либо ограничивать, поэтому патчим хранилище.
+    monkeypatch.setattr(
+        "app.services.attachment_storage.settings.max_attachment_size_bytes", 4
+    )
     try:
         upload = await client.post(
             f"/api/v1/attempts/{attempt_id}/attachments?api_key={api_key}",

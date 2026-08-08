@@ -109,8 +109,12 @@ async def code_review_cron_tick(
             # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
             # файл-вложение мог быть удалён следующей загрузкой ученика в этой
             # же попытке (см. комментарий в `attempts.py`).
-            code = code_snapshot or pick_code_for_review(
-                value, comment, attachments, attempt_id=attempt_id, task_id=task_id
+            # tsk-593: разбор читает вложение из объектного хранилища —
+            # синхронный сетевой вызов, поэтому уносим с петли событий.
+            code = code_snapshot or await asyncio.to_thread(
+                pick_code_for_review,
+                value, comment, attachments,
+                attempt_id=attempt_id, task_id=task_id,
             )
             if not code:
                 # Программы в ответе нет (одно вложение, ответ-однострочник) —

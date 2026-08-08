@@ -7,7 +7,7 @@ from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, require_role
@@ -115,13 +115,13 @@ async def download_receipt(
     payment_id: int,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_payments_gate),
-) -> FileResponse:
+) -> StreamingResponse:
     payment = await payment_service.get_receipt(db, payment_id=payment_id)
     if payment is None or payment["receipt_file"] is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    # Общая выдача файла с типом по имени НА ДИСКЕ — см. `me_payments`:
+    # Общая выдача файла с типом по имени В ХРАНИЛИЩЕ — см. `me_payments`:
     # присланное имя доверять нельзя, иначе `evil.svg` вернётся активным.
-    return receipt_response(payment)
+    return await receipt_response(payment)
 
 
 @router.get(

@@ -6,8 +6,7 @@ from datetime import datetime
 from uuid import uuid4
 from typing import Any, List, Optional
 import os
-import mimetypes
-from starlette.responses import FileResponse
+from starlette.responses import StreamingResponse
 
 from fastapi import (
     APIRouter,
@@ -32,7 +31,9 @@ from app.schemas.messages import (
     MarkReadBySenderRequest,
     MarkReadResponse,
     )
+from app.services import attachment_storage
 from app.services.messages_service import MessagesService
+from app.utils.exceptions import DomainError
 from app.services.student_teacher_links_service import (
     StudentTeacherLinksService,
 )
@@ -488,38 +489,23 @@ async def attach_file_to_message_endpoint(
     Загружает файл и привязывает к сообщению.
 
     - Лимит размера: Settings.max_attachment_size_bytes
-    - Файл пишем в Settings.messages_upload_dir
+    - Файл уходит в объектное хранилище, пространство `messages` (tsk-593).
+      Раньше он ложился на диск приложения — тот же класс, что уничтожил файлы
+      материалов при переезде машины (tsk-519: 0 файлов после переноса).
     - attachment_url сохраняем как ОТНОСИТЕЛЬНЫЙ путь до download endpoint:
       /api/v1/messages/{message_id}/attachment
     """
-    # Папка гарантированно есть (Settings её создаёт), но на всякий случай:
-    settings.messages_upload_dir.mkdir(parents=True, exist_ok=True)
+    # Имя файла приходит от клиента и становится частью ключа в хранилище:
+    # чистим его тем же правилом, что и вложения ответов (пути, пробелы,
+    # кириллица). Раньше `file.filename` подставлялся в путь как есть.
+    safe_name = f"{message_id}_{uuid4().hex}_{attachment_storage.safe_name(file.filename)}"
 
-    safe_name = f"{message_id}_{uuid4().hex}_{file.filename}"
-    file_path = settings.messages_upload_dir / safe_name
-
-    total = 0
     try:
-        with open(file_path, "wb") as f:
-            while True:
-                chunk = await file.read(settings.attachment_chunk_size)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > settings.max_attachment_size_bytes:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
-                    )
-                f.write(chunk)
-    except HTTPException:
-        # удаляем частично записанный файл
-        try:
-            if file_path.exists():
-                file_path.unlink()
-        except Exception:
-            pass
-        raise
+        total, _content_type = await attachment_storage.store_upload(
+            attachment_storage.MESSAGES, safe_name, file
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
     # ✅ ВАЖНО: сохраняем относительный URL (без api_key)
     attachment_url = f"/api/v1/messages/{message_id}/attachment"
@@ -557,17 +543,36 @@ async def download_message_attachment(
     if user_id not in {msg.sender_id, msg.recipient_id}:
         raise HTTPException(status_code=403, detail="No access to this attachment")
 
-    file_path = settings.messages_upload_dir / msg.attachment_id
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Attachment file missing on server")
+    # tsk-593: содержимое приходит из объектного хранилища и отдаётся потоком
+    # через приложение — прямая ссылка на бакет обошла бы проверку прав выше.
+    try:
+        opened = await attachment_storage.open_stream(
+            attachment_storage.MESSAGES, os.path.basename(msg.attachment_id)
+        )
+    except DomainError as exc:
+        # «Хранилище не ответило» — не то же самое, что «файла нет»: 404 здесь
+        # читался бы как «вложения и не было».
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
 
-    media_type = mimetypes.guess_type(msg.attachment_id)[0] or "application/octet-stream"
+    if opened is None:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                "Файл вложения утрачен на сервере и восстановлению не подлежит. "
+                "Попросите отправителя приложить файл заново."
+            ),
+        )
 
+    stream, media_type = opened
     # filename: можно отдать исходное имя, но у нас оно в конце safe_name (с префиксом)
-    return FileResponse(
-        path=str(file_path),
+    return StreamingResponse(
+        stream,
         media_type=media_type,
-        filename=os.path.basename(msg.attachment_id),
+        headers={
+            "Content-Disposition": attachment_storage.content_disposition(
+                os.path.basename(msg.attachment_id)
+            )
+        },
     )
 
 class UnreadCountResponse(BaseModel):

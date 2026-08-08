@@ -30,9 +30,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.services.attempt_attachments import attachment_file_path, parse_attachment_id
+from app.services import attachment_storage
+from app.services.attempt_attachments import is_valid_attachment_id, parse_attachment_id
+from app.utils.exceptions import DomainError
 from app.services.llm import (
     Budget,
     LLMError,
@@ -278,7 +281,7 @@ def read_code_attachment(
     allow_untagged: bool = False,
 ) -> Optional[str]:
     """
-    Прочитать вложение-исходник с диска.
+    Прочитать вложение-исходник из хранилища (tsk-593: объектное, не диск).
 
     Возвращает `None` на любой заминке (файла нет, не текст, слишком большой,
     имя не строка, файл не тот) — оценка не должна падать из-за одного
@@ -306,9 +309,10 @@ def read_code_attachment(
       подставить один вылизанный `solution.py` в соседние задания своей
       попытки. Исключение — `allow_untagged=True`, его ставит только скрипт
       пересчёта истории: задним числом ученик уже ничего не перезальёт;
-    * расширение проверяется у РЕАЛЬНОГО файла, а не у заявленного `filename`:
-      иначе закрытый список расширений не закрывает ничего — `dannye.csv` под
-      именем `moe.py` прочитался бы и уехал модели.
+    * расширение проверяется у РЕАЛЬНОГО имени файла в хранилище, а не у
+      заявленного `filename`: иначе закрытый список расширений не закрывает
+      ничего — `dannye.csv` под именем `moe.py` прочитался бы и уехал модели.
+      Имя в хранилище присвоено сервером при загрузке и ученику не подвластно.
     """
     if not isinstance(attachment_id, str) or not attachment_id or attempt_id is None:
         return None
@@ -342,18 +346,29 @@ def read_code_attachment(
         )
         return None
 
-    path = attachment_file_path(attachment_id)
-    if path is None or path.suffix.lower() not in CODE_FILE_SUFFIXES:
+    if not is_valid_attachment_id(attachment_id):
         return None
+    suffix = Path(attachment_id).suffix.lower()
+    if suffix not in CODE_FILE_SUFFIXES:
+        return None
+
+    # tsk-593: файл лежит в объектном хранилище. Чтение синхронное намеренно —
+    # эта функция вызывается из потока (`asyncio.to_thread`) на приёме ответа и
+    # из фонового тика оценки, и вся её логика синхронная.
     try:
-        if not path.is_file() or path.stat().st_size > _MAX_CODE_FILE_BYTES:
+        data = attachment_storage.read_bytes_sync(
+            attachment_storage.ATTEMPTS, attachment_id, max_bytes=_MAX_CODE_FILE_BYTES
+        )
+        if data is None:
             return None
-        raw = path.read_text(encoding="utf-8", errors="strict")
-    except (OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
+        raw = data.decode("utf-8", errors="strict")
+    except (DomainError, OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
+        # Недоступное хранилище тоже глушим: обещание «оценка не роняет сдачу»
+        # держится буквально — исключение отсюда означало бы незаписанный ответ.
         logger.info("tsk-302: вложение %s не прочитано (%s)", attachment_id, type(exc).__name__)
         return None
 
-    if path.suffix.lower() == ".ipynb":
+    if suffix == ".ipynb":
         return _extract_notebook_code(raw)
     return raw
 

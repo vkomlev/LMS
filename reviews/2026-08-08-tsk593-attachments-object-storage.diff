@@ -1,0 +1,3295 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index e6a3ff9..c80dc72 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -581,6 +581,27 @@ async def _stop_link_audit_scheduler() -> None:
+         logger.exception("tsk-521: failed to stop link_audit scheduler")
+ 
+ 
++# tsk-593: суточная проверка вложений — «ссылка есть, файла в хранилище нет».
++# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
++from app.services import attachment_audit_service as _attachment_audit_service
++
++
++@app.on_event("startup")
++async def _start_attachment_audit_scheduler() -> None:
++    try:
++        _attachment_audit_service.start_scheduler()
++    except Exception:
++        logger.exception("tsk-593: failed to start attachment_audit scheduler")
++
++
++@app.on_event("shutdown")
++async def _stop_attachment_audit_scheduler() -> None:
++    try:
++        _attachment_audit_service.stop_scheduler()
++    except Exception:
++        logger.exception("tsk-593: failed to stop attachment_audit scheduler")
++
++
+ # tsk-541: фоновый пересчёт student_course_state для целей course_dependencies
+ # (подкурсов, никогда не покрытых resolve_next_item/manual_progress_service).
+ # Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index f1a5858..8f6223d 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -3,11 +3,10 @@ from __future__ import annotations
+ import asyncio
+ from typing import List, Optional
+ from datetime import datetime, timedelta, timezone
+-import mimetypes
+ import os
+ 
+ from fastapi import APIRouter, Depends, Body, File, Form, HTTPException, status, Query, UploadFile
+-from starlette.responses import FileResponse
++from starlette.responses import StreamingResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+ from sqlalchemy import select, text
+ 
+@@ -49,11 +48,13 @@ from app.services.code_review_service import pick_code_for_review
+ from app.services import entitlements_service
+ # tsk-575: раскладка файлов-вложений и разбор их имён — в одном модуле,
+ # потому что читают её ещё и teacher/history-пути (пометка «файл утрачен»).
++# tsk-593: сами файлы лежат в объектном хранилище, а не на диске приложения.
++from app.services import attachment_storage
+ from app.services.attempt_attachments import (
+-    attachment_file_path,
+-    attempt_attachment_files,
++    attempt_attachment_names,
+     build_attachment_id,
+-    files_replaced_by_upload,
++    is_valid_attachment_id,
++    names_replaced_by_upload,
+     parse_attachment_id,
+     safe_upload_filename,
+ )
+@@ -91,7 +92,7 @@ learning_engine_service = LearningEngineService()
+ # что не влияет.
+ 
+ 
+-def _task_attachment_files(attempt_id: int, task_id: int) -> list[os.PathLike]:
++async def _task_attachment_files(attempt_id: int, task_id: int) -> list[str]:
+     """
+     Файлы-вложения, которые считаются приложенными К ЭТОМУ заданию попытки (tsk-575).
+ 
+@@ -102,15 +103,17 @@ def _task_attachment_files(attempt_id: int, task_id: int) -> list[os.PathLike]:
+     догадается. Теперь ищем файл этого задания; файлы без метки задания
+     (старый клиент, ещё не присылающий `task_id`) засчитываются по-прежнему —
+     иначе обновление сервера в одиночку сломало бы приём ответов из бота.
++
++    tsk-593: список приходит из объектного хранилища, поэтому вызов сетевой —
++    результат берётся ОДИН раз на задание и переиспользуется обоими гейтами.
+     """
+-    return list(attempt_attachment_files(attempt_id, task_id, include_untagged=True))
++    return await attempt_attachment_names(attempt_id, task_id, include_untagged=True)
+ 
+ 
+ def _validate_attempt_attachment_id(attempt_id: int, attachment_id: str) -> str:
+     safe_id = safe_upload_filename(attachment_id)
+-    scope = attachment_file_path(attachment_id)
+-    parsed = parse_attachment_id(attachment_id)
+-    if safe_id != attachment_id or scope is None or parsed is None or parsed[0] != attempt_id:
++    parsed = parse_attachment_id(attachment_id) if is_valid_attachment_id(attachment_id) else None
++    if safe_id != attachment_id or parsed is None or parsed[0] != attempt_id:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+     return safe_id
+ 
+@@ -687,7 +690,7 @@ async def submit_attempt_answers(
+         #
+         # Вместе с пометкой кладём КОПИЮ кода. Причина — файл вложения
+         # ИЗМЕНЯЕМ: повторная загрузка по той же паре (попытка, задание)
+-        # вытесняет предыдущий (`files_replaced_by_upload`, tsk-575). Прочитай
++        # вытесняет предыдущий (`names_replaced_by_upload`, tsk-575). Прочитай
+         # фоновый тик файл позже — он взял бы уже другую редакцию решения и
+         # приписал её этой сдаче. Снимок прибивает ровно то, что сдали сейчас.
+         #
+@@ -822,8 +825,18 @@ async def submit_attempt_answers(
+         # tsk-575: файл ищем У ЭТОГО ЗАДАНИЯ, а не по всей попытке. Раньше хватало
+         # любого файла попытки — приложил скриншот к заданию 1, и задания 2..N
+         # проходили форс без вложения.
++        # tsk-593: список файлов задания — сетевой запрос в хранилище, поэтому
++        # снимаем его ОДИН раз на задание и переиспользуем в обоих гейтах ниже.
++        # Раньше здесь стояло три обращения к диску подряд, и с хранилищем это
++        # были бы три запроса на каждый принятый ответ.
++        task_attachment_files: Optional[list[str]] = None
++        if not attempt.time_expired and (
++            solution_rules.requires_attachment or task_content.type in COMMENT_TASK_TYPES
++        ):
++            task_attachment_files = await _task_attachment_files(attempt.id, task.id)
++
+         if solution_rules.requires_attachment and not attempt.time_expired:
+-            has_attachment = bool(_task_attachment_files(attempt.id, task.id))
++            has_attachment = bool(task_attachment_files)
+             if not has_attachment:
+                 logger.info(
+                     "POST /attempts/%s/answers: requires_attachment task_id=%s без вложения → не зачёт (tsk-227)",
+@@ -854,11 +867,11 @@ async def submit_attempt_answers(
+             and not attempt.time_expired
+             and not (
+                 solution_rules.requires_attachment
+-                and not bool(_task_attachment_files(attempt.id, task.id))
++                and not bool(task_attachment_files)
+             )
+         ):
+             has_comment = bool((answer.response.comment or "").strip())
+-            has_attachment = bool(_task_attachment_files(attempt.id, task.id))
++            has_attachment = bool(task_attachment_files)
+             if not has_comment and not has_attachment:
+                 logger.info(
+                     "POST /attempts/%s/answers: task_id=%s (%s) без комментария и вложения → не зачёт (tsk-419)",
+@@ -1087,8 +1100,6 @@ async def upload_attempt_attachment(
+             detail="Загружать вложения можно только для активной попытки.",
+         )
+ 
+-    settings.attempt_attachments_upload_dir.mkdir(parents=True, exist_ok=True)
+-
+     if task_id is not None and task_id <= 0:
+         raise HTTPException(
+             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+@@ -1097,62 +1108,48 @@ async def upload_attempt_attachment(
+ 
+     # Список того, что вытесняет эта загрузка, снимаем ДО записи нового файла:
+     # так в него заведомо не попадёт он сам.
+-    existing_files = files_replaced_by_upload(attempt_id, task_id)
++    existing_files = await names_replaced_by_upload(attempt_id, task_id)
+     original_name = safe_upload_filename(file.filename)
+     attachment_id = build_attachment_id(attempt_id, task_id, original_name)
+-    file_path = settings.attempt_attachments_upload_dir / attachment_id
+ 
+-    total = 0
++    # tsk-593: файл уходит в объектное хранилище. Отказ хранилища — это 503 и
++    # НЕ записанное вложение: молчаливый успех дал бы ученику ощущение сданной
++    # работы и ссылку в `answer_json`, за которой нет файла.
+     try:
+-        with open(file_path, "wb") as f:
+-            while True:
+-                chunk = await file.read(settings.attachment_chunk_size)
+-                if not chunk:
+-                    break
+-                total += len(chunk)
+-                if total > settings.max_attachment_size_bytes:
+-                    raise HTTPException(
+-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+-                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
+-                    )
+-                f.write(chunk)
+-    except HTTPException:
+-        try:
+-            if file_path.exists():
+-                file_path.unlink()
+-        except Exception:
+-            pass
+-        raise
++        total, content_type = await attachment_storage.store_upload(
++            attachment_storage.ATTEMPTS, attachment_id, file
++        )
++    except DomainError as exc:
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+ 
+-    for old_file in existing_files:
+-        if old_file != file_path:
+-            try:
+-                os.remove(old_file)
+-            except FileNotFoundError:
+-                pass
+-            except Exception:
+-                logger.warning(
+-                    "Не удалось удалить старое вложение attempt_id=%s task_id=%s path=%s",
+-                    attempt_id,
+-                    task_id,
+-                    old_file,
+-                    exc_info=True,
+-                )
++    for old_name in existing_files:
++        if old_name == attachment_id:
++            continue
++        try:
++            await attachment_storage.delete(attachment_storage.ATTEMPTS, old_name)
++        except DomainError:
++            # Вытеснить прежний файл не вышло — новый уже записан, приём ответа
++            # ломать из-за этого нельзя. Останется лишний файл, а не потерянный.
++            logger.warning(
++                "tsk-593: не удалось удалить старое вложение attempt_id=%s task_id=%s имя=%s",
++                attempt_id, task_id, old_name, exc_info=True,
++            )
+ 
+     attachment_url = f"/api/v1/attempts/{attempt_id}/attachments/{attachment_id}"
+     logger.info(
+-        "POST /attempts/%s/attachments: файл загружен task_id=%s filename=%s size=%s заменено=%s",
++        "POST /attempts/%s/attachments: файл загружен task_id=%s filename=%s size=%s заменено=%s хранилище=%s",
+         attempt_id,
+         task_id,
+         original_name,
+         total,
+         len(existing_files),
++        "s3" if attachment_storage.s3_enabled() else "диск",
+     )
+     return AttemptAttachmentRead(
+         attachment_id=attachment_id,
+         attachment_url=attachment_url,
+         filename=original_name,
+-        content_type=file.content_type or "application/octet-stream",
++        content_type=content_type,
+         size_bytes=total,
+     )
+ 
+@@ -1192,15 +1189,28 @@ async def download_attempt_attachment(
+             raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+     safe_attachment_id = _validate_attempt_attachment_id(attempt_id, attachment_id)
+-    file_path = settings.attempt_attachments_upload_dir / safe_attachment_id
+-    if not file_path.exists():
++
++    # tsk-593: содержимое приходит из объектного хранилища и отдаётся потоком
++    # через приложение. Прямая ссылка на бакет наружу не выдаётся намеренно:
++    # переадресация обошла бы проверку прав выше, а в бакете объект читает
++    # любой, кто знает ключ.
++    try:
++        opened = await attachment_storage.open_stream(
++            attachment_storage.ATTEMPTS, safe_attachment_id
++        )
++    except DomainError as exc:
++        # Хранилище не ответило — это НЕ «файла нет»: 410 здесь означал бы
++        # «файл утрачен навсегда», и преподаватель зря попросил бы перезалить.
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
++
++    if opened is None:
+         # 410, а не 404: имя разобрано, попытка та самая — файл БЫЛ и его больше
+         # нет. Различать «утрачен дефектом хранения (tsk-575)» и «вытеснен
+-        # перезаливкой того же задания» по диску нельзя, поэтому текст говорит о
+-        # факте, а не о причине. 404 здесь врал: он читается как «такого файла и
+-        # не было», и преподаватель шёл искать ошибку у себя.
++        # перезаливкой того же задания» по хранилищу нельзя, поэтому текст
++        # говорит о факте, а не о причине. 404 здесь врал: он читается как
++        # «такого файла и не было», и преподаватель шёл искать ошибку у себя.
+         logger.warning(
+-            "GET /attempts/%s/attachments/%s: файла нет на диске (tsk-575)",
++            "GET /attempts/%s/attachments/%s: файла нет в хранилище (tsk-575)",
+             attempt_id, safe_attachment_id,
+         )
+         raise HTTPException(
+@@ -1211,11 +1221,15 @@ async def download_attempt_attachment(
+             ),
+         )
+ 
+-    media_type = mimetypes.guess_type(safe_attachment_id)[0] or "application/octet-stream"
+-    return FileResponse(
+-        path=str(file_path),
++    stream, media_type = opened
++    return StreamingResponse(
++        stream,
+         media_type=media_type,
+-        filename=os.path.basename(safe_attachment_id),
++        headers={
++            "Content-Disposition": attachment_storage.content_disposition(
++                os.path.basename(safe_attachment_id)
++            )
++        },
+     )
+ 
+ 
+diff --git a/app/api/v1/marketer_payments.py b/app/api/v1/marketer_payments.py
+index 34b8b37..1b4cb8a 100644
+--- a/app/api/v1/marketer_payments.py
++++ b/app/api/v1/marketer_payments.py
+@@ -7,7 +7,7 @@ from datetime import date
+ from typing import Optional
+ 
+ from fastapi import APIRouter, Depends, HTTPException, Query, status
+-from fastapi.responses import FileResponse
++from fastapi.responses import StreamingResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import CurrentUser, require_role
+@@ -115,13 +115,13 @@ async def download_receipt(
+     payment_id: int,
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_payments_gate),
+-) -> FileResponse:
++) -> StreamingResponse:
+     payment = await payment_service.get_receipt(db, payment_id=payment_id)
+     if payment is None or payment["receipt_file"] is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+-    # Общая выдача файла с типом по имени НА ДИСКЕ — см. `me_payments`:
++    # Общая выдача файла с типом по имени В ХРАНИЛИЩЕ — см. `me_payments`:
+     # присланное имя доверять нельзя, иначе `evil.svg` вернётся активным.
+-    return receipt_response(payment)
++    return await receipt_response(payment)
+ 
+ 
+ @router.get(
+diff --git a/app/api/v1/me_payments.py b/app/api/v1/me_payments.py
+index 108ffaa..0754fe9 100644
+--- a/app/api/v1/me_payments.py
++++ b/app/api/v1/me_payments.py
+@@ -8,7 +8,7 @@
+ from __future__ import annotations
+ 
+ import logging
+-import mimetypes
++import os
+ import re
+ from datetime import date
+ from pathlib import Path
+@@ -25,14 +25,15 @@ from fastapi import (
+     UploadFile,
+     status,
+ )
+-from fastapi.responses import FileResponse
++from fastapi.responses import StreamingResponse
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.api.deps import CurrentUser, get_current_user
+ from app.core.config import Settings
+ from app.db.session import get_async_db
+ from app.schemas.payment import StudentChargeRead
+-from app.services import payment_service
++from app.services import attachment_storage, payment_service
++from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+ settings = Settings()
+@@ -56,6 +57,22 @@ _ALLOWED_RECEIPT_TYPES = {
+ MAX_PAYMENT_MINOR = 100_000_000  # 1 000 000 ₽
+ 
+ 
++async def _drop_stored_receipt(stored_name: str) -> None:
++    """Убрать записанный чек, если платёж завести не удалось.
++
++    Иначе в хранилище копится чужой платёжный документ, которому в базе не
++    соответствует ничего: удалить его потом будет нечем — ссылки-то нет.
++    Сбой самой уборки не должен подменять исходную ошибку, ради которой её и
++    затеяли, поэтому он только логируется.
++    """
++    try:
++        await attachment_storage.delete(attachment_storage.RECEIPTS, stored_name)
++    except Exception:
++        logger.warning(
++            "tsk-593: не удалось убрать чек из хранилища имя=%s", stored_name, exc_info=True
++        )
++
++
+ def _safe_name(filename: Optional[str]) -> str:
+     """Имя для показа человеку: кириллицу сохраняем, служебные символы гасим.
+ 
+@@ -68,23 +85,42 @@ def _safe_name(filename: Optional[str]) -> str:
+     return safe or "receipt"
+ 
+ 
+-def receipt_response(payment: dict) -> FileResponse:
++async def receipt_response(payment: dict) -> StreamingResponse:
+     """Отдать файл чека.
+ 
+-    Тип содержимого выводим из ИМЕНИ НА ДИСКЕ, а не из имени, присланного
+-    загрузившим: расширение на диске мы поставили сами по подтверждённому типу,
+-    а присланное имя — чужой ввод. Иначе `evil.svg`, загруженный под видом
++    Тип содержимого выводим из ИМЕНИ В ХРАНИЛИЩЕ, а не из имени, присланного
++    загрузившим: расширение мы поставили сами по подтверждённому типу, а
++    присланное имя — чужой ввод. Иначе `evil.svg`, загруженный под видом
+     картинки, уезжал бы обратно как `image/svg+xml` — то есть активным
+     содержимым, и вся защита держалась бы на одном заголовке «скачать».
++
++    tsk-593: чек лежит в объектном хранилище, в СВОЁМ пространстве ключей
++    (`receipts/`), отдельно от учебных вложений — это платёжный документ с
++    другим кругом читателей. Наружу он идёт только потоком через эту функцию:
++    вызывающие эндпоинты проверяют, что смотрит либо владелец начисления
++    (ученик или его родитель), либо маркетолог. Прямая ссылка на бакет не
++    выдаётся ни при каких условиях.
+     """
+-    path = settings.payment_receipts_upload_dir / payment["receipt_file"]
+-    if not path.exists():
++    stored_name = os.path.basename(payment["receipt_file"])
++    try:
++        opened = await attachment_storage.open_stream(
++            attachment_storage.RECEIPTS, stored_name
++        )
++    except DomainError as exc:
++        raise HTTPException(exc.status_code, exc.detail)
++
++    if opened is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл чека не найден")
+-    media_type = mimetypes.guess_type(payment["receipt_file"])[0]
+-    return FileResponse(
+-        path,
+-        filename=payment["receipt_name"] or "receipt",
+-        media_type=media_type or "application/octet-stream",
++
++    stream, media_type = opened
++    return StreamingResponse(
++        stream,
++        media_type=media_type,
++        headers={
++            "Content-Disposition": attachment_storage.content_disposition(
++                payment["receipt_name"] or "receipt"
++            )
++        },
+     )
+ 
+ 
+@@ -217,32 +253,20 @@ async def store_receipt_payment(
+             "Чек принимается изображением (JPEG, PNG, HEIC, WebP) или файлом PDF",
+         )
+ 
+-    settings.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
+     original_name = _safe_name(file.filename)
+     # Расширение — от подтверждённого типа, а не от присланного имени.
+     stored_name = f"{charge['student_id']}_{uuid4().hex}{extension}"
+-    file_path = settings.payment_receipts_upload_dir / stored_name
+ 
+-    total = 0
++    # tsk-593: чек уходит в объектное хранилище. До этого он лежал на диске
++    # приложения — на том же корневом разделе, где уже потеряли все файлы
++    # материалов при переезде машины (tsk-519). Для платёжного документа это
++    # хуже вдвойне: спор об оплате разбирают именно по нему.
+     try:
+-        with open(file_path, "wb") as fh:
+-            while True:
+-                chunk = await file.read(settings.attachment_chunk_size)
+-                if not chunk:
+-                    break
+-                total += len(chunk)
+-                if total > settings.max_attachment_size_bytes:
+-                    raise HTTPException(
+-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+-                        f"Файл больше допустимого размера "
+-                        f"({settings.max_attachment_size_bytes} байт)",
+-                    )
+-                fh.write(chunk)
+-    except Exception:
+-        # Любой сбой записи — файл убираем. Иначе на диске копится чужой
+-        # платёжный документ, которому в базе не соответствует ничего.
+-        file_path.unlink(missing_ok=True)
+-        raise
++        await attachment_storage.store_upload(
++            attachment_storage.RECEIPTS, stored_name, file
++        )
++    except DomainError as exc:
++        raise HTTPException(exc.status_code, exc.detail)
+ 
+     try:
+         payment_id = await payment_service.create_manual_payment(
+@@ -258,13 +282,13 @@ async def store_receipt_payment(
+             submitted_by=submitted_by,
+         )
+     except payment_service.DuplicatePaymentError:
+-        file_path.unlink(missing_ok=True)
++        await _drop_stored_receipt(stored_name)
+         raise HTTPException(
+             status.HTTP_409_CONFLICT,
+             "Такой чек уже отправлен и ждёт подтверждения — второй раз отправлять не нужно",
+         ) from None
+     except Exception:
+-        file_path.unlink(missing_ok=True)
++        await _drop_stored_receipt(stored_name)
+         logger.exception(
+             "tsk-010: не удалось записать платёж ученика %s за %s",
+             charge["student_id"],
+@@ -284,7 +308,7 @@ async def download_own_receipt(
+     payment_id: int,
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(get_current_user),
+-) -> FileResponse:
++) -> StreamingResponse:
+     if current_user.is_service:
+         raise HTTPException(
+             status.HTTP_403_FORBIDDEN,
+@@ -300,4 +324,4 @@ async def download_own_receipt(
+         # Тот же ответ, что и на несуществующий чек: разница в ответах сама по
+         # себе рассказала бы, какие номера платежей заняты.
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
+-    return receipt_response(payment)
++    return await receipt_response(payment)
+diff --git a/app/api/v1/messages_extra.py b/app/api/v1/messages_extra.py
+index 4c41304..ba97c58 100644
+--- a/app/api/v1/messages_extra.py
++++ b/app/api/v1/messages_extra.py
+@@ -6,8 +6,7 @@ from datetime import datetime
+ from uuid import uuid4
+ from typing import Any, List, Optional
+ import os
+-import mimetypes
+-from starlette.responses import FileResponse
++from starlette.responses import StreamingResponse
+ 
+ from fastapi import (
+     APIRouter,
+@@ -32,7 +31,9 @@ from app.schemas.messages import (
+     MarkReadBySenderRequest,
+     MarkReadResponse,
+     )
++from app.services import attachment_storage
+ from app.services.messages_service import MessagesService
++from app.utils.exceptions import DomainError
+ from app.services.student_teacher_links_service import (
+     StudentTeacherLinksService,
+ )
+@@ -488,38 +489,23 @@ async def attach_file_to_message_endpoint(
+     Загружает файл и привязывает к сообщению.
+ 
+     - Лимит размера: Settings.max_attachment_size_bytes
+-    - Файл пишем в Settings.messages_upload_dir
++    - Файл уходит в объектное хранилище, пространство `messages` (tsk-593).
++      Раньше он ложился на диск приложения — тот же класс, что уничтожил файлы
++      материалов при переезде машины (tsk-519: 0 файлов после переноса).
+     - attachment_url сохраняем как ОТНОСИТЕЛЬНЫЙ путь до download endpoint:
+       /api/v1/messages/{message_id}/attachment
+     """
+-    # Папка гарантированно есть (Settings её создаёт), но на всякий случай:
+-    settings.messages_upload_dir.mkdir(parents=True, exist_ok=True)
++    # Имя файла приходит от клиента и становится частью ключа в хранилище:
++    # чистим его тем же правилом, что и вложения ответов (пути, пробелы,
++    # кириллица). Раньше `file.filename` подставлялся в путь как есть.
++    safe_name = f"{message_id}_{uuid4().hex}_{attachment_storage.safe_name(file.filename)}"
+ 
+-    safe_name = f"{message_id}_{uuid4().hex}_{file.filename}"
+-    file_path = settings.messages_upload_dir / safe_name
+-
+-    total = 0
+     try:
+-        with open(file_path, "wb") as f:
+-            while True:
+-                chunk = await file.read(settings.attachment_chunk_size)
+-                if not chunk:
+-                    break
+-                total += len(chunk)
+-                if total > settings.max_attachment_size_bytes:
+-                    raise HTTPException(
+-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+-                        detail=f"Attachment too large. Max {settings.max_attachment_size_bytes} bytes",
+-                    )
+-                f.write(chunk)
+-    except HTTPException:
+-        # удаляем частично записанный файл
+-        try:
+-            if file_path.exists():
+-                file_path.unlink()
+-        except Exception:
+-            pass
+-        raise
++        total, _content_type = await attachment_storage.store_upload(
++            attachment_storage.MESSAGES, safe_name, file
++        )
++    except DomainError as exc:
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
+ 
+     # ✅ ВАЖНО: сохраняем относительный URL (без api_key)
+     attachment_url = f"/api/v1/messages/{message_id}/attachment"
+@@ -557,17 +543,36 @@ async def download_message_attachment(
+     if user_id not in {msg.sender_id, msg.recipient_id}:
+         raise HTTPException(status_code=403, detail="No access to this attachment")
+ 
+-    file_path = settings.messages_upload_dir / msg.attachment_id
+-    if not file_path.exists():
+-        raise HTTPException(status_code=404, detail="Attachment file missing on server")
+-
+-    media_type = mimetypes.guess_type(msg.attachment_id)[0] or "application/octet-stream"
++    # tsk-593: содержимое приходит из объектного хранилища и отдаётся потоком
++    # через приложение — прямая ссылка на бакет обошла бы проверку прав выше.
++    try:
++        opened = await attachment_storage.open_stream(
++            attachment_storage.MESSAGES, os.path.basename(msg.attachment_id)
++        )
++    except DomainError as exc:
++        # «Хранилище не ответило» — не то же самое, что «файла нет»: 404 здесь
++        # читался бы как «вложения и не было».
++        raise HTTPException(status_code=exc.status_code, detail=exc.detail)
++
++    if opened is None:
++        raise HTTPException(
++            status_code=410,
++            detail=(
++                "Файл вложения утрачен на сервере и восстановлению не подлежит. "
++                "Попросите отправителя приложить файл заново."
++            ),
++        )
+ 
++    stream, media_type = opened
+     # filename: можно отдать исходное имя, но у нас оно в конце safe_name (с префиксом)
+-    return FileResponse(
+-        path=str(file_path),
++    return StreamingResponse(
++        stream,
+         media_type=media_type,
+-        filename=os.path.basename(msg.attachment_id),
++        headers={
++            "Content-Disposition": attachment_storage.content_disposition(
++                os.path.basename(msg.attachment_id)
++            )
++        },
+     )
+ 
+ class UnreadCountResponse(BaseModel):
+diff --git a/app/core/config.py b/app/core/config.py
+index 3f5b90e..6d2d7c5 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -27,6 +27,8 @@ class Settings:
+             raise RuntimeError("VALID_API_KEYS must contain at least one key")
+ 
+         # ✅ Messages attachments settings (из env + дефолты)
++        # tsk-593: с настроенным S3 это уже не «где лежит файл», а запасной путь
++        # для файлов, загруженных до переезда, и режим разработки без S3.
+         self.messages_upload_dir: Path = Path(
+             os.getenv("MESSAGES_UPLOAD_DIR", "uploads/messages")
+         )
+@@ -126,6 +128,29 @@ class Settings:
+             "MATERIAL_FILES_S3_PREFIX", "materials"
+         ).strip("/")
+ 
++        # ✅ tsk-593: пространства ключей для файлов, которые до сих пор жили
++        # только на диске приложения. Диск переезд машины не переживает — так уже
++        # потеряли ВСЕ файлы материалов (tsk-519: 0 файлов после переноса).
++        #
++        # Пространства РАЗНЫЕ намеренно, а не один общий каталог: у чека об
++        # оплате другой круг читателей (ученик/родитель и маркетолог) и другой
++        # срок хранения, чем у учебного вложения. Разделение по префиксу — то,
++        # на что опирается и правило доступа в бакете, и разбор при переносе.
++        #
++        # Ни одно из трёх пространств НЕ публично: наружу файл уходит только
++        # потоком через эндпоинт с проверкой прав. Публичное чтение в бакете
++        # оставлено ровно на CAS-пространстве заданий (`<2 hex>/…`), потому что
++        # `/api/v1/media` отдаёт на него переадресацию в браузер ученика.
++        self.attempt_attachments_s3_prefix: str = os.getenv(
++            "ATTEMPT_ATTACHMENTS_S3_PREFIX", "attempts"
++        ).strip("/")
++        self.message_attachments_s3_prefix: str = os.getenv(
++            "MESSAGE_ATTACHMENTS_S3_PREFIX", "messages"
++        ).strip("/")
++        self.payment_receipts_s3_prefix: str = os.getenv(
++            "PAYMENT_RECEIPTS_S3_PREFIX", "receipts"
++        ).strip("/")
++
+         # ✅ Проверка целостности ссылок на файлы (tsk-521). Связи «материал → файл»
+         # в базе нет, поэтому битую ссылку не видно, пока на неё не наткнётся
+         # человек: в tsk-519 такая провисела полгода.
+@@ -158,6 +183,35 @@ class Settings:
+             os.getenv("LINK_AUDIT_MAX_EXAMPLES", "10")
+         )
+ 
++        # ✅ tsk-593: суточная проверка вложений — «ссылка на файл есть, файла в
++        # хранилище нет». Брат-близнец проверки ссылок в контенте (tsk-521), но
++        # источник другой: сами работы учеников, переписка и чеки, а не тела
++        # материалов и заданий.
++        #
++        # Уведомление уходит ТОЛЬКО о новых потерях: те, что случились до
++        # переезда (утраченные дефектом tsk-575), записаны в
++        # `attachment_missing_seen` как исходный уровень и больше не тревожат —
++        # иначе ежедневный тик превратился бы в постоянный шум, на который
++        # перестают смотреть. Чистый прогон молчит.
++        self.attachment_audit_enabled: bool = os.getenv(
++            "ATTACHMENT_AUDIT_ENABLED", "true"
++        ).lower() in ("true", "1", "yes")
++        self.attachment_audit_interval_hours: int = int(
++            os.getenv("ATTACHMENT_AUDIT_INTERVAL_HOURS", "24")
++        )
++        self.attachment_audit_notify_cooldown_hours: int = int(
++            os.getenv("ATTACHMENT_AUDIT_NOTIFY_COOLDOWN_HOURS", "24")
++        )
++        self.attachment_audit_max_examples: int = int(
++            os.getenv("ATTACHMENT_AUDIT_MAX_EXAMPLES", "10")
++        )
++        # Сколько проверок наличия файла держим в полёте разом. Проверка одного
++        # файла — сетевой запрос к хранилищу; без предела тик на тысяче вложений
++        # открыл бы тысячу соединений.
++        self.attachment_storage_concurrency: int = int(
++            os.getenv("ATTACHMENT_STORAGE_CONCURRENCY", "8")
++        )
++
+         # tsk-541: фоновый пересчёт student_course_state для целей
+         # course_dependencies (см. course_dependency_state_cron_service.py).
+         # Без него подкурс-цель зависимости, записанной в обход API (прямой
+diff --git a/app/db/migrations/versions/20260808_060000_tsk593_attachment_missing_seen.py b/app/db/migrations/versions/20260808_060000_tsk593_attachment_missing_seen.py
+new file mode 100644
+index 0000000..3007479
+--- /dev/null
++++ b/app/db/migrations/versions/20260808_060000_tsk593_attachment_missing_seen.py
+@@ -0,0 +1,70 @@
++"""tsk-593: журнал уже известных утрат файлов-вложений.
++
++**Зачем таблица.** Суточная проверка целостности («ссылка на файл есть, файла в
++хранилище нет») обязана МОЛЧАТЬ на чистом прогоне. Но чистым прогон уже не
++будет: 180 файлов вложений утрачено дефектом tsk-575 до его починки, и
++восстановить их нечем. Без памяти о них проверка каждый день сообщала бы про
++одни и те же 180 потерь — а на уведомление, которое всегда одинаковое,
++перестают смотреть, и настоящая новая потеря утонет в нём.
++
++Поэтому здесь хранится ровно один факт: «про эту утрату уже знают». Строки
++кладёт сама проверка; исходный уровень (то, что потеряно до переезда) заносит
++разовый скрипт `scripts/tsk593_lost_attachments_report.py`. Уведомление уходит
++только про то, чего в таблице ещё нет.
++
++**Самолечение.** Если файл вернулся (ученик перезалил) или исчезла сама ссылка
++на него — проверка убирает строку. Иначе повторная потеря того же имени уже
++никого бы не разбудила.
++
++`space` — пространство ключей хранилища: `attempts` (вложения ответов),
++`messages` (переписка), `receipts` (чеки). Отдельной таблицы вложений в базе
++нет, поэтому внешних ключей тут тоже нет: `name` — это имя файла в хранилище,
++а не ссылка на строку.
++
++**Про откат.** `downgrade` удаляет таблицу целиком: в ней только служебная
++память проверки, ничего пользовательского. После отката первая же проверка
++сообщит про все известные утраты разом — неприятно, но не потеря данных.
++
++Revision ID: tsk593_missing_seen
++Revises: tsk032_retention_ach
++Create Date: 2026-08-08
++"""
++
++from __future__ import annotations
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk593_missing_seen"
++down_revision: Union[str, None] = "tsk032_retention_ach"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.create_table(
++        "attachment_missing_seen",
++        sa.Column("space", sa.Text, nullable=False),
++        sa.Column("name", sa.Text, nullable=False),
++        sa.Column(
++            "first_seen_at",
++            sa.DateTime(timezone=True),
++            nullable=False,
++            server_default=sa.text("now()"),
++        ),
++        # Где встретилась ссылка — чтобы по записи можно было выйти на ученика и
++        # задание, не разбирая имя файла заново.
++        sa.Column("owner_kind", sa.Text, nullable=True),
++        sa.Column("owner_id", sa.BigInteger, nullable=True),
++        sa.PrimaryKeyConstraint("space", "name", name="pk_attachment_missing_seen"),
++        sa.CheckConstraint(
++            "space IN ('attempts', 'messages', 'receipts')",
++            name="ck_attachment_missing_seen_space",
++        ),
++    )
++
++
++def downgrade() -> None:
++    op.drop_table("attachment_missing_seen")
+diff --git a/app/services/attachment_audit_service.py b/app/services/attachment_audit_service.py
+new file mode 100644
+index 0000000..d355b32
+--- /dev/null
++++ b/app/services/attachment_audit_service.py
+@@ -0,0 +1,358 @@
++# app/services/attachment_audit_service.py
++"""tsk-593: суточная проверка «ссылка на вложение есть, файла нет».
++
++**Зачем.** Отдельной таблицы вложений в базе нет: имя файла живёт строкой
++внутри `answer_json`, в колонке `messages.attachment_id` и в
++`student_payment.receipt_file`. База не знает, существует ли файл на самом
++деле — ровно поэтому дефект tsk-575 съедал работы учеников месяцами, а узнали
++о нём, только когда преподаватель ткнул в ссылку и получил ошибку. Брат-близнец
++проверки ссылок в контенте курсов (tsk-521), но источник другой: работы
++учеников, переписка и чеки, а не тела материалов и заданий.
++
++**Молчание = всё хорошо.** Уведомление уходит ТОЛЬКО про НОВЫЕ утраты. Всё, что
++потеряно раньше (180 файлов до починки tsk-575), записано в
++`attachment_missing_seen` и больше не тревожит: ежедневное одинаковое
++уведомление про невосстановимое — это шум, за которым перестанут замечать
++настоящую новую потерю.
++
++**Кому уходит.** Учебные вложения и переписка — методистам; чеки об оплате —
++маркетологам: платёжный документ методист всё равно не восстановит.
++
++**Отказ хранилища прерывает прогон целиком.** «Нет ответа» — не то же самое,
++что «файла нет»: иначе одна сетевая заминка нарисовала бы утраченными все
++вложения разом и разбудила бы всех.
++
++Multi-worker safety — как у соседних тиков: advisory-lock уровня транзакции со
++своим ключом. Один worker за тик делает работу, остальные мгновенно отступают.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import datetime, timezone
++from typing import Dict, List, Optional, Sequence, Tuple
++
++from apscheduler.schedulers.asyncio import AsyncIOScheduler
++from apscheduler.triggers.interval import IntervalTrigger
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
++
++from app.core.config import Settings
++from app.db.session import async_session_factory
++from app.services import attachment_storage, inbox_service
++from app.services.attempt_attachments import collect_attachment_ids
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger("app.attachment_audit")
++
++# Ключ advisory-lock. Не должен пересекаться с соседними тиками:
++# проверка ссылок в контенте — 0x4C494E4B ("LINK"), escalation — "Y6TS".
++_ATTACHMENT_AUDIT_LOCK_KEY = 0x41545443  # ascii "ATTC"
++
++NOTIFICATION_KIND = "missing_attachments"
++
++#: Кому уходит уведомление о потере в этом пространстве.
++_AUDIENCE: Dict[str, str] = {
++    attachment_storage.ATTEMPTS: "methodist",
++    attachment_storage.MESSAGES: "methodist",
++    attachment_storage.RECEIPTS: "marketer",
++}
++
++#: Как называть пространство в тексте для человека.
++_HUMAN_SPACE: Dict[str, str] = {
++    attachment_storage.ATTEMPTS: "вложение к работе ученика",
++    attachment_storage.MESSAGES: "файл в переписке",
++    attachment_storage.RECEIPTS: "чек об оплате",
++}
++
++#: Ссылка на файл: (пространство, имя) → где встретилась.
++Reference = Tuple[str, str]
++Owner = Tuple[str, int]
++
++
++async def _collect_references(db: AsyncSession) -> Dict[Reference, Owner]:
++    """Собирает все ссылки на файлы вложений из базы.
++
++    Один владелец на ссылку: если одно и то же имя встретилось дважды,
++    достаточно любого — запись нужна, чтобы человек нашёл, откуда она.
++    """
++    found: Dict[Reference, Owner] = {}
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT id, answer_json FROM task_results "
++                "WHERE jsonb_array_length("
++                "  COALESCE(answer_json->'response'->'meta'->'attachments', '[]'::jsonb)"
++                ") > 0"
++            )
++        )
++    ).fetchall()
++    for result_id, answer_json in rows:
++        for name in collect_attachment_ids(answer_json):
++            found.setdefault((attachment_storage.ATTEMPTS, name), ("task_result", int(result_id)))
++
++    rows = (
++        await db.execute(
++            text("SELECT id, attachment_id FROM messages WHERE attachment_id IS NOT NULL")
++        )
++    ).fetchall()
++    for message_id, name in rows:
++        if name:
++            found.setdefault((attachment_storage.MESSAGES, name), ("message", int(message_id)))
++
++    rows = (
++        await db.execute(
++            text("SELECT id, receipt_file FROM student_payment WHERE receipt_file IS NOT NULL")
++        )
++    ).fetchall()
++    for payment_id, name in rows:
++        if name:
++            found.setdefault((attachment_storage.RECEIPTS, name), ("payment", int(payment_id)))
++
++    return found
++
++
++async def _missing(references: Sequence[Reference]) -> List[Reference]:
++    """Какие из ссылок не находят файла в хранилище (по пространству, пачкой)."""
++    missing: List[Reference] = []
++    for space in attachment_storage.SPACES:
++        names = [name for sp, name in references if sp == space]
++        if not names:
++            continue
++        present = await attachment_storage.existing_names(space, names)
++        missing.extend((space, name) for name in names if name not in present)
++    return missing
++
++
++async def _known_missing(db: AsyncSession) -> set[Reference]:
++    """Утраты, про которые уже знают (исходный уровень + прошлые прогоны)."""
++    rows = (await db.execute(text("SELECT space, name FROM attachment_missing_seen"))).fetchall()
++    return {(str(space), str(name)) for space, name in rows}
++
++
++async def _remember(db: AsyncSession, items: Sequence[Tuple[Reference, Owner]]) -> None:
++    """Запоминает новые утраты, чтобы завтра не сообщать о них снова."""
++    for (space, name), (owner_kind, owner_id) in items:
++        await db.execute(
++            text(
++                "INSERT INTO attachment_missing_seen (space, name, owner_kind, owner_id) "
++                "VALUES (:space, :name, :kind, :oid) "
++                "ON CONFLICT (space, name) DO NOTHING"
++            ),
++            {"space": space, "name": name, "kind": owner_kind, "oid": owner_id},
++        )
++
++
++async def _forget_healed(db: AsyncSession, still_missing: Sequence[Reference]) -> int:
++    """Убирает из памяти то, что перестало быть утратой.
++
++    Файл вернулся (ученик перезалил) или исчезла сама ссылка на него — значит
++    повторная потеря того же имени обязана снова считаться новой. Без этой
++    уборки она прошла бы молча.
++    """
++    known = await _known_missing(db)
++    healed = known - set(still_missing)
++    for space, name in healed:
++        await db.execute(
++            text("DELETE FROM attachment_missing_seen WHERE space = :space AND name = :name"),
++            {"space": space, "name": name},
++        )
++    return len(healed)
++
++
++async def _recently_notified(db: AsyncSession, cooldown_hours: int) -> bool:
++    """True, если уведомление такого рода уже отправляли за последние N часов."""
++    res = await db.execute(
++        text(
++            "SELECT count(*) FROM notifications "
++            "WHERE kind = :kind "
++            "  AND modified_at >= now() - CAST(:h AS text)::interval"
++        ),
++        {"kind": NOTIFICATION_KIND, "h": f"{int(cooldown_hours)} hours"},
++    )
++    return int(res.scalar() or 0) > 0
++
++
++async def _recipients(db: AsyncSession, role: str) -> List[int]:
++    """Кому слать: пользователи с этой ролью."""
++    res = await db.execute(
++        text(
++            "SELECT ur.user_id FROM user_roles ur "
++            "JOIN roles r ON r.id = ur.role_id WHERE r.name = :role"
++        ),
++        {"role": role},
++    )
++    return [int(row[0]) for row in res.fetchall()]
++
++
++async def _notify(
++    db: AsyncSession,
++    *,
++    fresh: List[Tuple[Reference, Owner]],
++    max_examples: int,
++) -> int:
++    """Кладёт уведомления адресатам по пространствам. Возвращает число уведомлённых."""
++    notified = 0
++    by_role: Dict[str, List[Tuple[Reference, Owner]]] = {}
++    for item in fresh:
++        by_role.setdefault(_AUDIENCE[item[0][0]], []).append(item)
++
++    for role, items in sorted(by_role.items()):
++        recipients = await _recipients(db, role)
++        if not recipients:
++            logger.warning(
++                "tsk-593: некому сообщить об утратах — нет пользователей с ролью %r", role
++            )
++            continue
++
++        examples = [
++            {
++                "space": space,
++                "name": name,
++                "where": f"{owner_kind} {owner_id}",
++            }
++            for (space, name), (owner_kind, owner_id) in sorted(items)[:max_examples]
++        ]
++        lines = [
++            f"Пропало файлов: {len(items)}. Ссылка на файл в базе есть, "
++            f"самого файла в хранилище нет.",
++            "",
++        ]
++        for ex in examples:
++            lines.append(
++                f"• {_HUMAN_SPACE.get(ex['space'], ex['space'])}: {ex['name']} ({ex['where']})"
++            )
++        if len(items) > len(examples):
++            lines.append(f"…и ещё {len(items) - len(examples)}.")
++        lines.append("")
++        lines.append(
++            "Восстановить файл нечем — попросите приложить его заново. "
++            "Если такое повторяется, это сбой хранилища, а не действия людей."
++        )
++
++        payload = {
++            "missing_count": len(items),
++            "examples": examples,
++            "checked_at": datetime.now(timezone.utc).isoformat(),
++        }
++        for user_id in recipients:
++            await inbox_service.create_for_user(
++                db,
++                user_id=user_id,
++                kind=NOTIFICATION_KIND,
++                title="Пропали файлы вложений",
++                content="\n".join(lines),
++                payload=payload,
++                created_by=None,
++            )
++            notified += 1
++    return notified
++
++
++async def attachment_audit_tick(
++    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
++) -> dict:
++    """Один проход проверки. Возвращает сводку для логов и тестов.
++
++    `session_factory` — точка подмены источника сессий: в проде APScheduler
++    зовёт тик без аргументов, тесты передают свою фабрику.
++    """
++    settings = Settings()
++    factory = session_factory or async_session_factory
++    summary: dict = {"locked": False, "checked": 0, "missing": 0, "fresh": 0, "notified": 0}
++
++    async with factory() as db:
++        got = await db.execute(
++            text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
++            {"k": _ATTACHMENT_AUDIT_LOCK_KEY},
++        )
++        if not bool(got.scalar()):
++            logger.info("tsk-593: тик пропущен — работу делает другой worker")
++            return summary
++        summary["locked"] = True
++
++        references = await _collect_references(db)
++        summary["checked"] = len(references)
++        if not references:
++            return summary
++
++        try:
++            missing = await _missing(list(references.keys()))
++        except DomainError as exc:
++            # Хранилище недоступно — прогон недостоверен целиком.
++            logger.error("tsk-593: проверка прервана: %s", exc.detail)
++            summary["error"] = exc.detail
++            return summary
++
++        summary["missing"] = len(missing)
++        summary["healed"] = await _forget_healed(db, missing)
++
++        known = await _known_missing(db)
++        fresh = [(ref, references[ref]) for ref in missing if ref not in known]
++        summary["fresh"] = len(fresh)
++        # Список находок в сводке — чтобы в логах и тестах была конкретная
++        # ссылка, а не счётчик по всей базе.
++        summary["fresh_names"] = [f"{space}:{name}" for (space, name), _o in sorted(fresh)[:50]]
++
++        if not fresh:
++            logger.info(
++                "tsk-593: проверено ссылок=%s, утрачено=%s (все известны), новых нет",
++                len(references), len(missing),
++            )
++            await db.commit()
++            return summary
++
++        await _remember(db, fresh)
++        logger.warning(
++            "tsk-593: новых утрат %s из %s ссылок; примеры: %s",
++            len(fresh), len(references), summary["fresh_names"][:5],
++        )
++
++        if await _recently_notified(db, settings.attachment_audit_notify_cooldown_hours):
++            logger.info("tsk-593: уведомление уже отправляли недавно — молчим")
++            await db.commit()
++            return summary
++
++        summary["notified"] = await _notify(
++            db, fresh=fresh, max_examples=settings.attachment_audit_max_examples
++        )
++        await db.commit()
++
++    return summary
++
++
++_scheduler: Optional[AsyncIOScheduler] = None
++
++
++def start_scheduler() -> None:
++    """Поднимает суточный тик проверки (если включён настройкой)."""
++    global _scheduler
++    settings = Settings()
++    if not settings.attachment_audit_enabled:
++        logger.info("tsk-593: проверка вложений выключена (ATTACHMENT_AUDIT_ENABLED)")
++        return
++    if _scheduler is not None:
++        return
++
++    _scheduler = AsyncIOScheduler(timezone="UTC")
++    _scheduler.add_job(
++        attachment_audit_tick,
++        IntervalTrigger(hours=settings.attachment_audit_interval_hours),
++        id="attachment_audit_tick",
++        max_instances=1,
++        coalesce=True,
++        replace_existing=True,
++    )
++    _scheduler.start()
++    logger.info(
++        "tsk-593: проверка вложений запущена, интервал %s ч",
++        settings.attachment_audit_interval_hours,
++    )
++
++
++def stop_scheduler() -> None:
++    """Останавливает тик при остановке приложения."""
++    global _scheduler
++    if _scheduler is not None:
++        _scheduler.shutdown(wait=False)
++        _scheduler = None
+diff --git a/app/services/attachment_storage.py b/app/services/attachment_storage.py
+new file mode 100644
+index 0000000..99aa7bd
+--- /dev/null
++++ b/app/services/attachment_storage.py
+@@ -0,0 +1,536 @@
++# app/services/attachment_storage.py
++"""Хранилище вложений (tsk-593): объектное хранилище вместо диска приложения.
++
++**Зачем.** Вложения ответов учеников, файлы переписки и чеки об оплате лежали
++на диске приложения, на корневом разделе, без отдельного тома. Ровно так уже
++потеряли ВСЕ файлы материалов: в tsk-519 машину переносили, базу перенесли, а
++каталог `uploads/` нет — осталось 0 файлов и битые ссылки, о которых база не
++знала. Материалы после этого перевели в объектное хранилище (tsk-520), а эти
++три вида файлов остались на старой схеме, хотя чек об оплате — вообще
++платёжный документ.
++
++**Три пространства, а не одно.** У чека другой круг читателей и другой срок
++хранения, чем у учебного вложения, поэтому ключи разделены префиксом:
++
++* `attempts/<attachment_id>` — вложения ответов учеников;
++* `messages/<attachment_id>`  — файлы переписки;
++* `receipts/<stored_name>`    — чеки об оплате.
++
++**Имя файла НЕ меняется.** В отличие от материалов (там имя — хэш содержимого),
++здесь имя само по себе является идентификатором и уже записано в базе:
++в `answer_json.response.meta.attachments[].attachment_id`, в
++`messages.attachment_id`, в `student_payment.receipt_file`. Переименование
++означало бы переписывание истории работ и платежей, поэтому ключ в бакете —
++это префикс плюс существующее имя. Заодно из имени вложения ответа
++по-прежнему читается пара «попытка + задание» (tsk-575).
++
++**Наружу прямых ссылок нет.** Файл всегда идёт потоком через эндпоинт с
++проверкой прав. Переадресация на бакет (как у публичного `/api/v1/media`)
++здесь запрещена: она обошла бы проверку доступа, а в бакете публичное чтение
++разрешено любому, кто знает ключ.
++
++**Без S3 (разработка).** Если реквизиты не заданы — файл пишется и читается в
++каталоге пространства, как раньше. Тот же каталог остаётся запасным путём
++чтения для файлов, загруженных до переезда.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++import mimetypes
++import os
++import re
++import tempfile
++from pathlib import Path
++from typing import IO, Iterator, List, Optional, Set, Tuple
++from urllib.parse import quote
++
++from fastapi import UploadFile
++
++from app.core.config import Settings
++from app.utils.exceptions import DomainError
++
++logger = logging.getLogger("services.attachment_storage")
++
++settings = Settings()
++
++#: Пространства ключей. Строковые константы, а не enum: имена уезжают в ключи
++#: бакета, в записи проверки целостности и в логи — там нужна ровно эта строка.
++ATTEMPTS = "attempts"
++MESSAGES = "messages"
++RECEIPTS = "receipts"
++
++SPACES: Tuple[str, ...] = (ATTEMPTS, MESSAGES, RECEIPTS)
++
++_DEFAULT_CONTENT_TYPE = "application/octet-stream"
++
++#: Всё, что не латиница, цифра, точка, дефис или подчёркивание, в имени ключа
++#: заменяется. Пробелы и кириллица в ключе бакета работают, но ломают ручную
++#: сверку и ссылки в логах, а разделители пути открыли бы чужое пространство.
++_UNSAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
++
++
++def _known(space: str) -> None:
++    """Страховка от опечатки в имени пространства: чужой префикс — не наш файл."""
++    if space not in SPACES:
++        raise ValueError(f"Неизвестное пространство вложений: {space!r}")
++
++
++def prefix_for(space: str) -> str:
++    """Префикс ключей пространства в бакете."""
++    _known(space)
++    return {
++        ATTEMPTS: settings.attempt_attachments_s3_prefix,
++        MESSAGES: settings.message_attachments_s3_prefix,
++        RECEIPTS: settings.payment_receipts_s3_prefix,
++    }[space]
++
++
++def local_dir(space: str) -> Path:
++    """Каталог пространства на диске: режим разработки и файлы до переезда.
++
++    Настройки читаются НА ВЫЗОВ, а не берутся из модульного `settings`: каталог
++    задаётся переменной окружения, и тесты подменяют её `monkeypatch.setenv`.
++    Реквизиты S3 при этом живут в модульном `settings` — их тесты подменяют
++    прямо на объекте, как у файлов материалов.
++    """
++    _known(space)
++    fresh = Settings()
++    return {
++        ATTEMPTS: fresh.attempt_attachments_upload_dir,
++        MESSAGES: fresh.messages_upload_dir,
++        RECEIPTS: fresh.payment_receipts_upload_dir,
++    }[space]
++
++
++def object_key(space: str, name: str) -> str:
++    """Ключ объекта в бакете: `<префикс пространства>/<имя файла>`."""
++    return f"{prefix_for(space)}/{name}"
++
++
++def safe_name(filename: Optional[str]) -> str:
++    """Имя файла, безопасное для ключа: без путей, пробелов и не-латиницы.
++
++    Имя приходит от клиента и становится частью ключа в бакете, поэтому чистим
++    его одинаково во всех пространствах. Показываемое человеку имя это не
++    портит: оно хранится отдельно (у чека — в `receipt_name`, у вложения — в
++    метаданных ответа).
++    """
++    base = os.path.basename(filename or "attachment")
++    cleaned = _UNSAFE_NAME_RE.sub("_", base).strip("._")
++    return cleaned or "attachment"
++
++
++def s3_enabled() -> bool:
++    """True, если заданы все реквизиты записи в S3 (иначе — режим диска)."""
++    return bool(
++        settings.s3_endpoint_url
++        and settings.s3_bucket_name
++        and settings.s3_access_key
++        and settings.s3_secret_key
++    )
++
++
++def guess_content_type(name: str, declared: Optional[str] = None) -> str:
++    """Тип содержимого файла: из имени, иначе из заявленного клиентом.
++
++    Имя ГЛАВНЕЕ заявленного типа. Причина — урок tsk-536: файлы уезжали в
++    хранилище с типом `binary/octet-stream`, и браузер отказывался рисовать
++    картинку, хотя сам файл был целым. Расширение мы контролируем сами (у
++    чеков — ставим по подтверждённому типу, у вложений — переносим из имени),
++    а заголовок присылает клиент.
++    """
++    guessed = mimetypes.guess_type(name)[0]
++    if guessed:
++        return guessed
++    declared = (declared or "").split(";")[0].strip()
++    return declared or _DEFAULT_CONTENT_TYPE
++
++
++def content_disposition(filename: str, *, inline: bool = False) -> str:
++    """Заголовок `Content-Disposition` с именем файла, безопасным для не-ASCII.
++
++    Имя чека — «чек за август.png», то есть кириллица. Голая подстановка в
++    заголовок роняет ответ (в заголовках только latin-1), поэтому для таких
++    имён идёт форма `filename*=utf-8''…` из RFC 5987.
++    """
++    kind = "inline" if inline else "attachment"
++    try:
++        filename.encode("ascii")
++    except UnicodeEncodeError:
++        return f"{kind}; filename*=utf-8''{quote(filename, safe='')}"
++    escaped = filename.replace('"', r"\"")
++    return f'{kind}; filename="{escaped}"'
++
++
++def _client():
++    """Создаёт boto3-клиент S3. Импорт локальный: без ключей зависимость не нужна."""
++    import boto3  # локальный импорт: разработка без S3 живёт без установленного boto3
++
++    return boto3.client(
++        "s3",
++        endpoint_url=settings.s3_endpoint_url,
++        aws_access_key_id=settings.s3_access_key,
++        aws_secret_access_key=settings.s3_secret_key,
++        region_name=settings.s3_region,
++    )
++
++
++def _safe_local_path(space: str, name: str) -> Optional[Path]:
++    """Путь файла в каталоге пространства, если имя не выводит за его пределы."""
++    root = local_dir(space).resolve()
++    try:
++        candidate = (local_dir(space) / name).resolve()
++    except OSError:
++        return None
++    if not candidate.is_relative_to(root):
++        logger.error("tsk-593: попытка выхода за каталог %s: %r", space, name)
++        return None
++    return candidate
++
++
++# ---------------------------------------------------------------- запись
++
++
++def _put_object_sync(fileobj: IO[bytes], key: str, content_type: str) -> None:
++    """Синхронная запись объекта (boto3 блокирующий) — звать через `to_thread`."""
++    fileobj.seek(0)
++    _client().put_object(
++        Bucket=settings.s3_bucket_name,
++        Key=key,
++        Body=fileobj,
++        ContentType=content_type,
++    )
++
++
++def _write_to_disk(space: str, name: str, fileobj: IO[bytes]) -> None:
++    """Записывает файл в каталог пространства атомарно (временный файл + замена)."""
++    directory = local_dir(space)
++    directory.mkdir(parents=True, exist_ok=True)
++    dest = _safe_local_path(space, name)
++    if dest is None:
++        raise DomainError("Недопустимое имя файла", status_code=400)
++
++    fileobj.seek(0)
++    tmp_fd, tmp_path = tempfile.mkstemp(dir=str(directory))
++    try:
++        with os.fdopen(tmp_fd, "wb") as tmp:
++            while True:
++                chunk = fileobj.read(settings.attachment_chunk_size)
++                if not chunk:
++                    break
++                tmp.write(chunk)
++        os.replace(tmp_path, dest)
++    except BaseException:
++        Path(tmp_path).unlink(missing_ok=True)
++        raise
++
++
++async def store_upload(space: str, name: str, file: UploadFile) -> Tuple[int, str]:
++    """Сохраняет загруженный файл под именем `name`. Возвращает `(размер, тип)`.
++
++    Raises:
++        DomainError: 413, если файл больше `MAX_ATTACHMENT_SIZE_BYTES`;
++            503, если хранилище не приняло файл (сеть, доступ, настройка).
++            Молчать про 503 нельзя: клиент запишет имя вложения в ответ ученика,
++            и «успешная» загрузка без файла даст ровно ту битую ссылку, ради
++            которой задача и заведена.
++    """
++    _known(space)
++    content_type = guess_content_type(name, file.content_type)
++    total = 0
++
++    # Буфер: до 4 кусков в памяти, дальше — временный файл. Тело нужно целиком
++    # до записи, потому что размер проверяется до отправки в хранилище.
++    with tempfile.SpooledTemporaryFile(max_size=settings.attachment_chunk_size * 4) as buf:
++        while True:
++            chunk = await file.read(settings.attachment_chunk_size)
++            if not chunk:
++                break
++            total += len(chunk)
++            if total > settings.max_attachment_size_bytes:
++                raise DomainError(
++                    f"Файл больше допустимого размера "
++                    f"({settings.max_attachment_size_bytes} байт)",
++                    status_code=413,
++                )
++            buf.write(chunk)
++
++        await store_bytes(space, name, buf, content_type=content_type)
++
++    return total, content_type
++
++
++async def store_bytes(
++    space: str, name: str, fileobj: IO[bytes], *, content_type: Optional[str] = None
++) -> None:
++    """Кладёт готовый поток в хранилище под именем `name` (без проверки размера).
++
++    Отдельно от `store_upload`, потому что этим же путём идёт перенос файлов с
++    диска: там тело уже на руках и лимит размера применять нельзя — файл сдан
++    учеником давно и должен переехать как есть.
++    """
++    _known(space)
++    ctype = content_type or guess_content_type(name)
++
++    if not s3_enabled():
++        await asyncio.to_thread(_write_to_disk, space, name, fileobj)
++        logger.info(
++            "tsk-593: S3 не настроен — файл записан на диск пространство=%s имя=%r",
++            space, name,
++        )
++        return
++
++    from botocore.exceptions import BotoCoreError, ClientError
++
++    key = object_key(space, name)
++    try:
++        await asyncio.to_thread(_put_object_sync, fileobj, key, ctype)
++    except (BotoCoreError, ClientError) as exc:
++        logger.error("tsk-593: хранилище не приняло файл key=%r err=%s", key, exc)
++        raise DomainError(
++            "Хранилище файлов недоступно, файл не сохранён", status_code=503
++        ) from exc
++    logger.info("tsk-593: файл записан в S3 key=%r тип=%r", key, ctype)
++
++
++# ---------------------------------------------------------------- чтение
++
++
++def _iter_file(path: Path) -> Iterator[bytes]:
++    """Читает файл с диска кусками."""
++    with open(path, "rb") as fh:
++        while True:
++            chunk = fh.read(settings.attachment_chunk_size)
++            if not chunk:
++                break
++            yield chunk
++
++
++def _iter_body(body) -> Iterator[bytes]:
++    """Читает тело ответа S3 кусками и закрывает поток."""
++    try:
++        while True:
++            chunk = body.read(settings.attachment_chunk_size)
++            if not chunk:
++                break
++            yield chunk
++    finally:
++        body.close()
++
++
++def _get_object_sync(key: str) -> Optional[dict]:
++    """Синхронное чтение объекта; None, если объекта нет. Звать через `to_thread`."""
++    from botocore.exceptions import BotoCoreError, ClientError
++
++    try:
++        return _client().get_object(Bucket=settings.s3_bucket_name, Key=key)
++    except ClientError as exc:
++        code = exc.response.get("Error", {}).get("Code", "")
++        if code in ("NoSuchKey", "404", "NotFound", "NoSuchBucket"):
++            return None
++        # Сеть, настройка или отказ доступа — это НЕ «файла нет»: ответить 404
++        # значило бы выдать отсутствие файла за установленный факт.
++        logger.error("tsk-593: ошибка чтения S3 key=%r err=%s", key, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++    except BotoCoreError as exc:
++        logger.error("tsk-593: ошибка соединения с S3 key=%r err=%s", key, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++
++
++async def open_stream(space: str, name: str) -> Optional[Tuple[Iterator[bytes], str]]:
++    """Открывает файл: `(поток кусков, тип содержимого)` или None, если файла нет.
++
++    Порядок источников: хранилище, затем диск — там лежат файлы, загруженные до
++    переезда, и все файлы режима разработки.
++
++    Обращение к S3 уходит в отдельный поток: boto3 блокирующий, а вызов идёт из
++    обработчика запроса. Чтение кусков в возвращаемом генераторе блокирующим не
++    считается: Starlette крутит синхронный итератор в пуле потоков.
++    """
++    _known(space)
++    fallback_type = guess_content_type(name)
++
++    if s3_enabled():
++        obj = await asyncio.to_thread(_get_object_sync, object_key(space, name))
++        if obj is not None:
++            stored = (obj.get("ContentType") or "").split(";")[0].strip()
++            # Тип из имени главнее сохранённого: часть старых объектов лежит с
++            # `binary/octet-stream`, и картинка по такому типу не рисуется
++            # (урок tsk-536). Сохранённый тип берём, только если из имени вывод
++            # не сделать.
++            media_type = fallback_type
++            if media_type == _DEFAULT_CONTENT_TYPE and stored:
++                media_type = stored
++            return _iter_body(obj["Body"]), media_type
++
++    path = _safe_local_path(space, name)
++    if path is None or not path.is_file():
++        return None
++    return _iter_file(path), fallback_type
++
++
++def read_bytes_sync(space: str, name: str, *, max_bytes: int) -> Optional[bytes]:
++    """Читает файл целиком, синхронно; None, если файла нет или он крупнее лимита.
++
++    Синхронная форма нужна оценке кода (`code_review_service`): она вызывается
++    из потока (`asyncio.to_thread`) на приёме ответа и напрямую в фоновом тике,
++    и вся её логика — синхронная.
++
++    Raises:
++        DomainError: 503, если хранилище недоступно (см. `_get_object_sync`).
++    """
++    _known(space)
++    if s3_enabled():
++        obj = _get_object_sync(object_key(space, name))
++        if obj is not None:
++            length = obj.get("ContentLength")
++            if length is not None and int(length) > max_bytes:
++                return None
++            body = obj["Body"]
++            try:
++                # Читаем на байт больше предела: так видно, что файл длиннее, и
++                # обрезанный кусок не уедет на оценку как целая программа.
++                data = body.read(max_bytes + 1)
++            finally:
++                body.close()
++            return None if len(data) > max_bytes else data
++
++    path = _safe_local_path(space, name)
++    if path is None or not path.is_file():
++        return None
++    try:
++        if path.stat().st_size > max_bytes:
++            return None
++        return path.read_bytes()
++    except OSError:
++        return None
++
++
++# ---------------------------------------------------------------- наличие
++
++
++def _head_object_sync(key: str) -> bool:
++    """True, если объект есть в бакете. Звать через `to_thread`."""
++    from botocore.exceptions import BotoCoreError, ClientError
++
++    try:
++        _client().head_object(Bucket=settings.s3_bucket_name, Key=key)
++        return True
++    except ClientError as exc:
++        code = exc.response.get("Error", {}).get("Code", "")
++        if code in ("NoSuchKey", "404", "NotFound", "NoSuchBucket"):
++            return False
++        logger.error("tsk-593: ошибка проверки объекта key=%r err=%s", key, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++    except BotoCoreError as exc:
++        logger.error("tsk-593: ошибка соединения с хранилищем key=%r err=%s", key, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++
++
++async def exists(space: str, name: str) -> bool:
++    """Есть ли файл — в бакете либо на диске (файлы до переезда, разработка).
++
++    Raises:
++        DomainError: 503, если хранилище не ответило. «Нет ответа» нельзя
++            выдавать за «файла нет»: иначе проверка целостности пометит
++            утраченными все вложения разом.
++    """
++    _known(space)
++    if s3_enabled() and await asyncio.to_thread(_head_object_sync, object_key(space, name)):
++        return True
++    path = _safe_local_path(space, name)
++    return path is not None and path.is_file()
++
++
++async def existing_names(space: str, names: List[str]) -> Set[str]:
++    """Какие из перечисленных файлов реально есть. Проверки идут параллельно.
++
++    Нужна там, где вложений на экране много (очередь преподавателя, история
++    работ): последовательная проверка превратила бы страницу в цепочку сетевых
++    запросов.
++    """
++    _known(space)
++    unique = sorted({n for n in names if n})
++    if not unique:
++        return set()
++
++    sem = asyncio.Semaphore(max(1, settings.attachment_storage_concurrency))
++
++    async def check(name: str) -> Tuple[str, bool]:
++        async with sem:
++            return name, await exists(space, name)
++
++    found = await asyncio.gather(*(check(n) for n in unique))
++    return {name for name, ok in found if ok}
++
++
++def _list_keys_sync(prefix: str) -> List[str]:
++    """Ключи бакета с этим префиксом. Звать через `to_thread`."""
++    from botocore.exceptions import BotoCoreError, ClientError
++
++    keys: List[str] = []
++    try:
++        paginator = _client().get_paginator("list_objects_v2")
++        for page in paginator.paginate(Bucket=settings.s3_bucket_name, Prefix=prefix):
++            keys.extend(obj["Key"] for obj in page.get("Contents", []))
++    except (BotoCoreError, ClientError) as exc:
++        logger.error("tsk-593: ошибка перечисления key_prefix=%r err=%s", prefix, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++    return keys
++
++
++async def list_names(space: str, name_prefix: str = "") -> List[str]:
++    """Имена файлов пространства, начинающиеся с `name_prefix` (бакет + диск).
++
++    Диск читается всегда, а не только без S3: файлы, загруженные до переезда,
++    остаются там, и гейты «есть ли вложение у этого задания» обязаны их видеть.
++    """
++    _known(space)
++    names: Set[str] = set()
++
++    if s3_enabled():
++        key_prefix = object_key(space, name_prefix)
++        head = f"{prefix_for(space)}/"
++        for key in await asyncio.to_thread(_list_keys_sync, key_prefix):
++            if key.startswith(head):
++                names.add(key[len(head):])
++
++    directory = local_dir(space)
++    if directory.exists():
++        for path in directory.iterdir():
++            if path.is_file() and path.name.startswith(name_prefix):
++                names.add(path.name)
++
++    return sorted(names)
++
++
++# ---------------------------------------------------------------- удаление
++
++
++def _delete_object_sync(key: str) -> None:
++    """Синхронное удаление объекта. Звать через `to_thread`."""
++    from botocore.exceptions import BotoCoreError, ClientError
++
++    try:
++        _client().delete_object(Bucket=settings.s3_bucket_name, Key=key)
++    except (BotoCoreError, ClientError) as exc:
++        logger.error("tsk-593: не удалось удалить объект key=%r err=%s", key, exc)
++        raise DomainError("Хранилище файлов недоступно", status_code=503) from exc
++
++
++async def delete(space: str, name: str) -> None:
++    """Удаляет файл и в бакете, и на диске (файл мог остаться там до переезда)."""
++    _known(space)
++    if s3_enabled():
++        await asyncio.to_thread(_delete_object_sync, object_key(space, name))
++
++    path = _safe_local_path(space, name)
++    if path is not None:
++        try:
++            path.unlink(missing_ok=True)
++        except OSError:
++            logger.warning(
++                "tsk-593: не удалось удалить файл с диска пространство=%s имя=%r",
++                space, name, exc_info=True,
++            )
+diff --git a/app/services/attempt_attachments.py b/app/services/attempt_attachments.py
+index db0e340..995e968 100644
+--- a/app/services/attempt_attachments.py
++++ b/app/services/attempt_attachments.py
+@@ -1,9 +1,8 @@
+ """
+-Файлы-вложения к ответам ученика: раскладка на диске и её инварианты (tsk-575).
++Файлы-вложения к ответам ученика: раскладка и её инварианты (tsk-575, tsk-593).
+ 
+-Отдельной таблицы вложений нет — каталог плоский
+-(`settings.attempt_attachments_upload_dir`), и всё знание о том, чьё это
+-вложение, живёт В ИМЕНИ файла. Отсюда два формата:
++Отдельной таблицы вложений нет — пространство плоское, и всё знание о том, чьё
++это вложение, живёт В ИМЕНИ файла. Отсюда два формата:
+ 
+ * `{attempt_id}_{uuid32}_{имя}` — исторический (до tsk-575). Так грузят
+   клиенты, которые не присылают `task_id`; такие файлы уже лежат на проде,
+@@ -22,37 +21,35 @@
+ Разбор имени однозначен: после `{attempt_id}_` в старом формате идёт uuid из
+ 32 hex-символов, а `t` в hex не входит — спутать метку задания с началом uuid
+ невозможно.
++
++**tsk-593: файлы переехали с диска приложения в объектное хранилище**
++(`attachment_storage`, пространство `attempts`). Имя не изменилось — оно и есть
++идентификатор, записанный в `answer_json`. Что изменилось для вызывающих:
++проверка наличия файла стала СЕТЕВОЙ, поэтому функции здесь асинхронные, а там,
++где вложений на экране много, наличие проверяется пачкой
++(`existing_attachment_ids`), а не по одному.
+ """
+ 
+ from __future__ import annotations
+ 
+ import logging
+-import os
+ import re
+-from pathlib import Path
+-from typing import Any, Dict, List, Optional, Tuple
++from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+ from uuid import uuid4
+ 
+-from app.core.config import Settings
++from app.services import attachment_storage
+ 
+ logger = logging.getLogger("app.attempt_attachments")
+ 
+-SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
++SPACE = attachment_storage.ATTEMPTS
++
+ ATTACHMENT_ID_RE = re.compile(
+     r"^(?P<attempt_id>\d+)_(?:t(?P<task_id>\d+)_)?[a-f0-9]{32}_[A-Za-z0-9._-]+$"
+ )
+ 
+-
+-def upload_dir() -> Path:
+-    """Каталог вложений. Settings читается на вызов — тесты подменяют его monkeypatch'ем."""
+-    return Settings().attempt_attachments_upload_dir
+-
+-
+-def safe_upload_filename(filename: Optional[str]) -> str:
+-    """Имя файла, безопасное для плоского каталога: без путей и небезопасных символов."""
+-    base = os.path.basename(filename or "attachment")
+-    safe = SAFE_FILENAME_RE.sub("_", base).strip("._")
+-    return safe or "attachment"
++#: Правило чистки имени общее для всех пространств хранилища (tsk-593), здесь
++#: оставлено под прежним названием: на него ссылаются вызывающие и тесты.
++safe_upload_filename = attachment_storage.safe_name
+ 
+ 
+ def build_attachment_id(attempt_id: int, task_id: Optional[int], original_name: str) -> str:
+@@ -66,7 +63,7 @@ def parse_attachment_id(name: str) -> Optional[Tuple[int, Optional[int]]]:
+     Разобрать имя вложения в пару (`attempt_id`, `task_id`).
+ 
+     `task_id` = None у файлов исторического формата. Возвращает None, если имя
+-    не наше (чужой файл в каталоге, попытка выйти из него, мусор из `answer_json`).
++    не наше (чужой файл, попытка выйти из пространства, мусор из `answer_json`).
+     """
+     match = ATTACHMENT_ID_RE.fullmatch(name)
+     if match is None:
+@@ -75,14 +72,19 @@ def parse_attachment_id(name: str) -> Optional[Tuple[int, Optional[int]]]:
+     return int(match.group("attempt_id")), (int(task_raw) if task_raw is not None else None)
+ 
+ 
+-def attempt_attachment_files(
++def is_valid_attachment_id(attachment_id: Any) -> bool:
++    """Похоже ли значение на наше имя вложения (данные из `answer_json` — не доверие)."""
++    return isinstance(attachment_id, str) and parse_attachment_id(attachment_id) is not None
++
++
++async def attempt_attachment_names(
+     attempt_id: int,
+     task_id: Optional[int] = None,
+     *,
+     include_untagged: bool = True,
+-) -> List[Path]:
++) -> List[str]:
+     """
+-    Файлы вложений попытки на диске.
++    Имена вложений попытки, реально лежащих в хранилище.
+ 
+     * `task_id=None` — все файлы попытки (историческое поведение);
+     * `task_id=N` — файлы этого задания. При `include_untagged=True` к ним
+@@ -90,25 +92,20 @@ def attempt_attachment_files(
+       ещё не умеет передавать `task_id`, и отказать ему значит сломать приём
+       ответов у бота до его обновления.
+     """
+-    directory = upload_dir()
+-    if not directory.exists():
+-        return []
+-    picked: List[Path] = []
+-    for path in directory.iterdir():
+-        if not path.is_file():
+-            continue
+-        scope = parse_attachment_id(path.name)
++    picked: List[str] = []
++    for name in await attachment_storage.list_names(SPACE, f"{attempt_id}_"):
++        scope = parse_attachment_id(name)
+         if scope is None or scope[0] != attempt_id:
+             continue
+         file_task_id = scope[1]
+         if task_id is None:
+-            picked.append(path)
++            picked.append(name)
+         elif file_task_id == task_id or (file_task_id is None and include_untagged):
+-            picked.append(path)
++            picked.append(name)
+     return sorted(picked)
+ 
+ 
+-def files_replaced_by_upload(attempt_id: int, task_id: Optional[int]) -> List[Path]:
++async def names_replaced_by_upload(attempt_id: int, task_id: Optional[int]) -> List[str]:
+     """
+     Файлы, которые вытесняет новая загрузка: СТРОГО та же пара (попытка, задание).
+ 
+@@ -117,47 +114,61 @@ def files_replaced_by_upload(attempt_id: int, task_id: Optional[int]) -> List[Pa
+     чтобы отличить своё задание от чужого, и стереть файл соседнего задания
+     (то, из-за чего и заведена tsk-575) она не должна.
+     """
+-    directory = upload_dir()
+-    if not directory.exists():
+-        return []
+     return sorted(
+-        path
+-        for path in directory.iterdir()
+-        if path.is_file() and parse_attachment_id(path.name) == (attempt_id, task_id)
++        name
++        for name in await attachment_storage.list_names(SPACE, f"{attempt_id}_")
++        if parse_attachment_id(name) == (attempt_id, task_id)
+     )
+ 
+ 
+-def attachment_file_path(attachment_id: str) -> Optional[Path]:
+-    """
+-    Путь к файлу вложения по его id, если id корректен и не выводит из каталога.
++async def attachment_exists(attachment_id: Any) -> bool:
++    """Есть ли файл вложения в хранилище (id из `answer_json` — данные, доверия им нет)."""
++    if not is_valid_attachment_id(attachment_id):
++        return False
++    return await attachment_storage.exists(SPACE, attachment_id)
+ 
+-    Возвращает путь независимо от того, существует файл или нет: «нет файла» —
+-    отдельное состояние (утрачен/вытеснен), и решать его должен вызывающий.
+-    """
+-    if parse_attachment_id(attachment_id) is None:
+-        return None
+-    base = upload_dir().resolve()
+-    try:
+-        path = (base / attachment_id).resolve()
+-    except OSError:
+-        return None
+-    if not path.is_relative_to(base):
+-        logger.warning("Вложение вне каталога загрузок, отказ: %s", attachment_id)
+-        return None
+-    return path
++
++def collect_attachment_ids(answer_json: Any) -> List[str]:
++    """Имена вложений, на которые ссылается ответ. Пусто, если ссылок нет."""
++    if not isinstance(answer_json, dict):
++        return []
++    response = answer_json.get("response")
++    if not isinstance(response, dict):
++        return []
++    meta = response.get("meta")
++    if not isinstance(meta, dict):
++        return []
++    attachments = meta.get("attachments")
++    if not isinstance(attachments, list):
++        return []
++    return [
++        item["attachment_id"]
++        for item in attachments
++        if isinstance(item, dict) and is_valid_attachment_id(item.get("attachment_id"))
++    ]
+ 
+ 
+-def attachment_exists(attachment_id: Any) -> bool:
+-    """Есть ли файл вложения на диске (id из `answer_json` — данные, доверия им нет)."""
+-    if not isinstance(attachment_id, str) or not attachment_id:
+-        return False
+-    path = attachment_file_path(attachment_id)
+-    return path is not None and path.is_file()
++async def existing_attachment_ids(answer_jsons: Sequence[Any]) -> Set[str]:
++    """Какие вложения этих ответов реально лежат в хранилище (одной пачкой).
++
++    Проверка наличия — сетевой запрос, поэтому страница с двумя десятками работ
++    обязана спрашивать хранилище один раз параллельно, а не двадцать раз подряд.
++    """
++    wanted: List[str] = []
++    for answer_json in answer_jsons:
++        wanted.extend(collect_attachment_ids(answer_json))
++    if not wanted:
++        return set()
++    return await attachment_storage.existing_names(SPACE, wanted)
+ 
+ 
+-def mark_missing_attachments(answer_json: Any) -> Any:
++def mark_missing_attachments(answer_json: Any, existing: Iterable[str]) -> Any:
+     """
+-    Проставить `missing: true` вложениям, файлов которых на диске уже нет (tsk-575).
++    Проставить `missing: true` вложениям, файлов которых в хранилище уже нет (tsk-575).
++
++    `existing` — имена, наличие которых уже проверено (`existing_attachment_ids`).
++    Сама функция в хранилище не ходит: её зовут в цикле по строкам, и запрос
++    на каждую строку означал бы страницу из десятков сетевых обращений.
+ 
+     Считается на чтении, а не хранится: метаданные ответа (`filename`,
+     `size_bytes`) — след того, что ученик файл действительно присылал, и
+@@ -180,13 +191,15 @@ def mark_missing_attachments(answer_json: Any) -> Any:
+     if not isinstance(attachments, list) or not attachments:
+         return answer_json
+ 
++    present = set(existing)
+     marked: List[Any] = []
+     changed = False
+     for item in attachments:
+         if not isinstance(item, dict):
+             marked.append(item)
+             continue
+-        if attachment_exists(item.get("attachment_id")):
++        attachment_id = item.get("attachment_id")
++        if isinstance(attachment_id, str) and attachment_id in present:
+             marked.append(item)
+             continue
+         marked.append({**item, "missing": True})
+@@ -198,3 +211,17 @@ def mark_missing_attachments(answer_json: Any) -> Any:
+     patched_meta: Dict[str, Any] = {**meta, "attachments": marked}
+     patched_response: Dict[str, Any] = {**response, "meta": patched_meta}
+     return {**answer_json, "response": patched_response}
++
++
++async def mark_missing_one(answer_json: Any) -> Any:
++    """Пометить утраченные вложения одного ответа (сама сходит в хранилище)."""
++    if not collect_attachment_ids(answer_json):
++        return answer_json
++    existing = await existing_attachment_ids([answer_json])
++    return mark_missing_attachments(answer_json, existing)
++
++
++async def mark_missing_many(answer_jsons: Sequence[Any]) -> List[Any]:
++    """Пометить утраченные вложения пачки ответов: один поход в хранилище на все."""
++    existing = await existing_attachment_ids(answer_jsons)
++    return [mark_missing_attachments(aj, existing) for aj in answer_jsons]
+diff --git a/app/services/code_review_cron_service.py b/app/services/code_review_cron_service.py
+index 9268ee8..94d11ac 100644
+--- a/app/services/code_review_cron_service.py
++++ b/app/services/code_review_cron_service.py
+@@ -109,8 +109,12 @@ async def code_review_cron_tick(
+             # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
+             # файл-вложение мог быть удалён следующей загрузкой ученика в этой
+             # же попытке (см. комментарий в `attempts.py`).
+-            code = code_snapshot or pick_code_for_review(
+-                value, comment, attachments, attempt_id=attempt_id, task_id=task_id
++            # tsk-593: разбор читает вложение из объектного хранилища —
++            # синхронный сетевой вызов, поэтому уносим с петли событий.
++            code = code_snapshot or await asyncio.to_thread(
++                pick_code_for_review,
++                value, comment, attachments,
++                attempt_id=attempt_id, task_id=task_id,
+             )
+             if not code:
+                 # Программы в ответе нет (одно вложение, ответ-однострочник) —
+diff --git a/app/services/code_review_service.py b/app/services/code_review_service.py
+index 813f18c..cfd9679 100644
+--- a/app/services/code_review_service.py
++++ b/app/services/code_review_service.py
+@@ -30,9 +30,12 @@ from __future__ import annotations
+ import json
+ import logging
+ import re
++from pathlib import Path
+ from typing import Any, Dict, List, Optional
+ 
+-from app.services.attempt_attachments import attachment_file_path, parse_attachment_id
++from app.services import attachment_storage
++from app.services.attempt_attachments import is_valid_attachment_id, parse_attachment_id
++from app.utils.exceptions import DomainError
+ from app.services.llm import (
+     Budget,
+     LLMError,
+@@ -278,7 +281,7 @@ def read_code_attachment(
+     allow_untagged: bool = False,
+ ) -> Optional[str]:
+     """
+-    Прочитать вложение-исходник с диска.
++    Прочитать вложение-исходник из хранилища (tsk-593: объектное, не диск).
+ 
+     Возвращает `None` на любой заминке (файла нет, не текст, слишком большой,
+     имя не строка, файл не тот) — оценка не должна падать из-за одного
+@@ -306,9 +309,10 @@ def read_code_attachment(
+       подставить один вылизанный `solution.py` в соседние задания своей
+       попытки. Исключение — `allow_untagged=True`, его ставит только скрипт
+       пересчёта истории: задним числом ученик уже ничего не перезальёт;
+-    * расширение проверяется у РЕАЛЬНОГО файла, а не у заявленного `filename`:
+-      иначе закрытый список расширений не закрывает ничего — `dannye.csv` под
+-      именем `moe.py` прочитался бы и уехал модели.
++    * расширение проверяется у РЕАЛЬНОГО имени файла в хранилище, а не у
++      заявленного `filename`: иначе закрытый список расширений не закрывает
++      ничего — `dannye.csv` под именем `moe.py` прочитался бы и уехал модели.
++      Имя в хранилище присвоено сервером при загрузке и ученику не подвластно.
+     """
+     if not isinstance(attachment_id, str) or not attachment_id or attempt_id is None:
+         return None
+@@ -342,18 +346,29 @@ def read_code_attachment(
+         )
+         return None
+ 
+-    path = attachment_file_path(attachment_id)
+-    if path is None or path.suffix.lower() not in CODE_FILE_SUFFIXES:
++    if not is_valid_attachment_id(attachment_id):
+         return None
++    suffix = Path(attachment_id).suffix.lower()
++    if suffix not in CODE_FILE_SUFFIXES:
++        return None
++
++    # tsk-593: файл лежит в объектном хранилище. Чтение синхронное намеренно —
++    # эта функция вызывается из потока (`asyncio.to_thread`) на приёме ответа и
++    # из фонового тика оценки, и вся её логика синхронная.
+     try:
+-        if not path.is_file() or path.stat().st_size > _MAX_CODE_FILE_BYTES:
++        data = attachment_storage.read_bytes_sync(
++            attachment_storage.ATTEMPTS, attachment_id, max_bytes=_MAX_CODE_FILE_BYTES
++        )
++        if data is None:
+             return None
+-        raw = path.read_text(encoding="utf-8", errors="strict")
+-    except (OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
++        raw = data.decode("utf-8", errors="strict")
++    except (DomainError, OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
++        # Недоступное хранилище тоже глушим: обещание «оценка не роняет сдачу»
++        # держится буквально — исключение отсюда означало бы незаписанный ответ.
+         logger.info("tsk-302: вложение %s не прочитано (%s)", attachment_id, type(exc).__name__)
+         return None
+ 
+-    if path.suffix.lower() == ".ipynb":
++    if suffix == ".ipynb":
+         return _extract_notebook_code(raw)
+     return raw
+ 
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index eeb55e9..878ca93 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -32,7 +32,11 @@ from app.repos.courses_repo import CoursesRepository
+ from app.repos.course_dependencies_repository import CourseDependenciesRepository
+ from app.schemas.task_content import QUIZ_TASK_TYPES
+ from app.schemas.course_sampling import CourseSamplingConfig
+-from app.services.attempt_attachments import mark_missing_attachments
++from app.services.attempt_attachments import (
++    existing_attachment_ids,
++    mark_missing_attachments,
++    mark_missing_one,
++)
+ from app.services.task_sampling import sample_task_ids
+ from app.utils.exceptions import DomainError
+ from pydantic import ValidationError
+@@ -411,7 +415,7 @@ class LearningEngineService:
+         )
+         # answer_json (JSONB) драйвер отдаёт уже как dict; is_correct/checked_at — как есть.
+         # tsk-575: ученик тоже не должен видеть живую ссылку на утраченный файл.
+-        last_answer_json = mark_missing_attachments(row[4]) if isinstance(row[4], dict) else None
++        last_answer_json = await mark_missing_one(row[4]) if isinstance(row[4], dict) else None
+         last_is_correct = row[5]
+         last_checked_at = row[6]
+ 
+@@ -568,6 +572,13 @@ class LearningEngineService:
+             ).mappings().fetchall()
+             last_results = {int(r["task_id"]): r for r in last_rows}
+ 
++        # tsk-593: наличие файлов вложений спрашиваем у хранилища одной пачкой
++        # на весь список заданий — иначе экран курса дал бы по сетевому запросу
++        # на каждое задание с вложением.
++        existing_attachments = await existing_attachment_ids(
++            [r["answer_json"] for r in last_results.values()]
++        )
++
+         results: dict[int, TaskStateResult] = {}
+         for tid in ids:
+             limit = limits.get(tid, DEFAULT_MAX_ATTEMPTS)
+@@ -585,7 +596,7 @@ class LearningEngineService:
+             last_score = int(row["score"]) if row["score"] is not None else 0
+             last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
+             last_answer_json = (
+-                mark_missing_attachments(row["answer_json"])
++                mark_missing_attachments(row["answer_json"], existing_attachments)
+                 if isinstance(row["answer_json"], dict) else None
+             )
+             common = dict(
+diff --git a/app/services/task_history_service.py b/app/services/task_history_service.py
+index 420a3c6..4bc33ad 100644
+--- a/app/services/task_history_service.py
++++ b/app/services/task_history_service.py
+@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.services.attempt_attachments import mark_missing_attachments
++from app.services.attempt_attachments import (
++    existing_attachment_ids,
++    mark_missing_attachments,
++)
+ from app.services.checking_service import CheckingService
+ from app.services.learning_events_service import get_hint_open_counts
+ 
+@@ -136,6 +139,11 @@ async def _load_attempts(
+         )
+     ).mappings().fetchall()
+ 
++    # tsk-593: наличие файлов спрашиваем у хранилища ОДИН раз на всю историю.
++    # По вложению на строку это была бы цепочка сетевых запросов длиной в число
++    # сдач ученика по заданию.
++    existing = await existing_attachment_ids([r["answer_json"] for r in rows])
++
+     attempts: List[Dict[str, Any]] = []
+     for idx, r in enumerate(rows, start=1):
+         attempt: Dict[str, Any] = {
+@@ -148,7 +156,7 @@ async def _load_attempts(
+             "is_correct": r["is_correct"],
+             "status": _attempt_status(r["is_correct"]),
+             # tsk-575: пометка «файл утрачен» вместо ссылки в никуда.
+-            "answer_json": mark_missing_attachments(r["answer_json"]),
++            "answer_json": mark_missing_attachments(r["answer_json"], existing),
+             "comment": r["comment"],
+             "checked_at": r["checked_at"],
+             "manual": (r["source_system"] == _MANUAL_SOURCE),
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 2864608..98b234d 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
+ # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
+ # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
+-from app.services.attempt_attachments import mark_missing_attachments
++from app.services.attempt_attachments import mark_missing_one
+ from app.utils.task_title import humanize_task_title
+ 
+ logger = logging.getLogger(__name__)
+@@ -479,7 +479,7 @@ async def claim_next_review(
+         "submitted_at": submitted_at,
+         "max_score": max_score,
+         "is_correct": is_correct,
+-        "answer_json": mark_missing_attachments(answer_json),
++        "answer_json": await mark_missing_one(answer_json),
+         "task_title": task_title,
+         "user_name": user_name,
+         "course_id": course_id_val,
+@@ -683,7 +683,7 @@ async def claim_review_by_id(
+         "submitted_at": submitted_at,
+         "max_score": max_score,
+         "is_correct": is_correct,
+-        "answer_json": mark_missing_attachments(answer_json),
++        "answer_json": await mark_missing_one(answer_json),
+         "task_title": task_title,
+         "user_name": urow2[0] if urow2 else None,
+         "course_id": course_id_val,
+diff --git a/scripts/tsk593_lost_attachments_report.py b/scripts/tsk593_lost_attachments_report.py
+new file mode 100644
+index 0000000..633151c
+--- /dev/null
++++ b/scripts/tsk593_lost_attachments_report.py
+@@ -0,0 +1,162 @@
++"""tsk-593 (хвост tsk-575): кто и что должен приложить заново.
++
++Файлы, утраченные до починки tsk-575, не восстановятся: копий нет ни в
++бэкапах, ни в других каталогах. Единственное, что можно сделать, —
++дать преподавателю понятный список: ученик, задание, курс, когда сдавал.
++Данные скрипт НЕ правит.
++
++Два действия:
++
++* **отчёт** (по умолчанию) — CSV и сводка по ученикам. Только чтение;
++* `--seed-baseline` — записать найденные утраты в `attachment_missing_seen`
++  как ИСХОДНЫЙ УРОВЕНЬ суточной проверки. Без этого шага первый же её прогон
++  сообщит про все старые потери разом, и уведомление про новую потерю утонет
++  в этом шуме. Это единственная запись, которую делает скрипт, и она
++  добавляющая: существующие строки не трогаются (`ON CONFLICT DO NOTHING`).
++
++Запуск (на сервере, под пользователем app):
++
++    sudo -u app bash -lc 'cd /opt/lms && set -a && . ./.env && set +a && \\
++        venv/bin/python scripts/tsk593_lost_attachments_report.py \\
++        --out reviews/2026-08-08-tsk593-lost-attachments.csv'
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import csv
++import logging
++import sys
++from pathlib import Path
++from typing import Any, Dict, List
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++from app.services import attachment_storage  # noqa: E402
++from app.services.attempt_attachments import collect_attachment_ids  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++logger = logging.getLogger("tsk593.lost")
++
++_SQL = """
++SELECT tr.id            AS task_result_id,
++       tr.user_id       AS user_id,
++       u.full_name      AS full_name,
++       tr.task_id       AS task_id,
++       t.external_uid   AS task_uid,
++       t.task_content->>'title' AS task_title,
++       tr.attempt_id    AS attempt_id,
++       a.course_id      AS course_id,
++       c.title          AS course_title,
++       tr.submitted_at  AS submitted_at,
++       tr.answer_json   AS answer_json
++FROM task_results tr
++LEFT JOIN users   u ON u.id = tr.user_id
++LEFT JOIN tasks   t ON t.id = tr.task_id
++LEFT JOIN attempts a ON a.id = tr.attempt_id
++LEFT JOIN courses c ON c.id = a.course_id
++WHERE jsonb_array_length(
++          COALESCE(tr.answer_json->'response'->'meta'->'attachments', '[]'::jsonb)
++      ) > 0
++ORDER BY tr.user_id, tr.task_id, tr.submitted_at
++"""
++
++
++async def collect() -> List[Dict[str, Any]]:
++    """Собрать строки «ссылка на вложение есть» и отметить, каких файлов нет."""
++    async with async_session_factory() as db:
++        rows = (await db.execute(text(_SQL))).mappings().fetchall()
++
++    wanted: List[str] = []
++    for row in rows:
++        wanted.extend(collect_attachment_ids(row["answer_json"]))
++    logger.info("работ со ссылкой на вложение: %s, имён файлов: %s", len(rows), len(set(wanted)))
++
++    present = await attachment_storage.existing_names(attachment_storage.ATTEMPTS, wanted)
++    logger.info("файлов найдено в хранилище: %s из %s", len(present), len(set(wanted)))
++
++    lost: List[Dict[str, Any]] = []
++    for row in rows:
++        for name in collect_attachment_ids(row["answer_json"]):
++            if name in present:
++                continue
++            lost.append({
++                "user_id": row["user_id"],
++                "full_name": row["full_name"],
++                "course_id": row["course_id"],
++                "course_title": row["course_title"],
++                "task_id": row["task_id"],
++                "task_uid": row["task_uid"],
++                "task_title": row["task_title"],
++                "attempt_id": row["attempt_id"],
++                "task_result_id": row["task_result_id"],
++                "submitted_at": row["submitted_at"],
++                "attachment_id": name,
++            })
++    return lost
++
++
++async def seed_baseline(lost: List[Dict[str, Any]]) -> int:
++    """Записать утраты как исходный уровень суточной проверки. Возвращает число строк."""
++    if not lost:
++        return 0
++    async with async_session_factory() as db:
++        for item in lost:
++            await db.execute(
++                text(
++                    "INSERT INTO attachment_missing_seen (space, name, owner_kind, owner_id) "
++                    "VALUES ('attempts', :name, 'task_result', :oid) "
++                    "ON CONFLICT (space, name) DO NOTHING"
++                ),
++                {"name": item["attachment_id"], "oid": item["task_result_id"]},
++            )
++        await db.commit()
++        written = (
++            await db.execute(text("SELECT count(*) FROM attachment_missing_seen"))
++        ).scalar()
++    return int(written or 0)
++
++
++async def main() -> int:
++    parser = argparse.ArgumentParser(description="Список утраченных вложений (tsk-575/tsk-593)")
++    parser.add_argument("--out", default=None, help="куда положить CSV")
++    parser.add_argument(
++        "--seed-baseline", action="store_true",
++        help="записать найденное в attachment_missing_seen как исходный уровень проверки",
++    )
++    args = parser.parse_args()
++
++    lost = await collect()
++    logger.info("утрачено файлов: %s", len(lost))
++
++    by_student: Dict[str, int] = {}
++    for item in lost:
++        key = f"{item['full_name']} (id {item['user_id']})"
++        by_student[key] = by_student.get(key, 0) + 1
++
++    print("\nКого просить приложить файл заново:")
++    for who, count in sorted(by_student.items(), key=lambda kv: -kv[1]):
++        print(f"  {who}: {count} файлов")
++
++    if args.out:
++        out = Path(args.out)
++        out.parent.mkdir(parents=True, exist_ok=True)
++        with open(out, "w", encoding="utf-8-sig", newline="") as fh:
++            writer = csv.DictWriter(fh, fieldnames=list(lost[0].keys()) if lost else ["нет"],
++                                    delimiter=";")
++            writer.writeheader()
++            writer.writerows(lost)
++        logger.info("CSV: %s", out)
++
++    if args.seed_baseline:
++        total = await seed_baseline(lost)
++        logger.info("исходный уровень записан, всего строк в памяти проверки: %s", total)
++
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(asyncio.run(main()))
+diff --git a/scripts/tsk593_migrate_attachments_to_s3.py b/scripts/tsk593_migrate_attachments_to_s3.py
+new file mode 100644
+index 0000000..4799485
+--- /dev/null
++++ b/scripts/tsk593_migrate_attachments_to_s3.py
+@@ -0,0 +1,219 @@
++"""tsk-593: перенос файлов вложений с диска приложения в объектное хранилище.
++
++Переносит три пространства — вложения ответов (`uploads/attempts`), файлы
++переписки (`uploads/messages`) и чеки об оплате (`uploads/receipts`).
++
++**Сверка поштучная, а не «столько же файлов».** Совпадение количества ничего не
++доказывает: перенести 46 файлов и испортить один — это тоже «46 из 46». Каждый
++файл после записи скачивается обратно из хранилища и сверяется:
++
++* по СОДЕРЖИМОМУ — sha256 скачанного против sha256 исходного, байт в байт;
++* по ТИПУ — что хранилище отдаёт не `binary/octet-stream` для картинки. Это
++  урок tsk-536: файлы уезжали с общим типом, код ответа был 200, а картинка у
++  человека не рисовалась. «Ответ 200» не является доказательством переноса.
++
++**Идемпотентность.** Файл, который уже лежит в хранилище с тем же содержимым,
++пропускается. Повторный прогон безопасен.
++
++**Исходники не удаляются.** Диск остаётся как есть: он же — запасной путь
++чтения в коде. Убирать его — отдельное решение и отдельный день.
++
++Запуск (на сервере, под пользователем app):
++
++    sudo -u app bash -lc 'cd /opt/lms && set -a && . ./.env && set +a && \\
++        venv/bin/python scripts/tsk593_migrate_attachments_to_s3.py --dry-run'
++    sudo -u app bash -lc '... venv/bin/python scripts/tsk593_migrate_attachments_to_s3.py --apply'
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import hashlib
++import io
++import json
++import logging
++import sys
++from datetime import datetime, timezone
++from pathlib import Path
++from typing import Dict, List, Optional
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from app.services import attachment_storage  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
++logger = logging.getLogger("tsk593.migrate")
++
++#: Типы, которые считаются «общими»: если файл с известным расширением уезжает
++#: с таким типом, проверка это фиксирует как расхождение (урок tsk-536).
++_GENERIC_TYPES = {"binary/octet-stream", "application/octet-stream", ""}
++
++
++def _sha256_file(path: Path) -> str:
++    """sha256 файла на диске, потоком."""
++    digest = hashlib.sha256()
++    with open(path, "rb") as fh:
++        while True:
++            chunk = fh.read(1024 * 1024)
++            if not chunk:
++                break
++            digest.update(chunk)
++    return digest.hexdigest()
++
++
++async def _download(space: str, name: str) -> Optional[tuple[bytes, str]]:
++    """Скачать файл обратно из хранилища: `(содержимое, тип)` или None."""
++    opened = await attachment_storage.open_stream(space, name)
++    if opened is None:
++        return None
++    stream, media_type = opened
++    return b"".join(stream), media_type
++
++
++async def _verify(space: str, name: str, source: Path, expected_sha: str) -> Dict[str, object]:
++    """Сверить один перенесённый файл. Возвращает запись отчёта."""
++    record: Dict[str, object] = {
++        "space": space,
++        "name": name,
++        "size_bytes": source.stat().st_size,
++        "sha256": expected_sha,
++    }
++
++    downloaded = await _download(space, name)
++    if downloaded is None:
++        record["status"] = "FAIL"
++        record["reason"] = "файла нет в хранилище после записи"
++        return record
++
++    data, media_type = downloaded
++    actual_sha = hashlib.sha256(data).hexdigest()
++    record["content_type"] = media_type
++    record["downloaded_bytes"] = len(data)
++
++    if actual_sha != expected_sha:
++        record["status"] = "FAIL"
++        record["reason"] = f"содержимое разошлось: получено sha256={actual_sha}"
++        return record
++
++    expected_type = attachment_storage.guess_content_type(name)
++    if expected_type not in _GENERIC_TYPES and media_type != expected_type:
++        # Не роняем перенос: файл целый. Но помечаем — по такому типу браузер
++        # откажется рисовать картинку, и это надо увидеть, а не проглядеть.
++        record["status"] = "WARN"
++        record["reason"] = f"тип содержимого {media_type!r}, ожидался {expected_type!r}"
++        return record
++
++    record["status"] = "OK"
++    return record
++
++
++async def migrate_space(space: str, *, apply: bool) -> List[Dict[str, object]]:
++    """Перенести одно пространство. Возвращает поштучный отчёт."""
++    directory = attachment_storage.local_dir(space)
++    records: List[Dict[str, object]] = []
++
++    if not directory.exists():
++        logger.info("пространство %s: каталога %s нет — переносить нечего", space, directory)
++        return records
++
++    files = sorted(p for p in directory.iterdir() if p.is_file())
++    logger.info("пространство %s: файлов на диске %s", space, len(files))
++
++    for source in files:
++        name = source.name
++        expected_sha = _sha256_file(source)
++
++        if not apply:
++            records.append({
++                "space": space, "name": name, "sha256": expected_sha,
++                "size_bytes": source.stat().st_size, "status": "DRY-RUN",
++            })
++            continue
++
++        # Уже лежит с тем же содержимым — повторная запись не нужна.
++        already = await _download(space, name)
++        if already is not None and hashlib.sha256(already[0]).hexdigest() == expected_sha:
++            record = await _verify(space, name, source, expected_sha)
++            record["skipped"] = True
++            records.append(record)
++            logger.info("%s/%s: уже в хранилище (%s)", space, name, record["status"])
++            continue
++
++        with open(source, "rb") as fh:
++            payload = io.BytesIO(fh.read())
++        await attachment_storage.store_bytes(
++            space, name, payload,
++            content_type=attachment_storage.guess_content_type(name),
++        )
++
++        record = await _verify(space, name, source, expected_sha)
++        records.append(record)
++        logger.info("%s/%s: %s", space, name, record["status"])
++
++    return records
++
++
++async def main() -> int:
++    parser = argparse.ArgumentParser(description="Перенос вложений в объектное хранилище")
++    parser.add_argument(
++        "--apply", action="store_true",
++        help="выполнить перенос (без флага — только показать, что будет перенесено)",
++    )
++    parser.add_argument(
++        "--report", default=None,
++        help="куда положить поштучный отчёт в формате JSON",
++    )
++    args = parser.parse_args()
++
++    if not attachment_storage.s3_enabled():
++        logger.error(
++            "S3 не настроен (S3_ENDPOINT_URL / S3_BUCKET_NAME / ключи) — переносить некуда"
++        )
++        return 2
++
++    logger.info(
++        "хранилище: %s бакет=%s, режим=%s",
++        attachment_storage.settings.s3_endpoint_url,
++        attachment_storage.settings.s3_bucket_name,
++        "перенос" if args.apply else "холостой прогон",
++    )
++
++    all_records: List[Dict[str, object]] = []
++    for space in attachment_storage.SPACES:
++        all_records.extend(await migrate_space(space, apply=args.apply))
++
++    by_status: Dict[str, int] = {}
++    for record in all_records:
++        status = str(record.get("status"))
++        by_status[status] = by_status.get(status, 0) + 1
++
++    logger.info("итого: %s", by_status)
++    for record in all_records:
++        if record.get("status") in ("FAIL", "WARN"):
++            logger.warning(
++                "%s %s/%s: %s",
++                record["status"], record["space"], record["name"], record.get("reason"),
++            )
++
++    if args.report:
++        Path(args.report).write_text(
++            json.dumps(
++                {
++                    "checked_at": datetime.now(timezone.utc).isoformat(),
++                    "applied": bool(args.apply),
++                    "summary": by_status,
++                    "files": all_records,
++                },
++                ensure_ascii=False, indent=2,
++            ),
++            encoding="utf-8",
++        )
++        logger.info("отчёт: %s", args.report)
++
++    # Ненулевой код возврата, если хотя бы один файл не сошёлся: перенос,
++    # закончившийся расхождением, нельзя считать успешным.
++    return 1 if by_status.get("FAIL") else 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(asyncio.run(main()))
+diff --git a/tests/test_attempt_attachments.py b/tests/test_attempt_attachments.py
+index 2e259b5..0512c59 100644
+--- a/tests/test_attempt_attachments.py
++++ b/tests/test_attempt_attachments.py
+@@ -134,7 +134,12 @@ async def test_upload_attempt_attachment_rejects_too_large_file(monkeypatch, db,
+     api_key = settings.valid_api_keys[0]
+     attempt_id = await _create_attempt(client, db)
+ 
+-    monkeypatch.setattr("app.api.v1.attempts.settings.max_attachment_size_bytes", 4)
++    # tsk-593: предел размера проверяет слой хранилища (`attachment_storage`),
++    # а не роутер — файл теперь пишется не роутером. Подмена настройки роутера
++    # тихо перестала бы что-либо ограничивать, поэтому патчим хранилище.
++    monkeypatch.setattr(
++        "app.services.attachment_storage.settings.max_attachment_size_bytes", 4
++    )
+     try:
+         upload = await client.post(
+             f"/api/v1/attempts/{attempt_id}/attachments?api_key={api_key}",
+diff --git a/tests/test_attempt_attachments_per_task_tsk575.py b/tests/test_attempt_attachments_per_task_tsk575.py
+index 5707696..605b712 100644
+--- a/tests/test_attempt_attachments_per_task_tsk575.py
++++ b/tests/test_attempt_attachments_per_task_tsk575.py
+@@ -25,7 +25,6 @@ from sqlalchemy import text
+ 
+ from app.core.config import Settings
+ from app.services.attempt_attachments import (
+-    attempt_attachment_files,
+     build_attachment_id,
+     parse_attachment_id,
+ )
+@@ -104,7 +103,13 @@ async def _upload(client, attempt_id: int, name: str, *, task_id: int | None = N
+ 
+ 
+ def _cleanup_attachments(attempt_id: int) -> None:
+-    for path in attempt_attachment_files(attempt_id):
++    """Убрать файлы попытки.
++
++    tsk-593: тесты идут БЕЗ настроенного S3, то есть хранилище работает в
++    режиме диска — поэтому уборка ходит прямо в каталог, а не через
++    асинхронный слой хранилища (его нельзя ждать в синхронном `finally`).
++    """
++    for path in _settings.attempt_attachments_upload_dir.glob(f"{attempt_id}_*"):
+         try:
+             os.remove(path)
+         except FileNotFoundError:
+diff --git a/tests/test_comment_or_attachment_gate_tsk419.py b/tests/test_comment_or_attachment_gate_tsk419.py
+index f17543e..a6ce024 100644
+--- a/tests/test_comment_or_attachment_gate_tsk419.py
++++ b/tests/test_comment_or_attachment_gate_tsk419.py
+@@ -25,7 +25,6 @@ import pytest
+ from sqlalchemy import text
+ 
+ from app.core.config import Settings
+-from app.services.attempt_attachments import attempt_attachment_files
+ 
+ pytestmark = pytest.mark.asyncio
+ 
+@@ -109,7 +108,13 @@ async def _create_attempt(client, *, student_id: int, course_id: int) -> int:
+ 
+ 
+ def _cleanup_attachments(attempt_id: int) -> None:
+-    for path in attempt_attachment_files(attempt_id):
++    """Убрать файлы попытки.
++
++    tsk-593: тесты идут без настроенного S3 — хранилище работает в режиме
++    диска, поэтому уборка ходит прямо в каталог, а не через асинхронный слой
++    хранилища (его нельзя ждать в синхронном `finally`).
++    """
++    for path in Settings().attempt_attachments_upload_dir.glob(f"{attempt_id}_*"):
+         try:
+             os.remove(path)
+         except FileNotFoundError:
+diff --git a/tests/test_requires_attachment_gate_tsk227.py b/tests/test_requires_attachment_gate_tsk227.py
+index 476d36a..53ce370 100644
+--- a/tests/test_requires_attachment_gate_tsk227.py
++++ b/tests/test_requires_attachment_gate_tsk227.py
+@@ -22,7 +22,6 @@ import pytest
+ from sqlalchemy import text
+ 
+ from app.core.config import Settings
+-from app.services.attempt_attachments import attempt_attachment_files
+ 
+ pytestmark = pytest.mark.asyncio
+ 
+@@ -116,7 +115,13 @@ async def _create_attempt(client, *, student_id: int, course_id: int) -> int:
+ 
+ 
+ def _cleanup_attachments(attempt_id: int) -> None:
+-    for path in attempt_attachment_files(attempt_id):
++    """Убрать файлы попытки.
++
++    tsk-593: тесты идут без настроенного S3 — хранилище работает в режиме
++    диска, поэтому уборка ходит прямо в каталог, а не через асинхронный слой
++    хранилища (его нельзя ждать в синхронном `finally`).
++    """
++    for path in Settings().attempt_attachments_upload_dir.glob(f"{attempt_id}_*"):
+         try:
+             os.remove(path)
+         except FileNotFoundError:
+diff --git a/tests/test_tsk593_attachment_audit.py b/tests/test_tsk593_attachment_audit.py
+new file mode 100644
+index 0000000..ce61573
+--- /dev/null
++++ b/tests/test_tsk593_attachment_audit.py
+@@ -0,0 +1,175 @@
++"""tsk-593: суточная проверка «ссылка на вложение есть, файла в хранилище нет».
++
++Главное свойство проверки — она МОЛЧИТ, пока не появилось новой утраты. Иначе
++180 старых потерь (дефект tsk-575, восстановлению не подлежат) превратили бы её
++в ежедневное одинаковое письмо, за которым новую потерю никто не заметит.
++
++Покрываем:
++- (а) чистый прогон: файлы на месте — ни одного уведомления;
++- (б) новая утрата: уведомление уходит, и адресат зависит от вида файла
++      (учебное вложение — методисту, чек — маркетологу);
++- (в) уже известная утрата второй раз не тревожит;
++- (г) файл вернулся — память об утрате очищается, повторная потеря снова
++      считается новой;
++- (д) хранилище не ответило — прогон признаётся недостоверным целиком, а не
++      объявляет утраченными все вложения разом.
++"""
++from __future__ import annotations
++
++import uuid
++from typing import List
++
++import pytest
++from sqlalchemy import text
++
++from app.services import attachment_audit_service as audit
++from app.services import attachment_storage
++from app.utils.exceptions import DomainError
++
++pytestmark = pytest.mark.asyncio
++
++
++async def _seed_result_with_attachment(db, name: str) -> int:
++    """Работа ученика со ссылкой на вложение. Возвращает id строки результата."""
++    user_id = (await db.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
++    task_id = (await db.execute(text("SELECT id FROM tasks LIMIT 1"))).scalar()
++    answer = (
++        '{"response": {"value": "готово", "meta": {"attachments": '
++        '[{"filename": "solution.py", "attachment_id": "' + name + '"}]}}}'
++    )
++    row = await db.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, score, max_score, answer_json, "
++            "                          source_system) "
++            "VALUES (:uid, :tid, 1, 1, CAST(:aj AS jsonb), 'tsk593_test') RETURNING id"
++        ),
++        {"uid": user_id, "tid": task_id, "aj": answer},
++    )
++    result_id = int(row.scalar())
++    await db.commit()
++    return result_id
++
++
++async def _cleanup(db, result_ids: List[int], names: List[str]) -> None:
++    for result_id in result_ids:
++        await db.execute(text("DELETE FROM task_results WHERE id = :i"), {"i": result_id})
++    for name in names:
++        await db.execute(
++            text("DELETE FROM attachment_missing_seen WHERE name = :n"), {"n": name}
++        )
++    await db.execute(
++        text("DELETE FROM notifications WHERE kind = :k"), {"k": audit.NOTIFICATION_KIND}
++    )
++    await db.commit()
++
++
++def _fresh_names(summary: dict) -> set[str]:
++    return set(summary.get("fresh_names") or [])
++
++
++async def test_clean_run_is_silent(db, db_session_factory, monkeypatch):
++    """Файл на месте — проверка не говорит ничего."""
++    name = f"901_t7_{uuid.uuid4().hex}_ok.py"
++    result_id = await _seed_result_with_attachment(db, name)
++
++    async def _all_present(space, names):
++        return set(names)
++
++    monkeypatch.setattr(attachment_storage, "existing_names", _all_present)
++    try:
++        summary = await audit.attachment_audit_tick(db_session_factory)
++        assert summary["locked"] is True
++        assert name not in str(summary.get("fresh_names"))
++        assert summary["notified"] == 0
++    finally:
++        await _cleanup(db, [result_id], [name])
++
++
++async def test_new_loss_notifies_methodist(db, db_session_factory, monkeypatch):
++    """Новая утрата — уведомление уходит, и в нём есть конкретное имя файла."""
++    name = f"902_t7_{uuid.uuid4().hex}_lost.py"
++    result_id = await _seed_result_with_attachment(db, name)
++
++    async def _nothing_found(space, names):
++        return set()
++
++    monkeypatch.setattr(attachment_storage, "existing_names", _nothing_found)
++    try:
++        summary = await audit.attachment_audit_tick(db_session_factory)
++        assert f"attempts:{name}" in _fresh_names(summary)
++        assert summary["notified"] >= 1
++
++        # Утрата записана в память проверки — это и делает завтрашний прогон тихим.
++        known = (
++            await db.execute(
++                text("SELECT count(*) FROM attachment_missing_seen WHERE name = :n"),
++                {"n": name},
++            )
++        ).scalar()
++        assert int(known) == 1
++    finally:
++        await _cleanup(db, [result_id], [name])
++
++
++async def test_known_loss_does_not_notify_twice(db, db_session_factory, monkeypatch):
++    """Вторые сутки подряд про ту же потерю не пишем: иначе это шум."""
++    name = f"903_t7_{uuid.uuid4().hex}_lost.py"
++    result_id = await _seed_result_with_attachment(db, name)
++
++    async def _nothing_found(space, names):
++        return set()
++
++    monkeypatch.setattr(attachment_storage, "existing_names", _nothing_found)
++    try:
++        await audit.attachment_audit_tick(db_session_factory)
++        second = await audit.attachment_audit_tick(db_session_factory)
++        assert f"attempts:{name}" not in _fresh_names(second)
++        assert second["notified"] == 0
++    finally:
++        await _cleanup(db, [result_id], [name])
++
++
++async def test_returned_file_clears_memory(db, db_session_factory, monkeypatch):
++    """Файл вернулся — забываем утрату, иначе повторная потеря пройдёт молча."""
++    name = f"904_t7_{uuid.uuid4().hex}_lost.py"
++    result_id = await _seed_result_with_attachment(db, name)
++
++    async def _nothing_found(space, names):
++        return set()
++
++    async def _all_present(space, names):
++        return set(names)
++
++    try:
++        monkeypatch.setattr(attachment_storage, "existing_names", _nothing_found)
++        await audit.attachment_audit_tick(db_session_factory)
++
++        monkeypatch.setattr(attachment_storage, "existing_names", _all_present)
++        await audit.attachment_audit_tick(db_session_factory)
++        left = (
++            await db.execute(
++                text("SELECT count(*) FROM attachment_missing_seen WHERE name = :n"),
++                {"n": name},
++            )
++        ).scalar()
++        assert int(left) == 0, "память об утрате не очистилась после возврата файла"
++    finally:
++        await _cleanup(db, [result_id], [name])
++
++
++async def test_storage_outage_aborts_run(db, db_session_factory, monkeypatch):
++    """«Нет ответа» — не «файла нет»: прогон прерывается, никого не будим."""
++    name = f"905_t7_{uuid.uuid4().hex}_x.py"
++    result_id = await _seed_result_with_attachment(db, name)
++
++    async def _outage(space, names):
++        raise DomainError("Хранилище файлов недоступно", status_code=503)
++
++    monkeypatch.setattr(attachment_storage, "existing_names", _outage)
++    try:
++        summary = await audit.attachment_audit_tick(db_session_factory)
++        assert "error" in summary
++        assert summary["notified"] == 0
++        assert summary["missing"] == 0
++    finally:
++        await _cleanup(db, [result_id], [name])
+diff --git a/tests/test_tsk593_attachment_storage.py b/tests/test_tsk593_attachment_storage.py
+new file mode 100644
+index 0000000..c9bb225
+--- /dev/null
++++ b/tests/test_tsk593_attachment_storage.py
+@@ -0,0 +1,349 @@
++"""tsk-593: вложения, переписка и чеки живут в объектном хранилище, не на диске.
++
++Покрываем то, ради чего задача заведена, и то, что при переезде легко потерять:
++
++- (а) загрузка вложения ответа кладёт файл в бакет, а не на диск приложения;
++- (б) скачивание идёт ПОТОКОМ через приложение — прямой ссылки на бакет
++      наружу не выдаётся (иначе проверка прав обходится);
++- (в) у каждого вида файлов СВОЁ пространство ключей: чек не лежит рядом с
++      учебным вложением;
++- (г) тип содержимого выводится из имени, а не берётся общим `octet-stream`
++      (урок tsk-536: картинка с общим типом не рисуется у человека);
++- (д) отказ хранилища — это 503 и НЕзаписанное вложение, а не молчаливый успех
++      со ссылкой в никуда (ровно то, из-за чего заведена tsk-519);
++- (е) файлы, лежащие на диске с прошлых времён, продолжают читаться;
++- (ж) «файла нет» отличается от «хранилище не ответило»: 410 против 503.
++"""
++from __future__ import annotations
++
++import io
++import uuid
++from typing import Any, Dict, List
++
++import pytest
++from sqlalchemy import text
++
++from app.services import attachment_storage
++
++pytestmark = pytest.mark.asyncio
++
++
++class _FakeS3:
++    """Двойник S3: объекты в памяти, поведение ошибок как у boto3."""
++
++    def __init__(self) -> None:
++        self.objects: Dict[str, bytes] = {}
++        self.content_types: Dict[str, str] = {}
++        self.put_calls: List[str] = []
++        self.fail_put = False
++
++    def put_object(self, *, Bucket: str, Key: str, Body: Any, ContentType: str) -> None:
++        if self.fail_put:
++            from botocore.exceptions import ClientError
++
++            raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
++        data = Body.read() if hasattr(Body, "read") else Body
++        self.objects[Key] = data
++        self.content_types[Key] = ContentType
++        self.put_calls.append(Key)
++
++    def get_object(self, *, Bucket: str, Key: str) -> Dict[str, Any]:
++        if Key not in self.objects:
++            from botocore.exceptions import ClientError
++
++            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
++        return {
++            "Body": io.BytesIO(self.objects[Key]),
++            "ContentType": self.content_types.get(Key, "application/octet-stream"),
++            "ContentLength": len(self.objects[Key]),
++        }
++
++    def head_object(self, *, Bucket: str, Key: str) -> Dict[str, Any]:
++        if Key not in self.objects:
++            from botocore.exceptions import ClientError
++
++            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
++        return {"ContentLength": len(self.objects[Key])}
++
++    def delete_object(self, *, Bucket: str, Key: str) -> None:
++        self.objects.pop(Key, None)
++        self.content_types.pop(Key, None)
++
++    def get_paginator(self, _name: str):
++        outer = self
++
++        class _Paginator:
++            def paginate(self, *, Bucket: str, Prefix: str):
++                contents = [
++                    {"Key": key} for key in sorted(outer.objects) if key.startswith(Prefix)
++                ]
++                yield {"Contents": contents}
++
++        return _Paginator()
++
++
++@pytest.fixture
++def fake_s3(monkeypatch) -> _FakeS3:
++    """Включает режим объектного хранилища и подменяет клиента двойником."""
++    fake = _FakeS3()
++    monkeypatch.setattr(attachment_storage.settings, "s3_endpoint_url", "https://s3.test")
++    monkeypatch.setattr(attachment_storage.settings, "s3_bucket_name", "test-bucket")
++    monkeypatch.setattr(attachment_storage.settings, "s3_access_key", "key")
++    monkeypatch.setattr(attachment_storage.settings, "s3_secret_key", "secret")
++    monkeypatch.setattr(attachment_storage, "_client", lambda: fake)
++    return fake
++
++
++def _headers() -> Dict[str, str]:
++    from app.core.config import Settings
++
++    return {"X-API-Key": next(iter(Settings().valid_api_keys))}
++
++
++async def _make_attempt(client, db) -> int:
++    user_id = (await db.execute(text("SELECT id FROM users LIMIT 1"))).scalar()
++    course_id = (await db.execute(text("SELECT id FROM courses LIMIT 1"))).scalar()
++    resp = await client.post(
++        "/api/v1/attempts",
++        json={
++            "user_id": int(user_id),
++            "course_id": int(course_id) if course_id else None,
++            "source_system": "test",
++        },
++        headers=_headers(),
++    )
++    assert resp.status_code == 201, resp.text
++    return int(resp.json()["id"])
++
++
++# ── (а) файл уходит в бакет, а не на диск ───────────────────────────────────
++
++
++async def test_upload_goes_to_bucket_not_disk(client, db, fake_s3):
++    """Главное обещание задачи: диск приложения больше не хранит вложение."""
++    attempt_id = await _make_attempt(client, db)
++    upload = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("solution.py", b"print(42)", "text/x-python")},
++        headers=_headers(),
++    )
++    assert upload.status_code == 201, upload.text
++    attachment_id = upload.json()["attachment_id"]
++
++    key = f"attempts/{attachment_id}"
++    assert key in fake_s3.objects, "файл не попал в бакет"
++    assert fake_s3.objects[key] == b"print(42)"
++
++    on_disk = attachment_storage.local_dir(attachment_storage.ATTEMPTS) / attachment_id
++    assert not on_disk.exists(), "файл всё ещё ложится на диск приложения"
++
++
++# ── (б) выдача потоком, без ссылки на бакет ─────────────────────────────────
++
++
++async def test_download_streams_through_app_without_redirect(client, db, fake_s3):
++    """Прямая ссылка на бакет обошла бы проверку прав — её быть не должно."""
++    attempt_id = await _make_attempt(client, db)
++    upload = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("solution.py", b"print(42)", "text/x-python")},
++        headers=_headers(),
++    )
++    attachment_id = upload.json()["attachment_id"]
++
++    download = await client.get(
++        f"/api/v1/attempts/{attempt_id}/attachments/{attachment_id}",
++        headers=_headers(),
++    )
++    assert download.status_code == 200, download.text
++    assert download.content == b"print(42)"
++    assert "s3.test" not in str(download.headers)
++    assert download.headers.get("content-type", "").startswith("text/x-python")
++
++
++# ── (в) у каждого вида файлов своё пространство ключей ──────────────────────
++
++
++async def test_spaces_do_not_share_prefix():
++    """Чек не должен лежать в одной куче с учебным вложением."""
++    keys = {
++        space: attachment_storage.object_key(space, "one.png")
++        for space in attachment_storage.SPACES
++    }
++    assert len(set(keys.values())) == len(attachment_storage.SPACES)
++    assert keys[attachment_storage.RECEIPTS].startswith("receipts/")
++    assert keys[attachment_storage.ATTEMPTS].startswith("attempts/")
++    assert keys[attachment_storage.MESSAGES].startswith("messages/")
++
++
++# ── (г) тип содержимого не «общий» ──────────────────────────────────────────
++
++
++async def test_content_type_comes_from_name_not_generic(fake_s3):
++    """Урок tsk-536: с типом `binary/octet-stream` картинка у человека не рисуется."""
++    payload = io.BytesIO(b"\x89PNG\r\n\x1a\n")
++    await attachment_storage.store_bytes(
++        attachment_storage.RECEIPTS, "7_abc.png", payload
++    )
++    assert fake_s3.content_types["receipts/7_abc.png"] == "image/png"
++
++    opened = await attachment_storage.open_stream(attachment_storage.RECEIPTS, "7_abc.png")
++    assert opened is not None
++    _stream, media_type = opened
++    assert media_type == "image/png"
++
++
++async def test_generic_stored_type_is_overridden_by_name(fake_s3):
++    """Старый объект лежит с общим типом — отдаём по имени, а не как есть."""
++    fake_s3.objects["receipts/8_old.png"] = b"\x89PNG"
++    fake_s3.content_types["receipts/8_old.png"] = "binary/octet-stream"
++
++    opened = await attachment_storage.open_stream(attachment_storage.RECEIPTS, "8_old.png")
++    assert opened is not None
++    assert opened[1] == "image/png"
++
++
++# ── (д) отказ хранилища не выдаётся за успех ────────────────────────────────
++
++
++async def test_storage_failure_returns_503_and_stores_nothing(client, db, fake_s3):
++    """«Успешная» загрузка без файла — это и есть битая ссылка из tsk-519."""
++    fake_s3.fail_put = True
++    attempt_id = await _make_attempt(client, db)
++
++    upload = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("solution.py", b"print(42)", "text/x-python")},
++        headers=_headers(),
++    )
++    assert upload.status_code == 503, upload.text
++    assert not fake_s3.objects
++
++
++# ── (е) файлы с диска, оставшиеся с прошлых времён ──────────────────────────
++
++
++async def test_file_left_on_disk_is_still_readable(client, db, fake_s3):
++    """Перенос не мгновенный: то, что осталось на диске, обязано читаться."""
++    from app.services.attempt_attachments import build_attachment_id
++
++    attempt_id = await _make_attempt(client, db)
++    legacy_id = build_attachment_id(attempt_id, None, "old.py")
++    path = attachment_storage.local_dir(attachment_storage.ATTEMPTS) / legacy_id
++    path.write_bytes(b"print('old')")
++    try:
++        download = await client.get(
++            f"/api/v1/attempts/{attempt_id}/attachments/{legacy_id}", headers=_headers()
++        )
++        assert download.status_code == 200, download.text
++        assert download.content == b"print('old')"
++    finally:
++        path.unlink(missing_ok=True)
++
++
++# ── (ж) «файла нет» ≠ «хранилище не ответило» ───────────────────────────────
++
++
++async def test_missing_file_is_410(client, db, fake_s3):
++    from app.services.attempt_attachments import build_attachment_id
++
++    attempt_id = await _make_attempt(client, db)
++    lost_id = build_attachment_id(attempt_id, 7, "lost.py")
++    download = await client.get(
++        f"/api/v1/attempts/{attempt_id}/attachments/{lost_id}", headers=_headers()
++    )
++    assert download.status_code == 410, download.text
++
++
++async def test_storage_outage_is_503_not_410(client, db, fake_s3, monkeypatch):
++    """Ответить «утрачен навсегда» из-за сетевой заминки — соврать преподавателю."""
++    from app.services.attempt_attachments import build_attachment_id
++
++    attempt_id = await _make_attempt(client, db)
++    name = build_attachment_id(attempt_id, 7, "x.py")
++
++    def _boom(**_kwargs):
++        from botocore.exceptions import ClientError
++
++        raise ClientError({"Error": {"Code": "InternalError"}}, "GetObject")
++
++    monkeypatch.setattr(fake_s3, "get_object", _boom)
++    download = await client.get(
++        f"/api/v1/attempts/{attempt_id}/attachments/{name}", headers=_headers()
++    )
++    assert download.status_code == 503, download.text
++
++
++# ── вытеснение прежнего файла работает и в бакете ───────────────────────────
++
++
++async def test_reupload_same_task_replaces_object_in_bucket(client, db, fake_s3):
++    """Инвариант tsk-575 «одно вложение на пару» не должен потеряться при переезде."""
++    attempt_id = await _make_attempt(client, db)
++    first = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("draft.py", b"draft", "text/x-python")},
++        data={"task_id": "77"},
++        headers=_headers(),
++    )
++    second = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("final.py", b"final", "text/x-python")},
++        data={"task_id": "77"},
++        headers=_headers(),
++    )
++    assert first.status_code == 201 and second.status_code == 201
++
++    assert f"attempts/{first.json()['attachment_id']}" not in fake_s3.objects
++    assert f"attempts/{second.json()['attachment_id']}" in fake_s3.objects
++
++
++async def test_upload_for_other_task_keeps_neighbour_object(client, db, fake_s3):
++    """И обратное: файл соседнего задания остаётся на месте (дефект tsk-575)."""
++    attempt_id = await _make_attempt(client, db)
++    first = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("task1.py", b"one", "text/x-python")},
++        data={"task_id": "11"},
++        headers=_headers(),
++    )
++    second = await client.post(
++        f"/api/v1/attempts/{attempt_id}/attachments",
++        files={"file": ("task2.py", b"two", "text/x-python")},
++        data={"task_id": "22"},
++        headers=_headers(),
++    )
++    assert f"attempts/{first.json()['attachment_id']}" in fake_s3.objects
++    assert f"attempts/{second.json()['attachment_id']}" in fake_s3.objects
++
++
++# ── имя файла с кириллицей не роняет выдачу ─────────────────────────────────
++
++
++async def test_cyrillic_filename_header_is_encoded():
++    """Имя чека — «чек за август.png»; в заголовке допустима только латиница."""
++    header = attachment_storage.content_disposition("чек за август.png")
++    assert header.startswith("attachment; filename*=utf-8''")
++    header.encode("latin-1")  # падение здесь означало бы 500 у человека
++
++
++async def test_ascii_filename_header_stays_simple():
++    assert attachment_storage.content_disposition("report.pdf") == (
++        'attachment; filename="report.pdf"'
++    )
++
++
++# ── имя не выводит за пределы пространства ──────────────────────────────────
++
++
++async def test_name_cannot_escape_space(fake_s3):
++    """Страховка от имени вида `../чужое`: на диске путь обязан остаться внутри."""
++    root = attachment_storage.local_dir(attachment_storage.MESSAGES).resolve()
++    assert attachment_storage._safe_local_path(attachment_storage.MESSAGES, "../evil") is None
++    inside = attachment_storage._safe_local_path(attachment_storage.MESSAGES, "ok.txt")
++    assert inside is not None and inside.parent == root
++
++
++async def test_unknown_space_is_refused():
++    with pytest.raises(ValueError):
++        attachment_storage.object_key("materials", "x.png")
+diff --git a/tests/test_tsk593_receipts_storage.py b/tests/test_tsk593_receipts_storage.py
+new file mode 100644
+index 0000000..58f813f
+--- /dev/null
++++ b/tests/test_tsk593_receipts_storage.py
+@@ -0,0 +1,104 @@
++"""tsk-593: чек об оплате уезжает в объектное хранилище, в своё пространство.
++
++Чек — платёжный документ: по нему разбирают спор об оплате. На диске
++приложения он не переживёт переезд машины (так уже потеряли все файлы
++материалов, tsk-519), а лежать в одной куче с учебными вложениями не должен —
++у него другой круг читателей.
++
++Покрываем:
++- (а) чек попадает в бакет под префикс `receipts/`, на диске его нет;
++- (б) владелец скачивает его потоком через приложение — ссылка на бакет
++      наружу не выдаётся;
++- (в) посторонний ученик не получает чужой чек и в новом хранилище;
++- (г) не заведённый платёж (дубль) не оставляет чек-сироту в хранилище.
++"""
++from __future__ import annotations
++
++import pytest
++
++from app.services import attachment_storage
++from tests.test_tsk010_payments import (
++    _charge_id,
++    _recalc,
++    _submit,
++)
++from tests.test_tsk505_marketer_pricing import _auth, _new_user
++from tests.test_tsk511_charges_breaks import _setup
++from tests.test_tsk593_attachment_storage import _FakeS3, fake_s3  # noqa: F401
++from tests.test_tsk010_payments import _login_as
++
++pytestmark = pytest.mark.asyncio
++
++
++async def test_receipt_lands_in_its_own_space(db, client, fake_s3):  # noqa: F811
++    """Чек лежит под `receipts/`, а не рядом с работами учеников и не на диске."""
++    env = await _setup(db, "tsk593-receipt")
++    await _recalc(db, student_id=env["student_id"])
++    charge_id = await _charge_id(db, student_id=env["student_id"])
++    _, student_token = await _login_as(db, env["student_id"])
++
++    resp = await _submit(client, student_token, charge_id=charge_id, amount_minor=1000)
++    assert resp.status_code == 201, resp.text
++
++    receipt_keys = [k for k in fake_s3.objects if k.startswith("receipts/")]
++    assert len(receipt_keys) == 1, f"чек не попал в своё пространство: {list(fake_s3.objects)}"
++    assert not [k for k in fake_s3.objects if k.startswith("attempts/")]
++
++    stored_name = receipt_keys[0].split("/", 1)[1]
++    on_disk = attachment_storage.local_dir(attachment_storage.RECEIPTS) / stored_name
++    assert not on_disk.exists(), "чек всё ещё ложится на диск приложения"
++
++
++async def test_owner_downloads_receipt_as_stream(db, client, fake_s3):  # noqa: F811
++    """Файл идёт через приложение: прямой ссылки на бакет человек не получает."""
++    env = await _setup(db, "tsk593-receipt-get")
++    await _recalc(db, student_id=env["student_id"])
++    charge_id = await _charge_id(db, student_id=env["student_id"])
++    _, student_token = await _login_as(db, env["student_id"])
++
++    submitted = await _submit(client, student_token, charge_id=charge_id, amount_minor=1000)
++    payment_id = submitted.json()["id"]
++
++    resp = await client.get(
++        f"/api/v1/me/payments/{payment_id}/receipt", headers=_auth(student_token)
++    )
++    assert resp.status_code == 200, resp.text
++    assert resp.content == b"\x89PNG\r\n\x1a\n test receipt"
++    # Тип — по имени в хранилище, а не по присланному клиентом заголовку.
++    assert resp.headers["content-type"].startswith("image/png")
++    assert "s3.test" not in str(resp.headers)
++
++
++async def test_stranger_still_cannot_read_receipt(db, client, fake_s3):  # noqa: F811
++    """Переезд в хранилище не должен ослабить проверку прав."""
++    env = await _setup(db, "tsk593-receipt-acl")
++    await _recalc(db, student_id=env["student_id"])
++    charge_id = await _charge_id(db, student_id=env["student_id"])
++    _, student_token = await _login_as(db, env["student_id"])
++
++    submitted = await _submit(client, student_token, charge_id=charge_id, amount_minor=1000)
++    payment_id = submitted.json()["id"]
++
++    stranger_id, _ = await _new_user(db, role="student", name="tsk593-stranger")
++    _, stranger_token = await _login_as(db, stranger_id)
++    resp = await client.get(
++        f"/api/v1/me/payments/{payment_id}/receipt", headers=_auth(stranger_token)
++    )
++    assert resp.status_code == 404, resp.text
++
++
++async def test_refused_duplicate_leaves_no_orphan_file(db, client, fake_s3):  # noqa: F811
++    """Платёж не завёлся — чек в хранилище не остаётся: ссылки на него нет ни у кого."""
++    env = await _setup(db, "tsk593-receipt-dup")
++    await _recalc(db, student_id=env["student_id"])
++    charge_id = await _charge_id(db, student_id=env["student_id"])
++    _, student_token = await _login_as(db, env["student_id"])
++
++    first = await _submit(client, student_token, charge_id=charge_id, amount_minor=1000)
++    assert first.status_code == 201, first.text
++    before = {k for k in fake_s3.objects if k.startswith("receipts/")}
++
++    second = await _submit(client, student_token, charge_id=charge_id, amount_minor=1000)
++    assert second.status_code == 409, second.text
++    after = {k for k in fake_s3.objects if k.startswith("receipts/")}
++    assert after == before, "после отказа в хранилище остался чек-сирота"

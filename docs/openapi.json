@@ -7145,7 +7145,7 @@
           "messages"
         ],
         "summary": "Прикрепить файл к сообщению",
-        "description": "Загружает файл и привязывает к сообщению.\n\n- Лимит размера: Settings.max_attachment_size_bytes\n- Файл пишем в Settings.messages_upload_dir\n- attachment_url сохраняем как ОТНОСИТЕЛЬНЫЙ путь до download endpoint:\n  /api/v1/messages/{message_id}/attachment",
+        "description": "Загружает файл и привязывает к сообщению.\n\n- Лимит размера: Settings.max_attachment_size_bytes\n- Файл уходит в объектное хранилище, пространство `messages` (tsk-593).\n  Раньше он ложился на диск приложения — тот же класс, что уничтожил файлы\n  материалов при переезде машины (tsk-519: 0 файлов после переноса).\n- attachment_url сохраняем как ОТНОСИТЕЛЬНЫЙ путь до download endpoint:\n  /api/v1/messages/{message_id}/attachment",
         "operationId": "attach_file_to_message_endpoint_api_v1_messages__message_id__attachment_post",
         "security": [
           {
@@ -27350,7 +27350,7 @@
             "description": "Участие уже закрыто или новое время занято"
           },
           "422": {
-            "description": "Новое время вне часов работы школы либо не совпадает ни с одним слотом расписания"
+            "description": "Новое время вне часов работы школы"
           }
         }
       }
@@ -27441,11 +27441,15 @@
               }
             }
           },
-          "409": {
-            "description": "Время занято другим активным занятием ученика"
-          },
           "422": {
-            "description": "Время вне часов работы школы либо не совпадает ни с одним слотом расписания"
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }

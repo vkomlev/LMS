@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
+import os
 import re
 from datetime import date
 from pathlib import Path
@@ -25,14 +25,15 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.payment import StudentChargeRead
-from app.services import payment_service
+from app.services import attachment_storage, payment_service
+from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -56,6 +57,22 @@ _ALLOWED_RECEIPT_TYPES = {
 MAX_PAYMENT_MINOR = 100_000_000  # 1 000 000 ₽
 
 
+async def _drop_stored_receipt(stored_name: str) -> None:
+    """Убрать записанный чек, если платёж завести не удалось.
+
+    Иначе в хранилище копится чужой платёжный документ, которому в базе не
+    соответствует ничего: удалить его потом будет нечем — ссылки-то нет.
+    Сбой самой уборки не должен подменять исходную ошибку, ради которой её и
+    затеяли, поэтому он только логируется.
+    """
+    try:
+        await attachment_storage.delete(attachment_storage.RECEIPTS, stored_name)
+    except Exception:
+        logger.warning(
+            "tsk-593: не удалось убрать чек из хранилища имя=%s", stored_name, exc_info=True
+        )
+
+
 def _safe_name(filename: Optional[str]) -> str:
     """Имя для показа человеку: кириллицу сохраняем, служебные символы гасим.
 
@@ -68,23 +85,42 @@ def _safe_name(filename: Optional[str]) -> str:
     return safe or "receipt"
 
 
-def receipt_response(payment: dict) -> FileResponse:
+async def receipt_response(payment: dict) -> StreamingResponse:
     """Отдать файл чека.
 
-    Тип содержимого выводим из ИМЕНИ НА ДИСКЕ, а не из имени, присланного
-    загрузившим: расширение на диске мы поставили сами по подтверждённому типу,
-    а присланное имя — чужой ввод. Иначе `evil.svg`, загруженный под видом
+    Тип содержимого выводим из ИМЕНИ В ХРАНИЛИЩЕ, а не из имени, присланного
+    загрузившим: расширение мы поставили сами по подтверждённому типу, а
+    присланное имя — чужой ввод. Иначе `evil.svg`, загруженный под видом
     картинки, уезжал бы обратно как `image/svg+xml` — то есть активным
     содержимым, и вся защита держалась бы на одном заголовке «скачать».
+
+    tsk-593: чек лежит в объектном хранилище, в СВОЁМ пространстве ключей
+    (`receipts/`), отдельно от учебных вложений — это платёжный документ с
+    другим кругом читателей. Наружу он идёт только потоком через эту функцию:
+    вызывающие эндпоинты проверяют, что смотрит либо владелец начисления
+    (ученик или его родитель), либо маркетолог. Прямая ссылка на бакет не
+    выдаётся ни при каких условиях.
     """
-    path = settings.payment_receipts_upload_dir / payment["receipt_file"]
-    if not path.exists():
+    stored_name = os.path.basename(payment["receipt_file"])
+    try:
+        opened = await attachment_storage.open_stream(
+            attachment_storage.RECEIPTS, stored_name
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
+
+    if opened is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Файл чека не найден")
-    media_type = mimetypes.guess_type(payment["receipt_file"])[0]
-    return FileResponse(
-        path,
-        filename=payment["receipt_name"] or "receipt",
-        media_type=media_type or "application/octet-stream",
+
+    stream, media_type = opened
+    return StreamingResponse(
+        stream,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": attachment_storage.content_disposition(
+                payment["receipt_name"] or "receipt"
+            )
+        },
     )
 
 
@@ -217,32 +253,20 @@ async def store_receipt_payment(
             "Чек принимается изображением (JPEG, PNG, HEIC, WebP) или файлом PDF",
         )
 
-    settings.payment_receipts_upload_dir.mkdir(parents=True, exist_ok=True)
     original_name = _safe_name(file.filename)
     # Расширение — от подтверждённого типа, а не от присланного имени.
     stored_name = f"{charge['student_id']}_{uuid4().hex}{extension}"
-    file_path = settings.payment_receipts_upload_dir / stored_name
 
-    total = 0
+    # tsk-593: чек уходит в объектное хранилище. До этого он лежал на диске
+    # приложения — на том же корневом разделе, где уже потеряли все файлы
+    # материалов при переезде машины (tsk-519). Для платёжного документа это
+    # хуже вдвойне: спор об оплате разбирают именно по нему.
     try:
-        with open(file_path, "wb") as fh:
-            while True:
-                chunk = await file.read(settings.attachment_chunk_size)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > settings.max_attachment_size_bytes:
-                    raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        f"Файл больше допустимого размера "
-                        f"({settings.max_attachment_size_bytes} байт)",
-                    )
-                fh.write(chunk)
-    except Exception:
-        # Любой сбой записи — файл убираем. Иначе на диске копится чужой
-        # платёжный документ, которому в базе не соответствует ничего.
-        file_path.unlink(missing_ok=True)
-        raise
+        await attachment_storage.store_upload(
+            attachment_storage.RECEIPTS, stored_name, file
+        )
+    except DomainError as exc:
+        raise HTTPException(exc.status_code, exc.detail)
 
     try:
         payment_id = await payment_service.create_manual_payment(
@@ -258,13 +282,13 @@ async def store_receipt_payment(
             submitted_by=submitted_by,
         )
     except payment_service.DuplicatePaymentError:
-        file_path.unlink(missing_ok=True)
+        await _drop_stored_receipt(stored_name)
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Такой чек уже отправлен и ждёт подтверждения — второй раз отправлять не нужно",
         ) from None
     except Exception:
-        file_path.unlink(missing_ok=True)
+        await _drop_stored_receipt(stored_name)
         logger.exception(
             "tsk-010: не удалось записать платёж ученика %s за %s",
             charge["student_id"],
@@ -284,7 +308,7 @@ async def download_own_receipt(
     payment_id: int,
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
-) -> FileResponse:
+) -> StreamingResponse:
     if current_user.is_service:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -300,4 +324,4 @@ async def download_own_receipt(
         # Тот же ответ, что и на несуществующий чек: разница в ответах сама по
         # себе рассказала бы, какие номера платежей заняты.
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Чек не найден")
-    return receipt_response(payment)
+    return await receipt_response(payment)
