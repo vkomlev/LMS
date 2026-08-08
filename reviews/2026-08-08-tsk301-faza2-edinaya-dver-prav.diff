@@ -1,0 +1,1711 @@
+diff --git a/app/core/config.py b/app/core/config.py
+index ed5e67f..3c2fb40 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -217,6 +217,33 @@ class Settings:
+         # откат без развёртывания, если наставник поведёт себя не так.
+         self.ai_tutor_enabled: bool = os.getenv("AI_TUTOR_ENABLED", "true").lower() in ("true", "1", "yes")
+ 
++        # tsk-301: режим подписного гейта. Четыре значения, а не булев рубильник —
++        # включение идёт ступенями, и `guests` это самостоятельный шаг выката,
++        # а не оттенок «включено»:
++        #   off    — проверка не вызывается вовсе, система как до задачи;
++        #   shadow — считает и ЛОГИРУЕТ, кого бы отрезала, ничего не запрещая;
++        #   guests — применяются только отказы «ученик не опознан / подписки нет»
++        #            (у гостя прав и так нет, риск нулевой, а кран токенов на
++        #            464 демо-курсах закрывается сразу);
++        #   on     — применяются все отказы.
++        # Откат — возврат в `off`, без развёртывания.
++        _gate_mode = os.getenv("SUBSCRIPTION_GATE_MODE", "off").strip().lower()
++        if _gate_mode not in ("off", "shadow", "guests", "on"):
++            # Опечатка в настройке не должна молча означать «включено»: неверное
++            # значение падает на старте, а не открывает или закрывает доступ наугад.
++            raise RuntimeError(
++                f"SUBSCRIPTION_GATE_MODE={_gate_mode!r}: допустимо off|shadow|guests|on"
++            )
++        self.subscription_gate_mode: str = _gate_mode
++
++        # tsk-301: до какого числа включительно первая покупка оплачивает ТЕКУЩИЙ
++        # месяц. Позже — первое начисление ставится за следующий, остаток текущего
++        # даётся бесплатно: человек не должен платить полную цену за три дня ровно
++        # в тот момент, когда впервые расстаётся с деньгами (решение оператора).
++        self.first_month_charge_cutoff_day: int = int(
++            os.getenv("FIRST_MONTH_CHARGE_CUTOFF_DAY", "20")
++        )
++
+         # tsk-572: суточный проход датчика учебных пробелов. Влияет на то, что
+         # видят преподаватель и методист, поэтому выключается без развёртывания.
+         self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index ca51efb..5657782 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -454,6 +454,13 @@ async def recalculate_open_months_for_group(
+                 SELECT DISTINCT ch.student_id
+                   FROM student_monthly_charge ch
+                  WHERE ch.group_id = :g AND ch.status = 'open'
++                UNION
++                -- tsk-301: ученик может попадать в группу подписки, не будучи
++                -- зачисленным ни на один её курс (Self и AI курсов не имеют).
++                SELECT DISTINCT s.student_id
++                  FROM student_subscription s
++                  JOIN users u ON u.id = s.student_id AND u.is_active
++                 WHERE s.ends_on IS NULL AND s.pricing_group_id = :g
+                 """
+             ),
+             {"g": group_id},
+@@ -472,21 +479,27 @@ async def recalculate_for_student(
+     Точка входа для автопересчёта: её зовут смена расписания и правка перерыва.
+     """
+     period = month_start(period or date.today())
+-    groups = (
++    # tsk-301: группа берётся из подписки, если она есть, иначе из проданных
++    # курсов (прежнее поведение).
++    target_groups = await pricing_service.billing_group_ids(db, student_id=student_id)
++
++    # К целевым добавляем группы, по которым у ученика УЖЕ есть открытая строка.
++    # Без этого смена тарифа оставила бы прежнее начисление нетронутым: цикл
++    # прошёл бы только по новой группе, а старая строка замерла бы со своей
++    # суммой навсегда — её больше никто не пересчитывает. `recalculate_student_group`
++    # такую строку удалит сам, как только увидит, что считать её не из чего.
++    stale = (
+         await db.execute(
+             text(
+-                """
+-                SELECT DISTINCT cp.group_id
+-                  FROM user_courses uc
+-                  JOIN course_pricing cp ON cp.course_id = uc.course_id
+-                                        AND cp.sale_status = 'paid'
+-                 WHERE uc.user_id = :s AND uc.is_active
+-                """
++                "SELECT DISTINCT group_id FROM student_monthly_charge "
++                " WHERE student_id = :s AND period = :p AND status = 'open'"
+             ),
+-            {"s": student_id},
++            {"s": student_id, "p": period},
+         )
+     ).all()
+-    for row in groups:
++    group_ids = sorted({*target_groups, *(int(r.group_id) for r in stale)})
++
++    for group_id in group_ids:
+         # Вложенная транзакция на группу — как в `recalculate_month`. Эту точку
+         # входа зовут смена расписания и правка перерыва, то есть она работает
+         # среди дня, когда идут платежи: платёж, пришедший ровно между проверкой
+@@ -495,13 +508,13 @@ async def recalculate_for_student(
+         try:
+             async with db.begin_nested():
+                 await recalculate_student_group(
+-                    db, student_id=student_id, group_id=row.group_id, period=period
++                    db, student_id=student_id, group_id=group_id, period=period
+                 )
+         except IntegrityError:
+             logger.warning(
+                 "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
+                 student_id,
+-                row.group_id,
++                group_id,
+                 period,
+                 exc_info=True,
+             )
+diff --git a/app/services/entitlements_service.py b/app/services/entitlements_service.py
+new file mode 100644
+index 0000000..7d4a88e
+--- /dev/null
++++ b/app/services/entitlements_service.py
+@@ -0,0 +1,389 @@
++"""Единая дверь прав подписки (tsk-301, Фаза 2).
++
++**Все точки принуждения спрашивают разрешение здесь и только здесь.** Прецедент,
++ради которого это правило существует: в tsk-572 правило применили в двух клиентах
++из трёх, и ученик получил порченый текст. Дисциплиной такое не закрывается —
++поэтому список точек расхода ИИ проверяется сторожевым тестом
++(`tests/test_tsk301_ai_spend_guard.py`), а не памятью.
++
++Контракт: `docs/specs/2026-08-08-contract-entitlements.md` §3-§6.
++Принцип: **тариф даёт ПРАВА, расписание порождает ДЕНЬГИ** (ADR-0006).
++
++Ключевое требование к форме ответа: «прав нет» и «проверка сломалась» — **разные
++исходы**, а не общий `False`. Сведение их к булеву значению и есть тот дефект,
++из-за которого анонимный посетитель 464 демо-курсов жёг бы токены.
++"""
++from __future__ import annotations
++
++import asyncio
++import logging
++from dataclasses import dataclass
++from datetime import date
++from typing import Literal, Optional
++
++from sqlalchemy import text
++from sqlalchemy.exc import InterfaceError, OperationalError
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.core.config import Settings
++
++logger = logging.getLogger(__name__)
++settings = Settings()
++
++#: Возможности, которые проходят через эту дверь.
++#: `lessons` и `content` сюда НЕ входят намеренно: первое — признак для расписания
++#: и денег, второе принуждается демо-лимитом гостевой сессии (tsk-423). Дверь,
++#: отвечающая на вопросы, которые она не решает, вводит в заблуждение.
++GATED_CAPABILITIES: tuple[str, ...] = ("ai_tutor", "code_review", "teacher_escalation")
++
++#: Полный набор для витрины `GET /me/entitlements` (Фаза 8).
++ALL_CAPABILITIES: tuple[str, ...] = GATED_CAPABILITIES + ("lessons", "content")
++
++Outcome = Literal[
++    "allowed",
++    "denied_no_plan",       # ученик не опознан либо подписки нет — ВАЛИДНЫЙ отказ
++    "denied_not_in_plan",   # подписка есть, возможность в неё не входит
++    "denied_limit",         # входит, но квота и пакеты исчерпаны
++    "error_technical",      # проверку не удалось выполнить (инфраструктура)
++]
++
++#: Исключения, на которых срабатывает fail-open. Список ЗАКРЫТЫЙ.
++#: Всё остальное (`KeyError`, `AttributeError`, `TypeError`, любая ошибка в нашей
++#: логике) поднимается наружу и доступ НЕ даёт: иначе первая же опечатка в коде
++#: превращается в молча открытую дверь, неотличимую от штатной работы.
++_TECHNICAL_ERRORS = (OperationalError, InterfaceError, asyncio.TimeoutError)
++
++
++@dataclass(frozen=True)
++class Decision:
++    """Ответ двери. `allowed` и `outcome` возвращаются вместе и оба."""
++
++    allowed: bool
++    outcome: Outcome
++    limit: Optional[int] = None
++    remaining: Optional[int] = None
++    upgrade_hint: Optional[str] = None
++    #: Списание прошло сверх лимита — разговор, начатый до исчерпания, доводится
++    #: до конца. Вызывающий обязан пометить этим `llm_usage_event.meta.over_limit`,
++    #: иначе щедрость становится невидимой и вопрос «не злоупотребляют ли» нечем
++    #: закрыть.
++    over_limit: bool = False
++    #: Откуда списана единица — чтобы вернуть ЕЁ ЖЕ, если вызов модели не удался.
++    #: Резерв идёт ДО вызова (только так закрывается гонка), поэтому неудачу
++    #: обязана компенсировать явная отдача, а не надежда на то, что сбоев не
++    #: бывает. `None` — ничего не списывали (безлимит либо отказ).
++    reserved_quota: bool = False
++    reserved_grant_id: Optional[int] = None
++
++
++_DENIED_NO_PLAN = Decision(allowed=False, outcome="denied_no_plan")
++_ERROR_TECHNICAL = Decision(allowed=True, outcome="error_technical")
++
++
++_PLAN_SQL = text("""
++    SELECT p.code, p.ai_tutor_limit, p.code_review, p.teacher_escalation,
++           p.lessons, p.content, p.upgrade_hint
++      FROM student_subscription s
++      JOIN subscription_plan p ON p.id = s.plan_id
++     WHERE s.student_id = :sid AND s.ends_on IS NULL
++""")
++
++
++def month_start(day: Optional[date] = None) -> date:
++    """Первое число месяца — период учёта квоты."""
++    day = day or date.today()
++    return day.replace(day=1)
++
++
++async def _load_plan(db: AsyncSession, student_id: int) -> Optional[dict]:
++    row = (await db.execute(_PLAN_SQL, {"sid": student_id})).mappings().first()
++    return dict(row) if row is not None else None
++
++
++async def _quota_used(db: AsyncSession, student_id: int, period: date) -> int:
++    used = (
++        await db.execute(
++            text(
++                "SELECT used FROM student_ai_quota "
++                " WHERE student_id = :sid AND period = :p"
++            ),
++            {"sid": student_id, "p": period},
++        )
++    ).scalar()
++    return int(used or 0)
++
++
++async def _grants_left(db: AsyncSession, student_id: int) -> int:
++    left = (
++        await db.execute(
++            text(
++                "SELECT coalesce(sum(granted - used), 0) FROM student_ai_grant "
++                " WHERE student_id = :sid AND used < granted"
++            ),
++            {"sid": student_id},
++        )
++    ).scalar()
++    return int(left or 0)
++
++
++def _hint(plan: dict) -> Optional[str]:
++    return plan.get("upgrade_hint")
++
++
++async def check(
++    db: AsyncSession, *, student_id: Optional[int], capability: str
++) -> Decision:
++    """Можно ли ученику воспользоваться возможностью. Ничего не списывает.
++
++    Args:
++        student_id: `None` и `0` означают «ученик не опознан» (гость, сервисный
++            вызов без явного ученика) — это валидный отрицательный ответ, а не
++            повод пускать.
++        capability: ключ из `GATED_CAPABILITIES`.
++
++    Raises:
++        ValueError: неизвестная возможность. Опечатка в ключе не должна молча
++            означать «разрешено».
++    """
++    if capability not in GATED_CAPABILITIES:
++        raise ValueError(
++            f"{capability!r} не проходит через дверь прав; "
++            f"доступны {GATED_CAPABILITIES}"
++        )
++    if not student_id:
++        return _DENIED_NO_PLAN
++
++    try:
++        plan = await _load_plan(db, student_id)
++        if plan is None:
++            return _DENIED_NO_PLAN
++
++        if capability in ("code_review", "teacher_escalation"):
++            if plan[capability]:
++                return Decision(allowed=True, outcome="allowed")
++            return Decision(
++                allowed=False, outcome="denied_not_in_plan", upgrade_hint=_hint(plan)
++            )
++
++        # ai_tutor — счётная возможность.
++        limit = plan["ai_tutor_limit"]
++        if limit is None:
++            return Decision(allowed=True, outcome="allowed")
++        if limit == 0:
++            return Decision(
++                allowed=False, outcome="denied_not_in_plan", upgrade_hint=_hint(plan)
++            )
++
++        period = month_start()
++        used = await _quota_used(db, student_id, period)
++        remaining = max(limit - used, 0) + await _grants_left(db, student_id)
++        if remaining <= 0:
++            return Decision(
++                allowed=False, outcome="denied_limit", limit=limit, remaining=0,
++                upgrade_hint=_hint(plan),
++            )
++        return Decision(
++            allowed=True, outcome="allowed", limit=limit, remaining=remaining
++        )
++    except _TECHNICAL_ERRORS:
++        logger.warning(
++            "tsk-301: проверка права %s для ученика %s не выполнена технически — "
++            "пускаем (fail-open)", capability, student_id, exc_info=True,
++        )
++        return _ERROR_TECHNICAL
++
++
++_RESERVE_QUOTA_SQL = text("""
++    INSERT INTO student_ai_quota (student_id, period, used)
++    VALUES (:sid, :p, 1)
++    ON CONFLICT (student_id, period) DO UPDATE
++       SET used = student_ai_quota.used + 1, updated_at = now()
++     WHERE student_ai_quota.used < :limit
++    RETURNING used
++""")
++
++_RESERVE_QUOTA_OVERRUN_SQL = text("""
++    INSERT INTO student_ai_quota (student_id, period, used)
++    VALUES (:sid, :p, 1)
++    ON CONFLICT (student_id, period) DO UPDATE
++       SET used = student_ai_quota.used + 1, updated_at = now()
++    RETURNING used
++""")
++
++#: FIFO по дате покупки: раньше купленный пакет тратится первым.
++#: `SKIP LOCKED` — чтобы две одновременные реплики не ждали друг друга на одной
++#: строке, а разошлись по разным пакетам.
++_RESERVE_GRANT_SQL = text("""
++    UPDATE student_ai_grant
++       SET used = used + 1
++     WHERE id = (
++        SELECT id FROM student_ai_grant
++         WHERE student_id = :sid AND used < granted
++         ORDER BY purchased_at, id
++         LIMIT 1
++         FOR UPDATE SKIP LOCKED
++     )
++    RETURNING id
++""")
++
++
++async def check_and_reserve(
++    db: AsyncSession,
++    *,
++    student_id: Optional[int],
++    capability: str = "ai_tutor",
++    allow_overrun: bool = False,
++) -> Decision:
++    """Проверить право и СРАЗУ списать единицу счётной возможности.
++
++    Проверка и резерв — **один оператор SQL**, а не «прочитал, сравнил, записал»:
++    две вкладки ученика иначе съедают одну единицу дважды.
++
++    Порядок списания: сначала бесплатная месячная квота, потом купленные пакеты
++    (FIFO). Обратный порядок сжигал бы оплаченное раньше бесплатного — человек
++    терял бы деньги в месяц, когда мог не тратить ничего.
++
++    Args:
++        allow_overrun: разрешить списание сверх лимита. Ставится, когда разговор
++            УЖЕ начат: исчерпание посреди диалога его не обрывает (решения 2C и
++            19 брифа). Перерасход ограничен сверху жёстким пределом ходов сессии
++            (`session_service`), отдельного потолка не нужно.
++    """
++    if capability != "ai_tutor":
++        # Несчётные возможности резервировать нечего — это не отказ, а ошибка
++        # вызова: молча вернуть `allowed` значило бы скрыть её.
++        raise ValueError(f"{capability!r} не является счётной возможностью")
++    if not student_id:
++        return _DENIED_NO_PLAN
++
++    try:
++        plan = await _load_plan(db, student_id)
++        if plan is None:
++            return _DENIED_NO_PLAN
++
++        limit = plan["ai_tutor_limit"]
++        if limit is None:
++            return Decision(allowed=True, outcome="allowed")
++        if limit == 0:
++            # `allow_overrun` снимает ЛИМИТ, но не выдаёт ПРАВО. Ноль означает
++            # «наставника в тарифе нет вовсе», и никакой начатый разговор этого
++            # не меняет. Иначе ученик Self с разговором, открытым до включения
++            # гейта (такие строки уже есть в `ai_tutor_session`), получил бы
++            # безлимитный доступ навсегда.
++            return Decision(
++                allowed=False, outcome="denied_not_in_plan", upgrade_hint=_hint(plan)
++            )
++
++        period = month_start()
++        if allow_overrun:
++            used = (
++                await db.execute(
++                    _RESERVE_QUOTA_OVERRUN_SQL, {"sid": student_id, "p": period}
++                )
++            ).scalar_one()
++            return Decision(
++                allowed=True, outcome="allowed", limit=limit,
++                remaining=max(limit - used, 0) + await _grants_left(db, student_id),
++                over_limit=used > limit,
++                reserved_quota=True,
++            )
++
++        used = (
++            await db.execute(
++                _RESERVE_QUOTA_SQL, {"sid": student_id, "p": period, "limit": limit}
++            )
++        ).scalar()
++        if used is not None:
++            return Decision(
++                allowed=True, outcome="allowed", limit=limit,
++                remaining=max(limit - used, 0) + await _grants_left(db, student_id),
++                reserved_quota=True,
++            )
++
++        # Квота исчерпана — идём в пакеты.
++        grant_id = (
++            await db.execute(_RESERVE_GRANT_SQL, {"sid": student_id})
++        ).scalar()
++        if grant_id is not None:
++            return Decision(
++                allowed=True, outcome="allowed", limit=limit,
++                remaining=await _grants_left(db, student_id),
++                reserved_grant_id=int(grant_id),
++            )
++
++        return Decision(
++            allowed=False, outcome="denied_limit", limit=limit, remaining=0,
++            upgrade_hint=_hint(plan),
++        )
++    except _TECHNICAL_ERRORS:
++        logger.warning(
++            "tsk-301: резерв лимита наставника для ученика %s не выполнен "
++            "технически — пускаем (fail-open)", student_id, exc_info=True,
++        )
++        return _ERROR_TECHNICAL
++
++
++async def release(
++    db: AsyncSession, decision: Decision, *, student_id: int
++) -> None:
++    """Вернуть списанную единицу, если вызов модели не удался.
++
++    Резерв идёт ДО вызова — иначе гонку двух вкладок закрыть нечем. Плата за это
++    одна: неудачный вызов обязан явно отдать единицу назад, а не рассчитывать на
++    то, что сбоев не бывает. Возвращается ровно тот источник, из которого
++    списали (`reserved_quota` либо конкретный пакет), — иначе отдача бесплатной
++    квоты «чинила» бы платный пакет и наоборот.
++
++    Ничего не делает, если резерва не было (безлимит, отказ, технический сбой).
++    Собственных исключений не поднимает: провалившаяся компенсация не должна
++    превращать сбой модели в ошибку сервера.
++    """
++    try:
++        if decision.reserved_quota:
++            await db.execute(
++                text(
++                    "UPDATE student_ai_quota SET used = greatest(used - 1, 0), "
++                    "       updated_at = now() "
++                    " WHERE student_id = :sid AND period = :p"
++                ),
++                {"sid": student_id, "p": month_start()},
++            )
++        elif decision.reserved_grant_id is not None:
++            await db.execute(
++                text(
++                    "UPDATE student_ai_grant SET used = greatest(used - 1, 0) "
++                    " WHERE id = :gid"
++                ),
++                {"gid": decision.reserved_grant_id},
++            )
++    except _TECHNICAL_ERRORS:
++        logger.warning(
++            "tsk-301: не удалось вернуть единицу лимита ученику %s — "
++            "останется списанной", student_id, exc_info=True,
++        )
++
++
++def should_block(decision: Decision, *, capability: str = "", student_id: int | None = None) -> bool:
++    """Применяется ли отказ при текущем режиме выката.
++
++    Решение считается ВСЕГДА, а применяется по режиму — так фаза наблюдения
++    (`shadow`) отвечает на вопрос «кого бы отрезало» до того, как кого-то
++    действительно отрежут.
++    """
++    if decision.allowed:
++        return False
++
++    mode = settings.subscription_gate_mode
++    if mode == "off":
++        return False
++
++    if mode in ("shadow", "guests"):
++        logger.info(
++            "tsk-301 gate[%s]: ученик=%s возможность=%s исход=%s — %s",
++            mode, student_id, capability, decision.outcome,
++            "ПРИМЕНЁН" if (mode == "guests" and decision.outcome == "denied_no_plan")
++            else "только лог",
++        )
++        return mode == "guests" and decision.outcome == "denied_no_plan"
++
++    return True
+diff --git a/app/services/pricing_service.py b/app/services/pricing_service.py
+index 53f6c65..8408c16 100644
+--- a/app/services/pricing_service.py
++++ b/app/services/pricing_service.py
+@@ -57,11 +57,71 @@ __all__ = [
+     "is_root_course",
+     "set_course_pricing",
+     "list_student_pricing",
++    "active_subscription_groups",
++    "billing_group_ids",
+     "resolve_attendance_frequency",
+     "AttendanceFrequencyResolution",
+ ]
+ 
+ 
++# ------------------------------------------------- группа из подписки (tsk-301)
++
++
++async def active_subscription_groups(db: AsyncSession) -> dict[int, Optional[int]]:
++    """`student_id` → тарифная группа действующей подписки.
++
++    **Наличие ключа означает «подписка есть»**, а значение `None` — «денег нет
++    вовсе» (Test, Demo, Выпускник). Различать это обязательно: отсутствие ключа
++    возвращает ученика к прежнему поведению (группа из курса), а `None` деньги
++    отменяет.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT student_id, pricing_group_id FROM student_subscription "
++                " WHERE ends_on IS NULL"
++            )
++        )
++    ).all()
++    return {int(r.student_id): r.pricing_group_id for r in rows}
++
++
++async def billing_group_ids(db: AsyncSession, *, student_id: int) -> list[int]:
++    """Группы, по которым считается месяц ученика. Подписка перекрывает курсы.
++
++    Три исхода, и их нельзя схлопнуть в два:
++
++    * подписка с группой → **только** эта группа. Не «вдобавок к курсовой»:
++      иначе ученик Self, зачисленный на курс группы «Базовый», получил бы два
++      начисления за один продукт;
++    * подписка без группы → пусто, начислений нет;
++    * подписки нет → прежнее поведение, группы из проданных курсов.
++
++    Пока подписки никому не присвоены (до Фазы 5), третья ветка работает для
++    всех — поэтому правка ничего не меняет в деньгах до самого присвоения.
++    """
++    subs = await active_subscription_groups(db)
++    if student_id in subs:
++        group_id = subs[student_id]
++        return [int(group_id)] if group_id is not None else []
++
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT DISTINCT cp.group_id
++                  FROM user_courses uc
++                  JOIN course_pricing cp ON cp.course_id = uc.course_id
++                                        AND cp.sale_status = 'paid'
++                 WHERE uc.user_id = :s AND uc.is_active
++                """
++            ),
++            {"s": student_id},
++        )
++    ).all()
++    return [int(r.group_id) for r in rows]
++
++
+ # ---------------------------------------------------------------- тарифные группы
+ 
+ 
+@@ -329,6 +389,45 @@ async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
+         )
+     ).all()
+ 
++    # tsk-301: подписка перекрывает группу курса. Строки ученика с подпиской
++    # отбрасываем целиком и заменяем одной — по группе подписки. Дописывать
++    # рядом нельзя: ученик Self, зачисленный на курс группы «Базовый», получил
++    # бы два начисления за один продукт.
++    subs = await active_subscription_groups(db)
++    if subs:
++        rows = [r for r in rows if r.student_id not in subs]
++        rows = list(rows) + list(
++            (
++                await db.execute(
++                    text(
++                        """
++                        SELECT u.id                AS student_id,
++                               u.full_name,
++                               s.pricing_group_id  AS group_id,
++                               pg.name             AS group_name,
++                               (SELECT string_agg(c.title, ' · ' ORDER BY c.title)
++                                  FROM user_courses uc
++                                  JOIN courses c ON c.id = uc.course_id
++                                 WHERE uc.user_id = u.id AND uc.is_active)
++                                                   AS course_title,
++                               (SELECT count(*)
++                                  FROM lesson_slot_student lss
++                                  JOIN lesson_slot ls ON ls.id = lss.slot_id
++                                 WHERE lss.student_id = u.id
++                                   AND lss.is_active
++                                   AND ls.is_active) AS weekly_lessons
++                          FROM student_subscription s
++                          JOIN users u ON u.id = s.student_id AND u.is_active
++                          JOIN pricing_group pg ON pg.id = s.pricing_group_id
++                         WHERE s.ends_on IS NULL
++                           AND s.pricing_group_id IS NOT NULL
++                         ORDER BY u.full_name
++                        """
++                    )
++                )
++            ).all()
++        )
++
+     tariffs = await _load_tariffs(db, only_active=True)
+ 
+     students: dict[int, StudentPricingRead] = {}
+@@ -358,7 +457,10 @@ async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
+             )
+             buckets[key] = bucket
+             student.groups.append(bucket)
+-        bucket.course_titles.append(row.course_title)
++        # У подписки без зачислений курсов нет вовсе — пустое имя в список не
++        # кладём, иначе на экране маркетолога появится безымянная строка.
++        if row.course_title:
++            bucket.course_titles.append(row.course_title)
+ 
+     for student in students.values():
+         prices = [g.price_minor for g in student.groups]
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index 0f96fcb..e3e680a 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -292,7 +292,8 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ | Зачисление пакета | Идемпотентность по `gateway_payment_id` (уникальный индекс). Повторная доставка уведомления не удваивает грант |
+ | «Деньги списаны, грант не создан» | Паттерн tsk-010: телу уведомления не верим, перезапрашиваем платёж у ЮKassa; сбой сверки → 502 (пусть повторят доставку) + алерт персоналу. Молча вернуть 200 запрещено — это потерянные деньги |
+ | Смена тарифа | Закрытие прежней строки и открытие новой — одна транзакция. Инвариант «не более одной действующей строки» держит частичный уникальный индекс, а не код |
+-| Реплика наставнику | Списание и вызов модели — так, чтобы неудавшийся вызов не съедал единицу: списываем при **успешном** ответе, как это уже делает `llm_usage_event` в своей сессии |
++| Реплика наставнику | Резерв идёт **до** вызова модели (иначе гонку двух вкладок закрыть нечем), а неудачный вызов **явно возвращает** единицу через `release()` — с указанием источника, из которого списали. Списание «по факту успеха» гонку открывает заново, поэтому выбран резерв с компенсацией |
++| `allow_overrun` | Снимает **лимит**, но не выдаёт **право**: план с `ai_tutor_limit = 0` отказывает всегда. Иначе ученик Self с разговором, открытым до включения гейта, получил бы безлимитный доступ навсегда — такие строки в `ai_tutor_session` уже есть |
+ | **Любая вставка по уникальному ключу** | `IntegrityError` (SQLSTATE 23505) перехватывается и маппится на **409**, с обязательным `db.rollback()` перед выбросом. Касается всех трёх ключей: действующая подписка, `student_ai_quota (student_id, period)`, `student_ai_grant.gateway_payment_id`. Ранняя проверка существования перехват **не отменяет** — между ними гонка (урок tsk-574, рецидив класса 2026-04-28 #4) |
+ | Разбор ответа шлюза | Пустая строка от внешнего сервиса — не отсутствие ключа: нормализовать безусловно `(x or "").strip() or None`, а не через `if x:` (урок tsk-363) |
+ 
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 1b7dc85..9d021b2 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -257,6 +257,10 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
+         # то есть своего engine. Остальные тесты той задачи живут в
+         # `test_tsk521_link_audit.py` под обычной изоляцией.
+         "test_tsk521_link_audit_lock.py",
++        # tsk-301: гонку списания лимита нельзя проверить на одном соединении —
++        # нужны настоящие параллельные транзакции и коммиты. Остальные тесты
++        # задачи живут под обычной изоляцией.
++        "test_tsk301_limit_race.py",
+         "test_teacher_courses_triggers_smoke.py",
+         "test_teacher_help_requests_overdue_tsk312.py",
+         "test_teacher_help_requests_stage38.py",
+diff --git a/tests/test_tsk301_ai_spend_guard.py b/tests/test_tsk301_ai_spend_guard.py
+new file mode 100644
+index 0000000..424489d
+--- /dev/null
++++ b/tests/test_tsk301_ai_spend_guard.py
+@@ -0,0 +1,173 @@
++"""tsk-301: сторожевой тест точек расхода ИИ (пробел П13 контракта).
++
++**Зачем нужен именно механический страж.** В tsk-572 правило применили в двух
++клиентах из трёх — SSE-буферизацию поставили в вебе и в боте, забыли в третьем
++месте, и ученик получил порченый текст. Ошибка этого класса не падает ни тестом,
++ни исключением: код работает, просто в одном месте правило не действует.
++Дисциплина «не забыть» уже проверена и уже проиграла, поэтому список точек
++расхода сверяется автоматически.
++
++Страж находит точки **сканированием исходников**, а не по памяти: любой новый
++вызов модели или новая постановка работы в очередь оценки обязаны появиться в
++реестре `AI_SPEND_POINTS` вместе с указанием, какая возможность их гейтит.
++Забыли внести — тест краснеет и называет файл.
++
++Реестр допускает запись «гейт стоит выше по потоку»: так устроена фоновая
++оценка кода — она сама зовёт модель, но работа попадает к ней только через уже
++прогейченный вход в `attempts.py`. Ссылка на этот вход обязательна, иначе
++формулировка «где-то выше проверяют» стала бы способом обойти сам страж.
++"""
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Optional
++
++import pytest
++
++APP_ROOT = Path(__file__).resolve().parents[1] / "app"
++
++#: Модуль общего LLM-транспорта. Его собственные файлы — реализация, а не точка
++#: расхода: гейт внутри транспорта стоял бы ПОСЛЕ решения потратить деньги.
++_TRANSPORT_DIR = APP_ROOT / "services" / "llm"
++
++#: Вызов модели: `stream(...)` / `complete(...)` из общего клиента.
++_LLM_CALL_RX = re.compile(r"\b(?:await\s+|async\s+for\s+\w+\s+in\s+)?(stream|complete)\s*\(")
++#: Импорт из транспорта — и однострочный, и многострочный в скобках. Первая
++#: редакция стража читала только однострочный и потому не видела
++#: `code_review_service` (там импорт в скобках) — страж, который не видит
++#: половину точек, хуже отсутствующего: он создаёт ложное спокойствие.
++_LLM_IMPORT_RX = re.compile(
++    r"from\s+app\.services\.llm\s+import\s+(?:\(([^)]*)\)|([^\n(]+))", re.DOTALL
++)
++
++#: Постановка работы в очередь оценки кода — расход, отложенный во времени.
++#: Гейт обязан стоять ДО неё: иначе обещание Demo «токены не расходуем»
++#: нарушается молча, работа уже помечена и тик её заберёт.
++_ENQUEUE_RX = re.compile(r"""["']status["']\s*:\s*["']pending["']""")
++
++
++@dataclass(frozen=True)
++class SpendPoint:
++    """Точка расхода и то, чем она гейтится."""
++
++    capability: str
++    #: Гейт стоит в этом же файле.
++    gated_here: bool = False
++    #: Гейт стоит выше по потоку — путь до места, где он реально вызывается.
++    gated_upstream: Optional[str] = None
++    #: Проводка выполнена (Фаза 3). Пока False, содержательной проверки гейта
++    #: в файле нет — но сам факт существования точки уже под надзором.
++    wired: bool = False
++
++    def __post_init__(self) -> None:
++        if not self.gated_here and not self.gated_upstream:
++            raise AssertionError(
++                "точка расхода обязана указать, где стоит её гейт"
++            )
++
++
++#: Реестр. Ключ — путь относительно корня репозитория.
++AI_SPEND_POINTS: dict[str, SpendPoint] = {
++    "app/api/v1/ai_tutor.py": SpendPoint(capability="ai_tutor", gated_here=True),
++    "app/api/v1/attempts.py": SpendPoint(capability="code_review", gated_here=True),
++    "app/services/code_review_service.py": SpendPoint(
++        capability="code_review", gated_upstream="app/api/v1/attempts.py"
++    ),
++    # Фоновый тик сам модель не зовёт, но разбирает очередь пометок и тем
++    # ЗАПУСКАЕТ расход. Найден стражем, а не глазами: в первой редакции реестра
++    # его не было — ровно тот пропуск, ради которого страж и написан.
++    "app/services/code_review_cron_service.py": SpendPoint(
++        capability="code_review", gated_upstream="app/api/v1/attempts.py"
++    ),
++}
++
++
++def _rel(path: Path) -> str:
++    return path.relative_to(APP_ROOT.parent).as_posix()
++
++
++def _discover() -> set[str]:
++    """Найти все точки расхода ИИ в `app/` сканированием исходников."""
++    found: set[str] = set()
++    for path in APP_ROOT.rglob("*.py"):
++        if _TRANSPORT_DIR in path.parents or path == _TRANSPORT_DIR:
++            continue
++        source = path.read_text(encoding="utf-8")
++
++        imported = set()
++        for match in _LLM_IMPORT_RX.finditer(source):
++            names = match.group(1) or match.group(2) or ""
++            imported.update(name.strip() for name in names.split(","))
++        if {"stream", "complete"} & imported and _LLM_CALL_RX.search(source):
++            found.add(_rel(path))
++
++        if _ENQUEUE_RX.search(source) and "code_review" in source:
++            found.add(_rel(path))
++    return found
++
++
++def test_no_unregistered_ai_spend_point() -> None:
++    """Каждая точка расхода ИИ значится в реестре с указанием своего гейта.
++
++    Это главная проверка: она ловит НОВУЮ точку, добавленную без гейта, —
++    ровно тот класс, из-за которого в tsk-572 правило применили не везде.
++    """
++    unregistered = _discover() - set(AI_SPEND_POINTS)
++    assert not unregistered, (
++        "новые точки расхода ИИ без записи в реестре: "
++        + ", ".join(sorted(unregistered))
++        + ". Внесите их в AI_SPEND_POINTS и укажите, какая возможность их гейтит."
++    )
++
++
++def test_registry_has_no_phantom_points() -> None:
++    """В реестре нет записей о точках, которых больше нет.
++
++    Мёртвая запись опаснее отсутствующей: она создаёт впечатление, что место
++    под надзором, и прячет за собой пустоту.
++    """
++    phantom = set(AI_SPEND_POINTS) - _discover()
++    assert not phantom, (
++        "в реестре числятся несуществующие точки расхода: " + ", ".join(sorted(phantom))
++    )
++
++
++@pytest.mark.parametrize(
++    "rel_path",
++    sorted(p for p, point in AI_SPEND_POINTS.items() if point.gated_upstream),
++)
++def test_upstream_gate_target_exists(rel_path: str) -> None:
++    """Ссылка «гейт выше по потоку» ведёт в реальный зарегистрированный файл."""
++    upstream = AI_SPEND_POINTS[rel_path].gated_upstream
++    assert upstream in AI_SPEND_POINTS, (
++        f"{rel_path}: ссылка на вышестоящий гейт {upstream!r} не найдена в реестре"
++    )
++    assert AI_SPEND_POINTS[upstream].gated_here, (
++        f"{rel_path}: {upstream} сам не гейтит — цепочка «выше по потоку» разорвана"
++    )
++
++
++@pytest.mark.parametrize(
++    "rel_path",
++    sorted(p for p, point in AI_SPEND_POINTS.items() if point.wired),
++)
++def test_wired_point_calls_the_door(rel_path: str) -> None:
++    """Проведённая точка действительно зовёт единую дверь, а не свою проверку.
++
++    Пока проводка не сделана (Фаза 3), параметризация пуста и тест не запускается.
++    Как только `wired=True` — проверка становится содержательной.
++    """
++    source = (APP_ROOT.parent / rel_path).read_text(encoding="utf-8")
++    assert "entitlements_service" in source, (
++        f"{rel_path}: точка помечена проведённой, но единую дверь не зовёт"
++    )
++
++
++def test_capabilities_are_known() -> None:
++    """Возможности в реестре совпадают с теми, что умеет дверь."""
++    from app.services.entitlements_service import GATED_CAPABILITIES
++
++    unknown = {p.capability for p in AI_SPEND_POINTS.values()} - set(GATED_CAPABILITIES)
++    assert not unknown, f"в реестре неизвестные возможности: {sorted(unknown)}"
+diff --git a/tests/test_tsk301_entitlements.py b/tests/test_tsk301_entitlements.py
+new file mode 100644
+index 0000000..f472263
+--- /dev/null
++++ b/tests/test_tsk301_entitlements.py
+@@ -0,0 +1,444 @@
++"""tsk-301: поведение единой двери прав (контракт §3-§6).
++
++Проверяется таблица исходов целиком, а не «пускает / не пускает». Смысл в том,
++что **«прав нет» и «проверка сломалась» — разные ответы**: сведение их к общему
++`False` и есть тот дефект, из-за которого анонимный посетитель 464 демо-курсов
++жёг бы токены (пробел П8, прецедент — `CurrentUser(id=0)` в tsk-572).
++
++Отдельно закреплено обратное направление: **ошибка в НАШЕЙ логике доступ не
++даёт**. Fail-open только на закрытом перечне инфраструктурных исключений — иначе
++первая же опечатка превращается в молча открытую дверь, неотличимую от штатной
++работы.
++"""
++from __future__ import annotations
++
++import asyncio
++import uuid
++from datetime import date
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.exc import OperationalError
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services import entitlements_service as ent
++
++pytestmark = pytest.mark.asyncio
++
++
++async def _make_student(db: AsyncSession) -> int:
++    return (
++        await db.execute(
++            text(
++                "INSERT INTO users (full_name, email, is_active) "
++                "VALUES ('tsk301 ученик прав', :e, true) RETURNING id"
++            ),
++            {"e": f"tsk301-ent-{uuid.uuid4().hex[:12]}@example.test"},
++        )
++    ).scalar_one()
++
++
++async def _subscribe(db: AsyncSession, student_id: int, plan_code: str) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
++            "SELECT :s, id, CURRENT_DATE FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "c": plan_code},
++    )
++
++
++@pytest_asyncio.fixture(scope="function")
++async def student(db: AsyncSession) -> int:
++    return await _make_student(db)
++
++
++# ───────────────────── «Ученик не опознан» — всегда fail-closed ─────────────
++
++
++@pytest.mark.parametrize("who", [None, 0])
++@pytest.mark.parametrize("capability", list(ent.GATED_CAPABILITIES))
++async def test_unknown_student_denied(db: AsyncSession, who, capability: str) -> None:
++    """Гость, `id=0` и сервисный вызов без ученика — валидный отказ, не сбой.
++
++    Именно здесь ломался tsk-572: `CurrentUser(id=0)` у сервисного вызова
++    трактовался как обычный пользователь.
++    """
++    decision = await ent.check(db, student_id=who, capability=capability)
++    assert decision.allowed is False
++    assert decision.outcome == "denied_no_plan"
++
++
++async def test_student_without_subscription_denied(
++    db: AsyncSession, student: int
++) -> None:
++    """Ученик есть, подписки нет — тоже отказ, а не «пустим на всякий случай»."""
++    decision = await ent.check(db, student_id=student, capability="code_review")
++    assert (decision.allowed, decision.outcome) == (False, "denied_no_plan")
++
++
++# ─────────────────────────── Права по плану ─────────────────────────────────
++
++
++@pytest.mark.parametrize(
++    "plan_code,capability,expected",
++    [
++        ("demo", "code_review", False),
++        ("demo", "teacher_escalation", False),
++        ("self", "code_review", False),
++        ("self", "teacher_escalation", False),
++        ("ai", "code_review", True),
++        ("ai", "teacher_escalation", False),
++        ("base", "code_review", True),
++        ("base", "teacher_escalation", True),
++        ("test", "teacher_escalation", True),
++        ("alumni", "code_review", False),
++        ("flagship", "teacher_escalation", True),
++    ],
++)
++async def test_binary_capability_matches_matrix(
++    db: AsyncSession, student: int, plan_code: str, capability: str, expected: bool
++) -> None:
++    await _subscribe(db, student, plan_code)
++    decision = await ent.check(db, student_id=student, capability=capability)
++    assert decision.allowed is expected
++    assert decision.outcome == ("allowed" if expected else "denied_not_in_plan")
++
++
++async def test_denied_carries_upgrade_hint(db: AsyncSession, student: int) -> None:
++    """На отказе обязана быть подсказка апгрейда, а не голое «недоступно».
++
++    Это не косметика: заблокированная кнопка без объяснения — тупик, а с
++    объяснением — шаг воронки.
++    """
++    await _subscribe(db, student, "self")
++    decision = await ent.check(db, student_id=student, capability="ai_tutor")
++    assert decision.allowed is False
++    assert decision.upgrade_hint, "план Self обязан объяснять, что даёт апгрейд"
++
++
++async def test_unlimited_plan_has_no_limit(db: AsyncSession, student: int) -> None:
++    await _subscribe(db, student, "flagship")
++    decision = await ent.check(db, student_id=student, capability="ai_tutor")
++    assert (decision.allowed, decision.limit) == (True, None)
++
++
++async def test_unknown_capability_raises(db: AsyncSession, student: int) -> None:
++    """Опечатка в ключе не должна молча означать «разрешено»."""
++    with pytest.raises(ValueError):
++        await ent.check(db, student_id=student, capability="ai_tutorr")
++
++
++# ─────────────────── Счётная возможность: квота и пакеты ────────────────────
++
++
++async def test_quota_counts_down(db: AsyncSession, student: int) -> None:
++    await _subscribe(db, student, "ai")  # лимит 40
++    first = await ent.check(db, student_id=student, capability="ai_tutor")
++    assert (first.limit, first.remaining) == (40, 40)
++
++    reserved = await ent.check_and_reserve(db, student_id=student)
++    assert reserved.allowed is True and reserved.remaining == 39
++
++    after = await ent.check(db, student_id=student, capability="ai_tutor")
++    assert after.remaining == 39
++
++
++async def test_quota_exhausted_denies(db: AsyncSession, student: int) -> None:
++    await _subscribe(db, student, "ai")
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_quota (student_id, period, used) "
++            "VALUES (:s, :p, 40)"
++        ),
++        {"s": student, "p": date.today().replace(day=1)},
++    )
++    decision = await ent.check_and_reserve(db, student_id=student)
++    assert (decision.allowed, decision.outcome, decision.remaining) == (
++        False, "denied_limit", 0,
++    )
++
++
++async def test_quota_spent_before_grants(db: AsyncSession, student: int) -> None:
++    """Порядок списания: сначала бесплатная квота, потом купленный пакет.
++
++    Обратный порядок сжигал бы оплаченное раньше бесплатного — человек терял бы
++    деньги в месяц, когда мог не тратить ничего.
++    """
++    await _subscribe(db, student, "ai")
++    await db.execute(
++        text("INSERT INTO student_ai_grant (student_id, granted) VALUES (:s, 5)"),
++        {"s": student},
++    )
++    await ent.check_and_reserve(db, student_id=student)
++
++    quota_used = (
++        await db.execute(
++            text("SELECT used FROM student_ai_quota WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).scalar()
++    grant_used = (
++        await db.execute(
++            text("SELECT used FROM student_ai_grant WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).scalar()
++    assert (quota_used, grant_used) == (1, 0), "пакет тронут раньше бесплатной квоты"
++
++
++async def test_grants_used_after_quota_and_fifo(
++    db: AsyncSession, student: int
++) -> None:
++    """Пакеты тратятся в порядке покупки — раньше купленный первым."""
++    await _subscribe(db, student, "ai")
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_quota (student_id, period, used) "
++            "VALUES (:s, :p, 40)"
++        ),
++        {"s": student, "p": date.today().replace(day=1)},
++    )
++    old_id = (
++        await db.execute(
++            text(
++                "INSERT INTO student_ai_grant (student_id, granted, purchased_at) "
++                "VALUES (:s, 2, now() - interval '10 days') RETURNING id"
++            ),
++            {"s": student},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_grant (student_id, granted, purchased_at) "
++            "VALUES (:s, 2, now()) RETURNING id"
++        ),
++        {"s": student},
++    )
++
++    decision = await ent.check_and_reserve(db, student_id=student)
++    assert decision.allowed is True
++
++    used_old = (
++        await db.execute(
++            text("SELECT used FROM student_ai_grant WHERE id = :i"), {"i": old_id}
++        )
++    ).scalar()
++    assert used_old == 1, "списание пошло не с раньше купленного пакета"
++
++
++async def test_started_conversation_may_overrun(
++    db: AsyncSession, student: int
++) -> None:
++    """Разговор, начатый до исчерпания, доводится до конца (решения 2C и 19).
++
++    Перерасход помечается: без отметки щедрость становится невидимой, и вопрос
++    «не злоупотребляют ли» нечем закрыть.
++    """
++    await _subscribe(db, student, "ai")
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_quota (student_id, period, used) "
++            "VALUES (:s, :p, 40)"
++        ),
++        {"s": student, "p": date.today().replace(day=1)},
++    )
++    blocked = await ent.check_and_reserve(db, student_id=student)
++    assert blocked.allowed is False
++
++    allowed = await ent.check_and_reserve(db, student_id=student, allow_overrun=True)
++    assert allowed.allowed is True
++    assert allowed.over_limit is True
++
++
++@pytest.mark.parametrize("plan_code", ["self", "demo", "alumni"])
++async def test_overrun_does_not_grant_a_right(
++    db: AsyncSession, student: int, plan_code: str
++) -> None:
++    """`allow_overrun` снимает лимит, но не выдаёт право.
++
++    Дыра, найденная ревью: разговоры в `ai_tutor_session` существуют ЗАДОЛГО до
++    включения гейта. Если «разговор уже начат» трактовать как разрешение, ученик
++    Self со старой сессией получил бы безлимитного наставника навсегда.
++    """
++    await _subscribe(db, student, plan_code)
++    decision = await ent.check_and_reserve(
++        db, student_id=student, allow_overrun=True
++    )
++    assert (decision.allowed, decision.outcome) == (False, "denied_not_in_plan")
++
++    spent = (
++        await db.execute(
++            text("SELECT count(*) FROM student_ai_quota WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).scalar()
++    assert spent == 0, "отказ не должен оставлять следа в счётчике"
++
++
++# ─────────────────── Возврат единицы при сбое вызова ────────────────────────
++
++
++async def test_release_returns_quota_unit(db: AsyncSession, student: int) -> None:
++    """Неудачный вызов модели возвращает списанную единицу квоты.
++
++    Резерв идёт до вызова — только так закрывается гонка; плата за это —
++    обязательная явная компенсация.
++    """
++    await _subscribe(db, student, "ai")
++    decision = await ent.check_and_reserve(db, student_id=student)
++    assert decision.reserved_quota is True
++
++    await ent.release(db, decision, student_id=student)
++    used = (
++        await db.execute(
++            text("SELECT used FROM student_ai_quota WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).scalar()
++    assert used == 0
++
++
++async def test_release_returns_the_same_grant(
++    db: AsyncSession, student: int
++) -> None:
++    """Возвращается ровно тот пакет, из которого списали.
++
++    Иначе отдача бесплатной квоты «чинила» бы платный пакет и наоборот.
++    """
++    await _subscribe(db, student, "ai")
++    await db.execute(
++        text(
++            "INSERT INTO student_ai_quota (student_id, period, used) "
++            "VALUES (:s, :p, 40)"
++        ),
++        {"s": student, "p": date.today().replace(day=1)},
++    )
++    grant_id = (
++        await db.execute(
++            text(
++                "INSERT INTO student_ai_grant (student_id, granted) "
++                "VALUES (:s, 3) RETURNING id"
++            ),
++            {"s": student},
++        )
++    ).scalar_one()
++
++    decision = await ent.check_and_reserve(db, student_id=student)
++    assert decision.reserved_grant_id == grant_id
++    assert decision.reserved_quota is False
++
++    await ent.release(db, decision, student_id=student)
++    used = (
++        await db.execute(
++            text("SELECT used FROM student_ai_grant WHERE id = :i"), {"i": grant_id}
++        )
++    ).scalar()
++    assert used == 0
++
++    quota_used = (
++        await db.execute(
++            text("SELECT used FROM student_ai_quota WHERE student_id = :s"),
++            {"s": student},
++        )
++    ).scalar()
++    assert quota_used == 40, "квоту трогать было нечего — списание шло из пакета"
++
++
++async def test_release_is_noop_without_reservation(
++    db: AsyncSession, student: int
++) -> None:
++    """Отказ и безлимит резерва не делают — возвращать нечего."""
++    await _subscribe(db, student, "flagship")
++    decision = await ent.check_and_reserve(db, student_id=student)
++    assert decision.reserved_quota is False and decision.reserved_grant_id is None
++    await ent.release(db, decision, student_id=student)  # не падает
++
++
++# ───────────────────── fail-open против fail-closed ─────────────────────────
++
++
++async def test_infrastructure_failure_is_fail_open(
++    db: AsyncSession, student: int, monkeypatch
++) -> None:
++    """Инфраструктурный сбой пускает — но помечает исход как технический."""
++
++    async def _boom(*_args, **_kwargs):
++        raise OperationalError("SELECT 1", {}, Exception("соединение потеряно"))
++
++    monkeypatch.setattr(ent, "_load_plan", _boom)
++    decision = await ent.check(db, student_id=student, capability="code_review")
++    assert (decision.allowed, decision.outcome) == (True, "error_technical")
++
++
++async def test_timeout_is_fail_open(
++    db: AsyncSession, student: int, monkeypatch
++) -> None:
++    async def _slow(*_args, **_kwargs):
++        raise asyncio.TimeoutError()
++
++    monkeypatch.setattr(ent, "_load_plan", _slow)
++    decision = await ent.check(db, student_id=student, capability="code_review")
++    assert decision.outcome == "error_technical"
++
++
++async def test_our_own_bug_does_not_open_the_door(
++    db: AsyncSession, student: int, monkeypatch
++) -> None:
++    """Ошибка в нашей логике поднимается наружу и доступа НЕ даёт.
++
++    Без этого теста fail-open постепенно накрыл бы любые исключения, и опечатка
++    стала бы неотличима от штатного разрешения.
++    """
++
++    async def _bug(*_args, **_kwargs):
++        raise KeyError("опечатка в ключе плана")
++
++    monkeypatch.setattr(ent, "_load_plan", _bug)
++    with pytest.raises(KeyError):
++        await ent.check(db, student_id=student, capability="code_review")
++
++
++# ─────────────────────────── Режимы выката ──────────────────────────────────
++
++
++@pytest.mark.parametrize(
++    "mode,outcome,expected_block",
++    [
++        ("off", "denied_no_plan", False),
++        ("off", "denied_limit", False),
++        ("shadow", "denied_no_plan", False),
++        ("shadow", "denied_not_in_plan", False),
++        ("guests", "denied_no_plan", True),
++        ("guests", "denied_not_in_plan", False),
++        ("guests", "denied_limit", False),
++        ("on", "denied_no_plan", True),
++        ("on", "denied_not_in_plan", True),
++        ("on", "denied_limit", True),
++    ],
++)
++async def test_gate_mode_decides_what_is_applied(
++    monkeypatch, mode: str, outcome: str, expected_block: bool
++) -> None:
++    """Решение считается всегда, применяется по режиму.
++
++    Режим `guests` — самостоятельный шаг выката, а не оттенок «включено»: он
++    закрывает кран токенов гостям, не трогая ни одного действующего ученика.
++    """
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", mode)
++    decision = ent.Decision(allowed=False, outcome=outcome)
++    assert ent.should_block(decision) is expected_block
++
++
++@pytest.mark.parametrize("mode", ["off", "shadow", "guests", "on"])
++async def test_allowed_is_never_blocked(monkeypatch, mode: str) -> None:
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", mode)
++    assert ent.should_block(ent.Decision(allowed=True, outcome="allowed")) is False
++
++
++@pytest.mark.parametrize("mode", ["off", "shadow", "guests", "on"])
++async def test_technical_error_never_blocks(monkeypatch, mode: str) -> None:
++    """Технический сбой не режет ни в одном режиме — в этом и смысл fail-open."""
++    monkeypatch.setattr(ent.settings, "subscription_gate_mode", mode)
++    assert ent.should_block(ent._ERROR_TECHNICAL) is False
+diff --git a/tests/test_tsk301_limit_race.py b/tests/test_tsk301_limit_race.py
+new file mode 100644
+index 0000000..5ec480c
+--- /dev/null
++++ b/tests/test_tsk301_limit_race.py
+@@ -0,0 +1,158 @@
++"""tsk-301: гонка при списании лимита наставника (пробел П7).
++
++Модель дефекта. Наивная проверка «прочитал `used`, сравнил с лимитом, записал
++`used+1`» между чтением и записью ничем не защищена. Две вкладки ученика при
++остатке в одну единицу обе прочитают «осталось 1», обе пройдут проверку и обе
++запишутся — итог `used = limit + 1`, то есть одна единица потрачена дважды.
++
++Здесь проверяется, что резерв делается **одним оператором SQL**
++(`INSERT … ON CONFLICT DO UPDATE … WHERE used < :limit`), и потому при остатке 1
++из N одновременных попыток проходит ровно одна.
++
++Тест работает вне общей откатываемой транзакции: гонку нельзя проверить на одном
++соединении — нужны настоящие параллельные транзакции и настоящие коммиты.
++Поэтому модуль убирает за собой сам.
++"""
++from __future__ import annotations
++
++import asyncio
++import sys
++import uuid
++from datetime import date
++from pathlib import Path
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
++from sqlalchemy.pool import NullPool
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from app.core.config import Settings
++from app.services import entitlements_service as ent
++
++pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
++
++_settings = Settings()
++
++#: Больше одновременных попыток — шире окно гонки.
++CONCURRENCY = 8
++
++
++@pytest_asyncio.fixture(scope="function")
++async def student_with_one_left():
++    """Ученик на тарифе AI (лимит 40), у которого израсходовано 39. Уборка своя."""
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    period = date.today().replace(day=1)
++    async with AsyncSession(engine, expire_on_commit=False) as s:
++        student_id = (
++            await s.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk301 гонка лимита', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk301-race-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++        await s.execute(
++            text(
++                "INSERT INTO student_subscription (student_id, plan_id, starts_on) "
++                "SELECT :s, id, CURRENT_DATE FROM subscription_plan WHERE code = 'ai'"
++            ),
++            {"s": student_id},
++        )
++        await s.execute(
++            text(
++                "INSERT INTO student_ai_quota (student_id, period, used) "
++                "VALUES (:s, :p, 39)"
++            ),
++            {"s": student_id, "p": period},
++        )
++        await s.commit()
++
++    try:
++        yield student_id
++    finally:
++        async with AsyncSession(engine) as s:
++            for table in (
++                "student_ai_grant", "student_ai_quota", "student_subscription",
++            ):
++                await s.execute(
++                    text(f"DELETE FROM {table} WHERE student_id = :s"),
++                    {"s": student_id},
++                )
++            await s.execute(
++                text("DELETE FROM users WHERE id = :s"), {"s": student_id}
++            )
++            await s.commit()
++        await engine.dispose()
++
++
++async def _reserve_once(engine, student_id: int) -> bool:
++    """Одна попытка списания в СВОЁМ соединении и СВОЕЙ транзакции."""
++    async with AsyncSession(engine, expire_on_commit=False) as session:
++        decision = await ent.check_and_reserve(session, student_id=student_id)
++        await session.commit()
++        return decision.allowed
++
++
++async def test_only_one_reservation_passes_when_one_left(
++    student_with_one_left: int,
++) -> None:
++    """При остатке 1 из восьми одновременных попыток проходит ровно одна."""
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        results = await asyncio.gather(
++            *(_reserve_once(engine, student_with_one_left) for _ in range(CONCURRENCY))
++        )
++        assert sum(results) == 1, (
++            f"списаний прошло {sum(results)} при остатке 1 — резерв не атомарен"
++        )
++
++        async with AsyncSession(engine) as s:
++            used = (
++                await s.execute(
++                    text(
++                        "SELECT used FROM student_ai_quota WHERE student_id = :s"
++                    ),
++                    {"s": student_with_one_left},
++                )
++            ).scalar()
++        assert used == 40, f"счётчик ушёл за лимит: used={used}, лимит 40"
++    finally:
++        await engine.dispose()
++
++
++async def test_grants_are_not_double_spent(student_with_one_left: int) -> None:
++    """Тот же инвариант для купленного пакета: одна единица — одно списание.
++
++    Квота исчерпана заранее, остаток только в пакете на 1 обращение.
++    """
++    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
++    try:
++        async with AsyncSession(engine) as s:
++            await s.execute(
++                text(
++                    "UPDATE student_ai_quota SET used = 40 WHERE student_id = :s"
++                ),
++                {"s": student_with_one_left},
++            )
++            await s.execute(
++                text(
++                    "INSERT INTO student_ai_grant (student_id, granted) "
++                    "VALUES (:s, 1)"
++                ),
++                {"s": student_with_one_left},
++            )
++            await s.commit()
++
++        results = await asyncio.gather(
++            *(_reserve_once(engine, student_with_one_left) for _ in range(CONCURRENCY))
++        )
++        assert sum(results) == 1, (
++            f"из пакета на 1 обращение списали {sum(results)} раз"
++        )
++    finally:
++        await engine.dispose()
+diff --git a/tests/test_tsk301_pricing_group_from_subscription.py b/tests/test_tsk301_pricing_group_from_subscription.py
+new file mode 100644
+index 0000000..f135c8c
+--- /dev/null
++++ b/tests/test_tsk301_pricing_group_from_subscription.py
+@@ -0,0 +1,244 @@
++"""tsk-301: тарифная группа берётся из подписки, а не из курса (контракт §7).
++
++Причина правки: «Базовый 3000», «Базовый 2750», «Self 1000» и «AI 1500» продают
++ОДИН И ТОТ ЖЕ курс — курсом их не различить. `course_pricing` даёт одну группу на
++курс, а резолвер внутри группы одноосный (частота ИЛИ сегмент), поэтому двумя
++тарифами в одной группе это тоже не выражается.
++
++Три исхода, и их нельзя схлопнуть в два:
++
++* подписка с группой → **только** она (не «вдобавок к курсовой», иначе ученик
++  Self, зачисленный на курс группы «Базовый», получит два начисления за один
++  продукт);
++* подписка без группы → начислений нет вовсе (Test, Demo, Выпускник);
++* подписки нет → прежнее поведение, группы из проданных курсов.
++
++Главный тест здесь — последний: **пока подписки никому не присвоены, деньги
++считаются ровно как раньше.** Это и есть то свойство, которое делает выкат
++безопасным: правка спит до Фазы 5.
++
++Отдельно закреплено удаление устаревшей строки при смене тарифа. Производная
++строка, у которой исчезло основание, не «остаётся как была» — она замирает со
++старой суммой навсегда, потому что пересчёт по ней больше не проходит.
++"""
++from __future__ import annotations
++
++import uuid
++from datetime import date
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services import charge_service, pricing_service
++
++pytestmark = pytest.mark.asyncio
++
++
++@pytest_asyncio.fixture(scope="function")
++async def money_fixture(db: AsyncSession) -> dict[str, int]:
++    """Ученик, зачисленный на платный курс группы «Базовый».
++
++    Форма повторяет прод: ученик **без расписания** и с зачислением на курс —
++    ровно тот случай, что у 18 человек из 52 (урок tsk-231: фикстура, не похожая
++    на прод, зеленеет при неверном правиле).
++    """
++    student_id = (
++        await db.execute(
++            text(
++                "INSERT INTO users (full_name, email, is_active) "
++                "VALUES ('tsk301 ученик денег', :e, true) RETURNING id"
++            ),
++            {"e": f"tsk301-money-{uuid.uuid4().hex[:12]}@example.test"},
++        )
++    ).scalar_one()
++    course_id = (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, access_level) "
++                "VALUES ('tsk301 платный курс', 'self_guided') RETURNING id"
++            )
++        )
++    ).scalar_one()
++    base_group = (
++        await db.execute(
++            text("SELECT id FROM pricing_group WHERE name = 'Базовый'")
++        )
++    ).scalar_one()
++    self_group = (
++        await db.execute(text("SELECT id FROM pricing_group WHERE name = 'Self'"))
++    ).scalar_one()
++
++    await db.execute(
++        text(
++            "INSERT INTO course_pricing (course_id, sale_status, group_id) "
++            "VALUES (:c, 'paid', :g)"
++        ),
++        {"c": course_id, "g": base_group},
++    )
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active) "
++            "VALUES (:u, :c, true)"
++        ),
++        {"u": student_id, "c": course_id},
++    )
++    return {
++        "student_id": int(student_id),
++        "course_id": int(course_id),
++        "base_group": int(base_group),
++        "self_group": int(self_group),
++    }
++
++
++async def _subscribe(
++    db: AsyncSession, student_id: int, plan_code: str, group_id: int | None
++) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, :g, CURRENT_DATE FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "g": group_id, "c": plan_code},
++    )
++
++
++# ───────────────── Главное свойство: без подписок ничего не меняется ────────
++
++
++async def test_without_subscription_groups_come_from_courses(
++    db: AsyncSession, money_fixture: dict[str, int]
++) -> None:
++    """Пока подписки не присвоены — прежнее поведение, группа из курса.
++
++    Это то самое свойство, ради которого правку можно катить до Фазы 5: она
++    спит, пока подписок нет.
++    """
++    groups = await pricing_service.billing_group_ids(
++        db, student_id=money_fixture["student_id"]
++    )
++    assert groups == [money_fixture["base_group"]]
++
++
++async def test_subscription_overrides_course_group(
++    db: AsyncSession, money_fixture: dict[str, int]
++) -> None:
++    """Подписка Self перекрывает группу курса, а не добавляется к ней."""
++    await _subscribe(
++        db, money_fixture["student_id"], "self", money_fixture["self_group"]
++    )
++    groups = await pricing_service.billing_group_ids(
++        db, student_id=money_fixture["student_id"]
++    )
++    assert groups == [money_fixture["self_group"]], (
++        "группа курса должна быть вытеснена, иначе выйдет два начисления за один продукт"
++    )
++
++
++async def test_subscription_without_group_means_no_money(
++    db: AsyncSession, money_fixture: dict[str, int]
++) -> None:
++    """Test, Demo и Выпускник начислений не порождают вовсе."""
++    await _subscribe(db, money_fixture["student_id"], "alumni", None)
++    groups = await pricing_service.billing_group_ids(
++        db, student_id=money_fixture["student_id"]
++    )
++    assert groups == []
++
++
++# ─────────────────────── Расчёт цены по подписке ────────────────────────────
++
++
++async def test_self_subscriber_without_schedule_gets_full_price(
++    db: AsyncSession, money_fixture: dict[str, int]
++) -> None:
++    """Ученик Self без расписания получает полную цену тарифа.
++
++    Так уже работает пропорция: при нуле ожидаемых занятий она не применяется.
++    Тариф без занятий вписывается в существующий расчёт без исключений — это и
++    есть содержание принципа «расписание порождает деньги».
++    """
++    await _subscribe(
++        db, money_fixture["student_id"], "self", money_fixture["self_group"]
++    )
++    rows = await pricing_service.list_student_pricing(db)
++    mine = [r for r in rows if r.student_id == money_fixture["student_id"]]
++    assert len(mine) == 1, "ученик обязан попасть в расчёт ровно один раз"
++
++    groups = mine[0].groups
++    assert len(groups) == 1, "групп у ученика с подпиской ровно одна"
++    assert groups[0].group_id == money_fixture["self_group"]
++    assert groups[0].price_minor == 100_000, "Self — 1000 ₽ полной ценой"
++
++
++async def test_subscriber_appears_without_any_paid_course(
++    db: AsyncSession
++) -> None:
++    """Подписчик без зачислений вообще тоже попадает в расчёт.
++
++    Self и AI курсов не имеют; если бы расчёт по-прежнему начинался с зачислений,
++    такой ученик не получил бы начисления никогда — он платит, а счёта нет.
++    """
++    student_id = (
++        await db.execute(
++            text(
++                "INSERT INTO users (full_name, email, is_active) "
++                "VALUES ('tsk301 подписчик без курсов', :e, true) RETURNING id"
++            ),
++            {"e": f"tsk301-bare-{uuid.uuid4().hex[:12]}@example.test"},
++        )
++    ).scalar_one()
++    ai_group = (
++        await db.execute(text("SELECT id FROM pricing_group WHERE name = 'AI'"))
++    ).scalar_one()
++    await _subscribe(db, int(student_id), "ai", int(ai_group))
++
++    rows = await pricing_service.list_student_pricing(db)
++    mine = [r for r in rows if r.student_id == student_id]
++    assert len(mine) == 1
++    assert mine[0].groups[0].price_minor == 150_000, "AI — 1500 ₽"
++
++
++# ──────────────── Смена тарифа не оставляет мёртвых начислений ──────────────
++
++
++async def test_switching_tariff_removes_stale_charge(
++    db: AsyncSession, money_fixture: dict[str, int]
++) -> None:
++    """Начисление по прежней группе удаляется, а не замирает со старой суммой.
++
++    Пересчёт идёт по НОВОМУ набору групп; если не добрать группы с уже открытыми
++    строками, старая строка не попадёт в цикл ни разу и останется навсегда —
++    производная величина без основания.
++    """
++    student_id = money_fixture["student_id"]
++    period = date.today().replace(day=1)
++
++    await db.execute(
++        text(
++            "INSERT INTO student_monthly_charge "
++            "  (student_id, group_id, period, calculated_minor, status) "
++            "VALUES (:s, :g, :p, 550000, 'open')"
++        ),
++        {"s": student_id, "g": money_fixture["base_group"], "p": period},
++    )
++    await _subscribe(db, student_id, "self", money_fixture["self_group"])
++
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=period)
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT group_id, calculated_minor FROM student_monthly_charge "
++                " WHERE student_id = :s AND period = :p"
++            ),
++            {"s": student_id, "p": period},
++        )
++    ).all()
++    groups = {int(r.group_id): int(r.calculated_minor) for r in rows}
++    assert money_fixture["base_group"] not in groups, (
++        "начисление по прежней группе осталось — оно замрёт со старой суммой"
++    )
++    assert groups.get(money_fixture["self_group"]) == 100_000

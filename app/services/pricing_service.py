@@ -57,9 +57,69 @@ __all__ = [
     "is_root_course",
     "set_course_pricing",
     "list_student_pricing",
+    "active_subscription_groups",
+    "billing_group_ids",
     "resolve_attendance_frequency",
     "AttendanceFrequencyResolution",
 ]
+
+
+# ------------------------------------------------- группа из подписки (tsk-301)
+
+
+async def active_subscription_groups(db: AsyncSession) -> dict[int, Optional[int]]:
+    """`student_id` → тарифная группа действующей подписки.
+
+    **Наличие ключа означает «подписка есть»**, а значение `None` — «денег нет
+    вовсе» (Test, Demo, Выпускник). Различать это обязательно: отсутствие ключа
+    возвращает ученика к прежнему поведению (группа из курса), а `None` деньги
+    отменяет.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT student_id, pricing_group_id FROM student_subscription "
+                " WHERE ends_on IS NULL"
+            )
+        )
+    ).all()
+    return {int(r.student_id): r.pricing_group_id for r in rows}
+
+
+async def billing_group_ids(db: AsyncSession, *, student_id: int) -> list[int]:
+    """Группы, по которым считается месяц ученика. Подписка перекрывает курсы.
+
+    Три исхода, и их нельзя схлопнуть в два:
+
+    * подписка с группой → **только** эта группа. Не «вдобавок к курсовой»:
+      иначе ученик Self, зачисленный на курс группы «Базовый», получил бы два
+      начисления за один продукт;
+    * подписка без группы → пусто, начислений нет;
+    * подписки нет → прежнее поведение, группы из проданных курсов.
+
+    Пока подписки никому не присвоены (до Фазы 5), третья ветка работает для
+    всех — поэтому правка ничего не меняет в деньгах до самого присвоения.
+    """
+    subs = await active_subscription_groups(db)
+    if student_id in subs:
+        group_id = subs[student_id]
+        return [int(group_id)] if group_id is not None else []
+
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT DISTINCT cp.group_id
+                  FROM user_courses uc
+                  JOIN course_pricing cp ON cp.course_id = uc.course_id
+                                        AND cp.sale_status = 'paid'
+                 WHERE uc.user_id = :s AND uc.is_active
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    return [int(r.group_id) for r in rows]
 
 
 # ---------------------------------------------------------------- тарифные группы
@@ -329,6 +389,45 @@ async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
         )
     ).all()
 
+    # tsk-301: подписка перекрывает группу курса. Строки ученика с подпиской
+    # отбрасываем целиком и заменяем одной — по группе подписки. Дописывать
+    # рядом нельзя: ученик Self, зачисленный на курс группы «Базовый», получил
+    # бы два начисления за один продукт.
+    subs = await active_subscription_groups(db)
+    if subs:
+        rows = [r for r in rows if r.student_id not in subs]
+        rows = list(rows) + list(
+            (
+                await db.execute(
+                    text(
+                        """
+                        SELECT u.id                AS student_id,
+                               u.full_name,
+                               s.pricing_group_id  AS group_id,
+                               pg.name             AS group_name,
+                               (SELECT string_agg(c.title, ' · ' ORDER BY c.title)
+                                  FROM user_courses uc
+                                  JOIN courses c ON c.id = uc.course_id
+                                 WHERE uc.user_id = u.id AND uc.is_active)
+                                                   AS course_title,
+                               (SELECT count(*)
+                                  FROM lesson_slot_student lss
+                                  JOIN lesson_slot ls ON ls.id = lss.slot_id
+                                 WHERE lss.student_id = u.id
+                                   AND lss.is_active
+                                   AND ls.is_active) AS weekly_lessons
+                          FROM student_subscription s
+                          JOIN users u ON u.id = s.student_id AND u.is_active
+                          JOIN pricing_group pg ON pg.id = s.pricing_group_id
+                         WHERE s.ends_on IS NULL
+                           AND s.pricing_group_id IS NOT NULL
+                         ORDER BY u.full_name
+                        """
+                    )
+                )
+            ).all()
+        )
+
     tariffs = await _load_tariffs(db, only_active=True)
 
     students: dict[int, StudentPricingRead] = {}
@@ -358,7 +457,10 @@ async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
             )
             buckets[key] = bucket
             student.groups.append(bucket)
-        bucket.course_titles.append(row.course_title)
+        # У подписки без зачислений курсов нет вовсе — пустое имя в список не
+        # кладём, иначе на экране маркетолога появится безымянная строка.
+        if row.course_title:
+            bucket.course_titles.append(row.course_title)
 
     for student in students.values():
         prices = [g.price_minor for g in student.groups]

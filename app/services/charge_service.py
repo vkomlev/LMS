@@ -454,6 +454,13 @@ async def recalculate_open_months_for_group(
                 SELECT DISTINCT ch.student_id
                   FROM student_monthly_charge ch
                  WHERE ch.group_id = :g AND ch.status = 'open'
+                UNION
+                -- tsk-301: ученик может попадать в группу подписки, не будучи
+                -- зачисленным ни на один её курс (Self и AI курсов не имеют).
+                SELECT DISTINCT s.student_id
+                  FROM student_subscription s
+                  JOIN users u ON u.id = s.student_id AND u.is_active
+                 WHERE s.ends_on IS NULL AND s.pricing_group_id = :g
                 """
             ),
             {"g": group_id},
@@ -472,21 +479,27 @@ async def recalculate_for_student(
     Точка входа для автопересчёта: её зовут смена расписания и правка перерыва.
     """
     period = month_start(period or date.today())
-    groups = (
+    # tsk-301: группа берётся из подписки, если она есть, иначе из проданных
+    # курсов (прежнее поведение).
+    target_groups = await pricing_service.billing_group_ids(db, student_id=student_id)
+
+    # К целевым добавляем группы, по которым у ученика УЖЕ есть открытая строка.
+    # Без этого смена тарифа оставила бы прежнее начисление нетронутым: цикл
+    # прошёл бы только по новой группе, а старая строка замерла бы со своей
+    # суммой навсегда — её больше никто не пересчитывает. `recalculate_student_group`
+    # такую строку удалит сам, как только увидит, что считать её не из чего.
+    stale = (
         await db.execute(
             text(
-                """
-                SELECT DISTINCT cp.group_id
-                  FROM user_courses uc
-                  JOIN course_pricing cp ON cp.course_id = uc.course_id
-                                        AND cp.sale_status = 'paid'
-                 WHERE uc.user_id = :s AND uc.is_active
-                """
+                "SELECT DISTINCT group_id FROM student_monthly_charge "
+                " WHERE student_id = :s AND period = :p AND status = 'open'"
             ),
-            {"s": student_id},
+            {"s": student_id, "p": period},
         )
     ).all()
-    for row in groups:
+    group_ids = sorted({*target_groups, *(int(r.group_id) for r in stale)})
+
+    for group_id in group_ids:
         # Вложенная транзакция на группу — как в `recalculate_month`. Эту точку
         # входа зовут смена расписания и правка перерыва, то есть она работает
         # среди дня, когда идут платежи: платёж, пришедший ровно между проверкой
@@ -495,13 +508,13 @@ async def recalculate_for_student(
         try:
             async with db.begin_nested():
                 await recalculate_student_group(
-                    db, student_id=student_id, group_id=row.group_id, period=period
+                    db, student_id=student_id, group_id=group_id, period=period
                 )
         except IntegrityError:
             logger.warning(
                 "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
                 student_id,
-                row.group_id,
+                group_id,
                 period,
                 exc_info=True,
             )

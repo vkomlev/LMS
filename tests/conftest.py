@@ -257,6 +257,10 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
         # то есть своего engine. Остальные тесты той задачи живут в
         # `test_tsk521_link_audit.py` под обычной изоляцией.
         "test_tsk521_link_audit_lock.py",
+        # tsk-301: гонку списания лимита нельзя проверить на одном соединении —
+        # нужны настоящие параллельные транзакции и коммиты. Остальные тесты
+        # задачи живут под обычной изоляцией.
+        "test_tsk301_limit_race.py",
         "test_teacher_courses_triggers_smoke.py",
         "test_teacher_help_requests_overdue_tsk312.py",
         "test_teacher_help_requests_stage38.py",
