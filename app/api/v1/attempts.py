@@ -44,6 +44,9 @@ from app.services.checking_service import CheckingService
 # tsk-302 этап 3: сам анализ переехал в фоновый тик
 # (`code_review_cron_service`), здесь работа только помечается к оценке.
 from app.services.code_review_service import pick_code_for_review
+# tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
+# правило живёт в одном месте на все точки принуждения (пробел П13).
+from app.services import entitlements_service
 # tsk-575: раскладка файлов-вложений и разбор их имён — в одном модуле,
 # потому что читают её ещё и teacher/history-пути (пометка «файл утрачен»).
 from app.services.attempt_attachments import (
@@ -695,6 +698,27 @@ async def submit_attempt_answers(
         #
         # Копия временная: тик перезапишет `code_review` отчётом.
         if not attempt.time_expired and settings.code_review_cron_enabled:
+            # tsk-301: гейт подписки стоит ЗДЕСЬ, ДО постановки в очередь и до
+            # чтения файла вложения. Позже нельзя: работа уже помечена, и фоновый
+            # тик её заберёт — обещание Demo «токены не расходуем» нарушится
+            # молча, без единой ошибки в логах (пробел П2 контракта).
+            #
+            # Ученику отказ НЕ виден: приём ответа проходит как обычно, просто
+            # работа не попадает в очередь оценки. Оценку он и так не видит —
+            # её читает преподаватель, — поэтому 403 здесь был бы сломанной
+            # сдачей вместо отсутствующей услуги.
+            gate = await entitlements_service.check(
+                db, student_id=attempt.user_id, capability="code_review"
+            )
+            skip_code_review = entitlements_service.should_block(
+                gate, capability="code_review", student_id=attempt.user_id
+            )
+        else:
+            # Просрочка или выключенный тик — не отказ подписки, но очередь
+            # всё равно пропускаем.
+            skip_code_review = True
+
+        if not skip_code_review:
             # Чтение файла — синхронный ввод-вывод, и теперь оно случается на
             # КАЖДОЙ сдаче с вложением, а не изредка. Уносим с петли событий.
             picked_code = await asyncio.to_thread(

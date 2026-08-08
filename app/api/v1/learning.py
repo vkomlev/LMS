@@ -54,6 +54,8 @@ from app.services.help_requests_service import (
 )
 from app.services import payment_access_service
 from app.services import lesson_attendance_service
+# tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
+from app.services import entitlements_service
 from app.services.attempts_service import AttemptsService
 from app.services.tasks_service import TasksService
 from app.services.materials_service import MaterialsService
@@ -543,6 +545,15 @@ async def get_task_state(
 @router.post(
     "/tasks/{task_id}/request-help",
     response_model=RequestHelpResponse,
+    responses={
+        403: {
+            "description": (
+                "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит "
+                "`payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при "
+                "исчерпании попыток этим гейтом не закрывается."
+            )
+        }
+    },
     summary="Запросить помощь по заданию (идемпотентно в окне дедупа)",
 )
 async def request_help(
@@ -558,6 +569,35 @@ async def request_help(
     # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
     if not current_user.is_service:
         await payment_access_service.assert_content_allowed(db, body.student_id)
+
+    # tsk-301: эскалация преподавателю входит не во все тарифы. Гейт стоит на
+    # РУЧНОМ запросе; авто-заявку `blocked_limit` он не трогает — ученик,
+    # упёршийся в лимит попыток, иначе остался бы вовсе без выхода.
+    #
+    # Проверяем по УЧЕНИКУ, а не по вызывающему: в отличие от гейта оплаты выше,
+    # сервисный ключ здесь не освобождает. Бот — транспорт, а не отдельное право;
+    # иначе вышло бы «через бота можно, через браузер нельзя» (класс tsk-433).
+    escalation_gate = await entitlements_service.check(
+        db, student_id=body.student_id, capability="teacher_escalation"
+    )
+    if entitlements_service.should_block(
+        escalation_gate,
+        capability="teacher_escalation",
+        student_id=body.student_id,
+    ):
+        raise DomainError(
+            detail=(
+                escalation_gate.upgrade_hint
+                or "Разбор с преподавателем не входит в ваш тариф."
+            ),
+            status_code=403,
+            payload={
+                "code": "subscription_denied",
+                "outcome": escalation_gate.outcome,
+                "upgrade_hint": escalation_gate.upgrade_hint,
+            },
+        )
+
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")

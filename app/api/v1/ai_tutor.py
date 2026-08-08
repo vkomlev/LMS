@@ -23,8 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, get_current_user, require_role
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
+from app.services import entitlements_service
 from app.services.ai_tutor import session_service
 from app.services.llm import Budget, LLMError, stream
+from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ai-tutor", tags=["ai_tutor"])
@@ -98,9 +100,42 @@ def _enabled() -> bool:
     return getattr(settings, "ai_tutor_enabled", True)
 
 
+def _deny(decision) -> DomainError:
+    """Отказ подписки в виде, из которого клиент соберёт предложение апгрейда.
+
+    Текст «недоступно» без объяснения — тупик; с объяснением — шаг воронки,
+    поэтому подсказка едет в теле отказа, а не теряется в коде ответа.
+    """
+    return DomainError(
+        detail=(
+            decision.upgrade_hint
+            or "ИИ-наставник не входит в ваш тариф."
+        ),
+        status_code=403,
+        payload={
+            "code": "subscription_denied",
+            "outcome": decision.outcome,
+            "limit": decision.limit,
+            "remaining": decision.remaining,
+            "upgrade_hint": decision.upgrade_hint,
+        },
+    )
+
+
+_SUBSCRIPTION_403 = {
+    403: {
+        "description": (
+            "tsk-301: наставник не входит в тариф либо исчерпан месячный лимит. "
+            "Тело содержит `payload.upgrade_hint` — что даёт апгрейд."
+        )
+    }
+}
+
+
 @router.get(
     "/tasks/{task_id}",
     response_model=TutorSessionRead,
+    responses=_SUBSCRIPTION_403,
     summary="Открыть разговор с наставником по заданию",
 )
 async def get_session(
@@ -116,8 +151,35 @@ async def get_session(
     """
     if not _enabled():
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Наставник выключен")
+    owner = _resolve_student(current_user, student_id)
+
+    # tsk-301: точка принуждения — открытие НОВОГО разговора. Проверяем до
+    # создания сессии: пустой разговор, который нельзя продолжить, хуже честного
+    # отказа с предложением апгрейда.
+    #
+    # Уже существующий разговор отдаём всегда. Иначе ученик, исчерпавший лимит,
+    # не смог бы даже открыть свой диалог — а обещание «начатый разговор
+    # доводится до конца» держится именно на том, что он до него дотянется.
+    # Расход при этом не растёт: платит реплика, а не просмотр.
+    existing = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM ai_tutor_session "
+                " WHERE student_id = :sid AND task_id = :tid"
+            ),
+            {"sid": owner, "tid": task_id},
+        )
+    ).first()
+    if existing is None:
+        gate = await entitlements_service.check(
+            db, student_id=owner, capability="ai_tutor"
+        )
+        if entitlements_service.should_block(
+            gate, capability="ai_tutor", student_id=owner
+        ):
+            raise _deny(gate)
+
     try:
-        owner = _resolve_student(current_user, student_id)
         session, _ = await session_service.get_or_create(
             db, student_id=owner, task_id=task_id
         )
@@ -144,6 +206,7 @@ def _sse(event: str, payload: dict) -> str:
 
 @router.post(
     "/tasks/{task_id}/ask",
+    responses=_SUBSCRIPTION_403,
     summary="Спросить наставника (поток server-sent events)",
 )
 async def ask(
@@ -180,6 +243,21 @@ async def ask(
 
         return StreamingResponse(_limited(), media_type="text/event-stream")
 
+    # tsk-301: единица лимита — обращение к модели, поэтому списание здесь, а не
+    # при создании сессии. Разговор, начатый до исчерпания, доводится до конца:
+    # `allow_overrun` включается по факту «ходы уже были», а не по тарифу
+    # (решения 2C и 19 брифа — одно правило на оба случая).
+    #
+    # Резерв идёт ДО вызова модели: иначе две вкладки ученика съедят одну
+    # единицу дважды. Неудачный вызов возвращает её через `release` ниже.
+    gate = await entitlements_service.check_and_reserve(
+        db, student_id=owner, allow_overrun=session.turns > 0
+    )
+    if entitlements_service.should_block(
+        gate, capability="ai_tutor", student_id=owner
+    ):
+        raise _deny(gate)
+
     student_text = (body.message or "").strip() or None
     if student_text:
         await session_service.add_message(db, session.id, "student", student_text)
@@ -208,6 +286,11 @@ async def ask(
                 "ai_tutor: сбой наставника session=%s student=%s: %s",
                 session.id, owner, exc,
             )
+            # tsk-301: единица списана до вызова — возвращаем её. Ученик не
+            # обязан платить лимитом за наш сбой; без явной отдачи потеря была
+            # бы молчаливой и накапливалась бы ровно в дни неполадок провайдера.
+            await entitlements_service.release(db, gate, student_id=owner)
+            await db.commit()
             yield _sse("delta", {"text": _DEGRADED_TEXT})
             yield _sse("done", {"offer_teacher": True, "degraded": True})
             return

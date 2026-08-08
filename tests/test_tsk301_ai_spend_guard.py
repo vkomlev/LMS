@@ -70,16 +70,20 @@ class SpendPoint:
 
 #: Реестр. Ключ — путь относительно корня репозитория.
 AI_SPEND_POINTS: dict[str, SpendPoint] = {
-    "app/api/v1/ai_tutor.py": SpendPoint(capability="ai_tutor", gated_here=True),
-    "app/api/v1/attempts.py": SpendPoint(capability="code_review", gated_here=True),
+    "app/api/v1/ai_tutor.py": SpendPoint(
+        capability="ai_tutor", gated_here=True, wired=True
+    ),
+    "app/api/v1/attempts.py": SpendPoint(
+        capability="code_review", gated_here=True, wired=True
+    ),
     "app/services/code_review_service.py": SpendPoint(
-        capability="code_review", gated_upstream="app/api/v1/attempts.py"
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
     ),
     # Фоновый тик сам модель не зовёт, но разбирает очередь пометок и тем
     # ЗАПУСКАЕТ расход. Найден стражем, а не глазами: в первой редакции реестра
     # его не было — ровно тот пропуск, ради которого страж и написан.
     "app/services/code_review_cron_service.py": SpendPoint(
-        capability="code_review", gated_upstream="app/api/v1/attempts.py"
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
     ),
 }
 
@@ -151,13 +155,15 @@ def test_upstream_gate_target_exists(rel_path: str) -> None:
 
 @pytest.mark.parametrize(
     "rel_path",
-    sorted(p for p, point in AI_SPEND_POINTS.items() if point.wired),
+    sorted(
+        p for p, point in AI_SPEND_POINTS.items() if point.wired and point.gated_here
+    ),
 )
 def test_wired_point_calls_the_door(rel_path: str) -> None:
     """Проведённая точка действительно зовёт единую дверь, а не свою проверку.
 
-    Пока проводка не сделана (Фаза 3), параметризация пуста и тест не запускается.
-    Как только `wired=True` — проверка становится содержательной.
+    Только для точек с гейтом на месте: те, что гейтятся выше по потоку, дверь
+    сами не зовут — за них это проверяет `test_upstream_gate_target_exists`.
     """
     source = (APP_ROOT.parent / rel_path).read_text(encoding="utf-8")
     assert "entitlements_service" in source, (
@@ -165,9 +171,109 @@ def test_wired_point_calls_the_door(rel_path: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "rel_path",
+    sorted(p for p, point in AI_SPEND_POINTS.items() if point.wired and point.gated_here),
+)
+def test_gate_goes_through_should_block(rel_path: str) -> None:
+    """Решение применяется через `should_block`, а не чтением `.allowed`.
+
+    Режимы выката и журнал наблюдения живут именно в `should_block`. Точка,
+    которая сверится с `decision.allowed` напрямую, обойдёт и `shadow`, и
+    `guests`: фаза наблюдения окажется пустой, а понять это будет не по чему —
+    отказов нет, значит «всё хорошо».
+    """
+    source = (APP_ROOT.parent / rel_path).read_text(encoding="utf-8")
+    assert "should_block" in source, (
+        f"{rel_path}: решение применяется мимо should_block — режимы выката не сработают"
+    )
+    assert ".allowed" not in source, (
+        f"{rel_path}: прямое чтение decision.allowed обходит режимы выката; "
+        f"используйте should_block"
+    )
+
+
+@pytest.mark.parametrize("rel_path", sorted(AI_SPEND_POINTS))
+def test_every_point_is_wired(rel_path: str) -> None:
+    """Все точки проведены. Приёмочный критерий Фазы 3.
+
+    Отдельным тестом, а не полем в реестре: `wired=False` — это состояние
+    «ещё не сделано», и оно обязано быть видимым как красный тест, а не как
+    тихо пропущенная параметризация.
+    """
+    assert AI_SPEND_POINTS[rel_path].wired, (
+        f"{rel_path}: точка расхода не проведена через дверь прав"
+    )
+
+
+# ─────────── Точки принуждения, не связанные с расходом токенов ─────────────
+#
+# Пробел П13 говорит про «одну функцию на 3 точки», а расход ИИ — только две из
+# них. Третья, эскалация преподавателю, тратит не токены, а время человека, и
+# сканером вызовов модели она не ловится. Без отдельного надзора здесь могла бы
+# появиться вторая дорога к преподавателю мимо тарифа — и заметить это было бы
+# нечем.
+
+#: Создание РУЧНОЙ заявки преподавателю. Авто-заявка `blocked_limit` намеренно
+#: не в списке: её создаёт система, и гейтить её нельзя.
+_MANUAL_HELP_RX = re.compile(r"\bget_or_create_help_request\s*\(")
+
+ENFORCEMENT_POINTS: dict[str, str] = {
+    "app/api/v1/learning.py": "teacher_escalation",
+}
+
+
+def _discover_manual_help() -> set[str]:
+    found: set[str] = set()
+    for path in APP_ROOT.rglob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        # Объявление функции — не её вызов.
+        if "def get_or_create_help_request" in source:
+            continue
+        if _MANUAL_HELP_RX.search(source):
+            found.add(_rel(path))
+    return found
+
+
+def test_no_ungated_manual_help_path() -> None:
+    """Любая дорога к ручной заявке преподавателю значится в реестре."""
+    unregistered = _discover_manual_help() - set(ENFORCEMENT_POINTS)
+    assert not unregistered, (
+        "ручная заявка преподавателю создаётся мимо надзора: "
+        + ", ".join(sorted(unregistered))
+    )
+
+
+@pytest.mark.parametrize("rel_path", sorted(ENFORCEMENT_POINTS))
+def test_enforcement_point_uses_the_door(rel_path: str) -> None:
+    source = (APP_ROOT.parent / rel_path).read_text(encoding="utf-8")
+    assert "entitlements_service" in source, f"{rel_path}: дверь прав не зовётся"
+    assert "should_block" in source, (
+        f"{rel_path}: решение применяется мимо should_block — режимы выката не сработают"
+    )
+
+
 def test_capabilities_are_known() -> None:
     """Возможности в реестре совпадают с теми, что умеет дверь."""
     from app.services.entitlements_service import GATED_CAPABILITIES
 
-    unknown = {p.capability for p in AI_SPEND_POINTS.values()} - set(GATED_CAPABILITIES)
+    declared = {p.capability for p in AI_SPEND_POINTS.values()} | set(
+        ENFORCEMENT_POINTS.values()
+    )
+    unknown = declared - set(GATED_CAPABILITIES)
     assert not unknown, f"в реестре неизвестные возможности: {sorted(unknown)}"
+
+
+def test_all_gated_capabilities_have_a_point() -> None:
+    """У каждой возможности, которую умеет дверь, есть хотя бы одна точка.
+
+    Возможность без точки принуждения — обещание, которое никто не выполняет:
+    тариф её перечисляет, а на деле она доступна всем.
+    """
+    from app.services.entitlements_service import GATED_CAPABILITIES
+
+    covered = {p.capability for p in AI_SPEND_POINTS.values()} | set(
+        ENFORCEMENT_POINTS.values()
+    )
+    missing = set(GATED_CAPABILITIES) - covered
+    assert not missing, f"возможности без точки принуждения: {sorted(missing)}"
