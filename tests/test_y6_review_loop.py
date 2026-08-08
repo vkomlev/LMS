@@ -95,6 +95,27 @@ async def _pick_root_task(db) -> tuple[int, int, str]:
     return int(row[0]), int(row[1]), str(row[2])
 
 
+async def _create_mandatory_task(db) -> tuple[int, int]:
+    """Курс + задание, которое ДЕЙСТВИТЕЛЬНО ждёт ручной проверки (tsk-597).
+
+    Заведено вместо `_pick_root_task` в тестах эскалации. Тот брал из базы
+    «любое SA_COM или TA», не глядя на `manual_review_required`, — и именно
+    поэтому тесты годами не замечали, что крон эскалации отбирает не по той
+    оси: в dev-базе ему попадалось авто-проверяемое SA_COM, крон его брал
+    (старая ось «тип + is_correct IS TRUE»), тест зеленел. На проде такие
+    работы дали 502 ложных срабатывания из 502.
+
+    Здесь свойства заданы явно: `manual_review_required=true` — то же, по чему
+    работу отбирает обязательная очередь преподавателя. Возвращает
+    `(task_id, course_id)`; убирать через `_cleanup_tasks_and_course`.
+    """
+    course_id = await _create_course(db, title_prefix="y6-mandatory")
+    task_id = await _create_task(
+        db, course_id=course_id, type_="SA_COM", manual=True
+    )
+    return task_id, course_id
+
+
 async def _create_course(db, *, title_prefix: str = "y6-course") -> int:
     """Создать standalone-курс (без course_parents) для изолированного дерева.
 
@@ -468,7 +489,7 @@ async def test_y6_escalation_cron_tick_idempotent(db, db_session_factory):
     tick_factory = db_session_factory
 
     # Создаём pending-record старше 48h без escalated_at marker
-    task_id, _course_id, _t = await _pick_root_task(db)
+    task_id, course_id = await _create_mandatory_task(db)
     student_id = await _create_user(db, prefix="y6-stud")
     methodist_id = await _create_user(db, role="methodist", prefix="y6-meth")
 
@@ -507,6 +528,9 @@ async def test_y6_escalation_cron_tick_idempotent(db, db_session_factory):
         assert int(nrow or 0) == 1, f"Expected 1 notification, got {nrow}"
     finally:
         await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
 
 
 @pytest.mark.asyncio
@@ -534,7 +558,7 @@ async def test_y6_escalation_cron_sees_any_metrics_shape(
     """
     from app.services import escalation_service
 
-    task_id, _course_id, _t = await _pick_root_task(db)
+    task_id, course_id = await _create_mandatory_task(db)
     student_id = await _create_user(db, prefix="y6-shape")
     methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-shape")
 
@@ -563,6 +587,9 @@ async def test_y6_escalation_cron_sees_any_metrics_shape(
         )
     finally:
         await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
 
 
 @pytest.mark.asyncio
@@ -574,7 +601,7 @@ async def test_y6_escalation_cron_skips_already_escalated(db, db_session_factory
     """
     from app.services import escalation_service
 
-    task_id, _course_id, _t = await _pick_root_task(db)
+    task_id, course_id = await _create_mandatory_task(db)
     student_id = await _create_user(db, prefix="y6-done")
     methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-done")
 
@@ -609,6 +636,107 @@ async def test_y6_escalation_cron_skips_already_escalated(db, db_session_factory
         assert int(n or 0) == 0, "повторный push по уже эскалированной работе"
     finally:
         await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task_type", ["SA_COM", "TBL_COM"])
+async def test_y6_escalation_skips_auto_checked_work(db, db_session_factory, task_type):
+    """tsk-597: авто-проверяемая работа НЕ зовёт методиста.
+
+    `SA_COM`/`TBL_COM` с `manual_review_required=false` проверяет автомат.
+    `is_correct=TRUE` им ставит оптимистичный зачёт при сдаче, а `checked_at`
+    не проставляется НИКОГДА — вторичная проверка не положена. Старая ось
+    отбора («тип + is_correct IS TRUE») видела их зависшими и через 48 ч звала
+    методиста в очередь, где таких работ нет и быть не может.
+
+    На проде это дало 502 ложных срабатывания из 502 кандидатов (замер
+    2026-08-08) и 72 уведомления, по которым методисту некуда идти.
+    """
+    from app.services import escalation_service
+
+    course_id = await _create_course(db, title_prefix="y6-auto")
+    # Ключевое отличие от `_create_mandatory_task`: ручная проверка НЕ требуется.
+    task_id = await _create_task(db, course_id=course_id, type_=task_type, manual=False)
+    student_id = await _create_user(db, prefix="y6-auto")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-auto")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=True, score=10, max_score=10,
+        submitted_at=datetime.now(timezone.utc) - timedelta(hours=72),
+    )
+
+    try:
+        await escalation_service.escalation_cron_tick(db_session_factory)
+
+        marked = (await db.execute(
+            text("SELECT jsonb_typeof(metrics) = 'object' AND metrics ? 'escalated_at' "
+                 "FROM task_results WHERE id = :r"),
+            {"r": rid},
+        )).scalar()
+        assert not marked, (
+            f"авто-проверяемая работа ({task_type}, manual_review_required=false) "
+            "эскалирована методисту — отбор снова идёт по типу задания, "
+            "а не по обязательности ручной проверки"
+        )
+        n = (await db.execute(
+            text("SELECT COUNT(*) FROM notifications "
+                 "WHERE kind = 'review_escalated' "
+                 "  AND (payload->>'result_id')::int = :r"),
+            {"r": rid},
+        )).scalar()
+        assert int(n or 0) == 0, "методист позван к работе, которую никто не проверяет"
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
+
+
+@pytest.mark.asyncio
+async def test_y6_escalation_catches_pending_sa_com_manual(db, db_session_factory):
+    """tsk-597, обратная сторона: SA_COM с ручной проверкой эскалируется.
+
+    `manual_review_required=true` держит `is_correct=NULL` до вердикта
+    преподавателя (`checking_service` обрабатывает SA и SA_COM одинаково по
+    этому флагу). Старый отбор требовал `is_correct IS TRUE` для SA_COM и
+    `type='SA'` для ветки ручной проверки — такая работа не подходила ни под
+    одну и не эскалировалась бы НИКОГДА. Зеркало tsk-438, где тот же разрыв
+    закрыли для SA-manual; на проде такая работа есть (№15843).
+    """
+    from app.services import escalation_service
+
+    task_id, course_id = await _create_mandatory_task(db)
+    student_id = await _create_user(db, prefix="y6-sacom-man")
+    methodist_id = await _create_user(db, role="methodist", prefix="y6-meth-sacom")
+
+    rid, _, _ = await _create_pending_tr(
+        db, student_id=student_id, task_id=task_id,
+        is_correct=None,  # вердикта ещё нет — ждём преподавателя
+        score=0, max_score=10,
+        submitted_at=datetime.now(timezone.utc) - timedelta(hours=72),
+    )
+
+    try:
+        await escalation_service.escalation_cron_tick(db_session_factory)
+
+        marked = (await db.execute(
+            text("SELECT jsonb_typeof(metrics) = 'object' AND metrics ? 'escalated_at' "
+                 "FROM task_results WHERE id = :r"),
+            {"r": rid},
+        )).scalar()
+        assert marked is True, (
+            "SA_COM с manual_review_required=true и is_correct=NULL не эскалирован: "
+            "настоящая зависшая проверка снова невидима методисту"
+        )
+    finally:
+        await _cleanup(db, user_ids=[student_id, methodist_id], result_ids=[rid])
+        await _cleanup_tasks_and_course(
+            db, task_ids=[task_id], course_id=course_id, result_ids=[]
+        )
 
 
 # ============================== Stage 4.4: methodist endpoint ==============================

@@ -33,6 +33,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import methodist_notify_service
+# tsk-597: единый предикат обязательной очереди (tsk-247). Импортируется, а не
+# копируется: своя копия здесь уже разъезжалась с очередью и давала 100%
+# ложных срабатываний.
+from app.services.teacher_queue_service import mandatory_review_sql
 
 logger = logging.getLogger("app.escalation")
 
@@ -86,49 +90,41 @@ async def escalation_cron_tick(
                 FROM task_results tr
                 JOIN tasks t ON t.id = tr.task_id
                 WHERE tr.checked_at IS NULL
-                  AND (
-                      -- tsk-210: SA_COM/TBL_COM/TA — эскалируем только первично-
-                      -- верные pending (ждут вторичной проверки учителя).
-                      -- is_correct=FALSE — честный FAILED, не pending. TA/SA_COM
-                      -- получают optimistic-PASSED (is_correct=TRUE) на submit
-                      -- (attempts.py optimistic_manual).
-                      -- tsk-396: в гибридном режиме (partial_auto_check) ждущая
-                      -- работа приходит с is_correct=NULL, а не TRUE:
-                      -- оптимистичного зачёта у неё нет, балл держится до
-                      -- преподавателя. Без этой ветки залежавшаяся работа
-                      -- ОГЭ-14 не эскалировалась бы методисту НИКОГДА — ровно
-                      -- тот же тихий провал, что чинил tsk-438 для SA-manual.
-                      -- is_correct=FALSE здесь по-прежнему не эскалируется:
-                      -- это законченный авто-вердикт «числа не сошлись»,
-                      -- работа к преподавателю и не шла.
-                      (
-                          t.task_content->>'type' IN ('SA_COM','TBL_COM','TA')
-                          AND (
-                              tr.is_correct IS TRUE
-                              OR (
-                                  COALESCE(
-                                      (t.solution_rules->>'partial_auto_check')::boolean, false
-                                  )
-                                  AND tr.is_correct IS NULL
-                              )
-                          )
-                      )
-                      -- tsk-438: SA НЕ входит в COMMENT_TASK_TYPES → не получает
-                      -- optimistic-pass (attempts.py:661-663). При
-                      -- manual_review_required=true checking_service держит
-                      -- is_correct=NULL до вердикта учителя (не TRUE, как у
-                      -- SA_COM) — ветка выше такой SA никогда не поймает, и
-                      -- залежавшийся SA-manual тихо не эскалировался НИКОГДА.
-                      -- Гейт по manual_review_required (а не blanket по типу) —
-                      -- иначе обычный авто-проверяемый SA (checked_at не
-                      -- проставляется в принципе, самый массовый тип задания)
-                      -- эскалировался бы методисту по любому таймауту.
-                      OR (
-                          t.task_content->>'type' = 'SA'
-                          AND COALESCE((t.solution_rules->>'manual_review_required')::boolean, false)
-                          AND tr.is_correct IS NULL
-                      )
-                  )
+                  -- tsk-597: ТОТ ЖЕ предикат обязательной очереди, что у списка
+                  -- проверки и claim-next. Раньше здесь жила своя ось — «по типу
+                  -- задания + is_correct IS TRUE», — и она разъехалась с очередью
+                  -- ровно так же, как разъезжались список и claim-next до
+                  -- tsk-247. Эскалация обязана звать методиста ТОЛЬКО туда, куда
+                  -- он может прийти: если работы нет в обязательной очереди,
+                  -- звать его не к чему.
+                  --
+                  -- Чем это было на проде (замер 2026-08-08): 502 кандидата, из
+                  -- них 502 ложных. `SA_COM`/`TBL_COM` с manual_review_required
+                  -- = false проверены автоматом, а `is_correct=TRUE` им ставит
+                  -- оптимистичный зачёт при сдаче; `checked_at` у них не
+                  -- проставляется никогда, потому что вторичная проверка не
+                  -- положена. Старая ось видела их «зависшими» и через 48 ч
+                  -- звала методиста в очередь, где их нет и быть не должно.
+                  --
+                  -- Обратная сторона той же ошибки: `SA_COM` с
+                  -- manual_review_required=true держит `is_correct=NULL` до
+                  -- вердикта преподавателя, под ветку `is_correct IS TRUE` не
+                  -- подходил, под ветку `type='SA'` тоже — и настоящий кандидат
+                  -- не эскалировался бы НИКОГДА (зеркало tsk-438, где тот же
+                  -- разрыв закрыли для SA-manual). На проде такая работа есть:
+                  -- №15843, сдана 2026-08-08 12:57.
+                  --
+                  -- Гибридный режим (tsk-396) внутри общего предиката учтён:
+                  -- `partial_auto_check` + `is_correct=FALSE` — законченный
+                  -- авто-вердикт «числа не сошлись», работа к преподавателю и
+                  -- не шла.
+                  AND """
+                # nosec B608 — подставляется не пользовательский ввод, а
+                # SQL-фрагмент из `teacher_queue_service`, собранный из двух
+                # литеральных алиасов ('t', 'tr'). То же обоснование, что у
+                # остальных call-site этого предиката.
+                + mandatory_review_sql("t", "tr")
+                + """
                   AND tr.submitted_at < (now() - (:h || ' hours')::interval)
                   -- tsk-582: пропускаем работу, только если эскалация УЖЕ была.
                   -- Прежнее условие (`metrics IS NULL OR (typeof='object' AND
