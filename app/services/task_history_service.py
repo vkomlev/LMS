@@ -28,7 +28,10 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.attempt_attachments import mark_missing_attachments
+from app.services.attempt_attachments import (
+    existing_attachment_ids,
+    mark_missing_attachments,
+)
 from app.services.checking_service import CheckingService
 from app.services.learning_events_service import get_hint_open_counts
 
@@ -136,6 +139,11 @@ async def _load_attempts(
         )
     ).mappings().fetchall()
 
+    # tsk-593: наличие файлов спрашиваем у хранилища ОДИН раз на всю историю.
+    # По вложению на строку это была бы цепочка сетевых запросов длиной в число
+    # сдач ученика по заданию.
+    existing = await existing_attachment_ids([r["answer_json"] for r in rows])
+
     attempts: List[Dict[str, Any]] = []
     for idx, r in enumerate(rows, start=1):
         attempt: Dict[str, Any] = {
@@ -148,7 +156,7 @@ async def _load_attempts(
             "is_correct": r["is_correct"],
             "status": _attempt_status(r["is_correct"]),
             # tsk-575: пометка «файл утрачен» вместо ссылки в никуда.
-            "answer_json": mark_missing_attachments(r["answer_json"]),
+            "answer_json": mark_missing_attachments(r["answer_json"], existing),
             "comment": r["comment"],
             "checked_at": r["checked_at"],
             "manual": (r["source_system"] == _MANUAL_SOURCE),

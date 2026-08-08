@@ -581,6 +581,27 @@ async def _stop_link_audit_scheduler() -> None:
         logger.exception("tsk-521: failed to stop link_audit scheduler")
 
 
+# tsk-593: суточная проверка вложений — «ссылка есть, файла в хранилище нет».
+# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+from app.services import attachment_audit_service as _attachment_audit_service
+
+
+@app.on_event("startup")
+async def _start_attachment_audit_scheduler() -> None:
+    try:
+        _attachment_audit_service.start_scheduler()
+    except Exception:
+        logger.exception("tsk-593: failed to start attachment_audit scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_attachment_audit_scheduler() -> None:
+    try:
+        _attachment_audit_service.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-593: failed to stop attachment_audit scheduler")
+
+
 # tsk-541: фоновый пересчёт student_course_state для целей course_dependencies
 # (подкурсов, никогда не покрытых resolve_next_item/manual_progress_service).
 # Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.

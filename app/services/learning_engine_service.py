@@ -32,7 +32,11 @@ from app.repos.courses_repo import CoursesRepository
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
 from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.schemas.course_sampling import CourseSamplingConfig
-from app.services.attempt_attachments import mark_missing_attachments
+from app.services.attempt_attachments import (
+    existing_attachment_ids,
+    mark_missing_attachments,
+    mark_missing_one,
+)
 from app.services.task_sampling import sample_task_ids
 # tsk-598: единый предикат обязательной очереди (tsk-247). Импортируется, а не
 # копируется словами: копия здесь уже разъехалась с очередью и дала 823 ложных
@@ -416,7 +420,7 @@ class LearningEngineService:
         )
         # answer_json (JSONB) драйвер отдаёт уже как dict; is_correct/checked_at — как есть.
         # tsk-575: ученик тоже не должен видеть живую ссылку на утраченный файл.
-        last_answer_json = mark_missing_attachments(row[4]) if isinstance(row[4], dict) else None
+        last_answer_json = await mark_missing_one(row[4]) if isinstance(row[4], dict) else None
         last_is_correct = row[5]
         last_checked_at = row[6]
 
@@ -573,6 +577,13 @@ class LearningEngineService:
             ).mappings().fetchall()
             last_results = {int(r["task_id"]): r for r in last_rows}
 
+        # tsk-593: наличие файлов вложений спрашиваем у хранилища одной пачкой
+        # на весь список заданий — иначе экран курса дал бы по сетевому запросу
+        # на каждое задание с вложением.
+        existing_attachments = await existing_attachment_ids(
+            [r["answer_json"] for r in last_results.values()]
+        )
+
         results: dict[int, TaskStateResult] = {}
         for tid in ids:
             limit = limits.get(tid, DEFAULT_MAX_ATTEMPTS)
@@ -590,7 +601,7 @@ class LearningEngineService:
             last_score = int(row["score"]) if row["score"] is not None else 0
             last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
             last_answer_json = (
-                mark_missing_attachments(row["answer_json"])
+                mark_missing_attachments(row["answer_json"], existing_attachments)
                 if isinstance(row["answer_json"], dict) else None
             )
             common = dict(

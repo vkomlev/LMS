@@ -25,7 +25,6 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import Settings
-from app.services.attempt_attachments import attempt_attachment_files
 
 pytestmark = pytest.mark.asyncio
 
@@ -109,7 +108,13 @@ async def _create_attempt(client, *, student_id: int, course_id: int) -> int:
 
 
 def _cleanup_attachments(attempt_id: int) -> None:
-    for path in attempt_attachment_files(attempt_id):
+    """Убрать файлы попытки.
+
+    tsk-593: тесты идут без настроенного S3 — хранилище работает в режиме
+    диска, поэтому уборка ходит прямо в каталог, а не через асинхронный слой
+    хранилища (его нельзя ждать в синхронном `finally`).
+    """
+    for path in Settings().attempt_attachments_upload_dir.glob(f"{attempt_id}_*"):
         try:
             os.remove(path)
         except FileNotFoundError:

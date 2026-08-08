@@ -27,6 +27,8 @@ class Settings:
             raise RuntimeError("VALID_API_KEYS must contain at least one key")
 
         # ✅ Messages attachments settings (из env + дефолты)
+        # tsk-593: с настроенным S3 это уже не «где лежит файл», а запасной путь
+        # для файлов, загруженных до переезда, и режим разработки без S3.
         self.messages_upload_dir: Path = Path(
             os.getenv("MESSAGES_UPLOAD_DIR", "uploads/messages")
         )
@@ -126,6 +128,29 @@ class Settings:
             "MATERIAL_FILES_S3_PREFIX", "materials"
         ).strip("/")
 
+        # ✅ tsk-593: пространства ключей для файлов, которые до сих пор жили
+        # только на диске приложения. Диск переезд машины не переживает — так уже
+        # потеряли ВСЕ файлы материалов (tsk-519: 0 файлов после переноса).
+        #
+        # Пространства РАЗНЫЕ намеренно, а не один общий каталог: у чека об
+        # оплате другой круг читателей (ученик/родитель и маркетолог) и другой
+        # срок хранения, чем у учебного вложения. Разделение по префиксу — то,
+        # на что опирается и правило доступа в бакете, и разбор при переносе.
+        #
+        # Ни одно из трёх пространств НЕ публично: наружу файл уходит только
+        # потоком через эндпоинт с проверкой прав. Публичное чтение в бакете
+        # оставлено ровно на CAS-пространстве заданий (`<2 hex>/…`), потому что
+        # `/api/v1/media` отдаёт на него переадресацию в браузер ученика.
+        self.attempt_attachments_s3_prefix: str = os.getenv(
+            "ATTEMPT_ATTACHMENTS_S3_PREFIX", "attempts"
+        ).strip("/")
+        self.message_attachments_s3_prefix: str = os.getenv(
+            "MESSAGE_ATTACHMENTS_S3_PREFIX", "messages"
+        ).strip("/")
+        self.payment_receipts_s3_prefix: str = os.getenv(
+            "PAYMENT_RECEIPTS_S3_PREFIX", "receipts"
+        ).strip("/")
+
         # ✅ Проверка целостности ссылок на файлы (tsk-521). Связи «материал → файл»
         # в базе нет, поэтому битую ссылку не видно, пока на неё не наткнётся
         # человек: в tsk-519 такая провисела полгода.
@@ -156,6 +181,35 @@ class Settings:
         )
         self.link_audit_max_examples: int = int(
             os.getenv("LINK_AUDIT_MAX_EXAMPLES", "10")
+        )
+
+        # ✅ tsk-593: суточная проверка вложений — «ссылка на файл есть, файла в
+        # хранилище нет». Брат-близнец проверки ссылок в контенте (tsk-521), но
+        # источник другой: сами работы учеников, переписка и чеки, а не тела
+        # материалов и заданий.
+        #
+        # Уведомление уходит ТОЛЬКО о новых потерях: те, что случились до
+        # переезда (утраченные дефектом tsk-575), записаны в
+        # `attachment_missing_seen` как исходный уровень и больше не тревожат —
+        # иначе ежедневный тик превратился бы в постоянный шум, на который
+        # перестают смотреть. Чистый прогон молчит.
+        self.attachment_audit_enabled: bool = os.getenv(
+            "ATTACHMENT_AUDIT_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.attachment_audit_interval_hours: int = int(
+            os.getenv("ATTACHMENT_AUDIT_INTERVAL_HOURS", "24")
+        )
+        self.attachment_audit_notify_cooldown_hours: int = int(
+            os.getenv("ATTACHMENT_AUDIT_NOTIFY_COOLDOWN_HOURS", "24")
+        )
+        self.attachment_audit_max_examples: int = int(
+            os.getenv("ATTACHMENT_AUDIT_MAX_EXAMPLES", "10")
+        )
+        # Сколько проверок наличия файла держим в полёте разом. Проверка одного
+        # файла — сетевой запрос к хранилищу; без предела тик на тысяче вложений
+        # открыл бы тысячу соединений.
+        self.attachment_storage_concurrency: int = int(
+            os.getenv("ATTACHMENT_STORAGE_CONCURRENCY", "8")
         )
 
         # tsk-541: фоновый пересчёт student_course_state для целей

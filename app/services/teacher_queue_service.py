@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
-from app.services.attempt_attachments import mark_missing_attachments
+from app.services.attempt_attachments import mark_missing_one
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -479,7 +479,7 @@ async def claim_next_review(
         "submitted_at": submitted_at,
         "max_score": max_score,
         "is_correct": is_correct,
-        "answer_json": mark_missing_attachments(answer_json),
+        "answer_json": await mark_missing_one(answer_json),
         "task_title": task_title,
         "user_name": user_name,
         "course_id": course_id_val,
@@ -683,7 +683,7 @@ async def claim_review_by_id(
         "submitted_at": submitted_at,
         "max_score": max_score,
         "is_correct": is_correct,
-        "answer_json": mark_missing_attachments(answer_json),
+        "answer_json": await mark_missing_one(answer_json),
         "task_title": task_title,
         "user_name": urow2[0] if urow2 else None,
         "course_id": course_id_val,
