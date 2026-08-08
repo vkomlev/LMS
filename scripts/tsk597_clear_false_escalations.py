@@ -22,7 +22,10 @@
 
 Запуск на сервере (под app, не под root — tsk-394):
     sudo -u app bash -lc "cd /opt/lms && venv/bin/python scripts/tsk597_clear_false_escalations.py --dry-run"
-    sudo -u app bash -lc "cd /opt/lms && venv/bin/python scripts/tsk597_clear_false_escalations.py --apply"
+    sudo -u app bash -lc "cd /opt/lms && DBCHECK_OK=1 venv/bin/python scripts/tsk597_clear_false_escalations.py --apply"
+
+`.env` и корень проекта скрипт подхватывает сам — переменные окружения снаружи
+задавать не нужно.
 """
 from __future__ import annotations
 
@@ -30,12 +33,23 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import text
+from dotenv import load_dotenv
 
-from app.db.session import async_session_factory
+_ROOT = Path(__file__).resolve().parent.parent
+# `.env` читается ДО импорта app.*: `app.db.session` собирает Settings на
+# импорте и падает без DATABASE_URL. `utf-8-sig` — файл на сервере может быть
+# с BOM. Передавать DSN через переменную в командной строке нельзя: аргументы
+# `sudo` попадают в auth.log и в вывод `ps`.
+load_dotenv(_ROOT / ".env", encoding="utf-8-sig")
+sys.path.insert(0, str(_ROOT))
+
+from sqlalchemy import text  # noqa: E402
+
+from app.db.session import async_session_factory  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 logger = logging.getLogger("tsk597")
