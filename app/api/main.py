@@ -603,6 +603,28 @@ async def _stop_course_dependency_state_scheduler() -> None:
         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
 
 
+# tsk-032: фиксация вех удержания (`user_achievements`). Сама недельная серия
+# считается на лету при чтении и от тика НЕ зависит — тик только проставляет
+# earned_at выполненным вехам. Тот же multi-worker-safe паттерн, отдельный ключ.
+from app.services import retention_achievements_cron_service as _retention_cron
+
+
+@app.on_event("startup")
+async def _start_retention_achievements_scheduler() -> None:
+    try:
+        _retention_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-032: failed to start retention_achievements scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_retention_achievements_scheduler() -> None:
+    try:
+        _retention_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-032: failed to stop retention_achievements scheduler")
+
+
 # tsk-302 этап 3: фоновая оценка кода ученика (чистота + признак ИИ-авторства).
 # Приём ответа только помечает работу `pending`, считает этот тик — вызов модели
 # слишком долгий для пользовательского пути. Тот же multi-worker-safe паттерн

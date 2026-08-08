@@ -47,11 +47,18 @@ from app.schemas.me import (
     StreakRead,
     SyllabusStatesResponse,
 )
+from app.schemas.retention import RetentionRead
 from app.schemas.task_history import TaskHistoryResponse
 from app.schemas.users import UserRead
 from app.services.parent_student_links_service import ParentStudentLinksService
 from app.services.student_teacher_links_service import StudentTeacherLinksService
-from app.services import lesson_calendar_service, me_service, roles_service, task_history_service
+from app.services import (
+    lesson_calendar_service,
+    me_service,
+    retention_service,
+    roles_service,
+    task_history_service,
+)
 from app.services.tasks_acl_service import assert_task_access
 from app.services.audit_service import log_event
 from app.services.full_name_validator import validate_full_name
@@ -375,6 +382,24 @@ async def get_streak(
     """Streak дней подряд в Europe/Moscow (см. §5.4)."""
     s = await me_service.get_streak(db, current_user.id)
     return StreakRead(**s)
+
+
+# ── GET /me/retention (tsk-032) ─────────────────────────────────────────────
+
+@router.get("/retention", response_model=RetentionRead)
+async def get_retention(
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> RetentionRead:
+    """Удержание между занятиями: недельная серия + личные вехи (tsk-032).
+
+    Отличие от `/me/streak`: та серия — суточная и считает ЛЮБУЮ сдачу, в том
+    числе сделанную на самом уроке, поэтому удержание между занятиями ею не
+    измеряется. Здесь время урока вычтено, а единица серии — активная НЕДЕЛЯ
+    (обоснование порога — на реальных данных, см. docstring
+    `app/services/retention_service.py`)."""
+    data = await retention_service.get_retention(db, student_id=current_user.id)
+    return RetentionRead(**data)
 
 
 # ── GET /me/history (Phase Y-4) ─────────────────────────────────────────────

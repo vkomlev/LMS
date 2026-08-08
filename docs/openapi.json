@@ -34737,6 +34737,96 @@
           }
         }
       }
+    },
+    "/api/v1/me/retention": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Get Retention",
+        "description": "Удержание между занятиями: недельная серия + личные вехи (tsk-032).\n\nОтличие от `/me/streak`: та серия — суточная и считает ЛЮБУЮ сдачу, в том\nчисле сделанную на самом уроке, поэтому удержание между занятиями ею не\nизмеряется. Здесь время урока вычтено, а единица серии — активная НЕДЕЛЯ\n(обоснование порога — на реальных данных, см. docstring\n`app/services/retention_service.py`).",
+        "operationId": "get_retention_api_v1_me_retention_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -46192,6 +46282,9 @@
               }
             ],
             "title": "Student Full Name"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/RetentionSummaryRead"
           }
         },
         "type": "object",
@@ -46204,7 +46297,8 @@
           "in_class_hours",
           "between_lessons",
           "attendance",
-          "between_lessons_activity_level"
+          "between_lessons_activity_level",
+          "retention"
         ],
         "title": "PublicParentDashboardRead",
         "description": "Дашборд, открытый по ссылке. Тот же состав, что у привилегированных\nзрителей (контракт tsk-494 — без `solution_rules` и текста заявок помощи),\nплюс имя ученика: родитель по ссылке не имеет профиля и иначе не увидел\nбы, чей это дашборд."
@@ -48241,6 +48335,9 @@
               "insufficient_data"
             ],
             "title": "Between Lessons Activity Level"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/RetentionSummaryRead"
           }
         },
         "type": "object",
@@ -48253,7 +48350,8 @@
           "in_class_hours",
           "between_lessons",
           "attendance",
-          "between_lessons_activity_level"
+          "between_lessons_activity_level",
+          "retention"
         ],
         "title": "StudentDashboardRead"
       },
@@ -54949,6 +55047,197 @@
         ],
         "title": "GoogleSheetsImportResponse",
         "description": "Ответ на запрос импорта из Google Sheets.\n\nСодержит детальный отчет об импорте: количество успешно импортированных задач,\nобновленных задач, список ошибок и общее количество обработанных строк.\n\n**Интерпретация результатов:**\n- `imported` - новые задачи, добавленные в БД\n- `updated` - существующие задачи, обновленные по external_uid\n- `errors` - список ошибок для строк, которые не удалось импортировать\n- `total_rows` - общее количество строк данных (без заголовка)\n\n**Успешный импорт:** `errors.length === 0` и `imported + updated === total_rows`"
+      },
+      "RetentionAchievementRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "badge_image_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Badge Image Url"
+          },
+          "earned_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Earned At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "RetentionAchievementRead",
+        "description": "Выполненная веха.\n\n``earned_at`` = ``None`` означает «условие уже выполнено, но фиксация в\n`user_achievements` ещё не прошла» — веху считает то же правило, что и\nфоновый тик, поэтому ученик видит её сразу, а дата появляется в течение\nближайшего тика (см. `retention_achievements_cron_service`)."
+      },
+      "RetentionNextMilestoneRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "current": {
+            "type": "integer",
+            "title": "Current"
+          },
+          "target": {
+            "type": "integer",
+            "title": "Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "current",
+          "target"
+        ],
+        "title": "RetentionNextMilestoneRead",
+        "description": "Ближайшая невыполненная веха и прогресс до неё."
+      },
+      "RetentionRead": {
+        "properties": {
+          "weekly_streak": {
+            "type": "integer",
+            "title": "Weekly Streak"
+          },
+          "best_weekly_streak": {
+            "type": "integer",
+            "title": "Best Weekly Streak"
+          },
+          "current_week_active": {
+            "type": "boolean",
+            "title": "Current Week Active"
+          },
+          "current_week_days": {
+            "type": "integer",
+            "title": "Current Week Days"
+          },
+          "current_week_items": {
+            "type": "integer",
+            "title": "Current Week Items"
+          },
+          "items_between_lessons_total": {
+            "type": "integer",
+            "title": "Items Between Lessons Total"
+          },
+          "last_active_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active Date"
+          },
+          "achievements": {
+            "items": {
+              "$ref": "#/components/schemas/RetentionAchievementRead"
+            },
+            "type": "array",
+            "title": "Achievements"
+          },
+          "next_milestone": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetentionNextMilestoneRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekly_streak",
+          "best_weekly_streak",
+          "current_week_active",
+          "current_week_days",
+          "current_week_items",
+          "items_between_lessons_total",
+          "achievements"
+        ],
+        "title": "RetentionRead",
+        "description": "Состояние удержания ученика.\n\n``weekly_streak`` — активных недель подряд, где активная неделя = хотя бы\nодин день работы МЕЖДУ занятиями (время самого урока вычтено, определение\nобщее с метрикой `between_lessons` дашборда родителя, tsk-494/504)."
+      },
+      "RetentionSummaryRead": {
+        "properties": {
+          "weekly_streak": {
+            "type": "integer",
+            "title": "Weekly Streak"
+          },
+          "best_weekly_streak": {
+            "type": "integer",
+            "title": "Best Weekly Streak"
+          },
+          "current_week_active": {
+            "type": "boolean",
+            "title": "Current Week Active"
+          },
+          "achievements_earned": {
+            "type": "integer",
+            "title": "Achievements Earned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekly_streak",
+          "best_weekly_streak",
+          "current_week_active",
+          "achievements_earned"
+        ],
+        "title": "RetentionSummaryRead",
+        "description": "Сводка для дашборда родителя: сигнал «возвращается ли ребёнок между\nзанятиями», без витрины наград."
       }
     },
     "securitySchemes": {

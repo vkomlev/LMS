@@ -20,6 +20,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.pricing import FrequencySource
+from app.schemas.retention import RetentionSummaryRead
 
 #: Позиция ученика относительно сверстников того же курса (tsk-504) — терциль
 #: распределения когорты (нижняя/средняя/верхняя треть) или явная пометка
@@ -102,3 +103,7 @@ class StudentDashboardRead(BaseModel):
     #: та же форма используется и для `period_total`/`in_class_hours`,
     #: которые оператор явно исключил из подсветки.
     between_lessons_activity_level: CohortLevel
+    #: Серия активных недель между занятиями (tsk-032). Соседствует с
+    #: `between_lessons` намеренно: это та же активность, но в виде
+    #: «возвращается ли ребёнок регулярно», а не «сколько сделал за период».
+    retention: RetentionSummaryRead

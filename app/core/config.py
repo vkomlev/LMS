@@ -367,6 +367,16 @@ class Settings:
         self.student_dashboard_cohort_min_size: int = int(
             os.getenv("STUDENT_DASHBOARD_COHORT_MIN_SIZE", "5")
         )
+        # tsk-032 (удержание между занятиями): фоновая фиксация выполненных
+        # вех в user_achievements. Сама серия НЕ хранится и от тика не зависит
+        # — она считается на лету при чтении; тик только проставляет earned_at
+        # (см. app/services/retention_achievements_cron_service.py).
+        self.retention_achievements_cron_enabled: bool = os.getenv(
+            "RETENTION_ACHIEVEMENTS_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.retention_achievements_cron_interval_min: int = int(
+            os.getenv("RETENTION_ACHIEVEMENTS_CRON_INTERVAL_MIN", "15")
+        )
         # Интервал APScheduler-тика reminder+no_show (чаще генератора —
         # десятиминутный порог no_show требует более мелкой гранулярности).
         self.lesson_attendance_cron_interval_min: int = int(

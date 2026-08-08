@@ -87,7 +87,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.services import charge_service, manual_progress_service, pricing_service
+from app.services import (
+    charge_service,
+    manual_progress_service,
+    pricing_service,
+    retention_service,
+)
 from app.services.teacher_lesson_summary_service import (
     DONE_STATUSES,
     MANUAL_SOURCE,
@@ -806,6 +811,12 @@ async def get_student_dashboard(
         },
         "attendance": attendance,
         "between_lessons_activity_level": between_lessons_activity_level,
+        # tsk-032: серия активных недель между занятиями. Считается тем же
+        # определением события, что и `between_lessons` выше (общий код —
+        # `retention_service`), поэтому число и серия не могут разойтись.
+        "retention": await retention_service.get_retention_summary(
+            db, student_id=student_id,
+        ),
     }
 
 
