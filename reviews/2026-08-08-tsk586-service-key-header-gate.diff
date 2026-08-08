@@ -1,0 +1,373 @@
+diff --git a/app/api/deps.py b/app/api/deps.py
+index 0c26b76..5be227c 100644
+--- a/app/api/deps.py
++++ b/app/api/deps.py
+@@ -26,12 +26,26 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+ # ---------------------------------------------------------------------------
+ 
+ async def get_api_key(
+-    key: str | None = Security(api_key_query),
++    key_query: str | None = Security(api_key_query),
++    key_header: str | None = Security(api_key_header),
+ ) -> str:
+-    """Проверка api_key в query-параметрах (legacy)."""
+-    if not key or key not in settings.valid_api_keys:
+-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or missing API Key")
+-    return key
++    """Проверка сервисного ключа: заголовок `X-API-Key` ИЛИ legacy `?api_key=`.
++
++    tsk-586: до 2026-08-08 эта дверь читала только query-параметр. TG_LMS с
++    коммита 8ceed6f (tsk-497) шлёт ключ ТОЛЬКО заголовком — все ~45 эндпоинтов
++    на `Depends(get_db)` отвечали ботам 403 («Недостаточно прав»). Заголовок
++    проверяется первым: это текущий транспорт клиентов, query оставлен для
++    обратной совместимости (ContentBackbone ходит с `?api_key=`).
++
++    :param key_query: ключ из query-параметра `api_key` (legacy-транспорт).
++    :param key_header: ключ из заголовка `X-API-Key` (основной транспорт).
++    :return: принятый ключ.
++    :raises HTTPException: 403, если ни один из источников не дал валидный ключ.
++    """
++    for key in (key_header, key_query):
++        if key and key in settings.valid_api_keys:
++            return key
++    raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or missing API Key")
+ 
+ 
+ async def get_db(
+diff --git a/app/repos/base.py b/app/repos/base.py
+index 5a8d506..09d4fb7 100644
+--- a/app/repos/base.py
++++ b/app/repos/base.py
+@@ -198,13 +198,17 @@ class BaseRepository(Generic[ModelType]):
+         else:
+             await db.flush()
+         await db.refresh(db_obj)
+-        # Загружаем parent_courses для курсов через selectinload
+-        if hasattr(db_obj, 'parent_courses'):
+-            from app.models.courses import Courses
+-            if isinstance(db_obj, Courses):
+-                stmt = select(Courses).where(Courses.id == db_obj.id).options(selectinload(Courses.parent_courses))
+-                result = await db.execute(stmt)
+-                db_obj = result.scalar_one()
++        # Загружаем parent_courses для курсов через selectinload.
++        # tsk-586: та же ловушка, что в `paginate` — `hasattr` на связи ORM её
++        # ЧИТАЕТ (lazy-load посреди async-сессии). Сейчас объект сюда приходит
++        # с уже загруженной связью и не падает, но идиома одна и та же, поэтому
++        # проверка типа делается напрямую через `isinstance`.
++        from app.models.courses import Courses  # noqa: PLC0415 — circular import
++
++        if isinstance(db_obj, Courses):
++            stmt = select(Courses).where(Courses.id == db_obj.id).options(selectinload(Courses.parent_courses))
++            result = await db.execute(stmt)
++            db_obj = result.scalar_one()
+         return db_obj
+ 
+     async def delete(
+@@ -418,25 +422,34 @@ class BaseRepository(Generic[ModelType]):
+             result = await db.execute(stmt)
+             items: List[ModelType] = list(result.scalars().all())
+             
+-            # Загружаем parent_courses для курсов, если есть
+-            if items and hasattr(items[0], 'parent_courses'):
+-                from sqlalchemy.orm import selectinload
+-                from app.models.courses import Courses
+-                if isinstance(items[0], Courses):
+-                    # Перезагружаем с relationships
+-                    ids = [item.id for item in items]
+-                    stmt_with_load = (
+-                        select(Courses)
+-                        .where(Courses.id.in_(ids))
+-                        .options(selectinload(Courses.parent_courses))
+-                    )
+-                    if filters:
+-                        for f in filters:
+-                            stmt_with_load = stmt_with_load.where(f)
+-                    if order_by:
+-                        stmt_with_load = stmt_with_load.order_by(*order_by)
+-                    result = await db.execute(stmt_with_load)
+-                    items = list(result.scalars().all())
++            # Загружаем parent_courses для курсов, если есть.
++            #
++            # tsk-586: проверка типа идёт ПЕРВОЙ и по `isinstance`. Раньше здесь
++            # стоял `hasattr(items[0], 'parent_courses')` — а `hasattr` на
++            # незагруженной связи ORM не «проверяет наличие поля», он её ЧИТАЕТ,
++            # то есть запускает lazy-load посреди async-сессии и падает с
++            # `MissingGreenlet` (`hasattr` глотает только AttributeError).
++            # Из-за этого `GET /courses/` и `GET /meta/tasks` отдавали 500 на
++            # проде при полностью валидном ключе.
++            from app.models.courses import Courses  # noqa: PLC0415 — circular import
++
++            if items and isinstance(items[0], Courses):
++                from sqlalchemy.orm import selectinload  # noqa: PLC0415
++
++                # Перезагружаем с relationships
++                ids = [item.id for item in items]
++                stmt_with_load = (
++                    select(Courses)
++                    .where(Courses.id.in_(ids))
++                    .options(selectinload(Courses.parent_courses))
++                )
++                if filters:
++                    for f in filters:
++                        stmt_with_load = stmt_with_load.where(f)
++                if order_by:
++                    stmt_with_load = stmt_with_load.order_by(*order_by)
++                result = await db.execute(stmt_with_load)
++                items = list(result.scalars().all())
+ 
+             # Отдельный COUNT(*) c теми же фильтрами
+             base_count = select(self.model)
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index 2bd9a79..9d6e738 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -38,3 +38,4 @@
+ | 2026-08-07 (tsk-574) | LMS | Прод 2026-08-06: скрипт пакетного назначения курса группе учеников отработал дважды | Первый прогон создал все пять связей, второй вернул пять `500 Internal server error`. Оператор не мог отличить «уже назначено» от отказа сервера и повторял запрос вслепую; выглядело как полный отказ. В логах — `asyncpg.UniqueViolationError: duplicate key value violates unique constraint "user_courses_pkey"` | `POST /api/v1/user-courses/` вставлял связь без перехвата `IntegrityError`: нарушение составного PK доходило до глобального обработчика `Exception` и превращалось в 500. При этом собственное описание эндпоинта с самого начала обещало 400 на дубликат — обещание не выполнялось никогда. **Рецидив класса 2026-04-28 #4** («orphan email → 500 вместо 409»): та же ошибка на другом эндпоинте, prevention-action прошлой записи была сформулирована узко — про пару «users.email ↔ identity_link», а не про класс «UNIQUE/PK из пользовательского ввода» | LOGIC + INTEGRATION | S2 (прод, user-facing операторский флоу; данные не пострадали — вставки не было) | Жалоба оператора + `logs/app.log` (`Unhandled exception at /api/v1/user-courses/`) | Перехват в `UserCoursesService.create` двумя слоями: ранняя проверка `get_by_keys` (до доназначения курсов-зависимостей) + перехват `IntegrityError` по SQLSTATE 23505 на гонке → `DomainError` 409 с телом `{"error": "domain_error", "detail": "Курс уже назначен этому ученику", "payload": {...}}`. Обязательный `db.rollback()` перед выбросом. Описание/`responses`/docstring/`docs/openapi.json`/`docs/API_STUDENTS_MANAGEMENT.md` приведены к 409. Второй путь (`assign_course_with_order`) отдавал 400 — расхождение убрано. Тесты `tests/test_user_courses_duplicate_tsk574.py` (штатный дубль + гонка) | (a) **Любая вставка по ключу из пользовательского ввода обязана маппить `IntegrityError` на 409** — не только пара «users.email ↔ identity_link» из записи 2026-04-28. При добавлении эндпоинта записи проверять: что будет при повторе того же тела? (b) **Обещание в описании эндпоинта — не реализация.** `responses={400: ...}` в декораторе не создаёт поведения; если код ответа заявлен, нужен тест, который его проверяет. (c) Ранняя проверка существования НЕ отменяет перехват `IntegrityError` — между ними гонка; и наоборот, перехват без ранней проверки делает бесполезные побочные вставки | FIXED |
+ | 2026-08-06 (tsk-303 Фаза 1) | LMS | Review-gate фазы 1 «лестница помощи»: CHECK на непустую вебинар-ссылку в миграции `tsk303_help_ladder` | Проверка «ссылка непустая», написанная как `length(btrim(webinar_link)) > 0`, пропускала строку из табуляции и перевода строки (`E'\t\n'`). До прода не дошло — поймано собственным тестом с набором `("", "   ", "\t\n")` | В PostgreSQL `btrim(string)` **без второго аргумента срезает только ПРОБЕЛЫ**, а не whitespace целиком (в отличие от `str.strip()` в Python, откуда и была перенесена интуиция). `length(btrim(E'\t\n'))` → 2, то есть условие `> 0` выполнялось. Класс тот же, что у 2026-07-17 (tsk-262/278) — «SQL-семантика ≠ интуиция из Python», но конкретная ловушка другая: не диалект регулярок, а умолчание аргумента функции | LOGIC | S3 (поймано до merge; дошло бы до прода — ученик получил бы кнопку «Перейти к разбору» в пустоту при формально отвеченной заявке) | Тест `tests/test_help_ladder_schema_tsk303.py::test_blank_webinar_link_rejected` (набор пустых значений включал табуляцию) + прямая проверка в БД: `SELECT length(btrim(E'\t\n'))` → 2, `SELECT E'\t\n' ~ '\S'` → false | Ограничение переписано на `webinar_link ~ '\S'` (есть хоть один непробельный символ) — проверено в самой БД до фиксации | (a) **«Непустая строка» в PG — это `~ '\S'`, а не `length(btrim(x)) > 0`.** Если всё же нужен btrim — задавать набор символов явно: `btrim(x, E' \t\r\n')`. (b) Тестовый набор «пустых» значений обязан включать НЕ ТОЛЬКО `''` и пробелы, но и табуляцию/перевод строки — иначе дефект этого класса тест не увидит. (c) Подтверждает и расширяет профилактику 2026-07-17: проверять в БД надо не только регулярки, но и умолчания строковых функций | FIXED |
+ | 2026-08-08 | LMS | tsk-396 — гибридный режим проверки; правится общий scoring-движок | SA_COM/TBL_COM с эталоном и `manual_review_required=true` засчитывался СРАЗУ на заведомо неверный ответ: `state=PASSED`, `score=max_score`, `is_correct=true` при `checked_at IS NULL`. Курс кредитовался до проверки человеком; обход tsk-395 не держал гейт, на который рассчитывал. 45 активных заданий прода | Условие оптимистичного зачёта (`attempts.py` 2.3d, tsk-210) опиралось на `check_result.is_correct is None`. У SA_COM/TBL_COM этот признак возникает по ДВУМ разным причинам: «эталона нет» (замысел) и «эталон есть, но включён ручной гейт» (tsk-230) — `_check_short_answer` короткозамыкает ДО чтения `short_answer`-правил. Вторая причина попала в условие непреднамеренно; комментарий рядом описывал ТОЛЬКО первую («SA_COM без правил») | LOGIC | S1 | Живой прогон пробы на dev (SA_COM + эталон «12 516,30», ответ «999 999») при сверке посылки задачи с контрактом `docs/frontend-contract-sa-com.md` — расхождение между тем, что задача считала намеренным поведением, и тем, что делает код | Условие переведено на признак «сверять нечем» — `not solution_rules.has_reference_answer()` (тот же единый предикат, что у UX-сигнала tsk-547). Миссии без эталона оптимистичный зачёт сохраняют; задания с эталоном + ручным гейтом больше не засчитываются вслепую. Регресс-тесты в `tests/test_partial_auto_check_tsk396.py` (обе стороны развилки) | (a) **Признак-триггер, вычисляемый несколькими путями, нельзя использовать как признак ОДНОГО из них.** `is_correct is None` означало и «нечем сверять», и «ждём человека» — условие обязано спрашивать о причине напрямую (`has_reference_answer()`), а не о её следствии. (b) Ранний `return` по флагу ДО чтения правил создаёт такие склейки — при добавлении флага в `checking_service` проверять, какие ещё ветки читают его следствия. (c) Юнит-тест на `CheckingService` (tsk-230 проверял `score=0`) НЕ ловит переопределение на слое роутера — для гейтов зачёта тест обязан идти через `POST /attempts/{id}/answers` и `GET /learning/tasks/{id}/state`, а не через сервис | FIXED |
++| 2026-08-08 | LMS | tsk-586 — TG-боты не могли писать в LMS: legacy-дверь `get_api_key` принимала только `?api_key=` | TG_LMS с `8ceed6f` (tsk-497, 2026-08-03) перевёл клиент на заголовок `X-API-Key`, а `app/api/deps.py::get_api_key` читал ТОЛЬКО `APIKeyQuery`. С выката ботов 2026-08-07 12:53 UTC весь класс эндпоинтов на `Depends(get_db)` (~116 пар метод+путь) отвечал ботам 403, бот показывал «Недостаточно прав». Живёт бок о бок второй дефект: `hasattr` на незагруженной связи ORM в `repos/base.py::paginate` читал её и падал `MissingGreenlet` → 500 на `GET /courses/` и `GET /meta/tasks` | Транспорт авторизации поменяли на ОДНОЙ стороне (клиент), вторая осталась на старом контракте. Тесты TG_LMS мокают HTTP-клиент (329/329 зелёные при полностью сломанной авторизации), тесты LMS на этих путях ходили с query-ключом — ни один слой не проверял связку «транспорт клиента ↔ дверь сервера» | INTEGRATION | S1 | Жалоба оператора («в боте методиста невозможно привязать курс ученику») → curl с прод-сервера: те же пути заголовком 403, query 200 → обход всех маршрутов за `get_api_key` реальным ASGI-клиентом | `get_api_key` принимает заголовок И query (заголовок первым); `paginate`/`update` определяют тип через `isinstance`, а не `hasattr` | (a) **Смена транспорта авторизации — всегда двусторонняя правка**: правишь клиента — в том же охвате проверь дверь сервера, и наоборот. (b) Класс «отвалилась общая дверь» точечным тестом не ловится — нужен обход ВСЕХ маршрутов за этой дверью реальным ASGI-клиентом (`tests/test_service_key_header_gate_tsk586.py`), мок HTTP-клиента здесь бесполезен по определению. (c) `hasattr` на атрибуте-связи SQLAlchemy — не проверка наличия поля, а чтение: в async-сессии это lazy-load и `MissingGreenlet`; проверять тип через `isinstance` | FIXED |
+diff --git a/tests/test_service_key_header_gate_tsk586.py b/tests/test_service_key_header_gate_tsk586.py
+new file mode 100644
+index 0000000..7894e8b
+--- /dev/null
++++ b/tests/test_service_key_header_gate_tsk586.py
+@@ -0,0 +1,239 @@
++"""tsk-586: сервисный ключ в заголовке `X-API-Key` на legacy-двери `get_db`.
++
++Что произошло. TG_LMS с коммита 8ceed6f (tsk-497, 2026-08-03) шлёт сервисный
++ключ ТОЛЬКО заголовком `X-API-Key`. Legacy-dependency `get_api_key` читала
++исключительно query-параметр `?api_key=` — все эндпоинты на `Depends(get_db)`
++(привязка курса ученику, ручная проверка работ, вся переписка, справочники)
++отвечали ботам 403, а бот показывал «Недостаточно прав для этого действия».
++Дефект прожил 5 дней при зелёных 329/329 тестах TG_LMS: там HTTP-клиент
++замокан, то есть транспорт авторизации не проверялся вовсе.
++
++Почему тест такой. Точечный тест на один эндпоинт этот класс не ловит — ломается
++не эндпоинт, а ОБЩАЯ дверь, и её отвал виден только обходом всех, кто за ней
++стоит. Поэтому здесь метод-обход: берём КАЖДЫЙ маршрут, у которого в дереве
++зависимостей есть `get_api_key`, и дёргаем его реальным ASGI-клиентом.
++
++Проверяются два свойства, по отдельности бесполезные:
++  1. с валидным ключом в ЗАГОЛОВКЕ ответ не 401/403 — дверь пускает;
++  2. с мусорным ключом ответ 401/403 — дверь вообще существует (иначе п.1
++     проходил бы и на полностью открытом эндпоинте).
++
++Побочные эффекты безопасны: `conftest._override_app_db` сажает ASGI-запросы на
++соединение с внешней транзакцией, которая откатывается после теста, а
++id-заглушка в путях (`_ABSENT_ID`) заведомо отсутствует в БД.
++"""
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++
++import pytest
++import pytest_asyncio
++from fastapi.routing import APIRoute
++from httpx import ASGITransport, AsyncClient
++
++project_root = Path(__file__).resolve().parent.parent
++if str(project_root) not in sys.path:
++    sys.path.insert(0, str(project_root))
++
++from fastapi import HTTPException
++
++from app.api.deps import get_api_key
++from app.api.main import app
++from app.core.config import Settings
++
++_settings = Settings()
++
++#: Заведомо отсутствующий id: обходчик доходит до хендлера (404), но ничего
++#: реального не трогает.
++_ABSENT_ID = 999_999_999
++_ABSENT_STR = "tsk586-absent"
++
++_BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
++
++
++def _service_key() -> str:
++    keys = list(_settings.valid_api_keys)
++    if not keys:
++        pytest.skip("VALID_API_KEYS не задан в .env — нечем проверять сервисный гейт")
++    return keys[0]
++
++
++def _depends_on_api_key(dependant) -> bool:
++    """Есть ли `get_api_key` где-либо в дереве зависимостей маршрута."""
++    if dependant.call is get_api_key:
++        return True
++    return any(_depends_on_api_key(sub) for sub in dependant.dependencies)
++
++
++def _fill_path(route: APIRoute) -> str:
++    """Подставить заглушки вместо path-параметров маршрута."""
++    types = {p.name: p.type_ for p in route.dependant.path_params}
++    path = route.path
++    for name, type_ in types.items():
++        value = str(_ABSENT_ID) if type_ is int else _ABSENT_STR
++        path = path.replace("{" + name + "}", value)
++    return path
++
++
++def _legacy_endpoints() -> list[tuple[str, str, str]]:
++    """Все (метод, путь-шаблон, путь-с-заглушками) за legacy-дверью `get_api_key`."""
++    out: list[tuple[str, str, str]] = []
++    for route in app.routes:
++        if not isinstance(route, APIRoute):
++            continue
++        if not _depends_on_api_key(route.dependant):
++            continue
++        filled = _fill_path(route)
++        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
++            out.append((method, route.path, filled))
++    return sorted(out, key=lambda row: (row[1], row[0]))
++
++
++LEGACY_ENDPOINTS = _legacy_endpoints()
++
++
++def test_legacy_gate_still_has_endpoints_behind_it():
++    """Сторож самого обхода: если список опустеет, тесты ниже станут пустышкой."""
++    assert len(LEGACY_ENDPOINTS) > 50, (
++        f"За legacy-дверью найдено всего {len(LEGACY_ENDPOINTS)} маршрутов — "
++        "обход перестал находить эндпоинты, проверь `_depends_on_api_key`"
++    )
++
++
++@pytest_asyncio.fixture(scope="function")
++async def gate_client():
++    """Клиент обхода: 500 внутри приложения превращается в статус, а не в исключение.
++
++    Обычная фикстура `client` пробрасывает исключение хендлера наружу — тогда
++    первый же сломанный эндпоинт (см. tsk-586, `/meta/tasks`) прервал бы обход
++    и скрыл состояние остальных ста с лишним. Здесь важен ровно статус двери.
++    """
++    transport = ASGITransport(app=app, raise_app_exceptions=False)
++    async with AsyncClient(transport=transport, base_url="http://test") as c:
++        yield c
++
++
++async def _call(client, method: str, path: str, headers: dict[str, str]):
++    kwargs: dict[str, object] = {"headers": headers}
++    if method in _BODY_METHODS:
++        kwargs["json"] = {}
++    return await client.request(method, path, **kwargs)
++
++
++@pytest.mark.asyncio
++async def test_every_legacy_endpoint_accepts_key_in_header(gate_client):
++    """Ключ в заголовке `X-API-Key` открывает КАЖДЫЙ эндпоинт legacy-двери."""
++    headers = {"X-API-Key": _service_key()}
++    rejected: list[str] = []
++    for method, template, path in LEGACY_ENDPOINTS:
++        resp = await _call(gate_client, method, path, headers)
++        if resp.status_code in (401, 403):
++            rejected.append(f"{method} {template} -> {resp.status_code} {resp.text[:120]}")
++    assert not rejected, (
++        "Сервисный ключ в заголовке X-API-Key отвергнут на "
++        f"{len(rejected)} из {len(LEGACY_ENDPOINTS)} эндпоинтов:\n" + "\n".join(rejected)
++    )
++
++
++@pytest.mark.asyncio
++async def test_every_legacy_endpoint_still_rejects_bad_key(gate_client):
++    """Обратная сторона: без валидного ключа дверь по-прежнему закрыта.
++
++    Без этой проверки предыдущий тест зеленел бы и на эндпоинте, с которого
++    авторизацию сняли вовсе.
++    """
++    headers = {"X-API-Key": "tsk586-definitely-not-a-valid-key"}
++    opened: list[str] = []
++    for method, template, path in LEGACY_ENDPOINTS:
++        resp = await _call(gate_client, method, path, headers)
++        if resp.status_code not in (401, 403):
++            opened.append(f"{method} {template} -> {resp.status_code}")
++    assert not opened, (
++        "Эндпоинты пустили запрос с невалидным ключом (дверь снята?):\n" + "\n".join(opened)
++    )
++
++
++@pytest.mark.asyncio
++async def test_legacy_query_key_still_works(client):
++    """Обратная совместимость: ContentBackbone ходит с `?api_key=` — не ломаем."""
++    resp = await client.get(f"/api/v1/roles/?api_key={_service_key()}")
++    assert resp.status_code == 200, resp.text
++
++
++@pytest.mark.asyncio
++async def test_user_courses_link_accepts_header(client):
++    """Точка из жалобы оператора: привязка курса ученику из бота методиста.
++
++    Тело намеренно пустое — важно, что ответ 422 (тело не прошло валидацию),
++    а НЕ 403 (не пустили на порог).
++    """
++    resp = await client.post(
++        "/api/v1/user-courses/",
++        headers={"X-API-Key": _service_key()},
++        json={},
++    )
++    assert resp.status_code == 422, resp.text
++
++
++# --- Второй дефект той же задачи: 500 на списках курсов ---------------------
++
++
++@pytest.mark.asyncio
++async def test_courses_list_does_not_crash_on_lazy_parents(client):
++    """`GET /courses/` не должен падать на lazy-load родительских курсов.
++
++    `app/repos/base.py::paginate` определял «это курс?» через
++    `hasattr(items[0], 'parent_courses')`. `hasattr` на незагруженной связи ORM
++    не проверяет наличие поля, а читает его — то есть запускает lazy-load
++    посреди async-сессии → `MissingGreenlet` → 500. На проде это ломало
++    `GET /courses/` и `GET /meta/tasks` при валидном ключе.
++    """
++    resp = await client.get(
++        "/api/v1/courses/?skip=0&limit=5", headers={"X-API-Key": _service_key()}
++    )
++    assert resp.status_code == 200, resp.text
++    items = resp.json()["items"]
++    assert items, "в dev-БД нет курсов — проверка вырождается, наполните данные"
++    # Связь должна быть реально подгружена, а не «съедена» защитой в property.
++    assert all("parent_course_ids" in c for c in items)
++
++
++@pytest.mark.asyncio
++async def test_meta_tasks_returns_200(client):
++    """`GET /meta/tasks` — тот же корень, отдельный вход (справочники для импорта)."""
++    resp = await client.get("/api/v1/meta/tasks", headers={"X-API-Key": _service_key()})
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["courses"], "справочник курсов пуст — проверка вырождается"
++    assert body["difficulties"]
++
++
++# --- Юнит-уровень самой dependency ------------------------------------------
++
++
++@pytest.mark.asyncio
++async def test_get_api_key_accepts_header():
++    key = _service_key()
++    assert await get_api_key(key_query=None, key_header=key) == key
++
++
++@pytest.mark.asyncio
++async def test_get_api_key_accepts_query():
++    key = _service_key()
++    assert await get_api_key(key_query=key, key_header=None) == key
++
++
++@pytest.mark.asyncio
++async def test_get_api_key_falls_back_to_query_when_header_invalid():
++    """Мусорный заголовок не должен «затенять» валидный legacy-query."""
++    key = _service_key()
++    assert await get_api_key(key_query=key, key_header="garbage") == key
++
++
++@pytest.mark.asyncio
++async def test_get_api_key_rejects_missing_and_invalid():
++    for query, header in ((None, None), ("garbage", None), (None, "garbage"), ("a", "b")):
++        with pytest.raises(HTTPException) as exc:
++            await get_api_key(key_query=query, key_header=header)
++        assert exc.value.status_code == 403

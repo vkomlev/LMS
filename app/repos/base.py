@@ -198,13 +198,17 @@ class BaseRepository(Generic[ModelType]):
         else:
             await db.flush()
         await db.refresh(db_obj)
-        # Загружаем parent_courses для курсов через selectinload
-        if hasattr(db_obj, 'parent_courses'):
-            from app.models.courses import Courses
-            if isinstance(db_obj, Courses):
-                stmt = select(Courses).where(Courses.id == db_obj.id).options(selectinload(Courses.parent_courses))
-                result = await db.execute(stmt)
-                db_obj = result.scalar_one()
+        # Загружаем parent_courses для курсов через selectinload.
+        # tsk-586: та же ловушка, что в `paginate` — `hasattr` на связи ORM её
+        # ЧИТАЕТ (lazy-load посреди async-сессии). Сейчас объект сюда приходит
+        # с уже загруженной связью и не падает, но идиома одна и та же, поэтому
+        # проверка типа делается напрямую через `isinstance`.
+        from app.models.courses import Courses  # noqa: PLC0415 — circular import
+
+        if isinstance(db_obj, Courses):
+            stmt = select(Courses).where(Courses.id == db_obj.id).options(selectinload(Courses.parent_courses))
+            result = await db.execute(stmt)
+            db_obj = result.scalar_one()
         return db_obj
 
     async def delete(
@@ -418,25 +422,34 @@ class BaseRepository(Generic[ModelType]):
             result = await db.execute(stmt)
             items: List[ModelType] = list(result.scalars().all())
             
-            # Загружаем parent_courses для курсов, если есть
-            if items and hasattr(items[0], 'parent_courses'):
-                from sqlalchemy.orm import selectinload
-                from app.models.courses import Courses
-                if isinstance(items[0], Courses):
-                    # Перезагружаем с relationships
-                    ids = [item.id for item in items]
-                    stmt_with_load = (
-                        select(Courses)
-                        .where(Courses.id.in_(ids))
-                        .options(selectinload(Courses.parent_courses))
-                    )
-                    if filters:
-                        for f in filters:
-                            stmt_with_load = stmt_with_load.where(f)
-                    if order_by:
-                        stmt_with_load = stmt_with_load.order_by(*order_by)
-                    result = await db.execute(stmt_with_load)
-                    items = list(result.scalars().all())
+            # Загружаем parent_courses для курсов, если есть.
+            #
+            # tsk-586: проверка типа идёт ПЕРВОЙ и по `isinstance`. Раньше здесь
+            # стоял `hasattr(items[0], 'parent_courses')` — а `hasattr` на
+            # незагруженной связи ORM не «проверяет наличие поля», он её ЧИТАЕТ,
+            # то есть запускает lazy-load посреди async-сессии и падает с
+            # `MissingGreenlet` (`hasattr` глотает только AttributeError).
+            # Из-за этого `GET /courses/` и `GET /meta/tasks` отдавали 500 на
+            # проде при полностью валидном ключе.
+            from app.models.courses import Courses  # noqa: PLC0415 — circular import
+
+            if items and isinstance(items[0], Courses):
+                from sqlalchemy.orm import selectinload  # noqa: PLC0415
+
+                # Перезагружаем с relationships
+                ids = [item.id for item in items]
+                stmt_with_load = (
+                    select(Courses)
+                    .where(Courses.id.in_(ids))
+                    .options(selectinload(Courses.parent_courses))
+                )
+                if filters:
+                    for f in filters:
+                        stmt_with_load = stmt_with_load.where(f)
+                if order_by:
+                    stmt_with_load = stmt_with_load.order_by(*order_by)
+                result = await db.execute(stmt_with_load)
+                items = list(result.scalars().all())
 
             # Отдельный COUNT(*) c теми же фильтрами
             base_count = select(self.model)

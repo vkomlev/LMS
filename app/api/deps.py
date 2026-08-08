@@ -26,12 +26,26 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 # ---------------------------------------------------------------------------
 
 async def get_api_key(
-    key: str | None = Security(api_key_query),
+    key_query: str | None = Security(api_key_query),
+    key_header: str | None = Security(api_key_header),
 ) -> str:
-    """Проверка api_key в query-параметрах (legacy)."""
-    if not key or key not in settings.valid_api_keys:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or missing API Key")
-    return key
+    """Проверка сервисного ключа: заголовок `X-API-Key` ИЛИ legacy `?api_key=`.
+
+    tsk-586: до 2026-08-08 эта дверь читала только query-параметр. TG_LMS с
+    коммита 8ceed6f (tsk-497) шлёт ключ ТОЛЬКО заголовком — все ~45 эндпоинтов
+    на `Depends(get_db)` отвечали ботам 403 («Недостаточно прав»). Заголовок
+    проверяется первым: это текущий транспорт клиентов, query оставлен для
+    обратной совместимости (ContentBackbone ходит с `?api_key=`).
+
+    :param key_query: ключ из query-параметра `api_key` (legacy-транспорт).
+    :param key_header: ключ из заголовка `X-API-Key` (основной транспорт).
+    :return: принятый ключ.
+    :raises HTTPException: 403, если ни один из источников не дал валидный ключ.
+    """
+    for key in (key_header, key_query):
+        if key and key in settings.valid_api_keys:
+            return key
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid or missing API Key")
 
 
 async def get_db(
