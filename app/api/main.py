@@ -508,7 +508,6 @@ from app.services import lesson_occurrence_generator_service as _lesson_calendar
 
 
 @app.on_event("startup")
-@app.on_event("startup")
 async def _start_learning_gaps_scheduler() -> None:
     """tsk-572: суточный проход датчика учебных пробелов."""
     try:
@@ -525,6 +524,10 @@ async def _stop_learning_gaps_scheduler() -> None:
         logger.exception("tsk-572: не удалось остановить проход датчика пробелов")
 
 
+# tsk-596: декоратор ниже был потерян коммитом 066002e (tsk-572, фаза 7) —
+# новый обработчик вставили ровно между `@app.on_event("startup")` и этой
+# функцией, из-за чего генератор занятий на старте не поднимался вовсе.
+@app.on_event("startup")
 async def _start_lesson_occurrence_generator_scheduler() -> None:
     try:
         _lesson_calendar_service.start_scheduler()
@@ -667,3 +670,26 @@ async def _stop_code_review_scheduler() -> None:
         _code_review_cron.stop_scheduler()
     except Exception:
         logger.exception("tsk-302: failed to stop code_review scheduler")
+
+
+# tsk-596: суточный пересчёт текущего месяца начислений + страж «ходит, но не
+# выставлен». До него строка месяца появлялась только при правке расписания
+# или по кнопке в кабинете маркетолога, то есть первого числа не появлялась.
+# Тот же multi-worker-safe паттерн (PG advisory lock), отдельный lock-ключ.
+from app.services import charge_cron_service as _charge_cron
+
+
+@app.on_event("startup")
+async def _start_charge_cron_scheduler() -> None:
+    try:
+        _charge_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-596: не удалось запустить автопересчёт начислений")
+
+
+@app.on_event("shutdown")
+async def _stop_charge_cron_scheduler() -> None:
+    try:
+        _charge_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-596: не удалось остановить автопересчёт начислений")

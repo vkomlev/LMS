@@ -303,6 +303,25 @@ class Settings:
         self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
         self.learning_gaps_cron_interval_hours: int = int(os.getenv("LEARNING_GAPS_CRON_INTERVAL_HOURS", "24"))
 
+        # tsk-596: суточный пересчёт текущего месяца начислений + страж
+        # «ходит, но не выставлен». Без него строка месяца появлялась только
+        # при правке расписания или по кнопке в кабинете маркетолога — то есть
+        # первого числа не появлялась вовсе.
+        self.charge_cron_enabled: bool = os.getenv(
+            "CHARGE_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        self.charge_cron_interval_hours: int = int(
+            os.getenv("CHARGE_CRON_INTERVAL_HOURS", "24")
+        )
+        # Молчание при чистом прогоне; при находках — не чаще раза в сутки,
+        # иначе ежедневный тик превратит одного невыставленного ученика в поток.
+        self.charge_anomaly_notify_cooldown_hours: int = int(
+            os.getenv("CHARGE_ANOMALY_NOTIFY_COOLDOWN_HOURS", "24")
+        )
+        self.charge_anomaly_max_examples: int = int(
+            os.getenv("CHARGE_ANOMALY_MAX_EXAMPLES", "10")
+        )
+
         # Learning Engine V1 (этап 1: только БД, без изменения поведения API)
         self.learning_engine_v1: bool = os.getenv("LEARNING_ENGINE_V1", "false").lower() in ("true", "1", "yes")
 
