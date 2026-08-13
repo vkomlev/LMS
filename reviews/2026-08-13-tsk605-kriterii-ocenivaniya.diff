@@ -1,0 +1,600 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index 1f83fce..d472afd 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -800,6 +800,33 @@ async def submit_attempt_answers(
+             and not solution_rules.partial_auto_check
+         )
+         if optimistic_manual and not attempt.time_expired:
++            # tsk-605: оптимистичный зачёт держится на том, что позже придёт
++            # человек. Там, где человека в тарифе нет («ученик работает без
++            # преподавателя»), он превращается в полный автозачёт задания, по
++            # которому сверять нечем, — а калибровка tsk-590 показала, что без
++            # эталона модель не пересчитывает, а подтверждает предъявленное
++            # (7.6–19.0 % собственных ошибок). Решение принимает единая дверь
++            # прав, здесь оно только применяется.
++            #
++            # Сегодня отказ НЕ применяется: прод стоит в режиме `guests`, где
++            # действуют только отказы `denied_no_plan`, — предохранитель
++            # включится вместе с гейтом подписки (tsk-301), которому и
++            # принадлежит решение, куда девать такую работу.
++            verdict_gate = await entitlements_service.check_machine_verdict(
++                db,
++                student_id=attempt.user_id,
++                task_type=task_content.type,
++                solution_rules=solution_rules,
++            )
++            hold_for_human = entitlements_service.should_block(
++                verdict_gate,
++                capability="machine_verdict",
++                student_id=attempt.user_id,
++            )
++        else:
++            hold_for_human = False
++
++        if optimistic_manual and not attempt.time_expired and not hold_for_human:
+             check_result = CheckResult(
+                 score=check_result.max_score,
+                 max_score=check_result.max_score,
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index b5ab890..0c28ca1 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -6,6 +6,7 @@ from sqlalchemy import select, or_
+ from typing import Any, List, Literal, Optional, Dict
+ from pydantic import BaseModel
+ import logging
++import re
+ 
+ from datetime import datetime, timezone
+ 
+@@ -151,6 +152,171 @@ async def get_task_by_external_uid(
+ # сигнатуре путь не сужает, она проверяет значение уже ПОСЛЕ матчинга. Ниже по
+ # файлу этот адрес был мёртв: отдавал 422 «не удалось разобрать строку как
+ # число» вместо результатов поиска.
++class GradingGapCourse(BaseModel):
++    """Курс и сколько в нём заданий без критериев."""
++
++    course_id: int
++    title: Optional[str] = None
++    tasks: int
++
++
++class GradingGapTask(BaseModel):
++    """Задание, которому нечем проверить ответ."""
++
++    task_id: int
++    external_uid: Optional[str] = None
++    course_id: int
++    course_title: Optional[str] = None
++    task_type: Optional[str] = None
++    order_position: Optional[int] = None
++    stem_preview: str
++    #: Ответ подтверждается файлом — критерии тут задачу не закроют (tsk-301).
++    requires_attachment: bool
++
++
++class GradingGapsResponse(BaseModel):
++    """Инвентарь пробелов: где методисту заполнять критерии (tsk-605)."""
++
++    tasks_total: int
++    courses_total: int
++    by_type: Dict[str, int]
++    #: Из общего числа — сколько упирается ещё и в файл-приложение.
++    attachment_blocked: int
++    by_course: List[GradingGapCourse]
++    items: List[GradingGapTask]
++
++
++#: Кандидаты в пробел отбираются SQL-ом ШИРЕ, чем нужно, а решение выносит
++#: единый предикат в Python (`ai_check_policy.evaluate`). Повторять правило
++#: допуска на SQL нельзя: две редакции одного условия расходятся при первой же
++#: правке, и экран методиста начал бы показывать не то, что применяет гейт.
++_GRADING_GAP_CANDIDATE_SQL = """
++    jsonb_array_length(coalesce(solution_rules->'correct_options','[]'::jsonb)) = 0
++    AND solution_rules->'turtle_sim' IS NULL
++    AND jsonb_array_length(coalesce(solution_rules->'short_answer'->'accepted_answers','[]'::jsonb)) = 0
++    AND jsonb_array_length(coalesce(solution_rules->'grading_criteria'->'must','[]'::jsonb)) = 0
++    AND jsonb_array_length(coalesce(solution_rules->'text_answer'->'rubric','[]'::jsonb)) = 0
++"""
++
++
++@router.get(
++    "/tasks/grading-gaps",
++    response_model=GradingGapsResponse,
++    summary="Задания, которым нечем проверить ответ (tsk-605)",
++    responses={
++        200: {"description": "Инвентарь пробелов по курсам и заданиям"},
++        401: {"description": "Не аутентифицирован"},
++        403: {"description": "Роль не позволяет (нужна methodist/admin)"},
++    },
++)
++async def grading_gaps(
++    course_id: Optional[int] = Query(None, description="Ограничить одним курсом"),
++    limit: int = Query(50, ge=1, le=500, description="Сколько заданий вернуть"),
++    offset: int = Query(0, ge=0, description="Смещение по списку заданий"),
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
++) -> GradingGapsResponse:
++    """Показать методисту, у каких заданий нет ни эталона, ни критериев.
++
++    Поле критериев без этого экрана осталось бы пустым навсегда: 416 заданий
++    (замер по проду 2026-08-13) разбросаны по 265 курсам, и найти их
++    перебором вручную нельзя. Список отсортирован так, чтобы сверху были
++    курсы с наибольшим числом пробелов — до них ученики дойдут раньше.
++
++    Сводка (`tasks_total`, `by_course`) считается по ВСЕЙ выборке, а не по
++    странице: постфильтр поверх пагинации молча терял бы строки, и методист
++    видел бы «осталось 50» там, где осталось 416.
++
++    :param course_id: показать только один курс.
++    :param limit: размер страницы списка заданий (сводка от него не зависит).
++    :param offset: смещение по списку заданий.
++    """
++    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
++    from app.models.courses import Courses  # noqa: PLC0415
++    from app.services import ai_check_policy  # noqa: PLC0415
++    from sqlalchemy import text as sa_text  # noqa: PLC0415
++
++    query = (
++        select(
++            Tasks.id,
++            Tasks.external_uid,
++            Tasks.course_id,
++            Tasks.task_content,
++            Tasks.solution_rules,
++            Tasks.order_position,
++            Courses.title.label("course_title"),
++        )
++        .join(Courses, Courses.id == Tasks.course_id)
++        .where(Tasks.is_active.is_(True))
++        .where(sa_text(_GRADING_GAP_CANDIDATE_SQL))
++    )
++    if course_id is not None:
++        query = query.where(Tasks.course_id == course_id)
++
++    rows = (await db.execute(query.order_by(Tasks.course_id, Tasks.order_position, Tasks.id))).all()
++
++    by_type: Dict[str, int] = {}
++    per_course: Dict[int, int] = {}
++    course_titles: Dict[int, Optional[str]] = {}
++    attachment_blocked = 0
++    gaps: List[GradingGapTask] = []
++
++    for row in rows:
++        content = row.task_content if isinstance(row.task_content, dict) else {}
++        task_type = content.get("type")
++        verdict = ai_check_policy.evaluate(task_type, row.solution_rules)
++        if verdict.allowed or verdict.reason != "no_reference_no_criteria":
++            # Отсев кандидатов, которые предикат всё-таки пропускает (квизы) и
++            # тех, чья причина другая: экран обещает «здесь нужны критерии».
++            continue
++        by_type[task_type or "?"] = by_type.get(task_type or "?", 0) + 1
++        per_course[row.course_id] = per_course.get(row.course_id, 0) + 1
++        course_titles.setdefault(row.course_id, row.course_title)
++        rules = row.solution_rules if isinstance(row.solution_rules, dict) else {}
++        needs_file = bool(rules.get("requires_attachment"))
++        if needs_file:
++            attachment_blocked += 1
++        gaps.append(
++            GradingGapTask(
++                task_id=row.id,
++                external_uid=row.external_uid,
++                course_id=row.course_id,
++                course_title=row.course_title,
++                task_type=task_type,
++                order_position=row.order_position,
++                stem_preview=_stem_preview(content.get("stem")),
++                requires_attachment=needs_file,
++            )
++        )
++
++    # Сверху — курсы с наибольшим числом пробелов: до них ученики дойдут раньше.
++    by_course = [
++        GradingGapCourse(course_id=cid, title=course_titles.get(cid), tasks=count)
++        for cid, count in sorted(per_course.items(), key=lambda kv: (-kv[1], kv[0]))
++    ]
++    return GradingGapsResponse(
++        tasks_total=len(gaps),
++        courses_total=len(per_course),
++        by_type=by_type,
++        attachment_blocked=attachment_blocked,
++        by_course=by_course,
++        items=gaps[offset : offset + limit],
++    )
++
++
++def _stem_preview(stem: Any, *, limit: int = 160) -> str:
++    """Короткая подпись задания для списка: без разметки и мягких переносов.
++
++    Мягкий перенос (`\\u00ad`) в стемах ЕГЭ приходит из источника и в списке
++    выглядит как разрыв слова посреди строки (см. плейбук импорта ЕГЭ).
++    """
++    if not isinstance(stem, str):
++        return ""
++    text_only = re.sub(r"<[^>]+>", " ", stem).replace("­", "")
++    text_only = " ".join(text_only.split())
++    return text_only[:limit]
++
++
+ @router.get(
+     "/tasks/search",
+     response_model=List[TaskRead],
+diff --git a/app/schemas/solution_rules.py b/app/schemas/solution_rules.py
+index 3bdc6b1..11467dc 100644
+--- a/app/schemas/solution_rules.py
++++ b/app/schemas/solution_rules.py
+@@ -180,6 +180,148 @@ class TextAnswerRules(BaseModel):
+     )
+ 
+ 
++#: Минимальная длина пункта критерия. Порог не выдуман: у 472 существующих
++#: пунктов рубрики TA на проде самый короткий — 22 символа, средний 60
++#: (замер 2026-08-13). Всё, что короче десяти, — не критерий, а отметка
++#: («ок», «верно», «см. урок»), и она молча делала бы задание пригодным для
++#: машинной проверки, ничего проверяющему не сообщая.
++CRITERION_MIN_LENGTH = 10
++CRITERION_MAX_LENGTH = 500
++CRITERIA_MAX_ITEMS = 20
++CRITERIA_NOTES_MAX_LENGTH = 2000
++
++
++def _clean_criteria_list(values: List[str], *, field_name: str) -> List[str]:
++    """Обрезать, проверить осмысленность и отсечь дубли в списке критериев.
++
++    :param values: сырые пункты, как их прислал методист.
++    :param field_name: имя поля — попадает в текст ошибки, чтобы методист
++        видел, ГДЕ он ошибся, а не абстрактное «неверные критерии».
++    :returns: очищенный список в исходном порядке.
++    :raises ValueError: пустой/слишком короткий/слишком длинный пункт, дубль
++        либо превышение числа пунктов.
++    """
++    if len(values) > CRITERIA_MAX_ITEMS:
++        raise ValueError(
++            f"{field_name}: не больше {CRITERIA_MAX_ITEMS} пунктов "
++            f"(прислано {len(values)}). Длинный список не читает ни человек, "
++            f"ни модель — он не помещается в осмысленный промпт."
++        )
++    cleaned: List[str] = []
++    seen: set[str] = set()
++    for raw in values:
++        item = " ".join(raw.split())
++        if len(item) < CRITERION_MIN_LENGTH:
++            raise ValueError(
++                f"{field_name}: пункт {item!r} короче {CRITERION_MIN_LENGTH} "
++                f"символов. Критерий должен говорить, ЧТО именно проверяется "
++                f"(«Приведены два примера с указанием органа чувств»), — "
++                f"пометка «ок» проверяющему ничего не сообщает."
++            )
++        if len(item) > CRITERION_MAX_LENGTH:
++            raise ValueError(
++                f"{field_name}: пункт длиннее {CRITERION_MAX_LENGTH} символов. "
++                f"Разбейте на несколько отдельных требований."
++            )
++        key = item.casefold()
++        if key in seen:
++            raise ValueError(f"{field_name}: пункт {item!r} повторяется.")
++        seen.add(key)
++        cleaned.append(item)
++    return cleaned
++
++
++class GradingCriteria(BaseModel):
++    """
++    Критерии оценивания задания, у которого нет формализуемого эталона (tsk-605).
++
++    **Зачем поле существует.** Калибровка на 180 живых сдачах (tsk-590, отчёт
++    `reviews/2026-08-08-tsk590-kalibrovka.md`) показала: разделяющий признак
++    годности машинной проверки — не тип задания, а наличие эталона. С эталоном
++    собственные ошибки лучшей модели 1.2 %, без эталона — 7.6–19.0 %. Причина
++    системная: без эталона модель не пересчитывает задачу, а подтверждает
++    предъявленное учеником число (зачла `8641` при верном `8641.5`). Там, где
++    ответ нельзя записать в `short_answer.accepted_answers`, критерии — это
++    единственная замена эталону, и без них задание в автономный (без
++    преподавателя) трек пускать нельзя.
++
++    **Форма.** Три списка вместо одного свободного текста: у проверяющего —
++    человека или модели — разные вопросы к ответу, и слепив их в абзац, мы
++    получили бы ровно то поведение, которое чиним, — «в целом похоже, зачёт».
++    `reject` заведён отдельно именно против измеренного класса ошибок: он
++    называет то, что выглядит правдоподобно, но ответом не является.
++
++    Развёрнутые ответы (TA) хранят критерии в `text_answer.rubric` — 148
++    заданий прода уже заполнены осмысленно. Они НЕ переносятся: предикат
++    `SolutionRules.has_grading_criteria()` читает оба источника, поэтому
++    миграция данных не нужна, а редактор рубрики TA продолжает работать.
++    """
++
++    must: List[str] = Field(
++        ...,
++        description=(
++            "Что обязательно должно быть в ответе, чтобы он считался верным. "
++            "Каждый пункт — проверяемое требование, а не тема."
++        ),
++        examples=[
++            [
++                "Программа читает количество чисел, а затем сами числа",
++                "Максимум ищется среди чисел, кратных 5, а не среди всех",
++                "Выводится одно число — сам максимум, без пояснений",
++            ]
++        ],
++    )
++    accept: List[str] = Field(
++        default_factory=list,
++        description=(
++            "Что считать эквивалентным и засчитывать: другие формулировки, "
++            "иная запись числа, другой верный способ решения."
++        ),
++        examples=[["Любые имена переменных", "Дробная часть через запятую или точку"]],
++    )
++    reject: List[str] = Field(
++        default_factory=list,
++        description=(
++            "Что НЕ засчитывать, даже если ответ выглядит близким. Пишется "
++            "против измеренного класса ошибок: модель склонна объявить чужую "
++            "ошибку опечаткой и подтвердить предъявленное число."
++        ),
++        examples=[["Округлённый результат вместо точного", "Ответ без пересчёта — «примерно столько же»"]],
++    )
++    notes: Optional[str] = Field(
++        default=None,
++        description="Свободное пояснение проверяющему: контекст задания, частые ловушки.",
++        examples=[None, "Ученик сдаёт вывод программы; поле ответа схлопывает переносы строк."],
++    )
++
++    @model_validator(mode="after")
++    def validate_criteria(self) -> "GradingCriteria":
++        """Пустой или бессодержательный блок не должен считаться критериями.
++
++        Тот же принцип, что у `partial_auto_check` (tsk-396): предпосылки
++        проверяются на входе, а не выключаются молча. Блок с пустым `must`
++        прошёл бы гейт допуска и открыл заданию автономный трек, не сказав
++        проверяющему ничего, — то есть ровно та дыра, ради которой поле и
++        заведено.
++        """
++        self.must = _clean_criteria_list(self.must, field_name="grading_criteria.must")
++        if not self.must:
++            raise ValueError(
++                "grading_criteria.must не может быть пустым: критерии без "
++                "обязательных требований не отличают верный ответ от неверного"
++            )
++        self.accept = _clean_criteria_list(self.accept, field_name="grading_criteria.accept")
++        self.reject = _clean_criteria_list(self.reject, field_name="grading_criteria.reject")
++        if self.notes is not None:
++            notes = self.notes.strip()
++            if len(notes) > CRITERIA_NOTES_MAX_LENGTH:
++                raise ValueError(
++                    f"grading_criteria.notes длиннее {CRITERIA_NOTES_MAX_LENGTH} символов"
++                )
++            self.notes = notes or None
++        return self
++
++
+ class PenaltiesRules(BaseModel):
+     """
+     Правила штрафов за различные типы ошибок.
+@@ -424,6 +566,21 @@ class SolutionRules(BaseModel):
+         description="Настройки проверки развёрнутых ответов (TA).",
+     )
+ 
++    # Критерии оценивания там, где эталона нет и быть не может (tsk-605)
++    grading_criteria: Optional[GradingCriteria] = Field(
++        default=None,
++        description=(
++            "Критерии оценивания для заданий без формализуемого эталона "
++            "(tsk-605). Замена `short_answer.accepted_answers` там, где ответ "
++            "нельзя перечислить списком: что обязательно должно быть в ответе, "
++            "что считать эквивалентным, что — ошибкой. Вместе с эталоном "
++            "образует условие допуска задания к машинной проверке "
++            "(`has_grading_criteria`, `app/services/ai_check_policy.py`). "
++            "Для TA ту же роль играет заполненная `text_answer.rubric` — "
++            "предикат читает оба источника, переносить данные не требуется."
++        ),
++    )
++
+     # Для квиз-вопросов со шкалами (SC_Qw/MC_Qw)
+     quiz: Optional[QuizRules] = Field(
+         default=None,
+@@ -529,6 +686,57 @@ class SolutionRules(BaseModel):
+             return True
+         return bool(rules.use_regex and rules.regex)
+ 
++    def has_grading_criteria(self) -> bool:
++        """Заданы ли критерии оценивания — замена эталона там, где его нет (tsk-605).
++
++        Читает ДВА источника, и это не дублирование, а отказ от миграции:
++        `grading_criteria` — новое поле для любого типа задания, а
++        `text_answer.rubric` — то же самое по смыслу у развёрнутых ответов,
++        где 148 заданий прода уже заполнены осмысленно (замер 2026-08-13:
++        472 пункта, средняя длина 60 символов). Перенос данных ради единого
++        поля обесценил бы готовую работу методиста и сломал редактор рубрики.
++
++        Проверяется НЕПУСТОТА, а не наличие блока: пустой объект — та же
++        форма «правило есть, а содержимого нет», из-за которой предикат
++        `has_reference_answer` пришлось делать общим (см. его docstring).
++
++        :returns: True — проверяющему есть по чему судить ответ без эталона.
++        """
++        if self.grading_criteria is not None and self.grading_criteria.must:
++            return True
++        return bool(self.text_answer is not None and self.text_answer.rubric)
++
++    def criteria_for_judge(self) -> Optional[dict]:
++        """Критерии в едином виде — независимо от того, где они лежат (tsk-605).
++
++        Единственная точка сборки: и промпт судьи, и экран методиста, и
++        инвентарь пробелов обязаны понимать «критерии есть» одинаково. Если
++        каждый потребитель разберёт `grading_criteria` и `text_answer.rubric`
++        сам, они разъедутся — ровно так уже расходились «сверять нечем» на
++        проверке и «поле ответа бессмысленно» в форме до tsk-547.
++
++        :returns: `{"must": [...], "accept": [...], "reject": [...],
++            "notes": str | None, "source": "grading_criteria" | "text_rubric"}`
++            либо None, если критериев нет.
++        """
++        if self.grading_criteria is not None and self.grading_criteria.must:
++            return {
++                "must": list(self.grading_criteria.must),
++                "accept": list(self.grading_criteria.accept),
++                "reject": list(self.grading_criteria.reject),
++                "notes": self.grading_criteria.notes,
++                "source": "grading_criteria",
++            }
++        if self.text_answer is not None and self.text_answer.rubric:
++            return {
++                "must": [item.title for item in self.text_answer.rubric],
++                "accept": [],
++                "reject": [],
++                "notes": None,
++                "source": "text_rubric",
++            }
++        return None
++
+     def validate_with_task_content(self, task_content: "TaskContent") -> None:
+         """
+         Валидирует соответствие correct_options и options[].id из task_content.
+diff --git a/app/services/entitlements_service.py b/app/services/entitlements_service.py
+index 7d4a88e..811e311 100644
+--- a/app/services/entitlements_service.py
++++ b/app/services/entitlements_service.py
+@@ -45,6 +45,9 @@ Outcome = Literal[
+     "denied_not_in_plan",   # подписка есть, возможность в неё не входит
+     "denied_limit",         # входит, но квота и пакеты исчерпаны
+     "error_technical",      # проверку не удалось выполнить (инфраструктура)
++    # tsk-605: у задания нет ни эталона, ни критериев, а у ученика нет выхода
++    # на человека — машине нельзя оставлять последнее слово.
++    "denied_task_not_gradable",
+ ]
+ 
+ #: Исключения, на которых срабатывает fail-open. Список ЗАКРЫТЫЙ.
+@@ -193,6 +196,78 @@ async def check(
+         return _ERROR_TECHNICAL
+ 
+ 
++async def check_machine_verdict(
++    db: AsyncSession,
++    *,
++    student_id: Optional[int],
++    task_type: Optional[str],
++    solution_rules: object,
++) -> Decision:
++    """Можно ли оставить последнее слово по заданию за машиной (tsk-605).
++
++    Вопрос состоит из двух половин, и обе обязаны сойтись:
++
++    1. **Годится ли задание.** Калибровка tsk-590 на 180 живых сдачах: с
++       эталоном собственные ошибки лучшей модели 1.2 %, без эталона —
++       7.6–19.0 %, потому что без эталона модель не пересчитывает задачу, а
++       подтверждает предъявленное учеником число. Предикат — единый,
++       `ai_check_policy.evaluate`, здесь он вызывается, а не повторяется.
++    2. **Есть ли кому перехватить ошибку.** Пока у ученика в тарифе есть
++       выход на преподавателя (`teacher_escalation`), ошибочный зачёт ловит
++       человек — так живёт сегодняшняя обязательная очередь. В автономном
++       треке («ученик работает без преподавателя», решение оператора
++       2026-08-08) перехватывать некому, и та же ошибка уезжает ученику как
++       знание.
++
++    Отказ означает не «ученику отказать», а «машине не решать»: работа
++    уходит человеку. Что делать, если человека в тарифе нет вовсе —
++    исключить задание из трека либо продать эскалацию — решается в tsk-301,
++    здесь такое право не выдумывается.
++
++    Отсутствие подписки трактуется как отсутствие ДОКАЗАННОГО выхода на
++    человека: неизвестность на стороне безопасности, а не разрешения. На
++    поведение это сегодня не влияет — применение отказа управляется
++    `should_block` и режимом выката.
++
++    :param student_id: `None`/`0` — ученик не опознан.
++    :param task_type: `task_content.type` задания.
++    :param solution_rules: правила задания (схема, словарь либо None).
++    """
++    # Импорт внутри функции: политика допуска тянет схемы заданий, а дверь
++    # прав грузится в модулях, которым задания не нужны вовсе.
++    from app.services import ai_check_policy  # noqa: PLC0415
++
++    verdict = ai_check_policy.evaluate(task_type, solution_rules)
++    if verdict.allowed:
++        return Decision(allowed=True, outcome="allowed")
++
++    denied = Decision(
++        allowed=False,
++        outcome="denied_task_not_gradable",
++        upgrade_hint=(
++            f"Задание проверяет преподаватель: {verdict.human_reason}."
++        ),
++    )
++    if not student_id:
++        return denied
++
++    try:
++        plan = await _load_plan(db, student_id)
++        if plan is None:
++            return denied
++        if plan["teacher_escalation"]:
++            # Человек в тарифе есть — сегодняшний порядок (машина ставит
++            # предварительный итог, преподаватель подтверждает) не ломаем.
++            return Decision(allowed=True, outcome="allowed")
++        return denied
++    except _TECHNICAL_ERRORS:
++        logger.warning(
++            "tsk-605: не удалось узнать, есть ли у ученика %s выход на "
++            "преподавателя — пускаем (fail-open)", student_id, exc_info=True,
++        )
++        return _ERROR_TECHNICAL
++
++
+ _RESERVE_QUOTA_SQL = text("""
+     INSERT INTO student_ai_quota (student_id, period, used)
+     VALUES (:sid, :p, 1)
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index 783b863..efc381e 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -103,6 +103,9 @@ Outcome = Literal[
+     "denied_not_in_plan",  # подписка есть, эта возможность в неё не входит
+     "denied_limit",        # входит, но месячная квота и пакеты исчерпаны
+     "error_technical",     # проверку не удалось выполнить (инфраструктура)
++    # tsk-605: у задания нет ни эталона, ни критериев оценивания, а у ученика
++    # нет выхода на преподавателя — машине нельзя оставлять последнее слово.
++    "denied_task_not_gradable",
+ ]
+ 
+ @dataclass(frozen=True)
+@@ -126,6 +129,7 @@ class Decision:
+ | План не даёт возможность | `denied_not_in_plan` | **False** |
+ | Квота и пакеты исчерпаны | `denied_limit` | **False** |
+ | Чтение подписки/квоты упало по инфраструктуре | `error_technical` | **True** (fail-open) + WARNING |
++| Задание нечем проверить машине, а выход на преподавателя не доказан (tsk-605) | `denied_task_not_gradable` | **False** |
+ 
+ **fail-open срабатывает только на закрытом перечне исключений:**
+ `sqlalchemy.exc.OperationalError`, `sqlalchemy.exc.InterfaceError`, `asyncio.TimeoutError`.
+@@ -346,6 +350,29 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ Форма решения §3, правила §4, порядок списания §6.
+ **Исполнитель:** `/executor-pro` · **Ревью:** `/techlead-code-reviewer` (RBAC + fail-open/closed)
+ 
++### 15.2а. Четвёртая точка: последнее слово по заданию (tsk-605, вне фаз tsk-301)
++
++`check_machine_verdict(db, *, student_id, task_type, solution_rules)` — единственное
++место, где сходятся две половины условия: **годится ли задание** для машинной проверки
++(единый предикат `app/services/ai_check_policy.py::evaluate` — эталон **либо** критерии
++оценивания) и **есть ли кому перехватить ошибку** (`subscription_plan.teacher_escalation`).
++
++Отказ `denied_task_not_gradable` означает не «ученику отказать», а «машине не решать»:
++работа уходит человеку. Что делать, если человека в тарифе нет вовсе — исключить задание
++из трека либо продать эскалацию — решается здесь же, в tsk-301; в tsk-605 такое право
++не выдумывалось.
++
++Применение идёт через `should_block`, поэтому режим выката общий с остальными правами.
++Проводка стоит в `attempts.py` на оптимистичном зачёте (единственная существующая
++поверхность, где машина ставит итог по заданию без эталона).
++
++**Замер, который надо учесть при включении** (`reviews/2026-08-13-tsk605-kriterii-ocenivaniya.md`
++§5): критерии снижают собственные ошибки модели с 21.1 % до 15.8 %, но ложных зачётов
++остаётся 12.3 % против 3.1 % с эталоном. Для автономного трека условия «эталон ИЛИ
++критерии» может оказаться мало — развилка описана там же в §7.
++
++**Исполнитель:** `/fastapi-api-developer` · **Ревью:** `/review-gate` (пройдено 2026-08-13)
++
+ ### 15.3. Тест-страж точек расхода (Фаза 2)
+ Механизм §9. Приёмка — страж краснеет на нарочно добавленной точке без двери.
+ **Исполнитель:** `/executor-pro` · **Ревью:** `/qa-fix`

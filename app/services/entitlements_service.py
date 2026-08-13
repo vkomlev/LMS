@@ -45,6 +45,9 @@ Outcome = Literal[
     "denied_not_in_plan",   # подписка есть, возможность в неё не входит
     "denied_limit",         # входит, но квота и пакеты исчерпаны
     "error_technical",      # проверку не удалось выполнить (инфраструктура)
+    # tsk-605: у задания нет ни эталона, ни критериев, а у ученика нет выхода
+    # на человека — машине нельзя оставлять последнее слово.
+    "denied_task_not_gradable",
 ]
 
 #: Исключения, на которых срабатывает fail-open. Список ЗАКРЫТЫЙ.
@@ -189,6 +192,78 @@ async def check(
         logger.warning(
             "tsk-301: проверка права %s для ученика %s не выполнена технически — "
             "пускаем (fail-open)", capability, student_id, exc_info=True,
+        )
+        return _ERROR_TECHNICAL
+
+
+async def check_machine_verdict(
+    db: AsyncSession,
+    *,
+    student_id: Optional[int],
+    task_type: Optional[str],
+    solution_rules: object,
+) -> Decision:
+    """Можно ли оставить последнее слово по заданию за машиной (tsk-605).
+
+    Вопрос состоит из двух половин, и обе обязаны сойтись:
+
+    1. **Годится ли задание.** Калибровка tsk-590 на 180 живых сдачах: с
+       эталоном собственные ошибки лучшей модели 1.2 %, без эталона —
+       7.6–19.0 %, потому что без эталона модель не пересчитывает задачу, а
+       подтверждает предъявленное учеником число. Предикат — единый,
+       `ai_check_policy.evaluate`, здесь он вызывается, а не повторяется.
+    2. **Есть ли кому перехватить ошибку.** Пока у ученика в тарифе есть
+       выход на преподавателя (`teacher_escalation`), ошибочный зачёт ловит
+       человек — так живёт сегодняшняя обязательная очередь. В автономном
+       треке («ученик работает без преподавателя», решение оператора
+       2026-08-08) перехватывать некому, и та же ошибка уезжает ученику как
+       знание.
+
+    Отказ означает не «ученику отказать», а «машине не решать»: работа
+    уходит человеку. Что делать, если человека в тарифе нет вовсе —
+    исключить задание из трека либо продать эскалацию — решается в tsk-301,
+    здесь такое право не выдумывается.
+
+    Отсутствие подписки трактуется как отсутствие ДОКАЗАННОГО выхода на
+    человека: неизвестность на стороне безопасности, а не разрешения. На
+    поведение это сегодня не влияет — применение отказа управляется
+    `should_block` и режимом выката.
+
+    :param student_id: `None`/`0` — ученик не опознан.
+    :param task_type: `task_content.type` задания.
+    :param solution_rules: правила задания (схема, словарь либо None).
+    """
+    # Импорт внутри функции: политика допуска тянет схемы заданий, а дверь
+    # прав грузится в модулях, которым задания не нужны вовсе.
+    from app.services import ai_check_policy  # noqa: PLC0415
+
+    verdict = ai_check_policy.evaluate(task_type, solution_rules)
+    if verdict.allowed:
+        return Decision(allowed=True, outcome="allowed")
+
+    denied = Decision(
+        allowed=False,
+        outcome="denied_task_not_gradable",
+        upgrade_hint=(
+            f"Задание проверяет преподаватель: {verdict.human_reason}."
+        ),
+    )
+    if not student_id:
+        return denied
+
+    try:
+        plan = await _load_plan(db, student_id)
+        if plan is None:
+            return denied
+        if plan["teacher_escalation"]:
+            # Человек в тарифе есть — сегодняшний порядок (машина ставит
+            # предварительный итог, преподаватель подтверждает) не ломаем.
+            return Decision(allowed=True, outcome="allowed")
+        return denied
+    except _TECHNICAL_ERRORS:
+        logger.warning(
+            "tsk-605: не удалось узнать, есть ли у ученика %s выход на "
+            "преподавателя — пускаем (fail-open)", student_id, exc_info=True,
         )
         return _ERROR_TECHNICAL
 

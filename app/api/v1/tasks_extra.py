@@ -6,6 +6,7 @@ from sqlalchemy import select, or_
 from typing import Any, List, Literal, Optional, Dict
 from pydantic import BaseModel
 import logging
+import re
 
 from datetime import datetime, timezone
 
@@ -151,6 +152,171 @@ async def get_task_by_external_uid(
 # сигнатуре путь не сужает, она проверяет значение уже ПОСЛЕ матчинга. Ниже по
 # файлу этот адрес был мёртв: отдавал 422 «не удалось разобрать строку как
 # число» вместо результатов поиска.
+class GradingGapCourse(BaseModel):
+    """Курс и сколько в нём заданий без критериев."""
+
+    course_id: int
+    title: Optional[str] = None
+    tasks: int
+
+
+class GradingGapTask(BaseModel):
+    """Задание, которому нечем проверить ответ."""
+
+    task_id: int
+    external_uid: Optional[str] = None
+    course_id: int
+    course_title: Optional[str] = None
+    task_type: Optional[str] = None
+    order_position: Optional[int] = None
+    stem_preview: str
+    #: Ответ подтверждается файлом — критерии тут задачу не закроют (tsk-301).
+    requires_attachment: bool
+
+
+class GradingGapsResponse(BaseModel):
+    """Инвентарь пробелов: где методисту заполнять критерии (tsk-605)."""
+
+    tasks_total: int
+    courses_total: int
+    by_type: Dict[str, int]
+    #: Из общего числа — сколько упирается ещё и в файл-приложение.
+    attachment_blocked: int
+    by_course: List[GradingGapCourse]
+    items: List[GradingGapTask]
+
+
+#: Кандидаты в пробел отбираются SQL-ом ШИРЕ, чем нужно, а решение выносит
+#: единый предикат в Python (`ai_check_policy.evaluate`). Повторять правило
+#: допуска на SQL нельзя: две редакции одного условия расходятся при первой же
+#: правке, и экран методиста начал бы показывать не то, что применяет гейт.
+_GRADING_GAP_CANDIDATE_SQL = """
+    jsonb_array_length(coalesce(solution_rules->'correct_options','[]'::jsonb)) = 0
+    AND solution_rules->'turtle_sim' IS NULL
+    AND jsonb_array_length(coalesce(solution_rules->'short_answer'->'accepted_answers','[]'::jsonb)) = 0
+    AND jsonb_array_length(coalesce(solution_rules->'grading_criteria'->'must','[]'::jsonb)) = 0
+    AND jsonb_array_length(coalesce(solution_rules->'text_answer'->'rubric','[]'::jsonb)) = 0
+"""
+
+
+@router.get(
+    "/tasks/grading-gaps",
+    response_model=GradingGapsResponse,
+    summary="Задания, которым нечем проверить ответ (tsk-605)",
+    responses={
+        200: {"description": "Инвентарь пробелов по курсам и заданиям"},
+        401: {"description": "Не аутентифицирован"},
+        403: {"description": "Роль не позволяет (нужна methodist/admin)"},
+    },
+)
+async def grading_gaps(
+    course_id: Optional[int] = Query(None, description="Ограничить одним курсом"),
+    limit: int = Query(50, ge=1, le=500, description="Сколько заданий вернуть"),
+    offset: int = Query(0, ge=0, description="Смещение по списку заданий"),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_STRUCTURE_GATE),
+) -> GradingGapsResponse:
+    """Показать методисту, у каких заданий нет ни эталона, ни критериев.
+
+    Поле критериев без этого экрана осталось бы пустым навсегда: 416 заданий
+    (замер по проду 2026-08-13) разбросаны по 265 курсам, и найти их
+    перебором вручную нельзя. Список отсортирован так, чтобы сверху были
+    курсы с наибольшим числом пробелов — до них ученики дойдут раньше.
+
+    Сводка (`tasks_total`, `by_course`) считается по ВСЕЙ выборке, а не по
+    странице: постфильтр поверх пагинации молча терял бы строки, и методист
+    видел бы «осталось 50» там, где осталось 416.
+
+    :param course_id: показать только один курс.
+    :param limit: размер страницы списка заданий (сводка от него не зависит).
+    :param offset: смещение по списку заданий.
+    """
+    from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+    from app.models.courses import Courses  # noqa: PLC0415
+    from app.services import ai_check_policy  # noqa: PLC0415
+    from sqlalchemy import text as sa_text  # noqa: PLC0415
+
+    query = (
+        select(
+            Tasks.id,
+            Tasks.external_uid,
+            Tasks.course_id,
+            Tasks.task_content,
+            Tasks.solution_rules,
+            Tasks.order_position,
+            Courses.title.label("course_title"),
+        )
+        .join(Courses, Courses.id == Tasks.course_id)
+        .where(Tasks.is_active.is_(True))
+        .where(sa_text(_GRADING_GAP_CANDIDATE_SQL))
+    )
+    if course_id is not None:
+        query = query.where(Tasks.course_id == course_id)
+
+    rows = (await db.execute(query.order_by(Tasks.course_id, Tasks.order_position, Tasks.id))).all()
+
+    by_type: Dict[str, int] = {}
+    per_course: Dict[int, int] = {}
+    course_titles: Dict[int, Optional[str]] = {}
+    attachment_blocked = 0
+    gaps: List[GradingGapTask] = []
+
+    for row in rows:
+        content = row.task_content if isinstance(row.task_content, dict) else {}
+        task_type = content.get("type")
+        verdict = ai_check_policy.evaluate(task_type, row.solution_rules)
+        if verdict.allowed or verdict.reason != "no_reference_no_criteria":
+            # Отсев кандидатов, которые предикат всё-таки пропускает (квизы) и
+            # тех, чья причина другая: экран обещает «здесь нужны критерии».
+            continue
+        by_type[task_type or "?"] = by_type.get(task_type or "?", 0) + 1
+        per_course[row.course_id] = per_course.get(row.course_id, 0) + 1
+        course_titles.setdefault(row.course_id, row.course_title)
+        rules = row.solution_rules if isinstance(row.solution_rules, dict) else {}
+        needs_file = bool(rules.get("requires_attachment"))
+        if needs_file:
+            attachment_blocked += 1
+        gaps.append(
+            GradingGapTask(
+                task_id=row.id,
+                external_uid=row.external_uid,
+                course_id=row.course_id,
+                course_title=row.course_title,
+                task_type=task_type,
+                order_position=row.order_position,
+                stem_preview=_stem_preview(content.get("stem")),
+                requires_attachment=needs_file,
+            )
+        )
+
+    # Сверху — курсы с наибольшим числом пробелов: до них ученики дойдут раньше.
+    by_course = [
+        GradingGapCourse(course_id=cid, title=course_titles.get(cid), tasks=count)
+        for cid, count in sorted(per_course.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return GradingGapsResponse(
+        tasks_total=len(gaps),
+        courses_total=len(per_course),
+        by_type=by_type,
+        attachment_blocked=attachment_blocked,
+        by_course=by_course,
+        items=gaps[offset : offset + limit],
+    )
+
+
+def _stem_preview(stem: Any, *, limit: int = 160) -> str:
+    """Короткая подпись задания для списка: без разметки и мягких переносов.
+
+    Мягкий перенос (`\\u00ad`) в стемах ЕГЭ приходит из источника и в списке
+    выглядит как разрыв слова посреди строки (см. плейбук импорта ЕГЭ).
+    """
+    if not isinstance(stem, str):
+        return ""
+    text_only = re.sub(r"<[^>]+>", " ", stem).replace("­", "")
+    text_only = " ".join(text_only.split())
+    return text_only[:limit]
+
+
 @router.get(
     "/tasks/search",
     response_model=List[TaskRead],

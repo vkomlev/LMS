@@ -180,6 +180,148 @@ class TextAnswerRules(BaseModel):
     )
 
 
+#: Минимальная длина пункта критерия. Порог не выдуман: у 472 существующих
+#: пунктов рубрики TA на проде самый короткий — 22 символа, средний 60
+#: (замер 2026-08-13). Всё, что короче десяти, — не критерий, а отметка
+#: («ок», «верно», «см. урок»), и она молча делала бы задание пригодным для
+#: машинной проверки, ничего проверяющему не сообщая.
+CRITERION_MIN_LENGTH = 10
+CRITERION_MAX_LENGTH = 500
+CRITERIA_MAX_ITEMS = 20
+CRITERIA_NOTES_MAX_LENGTH = 2000
+
+
+def _clean_criteria_list(values: List[str], *, field_name: str) -> List[str]:
+    """Обрезать, проверить осмысленность и отсечь дубли в списке критериев.
+
+    :param values: сырые пункты, как их прислал методист.
+    :param field_name: имя поля — попадает в текст ошибки, чтобы методист
+        видел, ГДЕ он ошибся, а не абстрактное «неверные критерии».
+    :returns: очищенный список в исходном порядке.
+    :raises ValueError: пустой/слишком короткий/слишком длинный пункт, дубль
+        либо превышение числа пунктов.
+    """
+    if len(values) > CRITERIA_MAX_ITEMS:
+        raise ValueError(
+            f"{field_name}: не больше {CRITERIA_MAX_ITEMS} пунктов "
+            f"(прислано {len(values)}). Длинный список не читает ни человек, "
+            f"ни модель — он не помещается в осмысленный промпт."
+        )
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        item = " ".join(raw.split())
+        if len(item) < CRITERION_MIN_LENGTH:
+            raise ValueError(
+                f"{field_name}: пункт {item!r} короче {CRITERION_MIN_LENGTH} "
+                f"символов. Критерий должен говорить, ЧТО именно проверяется "
+                f"(«Приведены два примера с указанием органа чувств»), — "
+                f"пометка «ок» проверяющему ничего не сообщает."
+            )
+        if len(item) > CRITERION_MAX_LENGTH:
+            raise ValueError(
+                f"{field_name}: пункт длиннее {CRITERION_MAX_LENGTH} символов. "
+                f"Разбейте на несколько отдельных требований."
+            )
+        key = item.casefold()
+        if key in seen:
+            raise ValueError(f"{field_name}: пункт {item!r} повторяется.")
+        seen.add(key)
+        cleaned.append(item)
+    return cleaned
+
+
+class GradingCriteria(BaseModel):
+    """
+    Критерии оценивания задания, у которого нет формализуемого эталона (tsk-605).
+
+    **Зачем поле существует.** Калибровка на 180 живых сдачах (tsk-590, отчёт
+    `reviews/2026-08-08-tsk590-kalibrovka.md`) показала: разделяющий признак
+    годности машинной проверки — не тип задания, а наличие эталона. С эталоном
+    собственные ошибки лучшей модели 1.2 %, без эталона — 7.6–19.0 %. Причина
+    системная: без эталона модель не пересчитывает задачу, а подтверждает
+    предъявленное учеником число (зачла `8641` при верном `8641.5`). Там, где
+    ответ нельзя записать в `short_answer.accepted_answers`, критерии — это
+    единственная замена эталону, и без них задание в автономный (без
+    преподавателя) трек пускать нельзя.
+
+    **Форма.** Три списка вместо одного свободного текста: у проверяющего —
+    человека или модели — разные вопросы к ответу, и слепив их в абзац, мы
+    получили бы ровно то поведение, которое чиним, — «в целом похоже, зачёт».
+    `reject` заведён отдельно именно против измеренного класса ошибок: он
+    называет то, что выглядит правдоподобно, но ответом не является.
+
+    Развёрнутые ответы (TA) хранят критерии в `text_answer.rubric` — 148
+    заданий прода уже заполнены осмысленно. Они НЕ переносятся: предикат
+    `SolutionRules.has_grading_criteria()` читает оба источника, поэтому
+    миграция данных не нужна, а редактор рубрики TA продолжает работать.
+    """
+
+    must: List[str] = Field(
+        ...,
+        description=(
+            "Что обязательно должно быть в ответе, чтобы он считался верным. "
+            "Каждый пункт — проверяемое требование, а не тема."
+        ),
+        examples=[
+            [
+                "Программа читает количество чисел, а затем сами числа",
+                "Максимум ищется среди чисел, кратных 5, а не среди всех",
+                "Выводится одно число — сам максимум, без пояснений",
+            ]
+        ],
+    )
+    accept: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Что считать эквивалентным и засчитывать: другие формулировки, "
+            "иная запись числа, другой верный способ решения."
+        ),
+        examples=[["Любые имена переменных", "Дробная часть через запятую или точку"]],
+    )
+    reject: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Что НЕ засчитывать, даже если ответ выглядит близким. Пишется "
+            "против измеренного класса ошибок: модель склонна объявить чужую "
+            "ошибку опечаткой и подтвердить предъявленное число."
+        ),
+        examples=[["Округлённый результат вместо точного", "Ответ без пересчёта — «примерно столько же»"]],
+    )
+    notes: Optional[str] = Field(
+        default=None,
+        description="Свободное пояснение проверяющему: контекст задания, частые ловушки.",
+        examples=[None, "Ученик сдаёт вывод программы; поле ответа схлопывает переносы строк."],
+    )
+
+    @model_validator(mode="after")
+    def validate_criteria(self) -> "GradingCriteria":
+        """Пустой или бессодержательный блок не должен считаться критериями.
+
+        Тот же принцип, что у `partial_auto_check` (tsk-396): предпосылки
+        проверяются на входе, а не выключаются молча. Блок с пустым `must`
+        прошёл бы гейт допуска и открыл заданию автономный трек, не сказав
+        проверяющему ничего, — то есть ровно та дыра, ради которой поле и
+        заведено.
+        """
+        self.must = _clean_criteria_list(self.must, field_name="grading_criteria.must")
+        if not self.must:
+            raise ValueError(
+                "grading_criteria.must не может быть пустым: критерии без "
+                "обязательных требований не отличают верный ответ от неверного"
+            )
+        self.accept = _clean_criteria_list(self.accept, field_name="grading_criteria.accept")
+        self.reject = _clean_criteria_list(self.reject, field_name="grading_criteria.reject")
+        if self.notes is not None:
+            notes = self.notes.strip()
+            if len(notes) > CRITERIA_NOTES_MAX_LENGTH:
+                raise ValueError(
+                    f"grading_criteria.notes длиннее {CRITERIA_NOTES_MAX_LENGTH} символов"
+                )
+            self.notes = notes or None
+        return self
+
+
 class PenaltiesRules(BaseModel):
     """
     Правила штрафов за различные типы ошибок.
@@ -424,6 +566,21 @@ class SolutionRules(BaseModel):
         description="Настройки проверки развёрнутых ответов (TA).",
     )
 
+    # Критерии оценивания там, где эталона нет и быть не может (tsk-605)
+    grading_criteria: Optional[GradingCriteria] = Field(
+        default=None,
+        description=(
+            "Критерии оценивания для заданий без формализуемого эталона "
+            "(tsk-605). Замена `short_answer.accepted_answers` там, где ответ "
+            "нельзя перечислить списком: что обязательно должно быть в ответе, "
+            "что считать эквивалентным, что — ошибкой. Вместе с эталоном "
+            "образует условие допуска задания к машинной проверке "
+            "(`has_grading_criteria`, `app/services/ai_check_policy.py`). "
+            "Для TA ту же роль играет заполненная `text_answer.rubric` — "
+            "предикат читает оба источника, переносить данные не требуется."
+        ),
+    )
+
     # Для квиз-вопросов со шкалами (SC_Qw/MC_Qw)
     quiz: Optional[QuizRules] = Field(
         default=None,
@@ -528,6 +685,57 @@ class SolutionRules(BaseModel):
         if rules.accepted_answers:
             return True
         return bool(rules.use_regex and rules.regex)
+
+    def has_grading_criteria(self) -> bool:
+        """Заданы ли критерии оценивания — замена эталона там, где его нет (tsk-605).
+
+        Читает ДВА источника, и это не дублирование, а отказ от миграции:
+        `grading_criteria` — новое поле для любого типа задания, а
+        `text_answer.rubric` — то же самое по смыслу у развёрнутых ответов,
+        где 148 заданий прода уже заполнены осмысленно (замер 2026-08-13:
+        472 пункта, средняя длина 60 символов). Перенос данных ради единого
+        поля обесценил бы готовую работу методиста и сломал редактор рубрики.
+
+        Проверяется НЕПУСТОТА, а не наличие блока: пустой объект — та же
+        форма «правило есть, а содержимого нет», из-за которой предикат
+        `has_reference_answer` пришлось делать общим (см. его docstring).
+
+        :returns: True — проверяющему есть по чему судить ответ без эталона.
+        """
+        if self.grading_criteria is not None and self.grading_criteria.must:
+            return True
+        return bool(self.text_answer is not None and self.text_answer.rubric)
+
+    def criteria_for_judge(self) -> Optional[dict]:
+        """Критерии в едином виде — независимо от того, где они лежат (tsk-605).
+
+        Единственная точка сборки: и промпт судьи, и экран методиста, и
+        инвентарь пробелов обязаны понимать «критерии есть» одинаково. Если
+        каждый потребитель разберёт `grading_criteria` и `text_answer.rubric`
+        сам, они разъедутся — ровно так уже расходились «сверять нечем» на
+        проверке и «поле ответа бессмысленно» в форме до tsk-547.
+
+        :returns: `{"must": [...], "accept": [...], "reject": [...],
+            "notes": str | None, "source": "grading_criteria" | "text_rubric"}`
+            либо None, если критериев нет.
+        """
+        if self.grading_criteria is not None and self.grading_criteria.must:
+            return {
+                "must": list(self.grading_criteria.must),
+                "accept": list(self.grading_criteria.accept),
+                "reject": list(self.grading_criteria.reject),
+                "notes": self.grading_criteria.notes,
+                "source": "grading_criteria",
+            }
+        if self.text_answer is not None and self.text_answer.rubric:
+            return {
+                "must": [item.title for item in self.text_answer.rubric],
+                "accept": [],
+                "reject": [],
+                "notes": None,
+                "source": "text_rubric",
+            }
+        return None
 
     def validate_with_task_content(self, task_content: "TaskContent") -> None:
         """

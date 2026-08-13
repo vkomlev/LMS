@@ -8799,6 +8799,147 @@
         }
       }
     },
+    "/api/v1/tasks/grading-gaps": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Задания, которым нечем проверить ответ (tsk-605)",
+        "description": "Показать методисту, у каких заданий нет ни эталона, ни критериев.\n\nПоле критериев без этого экрана осталось бы пустым навсегда: 416 заданий\n(замер по проду 2026-08-13) разбросаны по 265 курсам, и найти их\nперебором вручную нельзя. Список отсортирован так, чтобы сверху были\nкурсы с наибольшим числом пробелов — до них ученики дойдут раньше.\n\nСводка (`tasks_total`, `by_course`) считается по ВСЕЙ выборке, а не по\nстранице: постфильтр поверх пагинации молча терял бы строки, и методист\nвидел бы «осталось 50» там, где осталось 416.\n\n:param course_id: показать только один курс.\n:param limit: размер страницы списка заданий (сводка от него не зависит).\n:param offset: смещение по списку заданий.",
+        "operationId": "grading_gaps_api_v1_tasks_grading_gaps_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ограничить одним курсом",
+              "title": "Course Id"
+            },
+            "description": "Ограничить одним курсом"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "description": "Сколько заданий вернуть",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "Сколько заданий вернуть"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение по списку заданий",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение по списку заданий"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Инвентарь пробелов по курсам и заданиям",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GradingGapsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tasks/search": {
       "get": {
         "tags": [
@@ -40235,6 +40376,226 @@
         "title": "GatewayPaymentStart",
         "description": "Куда отправить плательщика вводить данные карты."
       },
+      "GradingCriteria": {
+        "properties": {
+          "must": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Must",
+            "description": "Что обязательно должно быть в ответе, чтобы он считался верным. Каждый пункт — проверяемое требование, а не тема.",
+            "examples": [
+              [
+                "Программа читает количество чисел, а затем сами числа",
+                "Максимум ищется среди чисел, кратных 5, а не среди всех",
+                "Выводится одно число — сам максимум, без пояснений"
+              ]
+            ]
+          },
+          "accept": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Accept",
+            "description": "Что считать эквивалентным и засчитывать: другие формулировки, иная запись числа, другой верный способ решения.",
+            "examples": [
+              [
+                "Любые имена переменных",
+                "Дробная часть через запятую или точку"
+              ]
+            ]
+          },
+          "reject": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reject",
+            "description": "Что НЕ засчитывать, даже если ответ выглядит близким. Пишется против измеренного класса ошибок: модель склонна объявить чужую ошибку опечаткой и подтвердить предъявленное число.",
+            "examples": [
+              [
+                "Округлённый результат вместо точного",
+                "Ответ без пересчёта — «примерно столько же»"
+              ]
+            ]
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Свободное пояснение проверяющему: контекст задания, частые ловушки.",
+            "examples": [
+              null,
+              "Ученик сдаёт вывод программы; поле ответа схлопывает переносы строк."
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "must"
+        ],
+        "title": "GradingCriteria",
+        "description": "Критерии оценивания задания, у которого нет формализуемого эталона (tsk-605).\n\n**Зачем поле существует.** Калибровка на 180 живых сдачах (tsk-590, отчёт\n`reviews/2026-08-08-tsk590-kalibrovka.md`) показала: разделяющий признак\nгодности машинной проверки — не тип задания, а наличие эталона. С эталоном\nсобственные ошибки лучшей модели 1.2 %, без эталона — 7.6–19.0 %. Причина\nсистемная: без эталона модель не пересчитывает задачу, а подтверждает\nпредъявленное учеником число (зачла `8641` при верном `8641.5`). Там, где\nответ нельзя записать в `short_answer.accepted_answers`, критерии — это\nединственная замена эталону, и без них задание в автономный (без\nпреподавателя) трек пускать нельзя.\n\n**Форма.** Три списка вместо одного свободного текста: у проверяющего —\nчеловека или модели — разные вопросы к ответу, и слепив их в абзац, мы\nполучили бы ровно то поведение, которое чиним, — «в целом похоже, зачёт».\n`reject` заведён отдельно именно против измеренного класса ошибок: он\nназывает то, что выглядит правдоподобно, но ответом не является.\n\nРазвёрнутые ответы (TA) хранят критерии в `text_answer.rubric` — 148\nзаданий прода уже заполнены осмысленно. Они НЕ переносятся: предикат\n`SolutionRules.has_grading_criteria()` читает оба источника, поэтому\nмиграция данных не нужна, а редактор рубрики TA продолжает работать."
+      },
+      "GradingGapCourse": {
+        "properties": {
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "tasks": {
+            "type": "integer",
+            "title": "Tasks"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_id",
+          "tasks"
+        ],
+        "title": "GradingGapCourse",
+        "description": "Курс и сколько в нём заданий без критериев."
+      },
+      "GradingGapTask": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          },
+          "stem_preview": {
+            "type": "string",
+            "title": "Stem Preview"
+          },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "course_id",
+          "stem_preview",
+          "requires_attachment"
+        ],
+        "title": "GradingGapTask",
+        "description": "Задание, которому нечем проверить ответ."
+      },
+      "GradingGapsResponse": {
+        "properties": {
+          "tasks_total": {
+            "type": "integer",
+            "title": "Tasks Total"
+          },
+          "courses_total": {
+            "type": "integer",
+            "title": "Courses Total"
+          },
+          "by_type": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Type"
+          },
+          "attachment_blocked": {
+            "type": "integer",
+            "title": "Attachment Blocked"
+          },
+          "by_course": {
+            "items": {
+              "$ref": "#/components/schemas/GradingGapCourse"
+            },
+            "type": "array",
+            "title": "By Course"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GradingGapTask"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tasks_total",
+          "courses_total",
+          "by_type",
+          "attachment_blocked",
+          "by_course",
+          "items"
+        ],
+        "title": "GradingGapsResponse",
+        "description": "Инвентарь пробелов: где методисту заполнять критерии (tsk-605)."
+      },
       "GuestAttemptCreateRequest": {
         "properties": {
           "task_id": {
@@ -48379,6 +48740,17 @@
               }
             ],
             "description": "Настройки проверки развёрнутых ответов (TA)."
+          },
+          "grading_criteria": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GradingCriteria"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Критерии оценивания для заданий без формализуемого эталона (tsk-605). Замена `short_answer.accepted_answers` там, где ответ нельзя перечислить списком: что обязательно должно быть в ответе, что считать эквивалентным, что — ошибкой. Вместе с эталоном образует условие допуска задания к машинной проверке (`has_grading_criteria`, `app/services/ai_check_policy.py`). Для TA ту же роль играет заполненная `text_answer.rubric` — предикат читает оба источника, переносить данные не требуется."
           },
           "quiz": {
             "anyOf": [

@@ -800,6 +800,33 @@ async def submit_attempt_answers(
             and not solution_rules.partial_auto_check
         )
         if optimistic_manual and not attempt.time_expired:
+            # tsk-605: оптимистичный зачёт держится на том, что позже придёт
+            # человек. Там, где человека в тарифе нет («ученик работает без
+            # преподавателя»), он превращается в полный автозачёт задания, по
+            # которому сверять нечем, — а калибровка tsk-590 показала, что без
+            # эталона модель не пересчитывает, а подтверждает предъявленное
+            # (7.6–19.0 % собственных ошибок). Решение принимает единая дверь
+            # прав, здесь оно только применяется.
+            #
+            # Сегодня отказ НЕ применяется: прод стоит в режиме `guests`, где
+            # действуют только отказы `denied_no_plan`, — предохранитель
+            # включится вместе с гейтом подписки (tsk-301), которому и
+            # принадлежит решение, куда девать такую работу.
+            verdict_gate = await entitlements_service.check_machine_verdict(
+                db,
+                student_id=attempt.user_id,
+                task_type=task_content.type,
+                solution_rules=solution_rules,
+            )
+            hold_for_human = entitlements_service.should_block(
+                verdict_gate,
+                capability="machine_verdict",
+                student_id=attempt.user_id,
+            )
+        else:
+            hold_for_human = False
+
+        if optimistic_manual and not attempt.time_expired and not hold_for_human:
             check_result = CheckResult(
                 score=check_result.max_score,
                 max_score=check_result.max_score,
