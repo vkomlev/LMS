@@ -190,9 +190,16 @@ class GradingGapsResponse(BaseModel):
 #: единый предикат в Python (`ai_check_policy.evaluate`). Повторять правило
 #: допуска на SQL нельзя: две редакции одного условия расходятся при первой же
 #: правке, и экран методиста начал бы показывать не то, что применяет гейт.
+#: `turtle_sim` проверяется по ТИПУ значения, а не через `IS NULL`. Любая правка
+#: задания через API прогоняет правило сквозь `SolutionRules.model_dump()`, и
+#: незаполненные необязательные блоки записываются в jsonb явным JSON-null. Для
+#: SQL это НЕ SQL NULL: `->'turtle_sim' IS NULL` на таком задании ложно, и оно
+#: молча выпадало из инвентаря. Найдено живым прогоном на проде 2026-08-13 —
+#: 363 активных задания несут `turtle_sim: null` (настоящих всего 10), из-за чего
+#: список терял 9 заданий. Тот же класс, что `metrics` в task_results.
 _GRADING_GAP_CANDIDATE_SQL = """
     jsonb_array_length(coalesce(solution_rules->'correct_options','[]'::jsonb)) = 0
-    AND solution_rules->'turtle_sim' IS NULL
+    AND coalesce(jsonb_typeof(solution_rules->'turtle_sim'), 'null') <> 'object'
     AND jsonb_array_length(coalesce(solution_rules->'short_answer'->'accepted_answers','[]'::jsonb)) = 0
     AND jsonb_array_length(coalesce(solution_rules->'grading_criteria'->'must','[]'::jsonb)) = 0
     AND jsonb_array_length(coalesce(solution_rules->'text_answer'->'rubric','[]'::jsonb)) = 0

@@ -436,6 +436,63 @@ async def test_grading_gaps_task_disappears_after_criteria_filled(db, client):
     assert (await _gaps(client, course_id))["tasks_total"] == 0
 
 
+async def test_grading_gaps_sees_task_saved_through_api(db, client):
+    """Задание, правленное через API, не должно пропадать из инвентаря.
+
+    `SolutionRules.model_dump()` пишет незаполненные необязательные блоки явным
+    JSON-null, и `solution_rules->'turtle_sim' IS NULL` на таком задании ЛОЖНО:
+    в jsonb это JSON-null, а не SQL NULL. Прод 2026-08-13: 363 активных задания
+    несут `turtle_sim: null` (настоящих 10), и отбор терял 9 заданий молча —
+    экран показывал «пробелов меньше», чем есть.
+    """
+    course_id = await _make_course(db)
+    task_id = await _make_task(
+        db, course_id, task_type="SA_COM", rules=_rules(manual_review_required=True)
+    )
+    # Полный набор ключей — ровно то, что кладёт в базу правка через API.
+    await db.execute(
+        text("UPDATE tasks SET solution_rules = CAST(:sr AS jsonb) WHERE id = :t"),
+        {
+            "sr": json.dumps(
+                SolutionRules.model_validate(_rules(manual_review_required=True)).model_dump()
+            ),
+            "t": task_id,
+        },
+    )
+    await db.commit()
+
+    stored = (
+        await db.execute(
+            text("SELECT jsonb_typeof(solution_rules->'turtle_sim') FROM tasks WHERE id = :t"),
+            {"t": task_id},
+        )
+    ).scalar()
+    assert stored == "null", "предпосылка теста: ключ есть и равен JSON-null"
+
+    body = await _gaps(client, course_id)
+    assert [item["task_id"] for item in body["items"]] == [task_id]
+
+
+async def test_grading_gaps_still_skips_real_turtle_sim(db, client):
+    """Настоящий `turtle_sim` — это эталон (трасса), такое задание не пробел."""
+    course_id = await _make_course(db)
+    await _make_task(
+        db,
+        course_id,
+        task_type="SA_COM",
+        rules=_rules(
+            manual_review_required=True,
+            turtle_sim={
+                "expected_trace": {
+                    "segments": [],
+                    "final_state": {"position": [0, 0], "heading": 0.0, "pen_down": True},
+                }
+            },
+        ),
+    )
+    assert (await _gaps(client, course_id))["tasks_total"] == 0
+
+
 async def test_grading_gaps_marks_attachment_tasks(db, client):
     """Задание с файлом видно отдельно: критерии его не закроют."""
     course_id = await _make_course(db)
