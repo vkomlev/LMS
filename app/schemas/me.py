@@ -16,6 +16,11 @@ ProfileCategory = Literal[
     "adult",
 ]
 
+# tsk-588: откуда взялся `users.timezone`. 'manual' — вписал человек (профиль
+# ученика, карточка методиста), 'auto' — снят с браузера при входе. Автозахват
+# перезаписывает только 'auto' и пустое значение.
+TimezoneSource = Literal["auto", "manual"]
+
 
 def normalize_city(v: str | None) -> str | None:
     """Обрезать пробелы; строка из одних пробелов = не заполнено (None)."""
@@ -53,6 +58,9 @@ class MeResponse(BaseModel):
     school_grade: int | None = None
     city: str | None = None
     timezone: str | None = None
+    # tsk-588: откуда взят пояс. Клиенту нужно, чтобы честно подписать
+    # автоматическое значение в профиле и не спорить с ручным выбором.
+    timezone_source: TimezoneSource | None = None
     # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
     # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
     # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
@@ -112,6 +120,49 @@ class MeUpdateRequest(BaseModel):
     @classmethod
     def _validate_timezone(cls, v: str | None) -> str | None:
         return validate_timezone(v)
+
+
+# ── tsk-588: автозахват пояса из браузера ────────────────────────────────────
+
+class BrowserTimezoneRequest(BaseModel):
+    """Тело PUT /me/timezone/auto — системный пояс устройства, снятый клиентом.
+
+    Отдельный эндпоинт, а не поле в PATCH /me: у этих двух действий разные
+    права на значение. PATCH — «человек выбрал», он перебивает всё; этот —
+    «так думает устройство», и он уступает ручному выбору.
+    """
+
+    timezone: str = Field(
+        min_length=1,
+        description=(
+            "Системный пояс браузера, IANA-идентификатор "
+            "(Intl.DateTimeFormat().resolvedOptions().timeZone)."
+        ),
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        validated = validate_timezone(v)
+        assert validated is not None  # v не None по сигнатуре — для типизации
+        return validated
+
+
+class BrowserTimezoneResponse(BaseModel):
+    """Ответ PUT /me/timezone/auto — что в итоге записано в профиле."""
+
+    timezone: str | None = Field(
+        description="Пояс пользователя после запроса (может отличаться от присланного)"
+    )
+    source: TimezoneSource | None = Field(
+        description="Источник значения: manual (выбор человека) | auto (снят с браузера)"
+    )
+    applied: bool = Field(
+        description=(
+            "True — присланный пояс записан; False — оставлен прежний "
+            "(человек выбрал пояс сам, либо значение не изменилось)"
+        )
+    )
 
 
 # ── Phase Y-3: /me/identities ────────────────────────────────────────────────

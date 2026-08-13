@@ -37,6 +37,8 @@ from app.schemas.learning_guest import (
     AttributeGuestResponse,
 )
 from app.schemas.me import (
+    BrowserTimezoneRequest,
+    BrowserTimezoneResponse,
     CourseProgress,
     CourseWithProgressRead,
     HistoryItem,
@@ -113,6 +115,7 @@ async def get_me(
         school_grade=profile["school_grade"] if profile else None,
         city=profile["city"] if profile else None,
         timezone=profile["timezone"] if profile else None,
+        timezone_source=profile["timezone_source"] if profile else None,
         roles=roles,
     )
 
@@ -209,7 +212,47 @@ async def update_me(
         school_grade=profile["school_grade"] if profile else None,
         city=profile["city"] if profile else None,
         timezone=profile["timezone"] if profile else None,
+        timezone_source=profile["timezone_source"] if profile else None,
         roles=roles,
+    )
+
+
+# ── PUT /me/timezone/auto — системный пояс браузера (tsk-588) ───────────────
+
+@router.put("/timezone/auto", response_model=BrowserTimezoneResponse)
+async def set_browser_timezone(
+    body: BrowserTimezoneRequest,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> BrowserTimezoneResponse:
+    """Принять системный пояс устройства и записать его, если он не спорит с человеком.
+
+    tsk-588: пояс был у 3 из 52 активных пользователей, потому что его надо
+    было вписывать руками — а двое учеников из-за этого пришли на занятие
+    мимо на своё смещение от Москвы. Клиент присылает сюда
+    `Intl.DateTimeFormat().resolvedOptions().timeZone` при входе.
+
+    Ручной выбор сильнее (решение оператора 2026-08-08): если пояс вписан
+    человеком (`timezone_source = 'manual'`), запрос ничего не меняет и
+    возвращает `applied=false` с прежним значением. Эндпоинт идемпотентен —
+    повторный вызов с тем же поясом записи не делает.
+
+    401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.
+    """
+    try:
+        timezone_value, applied = await me_service.apply_browser_timezone(
+            db, current_user.id, body.timezone
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    await db.commit()
+
+    profile = await me_service.get_profile(db, current_user.id)
+    return BrowserTimezoneResponse(
+        timezone=timezone_value,
+        source=profile["timezone_source"] if profile else None,
+        applied=applied,
     )
 
 

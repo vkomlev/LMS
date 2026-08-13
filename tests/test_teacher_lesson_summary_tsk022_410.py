@@ -720,3 +720,48 @@ async def test_summary_group_occurrence_all_participants_present(db, client):
     assert resp.status_code == 200, resp.text
     ids = {p["student_id"] for p in resp.json()["participants"]}
     assert ids == {student_a, student_b}
+
+
+# ====================== Часовой пояс ученика (tsk-588) ======================
+
+
+@pytest.mark.asyncio
+async def test_summary_participant_carries_timezone(db, client):
+    """Сводка занятия несёт пояс ученика — это экран, где договариваются о времени.
+
+    tsk-588: расписание школы ведётся по Москве, а ученик из Орска
+    (`Asia/Yekaterinburg`, +2 к Москве) в июле 2026 пришёл на занятие мимо ровно
+    на своё смещение. Незаполненный пояс приходит как None — это не ошибка.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_orsk, _ = await _new_user(db, role="student", name="stuTZ")
+    student_empty, _ = await _new_user(db, role="student", name="stuNoTZ")
+    await db.execute(
+        text(
+            "UPDATE users SET timezone='Asia/Yekaterinburg', timezone_source='manual' "
+            "WHERE id=:u"
+        ),
+        {"u": student_orsk},
+    )
+    await db.commit()
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_orsk, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db.add(
+        LessonOccurrenceParticipant(
+            occurrence_id=occ_id, student_id=student_empty, status="scheduled"
+        )
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    by_student = {p["student_id"]: p for p in resp.json()["participants"]}
+    assert by_student[student_orsk]["timezone"] == "Asia/Yekaterinburg"
+    assert by_student[student_empty]["timezone"] is None

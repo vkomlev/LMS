@@ -116,6 +116,13 @@ class PendingReviewItem(BaseModel):
     task_id: int
     user_id: int
     user_name: Optional[str] = None
+    user_timezone: Optional[str] = Field(
+        None,
+        description=(
+            "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. "
+            "Нужен там, где преподаватель договаривается с учеником о времени."
+        ),
+    )
     task_title: Optional[str] = Field(
         None,
         description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",

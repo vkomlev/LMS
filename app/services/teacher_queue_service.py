@@ -1219,7 +1219,12 @@ async def list_pending_reviews(
                    -- сам факт флага + попадание в очередь означает «числа сошлись»,
                    -- и преподавателю остаётся проверить только ручную часть (диаграмму).
                    COALESCE((t.solution_rules->>'partial_auto_check')::boolean, false)
-                       AS partial_auto_check
+                       AS partial_auto_check,
+                   -- tsk-588: часовой пояс ученика. Очередь проверки — одно из
+                   -- мест, откуда преподаватель пишет ученику «давай созвонимся
+                   -- в …», поэтому разница поясов нужна здесь, а не только в
+                   -- карточке человека.
+                   u.timezone AS student_timezone
             FROM task_results tr
             JOIN tasks t ON t.id = tr.task_id
             LEFT JOIN users u ON u.id = tr.user_id
@@ -1247,6 +1252,8 @@ async def list_pending_reviews(
             "has_evidence": bool(row[14]),
             # tsk-396: True — числовая часть сверена авто-чеком и совпала.
             "auto_checked_part_matched": bool(row[15]),
+            # tsk-588: пояс ученика (None — не заполнен).
+            "user_timezone": row[16],
         }
         for row in r.fetchall()
     ]

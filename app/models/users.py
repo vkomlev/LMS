@@ -88,6 +88,14 @@ class Users(Base):
         String(64), nullable=True,
         comment="Часовой пояс, IANA-идентификатор (вводится вручную)",
     )
+    # tsk-588. Откуда взялся пояс: 'manual' — вписал человек (профиль ученика,
+    # карточка методиста), 'auto' — снят с браузера при входе. Автозахват
+    # перезаписывает только 'auto' и пустое значение: выбор человека
+    # приоритетнее системного пояса устройства.
+    timezone_source: Mapped[Optional[str]] = mapped_column(
+        String(16), nullable=True,
+        comment="Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
+    )
 
     role: Mapped[List["Roles"]] = relationship(
         "Roles", secondary=t_user_roles, back_populates="user"
