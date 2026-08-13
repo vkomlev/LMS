@@ -307,6 +307,13 @@ class TeacherSummaryParticipant(BaseModel):
     student_id: int
     full_name: Optional[str] = None
     tg_id: Optional[int] = None
+    timezone: Optional[str] = Field(
+        default=None,
+        description=(
+            "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. "
+            "Расписание школы ведётся по Москве — разница видна рядом с именем."
+        ),
+    )
     status: str = Field(
         description="scheduled | confirmed | declined | rescheduled | no_show | completed"
     )

@@ -142,7 +142,13 @@
 
 **Генератор occurrence:** `app/services/lesson_occurrence_generator_service.py::lesson_occurrence_generator_tick` — APScheduler-тик (интервал `LESSON_OCCURRENCE_CRON_INTERVAL_MIN`, default 60 мин), горизонт `LESSON_OCCURRENCE_HORIZON_DAYS` (default 14 дней). Создаёт occurrence (`ON CONFLICT (slot_id, scheduled_at) DO UPDATE` no-op — нужен `RETURNING id` даже на конфликте, чтобы синхронизировать участников) и СИНХРОНИЗИРУЕТ участников из активных `lesson_slot_student` в `lesson_occurrence_participant` (`ON CONFLICT (occurrence_id, student_id) DO NOTHING`) на каждый тик — новый ученик, добавленный в слот, получает участие во всех уже сгенерированных будущих occurrence сразу (без ожидания тика — `lesson_calendar_service.add_slot_participant` бэкфиллит явно), тик лишь подхватывает то, что бэкфилл мог пропустить. Multi-worker-safe через `pg_try_advisory_xact_lock` (паттерн `escalation_service.py`, отдельный lock-ключ `0x4C534E43`).
 
-**Таймзона:** MVP — захардкожен `Europe/Moscow` (без DST с 2014, UTC+3 круглый год). `users.timezone` не существует.
+**Таймзона:** расписание школы ведётся в `Europe/Moscow` (без DST с 2014, UTC+3 круглый год) — это канон, время занятия называется по нему.
+
+`users.timezone` **существует** (tsk-427) и с tsk-588 сопровождается `users.timezone_source` (`auto` | `manual`, NULL — пояс не заполнен):
+- `manual` — пояс вписал человек (профиль ученика, карточка методиста); автозахват такое значение НЕ трогает;
+- `auto` — пояс снят с браузера через `PUT /me/timezone/auto` (`me_service.apply_browser_timezone`); обновляется при смене пояса устройства.
+
+Пояс пользователя нужен не для пересчёта расписания, а чтобы показать рядом с московским временем его собственное («у вас 20:00») и чтобы преподаватель видел сдвиг ученика (`PendingReviewItem.user_timezone`, `TeacherSummaryParticipant.timezone`).
 
 **Фаза 2 (tsk-429, применено, per-участнику после tsk-435):** явка ученика + напоминания + авто-no_show.
 - `POST /lesson-occurrences/{id}/attendance` (`joined`→`confirmed`, `declined`→`declined`) — `require_authenticated`, ownership по наличию СВОЕЙ строки в `lesson_occurrence_participant` (403 если ученик не участник, 404 несуществующему occurrence, 409 если участие уже закрыто: `no_show`/`completed`/`rescheduled`).

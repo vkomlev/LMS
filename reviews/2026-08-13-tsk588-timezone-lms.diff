@@ -1,0 +1,1269 @@
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 4a7a103..0e78a24 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -37,6 +37,8 @@ from app.schemas.learning_guest import (
+     AttributeGuestResponse,
+ )
+ from app.schemas.me import (
++    BrowserTimezoneRequest,
++    BrowserTimezoneResponse,
+     CourseProgress,
+     CourseWithProgressRead,
+     HistoryItem,
+@@ -113,6 +115,7 @@ async def get_me(
+         school_grade=profile["school_grade"] if profile else None,
+         city=profile["city"] if profile else None,
+         timezone=profile["timezone"] if profile else None,
++        timezone_source=profile["timezone_source"] if profile else None,
+         roles=roles,
+     )
+ 
+@@ -209,10 +212,50 @@ async def update_me(
+         school_grade=profile["school_grade"] if profile else None,
+         city=profile["city"] if profile else None,
+         timezone=profile["timezone"] if profile else None,
++        timezone_source=profile["timezone_source"] if profile else None,
+         roles=roles,
+     )
+ 
+ 
++# ── PUT /me/timezone/auto — системный пояс браузера (tsk-588) ───────────────
++
++@router.put("/timezone/auto", response_model=BrowserTimezoneResponse)
++async def set_browser_timezone(
++    body: BrowserTimezoneRequest,
++    current_user: CurrentUser = Depends(require_authenticated),
++    db: AsyncSession = Depends(get_async_db),
++) -> BrowserTimezoneResponse:
++    """Принять системный пояс устройства и записать его, если он не спорит с человеком.
++
++    tsk-588: пояс был у 3 из 52 активных пользователей, потому что его надо
++    было вписывать руками — а двое учеников из-за этого пришли на занятие
++    мимо на своё смещение от Москвы. Клиент присылает сюда
++    `Intl.DateTimeFormat().resolvedOptions().timeZone` при входе.
++
++    Ручной выбор сильнее (решение оператора 2026-08-08): если пояс вписан
++    человеком (`timezone_source = 'manual'`), запрос ничего не меняет и
++    возвращает `applied=false` с прежним значением. Эндпоинт идемпотентен —
++    повторный вызов с тем же поясом записи не делает.
++
++    401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.
++    """
++    try:
++        timezone_value, applied = await me_service.apply_browser_timezone(
++            db, current_user.id, body.timezone
++        )
++    except ValueError as exc:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
++
++    await db.commit()
++
++    profile = await me_service.get_profile(db, current_user.id)
++    return BrowserTimezoneResponse(
++        timezone=timezone_value,
++        source=profile["timezone_source"] if profile else None,
++        applied=applied,
++    )
++
++
+ # ── GET /me/identities ──────────────────────────────────────────────────────
+ 
+ @router.get("/identities", response_model=list[IdentityRead])
+diff --git a/app/db/migrations/versions/20260813_010000_tsk588_timezone_source.py b/app/db/migrations/versions/20260813_010000_tsk588_timezone_source.py
+new file mode 100644
+index 0000000..3cf7970
+--- /dev/null
++++ b/app/db/migrations/versions/20260813_010000_tsk588_timezone_source.py
+@@ -0,0 +1,74 @@
++"""tsk-588: откуда взялся часовой пояс пользователя — из браузера или от человека.
++
++Пояс (`users.timezone`, tsk-427) заполнен у 3 из 52 активных пользователей,
++потому что его надо было вписать руками. Клиент теперь присылает системный пояс
++браузера сам, и появляется вопрос, который до этого не стоял: можно ли
++перезаписывать значение, которое человек выбрал осознанно.
++
++Решение оператора (tsk-588, 2026-08-08): **ручная правка имеет приоритет** —
++автозахват не перетирает выбор человека молча. Чтобы это различать, нужен
++источник значения:
++
++- `manual` — вписано человеком (профиль ученика, карточка в кабинете методиста);
++  автозахват такое значение НЕ трогает;
++- `auto` — снято с браузера; автозахват обновляет его при переезде/смене пояса;
++- `NULL` — пояс не заполнен вовсе (`timezone IS NULL`).
++
++Backfill: все уже заполненные пояса (их 3 на проде) проставляются `manual` —
++они вписаны руками через кабинет, и переписывать их автозахватом нельзя.
++
++Revision ID: tsk588_timezone_source
++Revises: tsk593_missing_seen
++Create Date: 2026-08-13
++"""
++
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk588_timezone_source"
++down_revision: Union[str, None] = "tsk593_missing_seen"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    """Добавляет `users.timezone_source` и помечает уже заполненные пояса как ручные."""
++    op.add_column(
++        "users",
++        sa.Column(
++            "timezone_source",
++            sa.String(16),
++            nullable=True,
++            comment=(
++                "tsk-588: откуда взят users.timezone — manual (вписал человек, "
++                "автозахват не трогает) или auto (снят с браузера). "
++                "NULL = пояс не заполнен."
++            ),
++        ),
++    )
++    op.create_check_constraint(
++        "ck_users_timezone_source",
++        "users",
++        "timezone_source IS NULL OR timezone_source IN ('auto', 'manual')",
++    )
++    # Пояс без источника — это значение, вписанное руками до появления
++    # автозахвата. Пометить его 'auto' означало бы разрешить клиенту молча
++    # его переписать, чего решение оператора прямо запрещает.
++    op.execute(
++        "UPDATE users SET timezone_source = 'manual' "
++        "WHERE timezone IS NOT NULL AND timezone_source IS NULL"
++    )
++
++
++def downgrade() -> None:
++    """Убирает constraint и колонку `timezone_source`.
++
++    Rollback-note: сам пояс (`users.timezone`) не трогается — теряется только
++    знание о том, откуда он взялся. После отката автозахват (если код тоже
++    откатан) снова не отличает ручной выбор от снятого с браузера, поэтому
++    откатывать код и БД надо вместе.
++    """
++    op.drop_constraint("ck_users_timezone_source", "users", type_="check")
++    op.drop_column("users", "timezone_source")
+diff --git a/app/models/users.py b/app/models/users.py
+index 7ee0a85..3230343 100644
+--- a/app/models/users.py
++++ b/app/models/users.py
+@@ -88,6 +88,14 @@ class Users(Base):
+         String(64), nullable=True,
+         comment="Часовой пояс, IANA-идентификатор (вводится вручную)",
+     )
++    # tsk-588. Откуда взялся пояс: 'manual' — вписал человек (профиль ученика,
++    # карточка методиста), 'auto' — снят с браузера при входе. Автозахват
++    # перезаписывает только 'auto' и пустое значение: выбор человека
++    # приоритетнее системного пояса устройства.
++    timezone_source: Mapped[Optional[str]] = mapped_column(
++        String(16), nullable=True,
++        comment="Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
++    )
+ 
+     role: Mapped[List["Roles"]] = relationship(
+         "Roles", secondary=t_user_roles, back_populates="user"
+diff --git a/app/schemas/lesson_calendar.py b/app/schemas/lesson_calendar.py
+index d8163e0..df10002 100644
+--- a/app/schemas/lesson_calendar.py
++++ b/app/schemas/lesson_calendar.py
+@@ -307,6 +307,13 @@ class TeacherSummaryParticipant(BaseModel):
+     student_id: int
+     full_name: Optional[str] = None
+     tg_id: Optional[int] = None
++    timezone: Optional[str] = Field(
++        default=None,
++        description=(
++            "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. "
++            "Расписание школы ведётся по Москве — разница видна рядом с именем."
++        ),
++    )
+     status: str = Field(
+         description="scheduled | confirmed | declined | rescheduled | no_show | completed"
+     )
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 5fdbd30..a101581 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -16,6 +16,11 @@ ProfileCategory = Literal[
+     "adult",
+ ]
+ 
++# tsk-588: откуда взялся `users.timezone`. 'manual' — вписал человек (профиль
++# ученика, карточка методиста), 'auto' — снят с браузера при входе. Автозахват
++# перезаписывает только 'auto' и пустое значение.
++TimezoneSource = Literal["auto", "manual"]
++
+ 
+ def normalize_city(v: str | None) -> str | None:
+     """Обрезать пробелы; строка из одних пробелов = не заполнено (None)."""
+@@ -53,6 +58,9 @@ class MeResponse(BaseModel):
+     school_grade: int | None = None
+     city: str | None = None
+     timezone: str | None = None
++    # tsk-588: откуда взят пояс. Клиенту нужно, чтобы честно подписать
++    # автоматическое значение в профиле и не спорить с ручным выбором.
++    timezone_source: TimezoneSource | None = None
+     # tsk-298 (Фаза 0): имена ролей пользователя из user_roles (M2M),
+     # отсортированы по алфавиту. Аддитивно — по умолчанию пустой список для
+     # обратной совместимости. SPW гейтит teacher-зону по наличию 'teacher'.
+@@ -114,6 +122,49 @@ class MeUpdateRequest(BaseModel):
+         return validate_timezone(v)
+ 
+ 
++# ── tsk-588: автозахват пояса из браузера ────────────────────────────────────
++
++class BrowserTimezoneRequest(BaseModel):
++    """Тело PUT /me/timezone/auto — системный пояс устройства, снятый клиентом.
++
++    Отдельный эндпоинт, а не поле в PATCH /me: у этих двух действий разные
++    права на значение. PATCH — «человек выбрал», он перебивает всё; этот —
++    «так думает устройство», и он уступает ручному выбору.
++    """
++
++    timezone: str = Field(
++        min_length=1,
++        description=(
++            "Системный пояс браузера, IANA-идентификатор "
++            "(Intl.DateTimeFormat().resolvedOptions().timeZone)."
++        ),
++    )
++
++    @field_validator("timezone")
++    @classmethod
++    def _validate_timezone(cls, v: str) -> str:
++        validated = validate_timezone(v)
++        assert validated is not None  # v не None по сигнатуре — для типизации
++        return validated
++
++
++class BrowserTimezoneResponse(BaseModel):
++    """Ответ PUT /me/timezone/auto — что в итоге записано в профиле."""
++
++    timezone: str | None = Field(
++        description="Пояс пользователя после запроса (может отличаться от присланного)"
++    )
++    source: TimezoneSource | None = Field(
++        description="Источник значения: manual (выбор человека) | auto (снят с браузера)"
++    )
++    applied: bool = Field(
++        description=(
++            "True — присланный пояс записан; False — оставлен прежний "
++            "(человек выбрал пояс сам, либо значение не изменилось)"
++        )
++    )
++
++
+ # ── Phase Y-3: /me/identities ────────────────────────────────────────────────
+ 
+ class IdentityRead(BaseModel):
+diff --git a/app/schemas/teacher_next_modes.py b/app/schemas/teacher_next_modes.py
+index 80102c6..d43042e 100644
+--- a/app/schemas/teacher_next_modes.py
++++ b/app/schemas/teacher_next_modes.py
+@@ -116,6 +116,13 @@ class PendingReviewItem(BaseModel):
+     task_id: int
+     user_id: int
+     user_name: Optional[str] = None
++    user_timezone: Optional[str] = Field(
++        None,
++        description=(
++            "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. "
++            "Нужен там, где преподаватель договаривается с учеником о времени."
++        ),
++    )
+     task_title: Optional[str] = Field(
+         None,
+         description="Человекочитаемый заголовок задания (title → очищенный stem → external_uid)",
+diff --git a/app/schemas/users.py b/app/schemas/users.py
+index 01bfd76..4393843 100644
+--- a/app/schemas/users.py
++++ b/app/schemas/users.py
+@@ -3,7 +3,12 @@ from typing import Optional
+ from datetime import datetime
+ from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
+ 
+-from app.schemas.me import ProfileCategory, normalize_city, validate_timezone
++from app.schemas.me import (
++    ProfileCategory,
++    TimezoneSource,
++    normalize_city,
++    validate_timezone,
++)
+ 
+ 
+ class UserCreate(BaseModel):
+@@ -112,6 +117,13 @@ class UserRead(BaseModel):
+     timezone: Optional[str] = Field(
+         None, description="Часовой пояс, IANA-идентификатор", examples=["Europe/Moscow", None]
+     )
++    # tsk-588: пояс, снятый с браузера, честно подписывается в кабинете — иначе
++    # методист не отличит «человек так сказал» от «так решило устройство».
++    timezone_source: Optional[TimezoneSource] = Field(
++        None,
++        description="Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
++        examples=["auto", None],
++    )
+ 
+     @field_validator("email", mode="before")
+     @classmethod
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 988c628..0706783 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -102,6 +102,7 @@ async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
+             Users.school_grade,
+             Users.city,
+             Users.timezone,
++            Users.timezone_source,
+         ).where(Users.id == user_id)
+     )
+     row = result.one_or_none()
+@@ -113,6 +114,7 @@ async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
+         "school_grade": row.school_grade,
+         "city": row.city,
+         "timezone": row.timezone,
++        "timezone_source": row.timezone_source,
+     }
+ 
+ 
+@@ -167,11 +169,61 @@ async def update_profile_extra(
+         user.city = city
+     if timezone_value is not None:
+         user.timezone = timezone_value
++        # tsk-588: пояс, пришедший этим путём, всегда выбран человеком — и
++        # профилем ученика, и карточкой в кабинете методиста правят руками.
++        # Пометка защищает значение от перезаписи автозахватом браузера.
++        user.timezone_source = "manual"
+ 
+     await db.flush()
+     logger.info("Доп. поля профиля обновлены для user_id=%s", user_id)
+ 
+ 
++async def apply_browser_timezone(
++    db: AsyncSession,
++    user_id: int,
++    timezone_value: str,
++) -> tuple[str | None, bool]:
++    """Записать пояс, снятый с браузера, если он не спорит с выбором человека (tsk-588).
++
++    Правило приоритета (решение оператора 2026-08-08): ручной выбор сильнее
++    системного пояса устройства. Поэтому запись происходит только когда пояс
++    пуст или был снят автоматически же:
++
++    - `timezone_source = 'manual'` → не трогаем (человек выбрал сам);
++    - пусто → записываем, источник `auto`;
++    - `auto` и пояс сменился (переезд, поездка) → обновляем;
++    - `auto` и пояс тот же → записи нет, лишний UPDATE не делаем.
++
++    Args:
++        db: async session.
++        user_id: ID пользователя.
++        timezone_value: IANA-идентификатор, уже проверенный схемой.
++
++    Returns:
++        Пара «пояс, который теперь у пользователя» и «была ли запись».
++
++    Raises:
++        ValueError: пользователь не найден.
++    """
++    user = await db.get(Users, user_id)
++    if user is None:
++        raise ValueError(f"Пользователь id={user_id} не найден.")
++
++    if user.timezone_source == "manual":
++        return user.timezone, False
++
++    if user.timezone == timezone_value and user.timezone_source == "auto":
++        return user.timezone, False
++
++    user.timezone = timezone_value
++    user.timezone_source = "auto"
++    await db.flush()
++    logger.info(
++        "Часовой пояс снят с браузера для user_id=%s: %s", user_id, timezone_value
++    )
++    return timezone_value, True
++
++
+ # ── /me/identities ──────────────────────────────────────────────────────────
+ 
+ async def get_identities(db: AsyncSession, user_id: int) -> list[dict]:
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index ffafda4..6ff6bbe 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -380,7 +380,9 @@ async def get_occurrence_summary(
+     if student_ids:
+         rows = (
+             await db.execute(
+-                text("SELECT id, full_name, tg_id FROM users WHERE id = ANY(:ids)"),
++                # tsk-588: timezone — сводка занятия и есть тот экран, где
++                # преподаватель договаривается с учеником о времени.
++                text("SELECT id, full_name, tg_id, timezone FROM users WHERE id = ANY(:ids)"),
+                 {"ids": student_ids},
+             )
+         ).mappings().fetchall()
+@@ -416,6 +418,7 @@ async def get_occurrence_summary(
+             "student_id": p.student_id,
+             "full_name": profile.get("full_name"),
+             "tg_id": profile.get("tg_id"),
++            "timezone": profile.get("timezone"),
+             "status": p.status,
+             "is_overdue": is_overdue,
+             "last_activity": last_activity,
+diff --git a/app/services/teacher_queue_service.py b/app/services/teacher_queue_service.py
+index 98b234d..45ff234 100644
+--- a/app/services/teacher_queue_service.py
++++ b/app/services/teacher_queue_service.py
+@@ -1219,7 +1219,12 @@ async def list_pending_reviews(
+                    -- сам факт флага + попадание в очередь означает «числа сошлись»,
+                    -- и преподавателю остаётся проверить только ручную часть (диаграмму).
+                    COALESCE((t.solution_rules->>'partial_auto_check')::boolean, false)
+-                       AS partial_auto_check
++                       AS partial_auto_check,
++                   -- tsk-588: часовой пояс ученика. Очередь проверки — одно из
++                   -- мест, откуда преподаватель пишет ученику «давай созвонимся
++                   -- в …», поэтому разница поясов нужна здесь, а не только в
++                   -- карточке человека.
++                   u.timezone AS student_timezone
+             FROM task_results tr
+             JOIN tasks t ON t.id = tr.task_id
+             LEFT JOIN users u ON u.id = tr.user_id
+@@ -1247,6 +1252,8 @@ async def list_pending_reviews(
+             "has_evidence": bool(row[14]),
+             # tsk-396: True — числовая часть сверена авто-чеком и совпала.
+             "auto_checked_part_matched": bool(row[15]),
++            # tsk-588: пояс ученика (None — не заполнен).
++            "user_timezone": row[16],
+         }
+         for row in r.fetchall()
+     ]
+diff --git a/docs/ai/data-model.md b/docs/ai/data-model.md
+index 8341eb1..926302f 100644
+--- a/docs/ai/data-model.md
++++ b/docs/ai/data-model.md
+@@ -142,7 +142,13 @@
+ 
+ **Генератор occurrence:** `app/services/lesson_occurrence_generator_service.py::lesson_occurrence_generator_tick` — APScheduler-тик (интервал `LESSON_OCCURRENCE_CRON_INTERVAL_MIN`, default 60 мин), горизонт `LESSON_OCCURRENCE_HORIZON_DAYS` (default 14 дней). Создаёт occurrence (`ON CONFLICT (slot_id, scheduled_at) DO UPDATE` no-op — нужен `RETURNING id` даже на конфликте, чтобы синхронизировать участников) и СИНХРОНИЗИРУЕТ участников из активных `lesson_slot_student` в `lesson_occurrence_participant` (`ON CONFLICT (occurrence_id, student_id) DO NOTHING`) на каждый тик — новый ученик, добавленный в слот, получает участие во всех уже сгенерированных будущих occurrence сразу (без ожидания тика — `lesson_calendar_service.add_slot_participant` бэкфиллит явно), тик лишь подхватывает то, что бэкфилл мог пропустить. Multi-worker-safe через `pg_try_advisory_xact_lock` (паттерн `escalation_service.py`, отдельный lock-ключ `0x4C534E43`).
+ 
+-**Таймзона:** MVP — захардкожен `Europe/Moscow` (без DST с 2014, UTC+3 круглый год). `users.timezone` не существует.
++**Таймзона:** расписание школы ведётся в `Europe/Moscow` (без DST с 2014, UTC+3 круглый год) — это канон, время занятия называется по нему.
++
++`users.timezone` **существует** (tsk-427) и с tsk-588 сопровождается `users.timezone_source` (`auto` | `manual`, NULL — пояс не заполнен):
++- `manual` — пояс вписал человек (профиль ученика, карточка методиста); автозахват такое значение НЕ трогает;
++- `auto` — пояс снят с браузера через `PUT /me/timezone/auto` (`me_service.apply_browser_timezone`); обновляется при смене пояса устройства.
++
++Пояс пользователя нужен не для пересчёта расписания, а чтобы показать рядом с московским временем его собственное («у вас 20:00») и чтобы преподаватель видел сдвиг ученика (`PendingReviewItem.user_timezone`, `TeacherSummaryParticipant.timezone`).
+ 
+ **Фаза 2 (tsk-429, применено, per-участнику после tsk-435):** явка ученика + напоминания + авто-no_show.
+ - `POST /lesson-occurrences/{id}/attendance` (`joined`→`confirmed`, `declined`→`declined`) — `require_authenticated`, ownership по наличию СВОЕЙ строки в `lesson_occurrence_participant` (403 если ученик не участник, 404 несуществующему occurrence, 409 если участие уже закрыто: `no_show`/`completed`/`rescheduled`).
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 78903d4..9cffa73 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -22112,6 +22112,106 @@
+         }
+       }
+     },
++    "/api/v1/me/timezone/auto": {
++      "put": {
++        "tags": [
++          "me"
++        ],
++        "summary": "Set Browser Timezone",
++        "description": "Принять системный пояс устройства и записать его, если он не спорит с человеком.\n\ntsk-588: пояс был у 3 из 52 активных пользователей, потому что его надо\nбыло вписывать руками — а двое учеников из-за этого пришли на занятие\nмимо на своё смещение от Москвы. Клиент присылает сюда\n`Intl.DateTimeFormat().resolvedOptions().timeZone` при входе.\n\nРучной выбор сильнее (решение оператора 2026-08-08): если пояс вписан\nчеловеком (`timezone_source = 'manual'`), запрос ничего не меняет и\nвозвращает `applied=false` с прежним значением. Эндпоинт идемпотентен —\nповторный вызов с тем же поясом записи не делает.\n\n401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.",
++        "operationId": "set_browser_timezone_api_v1_me_timezone_auto_put",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/BrowserTimezoneRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/BrowserTimezoneResponse"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/me/identities": {
+       "get": {
+         "tags": [
+@@ -37237,6 +37337,67 @@
+         "title": "BreakWriteRequest",
+         "description": "Границы включительные: «с 10 по 24» закрывает и 10-е, и 24-е."
+       },
++      "BrowserTimezoneRequest": {
++        "properties": {
++          "timezone": {
++            "type": "string",
++            "minLength": 1,
++            "title": "Timezone",
++            "description": "Системный пояс браузера, IANA-идентификатор (Intl.DateTimeFormat().resolvedOptions().timeZone)."
++          }
++        },
++        "type": "object",
++        "required": [
++          "timezone"
++        ],
++        "title": "BrowserTimezoneRequest",
++        "description": "Тело PUT /me/timezone/auto — системный пояс устройства, снятый клиентом.\n\nОтдельный эндпоинт, а не поле в PATCH /me: у этих двух действий разные\nправа на значение. PATCH — «человек выбрал», он перебивает всё; этот —\n«так думает устройство», и он уступает ручному выбору."
++      },
++      "BrowserTimezoneResponse": {
++        "properties": {
++          "timezone": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Timezone",
++            "description": "Пояс пользователя после запроса (может отличаться от присланного)"
++          },
++          "source": {
++            "anyOf": [
++              {
++                "type": "string",
++                "enum": [
++                  "auto",
++                  "manual"
++                ]
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Source",
++            "description": "Источник значения: manual (выбор человека) | auto (снят с браузера)"
++          },
++          "applied": {
++            "type": "boolean",
++            "title": "Applied",
++            "description": "True — присланный пояс записан; False — оставлен прежний (человек выбрал пояс сам, либо значение не изменилось)"
++          }
++        },
++        "type": "object",
++        "required": [
++          "timezone",
++          "source",
++          "applied"
++        ],
++        "title": "BrowserTimezoneResponse",
++        "description": "Ответ PUT /me/timezone/auto — что в итоге записано в профиле."
++      },
+       "ChargeRead": {
+         "properties": {
+           "id": {
+@@ -43803,6 +43964,21 @@
+             ],
+             "title": "Timezone"
+           },
++          "timezone_source": {
++            "anyOf": [
++              {
++                "type": "string",
++                "enum": [
++                  "auto",
++                  "manual"
++                ]
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Timezone Source"
++          },
+           "roles": {
+             "items": {
+               "type": "string"
+@@ -45916,6 +46092,18 @@
+             ],
+             "title": "User Name"
+           },
++          "user_timezone": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "User Timezone",
++            "description": "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. Нужен там, где преподаватель договаривается с учеником о времени."
++          },
+           "task_title": {
+             "anyOf": [
+               {
+@@ -53454,6 +53642,18 @@
+             ],
+             "title": "Tg Id"
+           },
++          "timezone": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Timezone",
++            "description": "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. Расписание школы ведётся по Москве — разница видна рядом с именем."
++          },
+           "status": {
+             "type": "string",
+             "title": "Status",
+@@ -54684,6 +54884,26 @@
+               "Europe/Moscow",
+               null
+             ]
++          },
++          "timezone_source": {
++            "anyOf": [
++              {
++                "type": "string",
++                "enum": [
++                  "auto",
++                  "manual"
++                ]
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Timezone Source",
++            "description": "Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
++            "examples": [
++              "auto",
++              null
++            ]
+           }
+         },
+         "type": "object",
+diff --git a/scripts/fill_default_timezone_tsk588.py b/scripts/fill_default_timezone_tsk588.py
+new file mode 100644
+index 0000000..e53f33c
+--- /dev/null
++++ b/scripts/fill_default_timezone_tsk588.py
+@@ -0,0 +1,138 @@
++"""tsk-588: разовое заполнение `users.timezone` тем, у кого он пуст (прод).
++
++Зачем. Расписание школы ведётся по Москве, а пояс человека до этой задачи надо
++было вписывать руками — он стоял у 3 из 68 активных. Преподаватель не знал, на
++сколько ученик сдвинут, а двое учеников пришли на занятие мимо ровно на своё
++смещение.
++
++Что ставим. `Europe/Moscow` **с источником `auto`**, а не `manual`. Причина
++прямая: план задачи предполагал «по городу, где он есть», но read-аудит прода
++2026-08-13 показал, что город не заполнен НИ У ОДНОГО из 65 человек без пояса —
++выводить не из чего. Значение `Europe/Moscow` здесь — заглушка «пока считаем,
++что как у школы», и источник `auto` оставляет её открытой для уточнения: при
++первом же входе браузер пришлёт настоящий пояс, и `apply_browser_timezone` его
++перезапишет. Пометка `manual` заблокировала бы автозахват навсегда и закрепила
++бы догадку как выбор человека.
++
++Кого НЕ трогаем: у кого пояс уже стоит (в том числе выбранный вручную) и
++заблокированных (`blocked_at IS NOT NULL`) — им ничего не показывается.
++
++Протокол (`/db-check`, режим записи):
++    python scripts/fill_default_timezone_tsk588.py              # сухой прогон
++    DBCHECK_OK=1 python scripts/fill_default_timezone_tsk588.py --apply
++
++Запускать на сервере под `app` (после применения миграции
++`tsk588_timezone_source`):
++    ssh lms-spw-vds 'sudo -u app bash -lc "cd /opt/lms && venv/bin/python \
++        scripts/fill_default_timezone_tsk588.py"'
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import logging
++import sys
++from pathlib import Path
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from dotenv import load_dotenv  # noqa: E402
++
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(message)s")
++logger = logging.getLogger("tsk588.timezone")
++
++DEFAULT_TIMEZONE = "Europe/Moscow"
++
++#: Кого затрагиваем: активные люди без пояса. Один и тот же предикат для
++#: выборки и для записи — чтобы показанное глазами и записанное совпадали.
++TARGET_WHERE = "blocked_at IS NULL AND timezone IS NULL"
++
++
++async def main(apply: bool) -> None:
++    async with async_session_factory() as session:
++        has_column = await session.scalar(
++            text(
++                "SELECT count(*) FROM information_schema.columns "
++                "WHERE table_name='users' AND column_name='timezone_source'"
++            )
++        )
++        if not has_column:
++            logger.error(
++                "Колонки users.timezone_source нет — сначала примените миграцию "
++                "tsk588_timezone_source, иначе заглушку нечем будет пометить."
++            )
++            raise SystemExit(1)
++
++        rows = (
++            await session.execute(
++                text(
++                    f"SELECT id, full_name, city FROM users WHERE {TARGET_WHERE} "  # nosec B608 — предикат из литерала модуля
++                    "ORDER BY id"
++                )
++            )
++        ).fetchall()
++
++        logger.info("Под заполнение попадает людей: %s", len(rows))
++        for r in rows[:20]:
++            logger.info("  #%s %s (город: %s)", r[0], r[1] or "—", r[2] or "не указан")
++        if len(rows) > 20:
++            logger.info("  … и ещё %s", len(rows) - 20)
++
++        with_city = [r for r in rows if (r[2] or "").strip()]
++        logger.info(
++            "Из них с заполненным городом: %s — по ним пояс можно уточнить точнее, "
++            "чем значением по умолчанию.",
++            len(with_city),
++        )
++
++        if not apply:
++            logger.info(
++                "\nСухой прогон. Запись не выполнялась. Для записи: "
++                "DBCHECK_OK=1 python %s --apply",
++                Path(__file__).name,
++            )
++            return
++
++        result = await session.execute(
++            text(
++                f"UPDATE users SET timezone = :tz, timezone_source = 'auto' "  # nosec B608 — предикат из литерала модуля
++                f"WHERE {TARGET_WHERE}"
++            ),
++            {"tz": DEFAULT_TIMEZONE},
++        )
++        await session.commit()
++        logger.info("Записано строк: %s", result.rowcount)
++
++        # Верификация после записи: пустых поясов у активных остаться не должно.
++        left = await session.scalar(
++            text(f"SELECT count(*) FROM users WHERE {TARGET_WHERE}")  # nosec B608
++        )
++        by_source = (
++            await session.execute(
++                text(
++                    "SELECT coalesce(timezone_source, '(нет)') AS src, count(*) "
++                    "FROM users WHERE blocked_at IS NULL GROUP BY 1 ORDER BY 2 DESC"
++                )
++            )
++        ).fetchall()
++        logger.info("Осталось активных без пояса: %s", left)
++        for src, n in by_source:
++            logger.info("  источник %s: %s", src, n)
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument(
++        "--apply",
++        action="store_true",
++        help="выполнить запись (без флага — только показать выборку)",
++    )
++    args = parser.parse_args()
++    asyncio.run(main(args.apply))
+diff --git a/tests/test_teacher_lesson_summary_tsk022_410.py b/tests/test_teacher_lesson_summary_tsk022_410.py
+index 87beff4..776ed53 100644
+--- a/tests/test_teacher_lesson_summary_tsk022_410.py
++++ b/tests/test_teacher_lesson_summary_tsk022_410.py
+@@ -720,3 +720,48 @@ async def test_summary_group_occurrence_all_participants_present(db, client):
+     assert resp.status_code == 200, resp.text
+     ids = {p["student_id"] for p in resp.json()["participants"]}
+     assert ids == {student_a, student_b}
++
++
++# ====================== Часовой пояс ученика (tsk-588) ======================
++
++
++@pytest.mark.asyncio
++async def test_summary_participant_carries_timezone(db, client):
++    """Сводка занятия несёт пояс ученика — это экран, где договариваются о времени.
++
++    tsk-588: расписание школы ведётся по Москве, а ученик из Орска
++    (`Asia/Yekaterinburg`, +2 к Москве) в июле 2026 пришёл на занятие мимо ровно
++    на своё смещение. Незаполненный пояс приходит как None — это не ошибка.
++    """
++    teacher_id, token = await _new_user(db, role="teacher", name="teach")
++    student_orsk, _ = await _new_user(db, role="student", name="stuTZ")
++    student_empty, _ = await _new_user(db, role="student", name="stuNoTZ")
++    await db.execute(
++        text(
++            "UPDATE users SET timezone='Asia/Yekaterinburg', timezone_source='manual' "
++            "WHERE id=:u"
++        ),
++        {"u": student_orsk},
++    )
++    await db.commit()
++
++    occ_id = await _create_occurrence_with_participant(
++        db, student_id=student_orsk, teacher_id=teacher_id,
++        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
++    )
++    db.add(
++        LessonOccurrenceParticipant(
++            occurrence_id=occ_id, student_id=student_empty, status="scheduled"
++        )
++    )
++    await db.commit()
++
++    resp = await client.get(
++        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
++        params={"teacher_id": teacher_id},
++        headers={"Authorization": f"Bearer {token}"},
++    )
++    assert resp.status_code == 200, resp.text
++    by_student = {p["student_id"]: p for p in resp.json()["participants"]}
++    assert by_student[student_orsk]["timezone"] == "Asia/Yekaterinburg"
++    assert by_student[student_empty]["timezone"] is None
+diff --git a/tests/test_tsk588_browser_timezone.py b/tests/test_tsk588_browser_timezone.py
+new file mode 100644
+index 0000000..1a10993
+--- /dev/null
++++ b/tests/test_tsk588_browser_timezone.py
+@@ -0,0 +1,200 @@
++"""Integration HTTP-тесты PUT /api/v1/me/timezone/auto — автозахват пояса (tsk-588).
++
++Покрывает правило приоритета из решения оператора 2026-08-08: пояс, снятый с
++браузера, заполняет пустое значение и обновляет своё же прежнее, но НЕ трогает
++выбор человека.
++
++- пустой пояс → записывается, источник `auto`;
++- тот же пояс повторно → записи нет (`applied=false`), эндпоинт идемпотентен;
++- сменился пояс (переезд) → обновляется, источник остаётся `auto`;
++- пояс вписан человеком (PATCH /me) → автозахват не трогает, `applied=false`;
++- некорректный IANA-идентификатор → 422;
++- без авторизации → 401.
++
++Образец подъёма user+session — как в test_tsk427_profile_extra_fields.py.
++"""
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++AUTO_URL = "/api/v1/me/timezone/auto"
++
++
++async def _setup_user_with_session(db):
++    email = f"tsk588_{random.randint(10**8, 10**10)}@example.com"
++    user = Users(email=email, password_hash=None, full_name="Иванов Иван", tg_id=None)
++    db.add(user)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, user.id, "email", email)
++    access_token, _, _ = await create_session(db, user_id=user.id)
++    await db.commit()
++    return user.id, access_token
++
++
++async def _cleanup(db, user_id: int) -> None:
++    await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": user_id})
++    await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": user_id})
++    await db.commit()
++
++
++async def _read_timezone(db, user_id: int) -> tuple[str | None, str | None]:
++    row = (
++        await db.execute(
++            text("SELECT timezone, timezone_source FROM users WHERE id=:u"),
++            {"u": user_id},
++        )
++    ).one()
++    return row[0], row[1]
++
++
++# ── пустой пояс заполняется автоматически ────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_auto_timezone_fills_empty_profile(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.put(
++            AUTO_URL,
++            json={"timezone": "Asia/Yekaterinburg"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body == {
++            "timezone": "Asia/Yekaterinburg",
++            "source": "auto",
++            "applied": True,
++        }
++
++        await db.commit()  # увидеть запись, сделанную в сессии эндпоинта
++        assert await _read_timezone(db, user_id) == ("Asia/Yekaterinburg", "auto")
++
++        me = await client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
++        assert me.json()["timezone"] == "Asia/Yekaterinburg"
++        assert me.json()["timezone_source"] == "auto"
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_auto_timezone_is_idempotent(db, client):
++    """Повторный вызов с тем же поясом ничего не пишет — applied=false."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        headers = {"Authorization": f"Bearer {token}"}
++        first = await client.put(AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers)
++        assert first.json()["applied"] is True
++
++        second = await client.put(AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers)
++        assert second.status_code == 200, second.text
++        assert second.json() == {
++            "timezone": "Europe/Moscow",
++            "source": "auto",
++            "applied": False,
++        }
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_auto_timezone_follows_move_to_another_zone(db, client):
++    """Пояс, снятый автоматически, обновляется при смене пояса устройства."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        headers = {"Authorization": f"Bearer {token}"}
++        await client.put(AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers)
++
++        moved = await client.put(
++            AUTO_URL, json={"timezone": "Asia/Novosibirsk"}, headers=headers
++        )
++        assert moved.status_code == 200, moved.text
++        assert moved.json() == {
++            "timezone": "Asia/Novosibirsk",
++            "source": "auto",
++            "applied": True,
++        }
++
++        await db.commit()
++        assert await _read_timezone(db, user_id) == ("Asia/Novosibirsk", "auto")
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── ручной выбор сильнее автозахвата ─────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_manual_timezone_is_not_overwritten(db, client):
++    """Человек выбрал пояс в профиле — браузер его не перебивает (решение 2026-08-08)."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        headers = {"Authorization": f"Bearer {token}"}
++        manual = await client.patch(
++            "/api/v1/me", json={"timezone": "Asia/Yekaterinburg"}, headers=headers
++        )
++        assert manual.status_code == 200, manual.text
++        assert manual.json()["timezone_source"] == "manual"
++
++        auto = await client.put(
++            AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers
++        )
++        assert auto.status_code == 200, auto.text
++        assert auto.json() == {
++            "timezone": "Asia/Yekaterinburg",
++            "source": "manual",
++            "applied": False,
++        }
++
++        await db.commit()
++        assert await _read_timezone(db, user_id) == ("Asia/Yekaterinburg", "manual")
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_manual_edit_wins_over_earlier_auto_value(db, client):
++    """Ручная правка поверх автоматического значения переводит его в manual."""
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        headers = {"Authorization": f"Bearer {token}"}
++        await client.put(AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers)
++
++        manual = await client.patch(
++            "/api/v1/me", json={"timezone": "Asia/Yekaterinburg"}, headers=headers
++        )
++        assert manual.status_code == 200, manual.text
++        assert manual.json()["timezone_source"] == "manual"
++
++        again = await client.put(
++            AUTO_URL, json={"timezone": "Europe/Moscow"}, headers=headers
++        )
++        assert again.json()["applied"] is False
++        assert again.json()["timezone"] == "Asia/Yekaterinburg"
++    finally:
++        await _cleanup(db, user_id)
++
++
++# ── валидация и доступ ───────────────────────────────────────────────────────
++
++@pytest.mark.asyncio
++async def test_auto_timezone_rejects_garbage(db, client):
++    user_id, token = await _setup_user_with_session(db)
++    try:
++        resp = await client.put(
++            AUTO_URL,
++            json={"timezone": "Moscow/NotAZone"},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 422, resp.text
++    finally:
++        await _cleanup(db, user_id)
++
++
++@pytest.mark.asyncio
++async def test_auto_timezone_requires_auth(client):
++    resp = await client.put(AUTO_URL, json={"timezone": "Europe/Moscow"})
++    assert resp.status_code == 401, resp.text
+diff --git a/tests/test_tsk588_student_timezone_visible.py b/tests/test_tsk588_student_timezone_visible.py
+new file mode 100644
+index 0000000..2b6c338
+--- /dev/null
++++ b/tests/test_tsk588_student_timezone_visible.py
+@@ -0,0 +1,128 @@
++"""tsk-588: часовой пояс ученика виден там, где договариваются о времени.
++
++Расписание школы ведётся по Москве (`operating_hours.timezone = Europe/Moscow`),
++а два ученика в июле-августе 2026 пришли на занятие мимо ровно на своё смещение.
++Преподаватель должен видеть пояс ученика рядом с его работой, а не искать его в
++карточке профиля.
++
++Здесь проверяется очередь проверки (`GET /teacher/reviews/pending`) — сводка
++занятия покрыта своим набором (`test_teacher_lesson_summary_tsk022_410.py`),
++куда поле добавлено тем же способом.
++
++Образец подъёма данных — как в test_pending_filters_tsk539.py.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++
++async def _setup_methodist(db) -> tuple[int, str]:
++    u = Users(
++        email=f"t588-met-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name="t588-met", tg_id=None,
++    )
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", u.email)
++    token, _, _ = await create_session(db, user_id=u.id)
++    await db.execute(
++        text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, r.id FROM roles r WHERE r.name = 'methodist' ON CONFLICT DO NOTHING"
++        ),
++        {"u": u.id},
++    )
++    await db.commit()
++    return u.id, token
++
++
++async def _create_student(db, full_name: str, timezone_value: str | None) -> int:
++    u = Users(
++        email=f"t588-stud-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None, full_name=full_name, tg_id=None,
++        timezone=timezone_value,
++        timezone_source="manual" if timezone_value else None,
++    )
++    db.add(u)
++    await db.flush()
++    await db.commit()
++    return u.id
++
++
++async def _create_task(db) -> int:
++    rules: dict = {"max_score": 10, "manual_review_required": True}
++    res = await db.execute(
++        text(
++            "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, course_id, difficulty_id) "
++            "VALUES (:ext, 10, CAST(:content AS jsonb), CAST(:rules AS jsonb), 1, 1) RETURNING id"
++        ),
++        {
++            "ext": f"t588-{random.randint(10**8, 10**10)}",
++            "content": json.dumps({"type": "SA_COM", "stem": "test"}),
++            "rules": json.dumps(rules),
++        },
++    )
++    tid = res.scalar_one()
++    await db.commit()
++    return tid
++
++
++async def _create_tr(db, *, user_id: int, task_id: int, submitted_at: datetime) -> int:
++    res = await db.execute(
++        text(
++            "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
++            "received_at, max_score, source_system, is_correct) "
++            "VALUES (0, :u, :t, :sub, 0, :sub, 10, 'spw', NULL) RETURNING id"
++        ),
++        {"u": user_id, "t": task_id, "sub": submitted_at},
++    )
++    rid = res.scalar_one()
++    await db.commit()
++    return rid
++
++
++async def _cleanup(db, *, user_ids, task_ids=(), rids=()):
++    if rids:
++        await db.execute(text("DELETE FROM task_results WHERE id = ANY(:r)"), {"r": list(rids)})
++    if task_ids:
++        await db.execute(text("DELETE FROM tasks WHERE id = ANY(:t)"), {"t": list(task_ids)})
++    for uid in user_ids:
++        await db.execute(text("DELETE FROM user_session WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM identity_link WHERE user_id=:u"), {"u": uid})
++        await db.execute(text("DELETE FROM user_roles WHERE user_id=:u"), {"u": uid})
++    await db.commit()
++
++
++@pytest.mark.asyncio
++async def test_pending_review_item_carries_student_timezone(db, client):
++    """Очередь отдаёт пояс ученика; у незаполненного профиля — None, не ошибка."""
++    met_id, token = await _setup_methodist(db)
++    tag = random.randint(10**8, 10**10)
++    stud_orsk = await _create_student(db, f"t588 Орск {tag}", "Asia/Yekaterinburg")
++    stud_empty = await _create_student(db, f"t588 Без пояса {tag}", None)
++    task_id = await _create_task(db)
++    now = datetime.now(timezone.utc)
++    rid_orsk = await _create_tr(db, user_id=stud_orsk, task_id=task_id, submitted_at=now)
++    rid_empty = await _create_tr(db, user_id=stud_empty, task_id=task_id, submitted_at=now)
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/reviews/pending?teacher_id={met_id}&limit=200",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        by_id = {it["id"]: it for it in resp.json()["items"]}
++
++        assert by_id[rid_orsk]["user_timezone"] == "Asia/Yekaterinburg"
++        assert by_id[rid_empty]["user_timezone"] is None
++    finally:
++        await _cleanup(db, user_ids=[met_id, stud_orsk, stud_empty], task_ids=[task_id],
++                       rids=[rid_orsk, rid_empty])

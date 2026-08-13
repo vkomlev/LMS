@@ -3,7 +3,12 @@ from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
-from app.schemas.me import ProfileCategory, normalize_city, validate_timezone
+from app.schemas.me import (
+    ProfileCategory,
+    TimezoneSource,
+    normalize_city,
+    validate_timezone,
+)
 
 
 class UserCreate(BaseModel):
@@ -111,6 +116,13 @@ class UserRead(BaseModel):
     city: Optional[str] = Field(None, description="Город", examples=["Москва", None])
     timezone: Optional[str] = Field(
         None, description="Часовой пояс, IANA-идентификатор", examples=["Europe/Moscow", None]
+    )
+    # tsk-588: пояс, снятый с браузера, честно подписывается в кабинете — иначе
+    # методист не отличит «человек так сказал» от «так решило устройство».
+    timezone_source: Optional[TimezoneSource] = Field(
+        None,
+        description="Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
+        examples=["auto", None],
     )
 
     @field_validator("email", mode="before")

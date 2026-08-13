@@ -102,6 +102,7 @@ async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
             Users.school_grade,
             Users.city,
             Users.timezone,
+            Users.timezone_source,
         ).where(Users.id == user_id)
     )
     row = result.one_or_none()
@@ -113,6 +114,7 @@ async def get_profile(db: AsyncSession, user_id: int) -> dict | None:
         "school_grade": row.school_grade,
         "city": row.city,
         "timezone": row.timezone,
+        "timezone_source": row.timezone_source,
     }
 
 
@@ -167,9 +169,59 @@ async def update_profile_extra(
         user.city = city
     if timezone_value is not None:
         user.timezone = timezone_value
+        # tsk-588: пояс, пришедший этим путём, всегда выбран человеком — и
+        # профилем ученика, и карточкой в кабинете методиста правят руками.
+        # Пометка защищает значение от перезаписи автозахватом браузера.
+        user.timezone_source = "manual"
 
     await db.flush()
     logger.info("Доп. поля профиля обновлены для user_id=%s", user_id)
+
+
+async def apply_browser_timezone(
+    db: AsyncSession,
+    user_id: int,
+    timezone_value: str,
+) -> tuple[str | None, bool]:
+    """Записать пояс, снятый с браузера, если он не спорит с выбором человека (tsk-588).
+
+    Правило приоритета (решение оператора 2026-08-08): ручной выбор сильнее
+    системного пояса устройства. Поэтому запись происходит только когда пояс
+    пуст или был снят автоматически же:
+
+    - `timezone_source = 'manual'` → не трогаем (человек выбрал сам);
+    - пусто → записываем, источник `auto`;
+    - `auto` и пояс сменился (переезд, поездка) → обновляем;
+    - `auto` и пояс тот же → записи нет, лишний UPDATE не делаем.
+
+    Args:
+        db: async session.
+        user_id: ID пользователя.
+        timezone_value: IANA-идентификатор, уже проверенный схемой.
+
+    Returns:
+        Пара «пояс, который теперь у пользователя» и «была ли запись».
+
+    Raises:
+        ValueError: пользователь не найден.
+    """
+    user = await db.get(Users, user_id)
+    if user is None:
+        raise ValueError(f"Пользователь id={user_id} не найден.")
+
+    if user.timezone_source == "manual":
+        return user.timezone, False
+
+    if user.timezone == timezone_value and user.timezone_source == "auto":
+        return user.timezone, False
+
+    user.timezone = timezone_value
+    user.timezone_source = "auto"
+    await db.flush()
+    logger.info(
+        "Часовой пояс снят с браузера для user_id=%s: %s", user_id, timezone_value
+    )
+    return timezone_value, True
 
 
 # ── /me/identities ──────────────────────────────────────────────────────────

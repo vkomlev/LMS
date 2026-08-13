@@ -22112,6 +22112,106 @@
         }
       }
     },
+    "/api/v1/me/timezone/auto": {
+      "put": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Set Browser Timezone",
+        "description": "Принять системный пояс устройства и записать его, если он не спорит с человеком.\n\ntsk-588: пояс был у 3 из 52 активных пользователей, потому что его надо\nбыло вписывать руками — а двое учеников из-за этого пришли на занятие\nмимо на своё смещение от Москвы. Клиент присылает сюда\n`Intl.DateTimeFormat().resolvedOptions().timeZone` при входе.\n\nРучной выбор сильнее (решение оператора 2026-08-08): если пояс вписан\nчеловеком (`timezone_source = 'manual'`), запрос ничего не меняет и\nвозвращает `applied=false` с прежним значением. Эндпоинт идемпотентен —\nповторный вызов с тем же поясом записи не делает.\n\n401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.",
+        "operationId": "set_browser_timezone_api_v1_me_timezone_auto_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BrowserTimezoneRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserTimezoneResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/identities": {
       "get": {
         "tags": [
@@ -37237,6 +37337,67 @@
         "title": "BreakWriteRequest",
         "description": "Границы включительные: «с 10 по 24» закрывает и 10-е, и 24-е."
       },
+      "BrowserTimezoneRequest": {
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Timezone",
+            "description": "Системный пояс браузера, IANA-идентификатор (Intl.DateTimeFormat().resolvedOptions().timeZone)."
+          }
+        },
+        "type": "object",
+        "required": [
+          "timezone"
+        ],
+        "title": "BrowserTimezoneRequest",
+        "description": "Тело PUT /me/timezone/auto — системный пояс устройства, снятый клиентом.\n\nОтдельный эндпоинт, а не поле в PATCH /me: у этих двух действий разные\nправа на значение. PATCH — «человек выбрал», он перебивает всё; этот —\n«так думает устройство», и он уступает ручному выбору."
+      },
+      "BrowserTimezoneResponse": {
+        "properties": {
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "Пояс пользователя после запроса (может отличаться от присланного)"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source",
+            "description": "Источник значения: manual (выбор человека) | auto (снят с браузера)"
+          },
+          "applied": {
+            "type": "boolean",
+            "title": "Applied",
+            "description": "True — присланный пояс записан; False — оставлен прежний (человек выбрал пояс сам, либо значение не изменилось)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "timezone",
+          "source",
+          "applied"
+        ],
+        "title": "BrowserTimezoneResponse",
+        "description": "Ответ PUT /me/timezone/auto — что в итоге записано в профиле."
+      },
       "ChargeRead": {
         "properties": {
           "id": {
@@ -43803,6 +43964,21 @@
             ],
             "title": "Timezone"
           },
+          "timezone_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone Source"
+          },
           "roles": {
             "items": {
               "type": "string"
@@ -45915,6 +46091,18 @@
               }
             ],
             "title": "User Name"
+          },
+          "user_timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Timezone",
+            "description": "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. Нужен там, где преподаватель договаривается с учеником о времени."
           },
           "task_title": {
             "anyOf": [
@@ -53454,6 +53642,18 @@
             ],
             "title": "Tg Id"
           },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone",
+            "description": "tsk-588: часовой пояс ученика (IANA id) или None, если не заполнен. Расписание школы ведётся по Москве — разница видна рядом с именем."
+          },
           "status": {
             "type": "string",
             "title": "Status",
@@ -54682,6 +54882,26 @@
             "description": "Часовой пояс, IANA-идентификатор",
             "examples": [
               "Europe/Moscow",
+              null
+            ]
+          },
+          "timezone_source": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone Source",
+            "description": "Источник пояса: manual (вписан человеком) | auto (снят с браузера)",
+            "examples": [
+              "auto",
               null
             ]
           }

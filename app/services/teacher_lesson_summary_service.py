@@ -380,7 +380,9 @@ async def get_occurrence_summary(
     if student_ids:
         rows = (
             await db.execute(
-                text("SELECT id, full_name, tg_id FROM users WHERE id = ANY(:ids)"),
+                # tsk-588: timezone — сводка занятия и есть тот экран, где
+                # преподаватель договаривается с учеником о времени.
+                text("SELECT id, full_name, tg_id, timezone FROM users WHERE id = ANY(:ids)"),
                 {"ids": student_ids},
             )
         ).mappings().fetchall()
@@ -416,6 +418,7 @@ async def get_occurrence_summary(
             "student_id": p.student_id,
             "full_name": profile.get("full_name"),
             "tg_id": profile.get("tg_id"),
+            "timezone": profile.get("timezone"),
             "status": p.status,
             "is_overdue": is_overdue,
             "last_activity": last_activity,
