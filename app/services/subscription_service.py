@@ -54,7 +54,12 @@ async def _current_plan_code(db: AsyncSession, student_id: int) -> Optional[str]
 
 
 async def _assign(
-    db: AsyncSession, student_id: int, plan_code: str, *, reason: str
+    db: AsyncSession,
+    student_id: int,
+    plan_code: str,
+    *,
+    reason: str,
+    changed_by: Optional[int] = None,
 ) -> bool:
     """Открыть подписку на план. Возвращает False, если план не найден.
 
@@ -83,10 +88,17 @@ async def _assign(
             await db.execute(
                 text(
                     "INSERT INTO student_subscription "
-                    "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
-                    "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
+                    "  (student_id, plan_id, pricing_group_id, starts_on, reason, "
+                    "   changed_by) "
+                    "VALUES (:s, :p, :g, CURRENT_DATE, :r, :by)"
                 ),
-                {"s": student_id, "p": row.id, "g": row.pricing_group_id, "r": reason},
+                {
+                    "s": student_id,
+                    "p": row.id,
+                    "g": row.pricing_group_id,
+                    "r": reason,
+                    "by": changed_by,
+                },
             )
     except IntegrityError:
         # Подписка появилась параллельно — это не ошибка, а именно то, чего мы
@@ -145,7 +157,41 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
     if has_slot is None:
         return False
 
-    if current is not None:
+    return await change_plan(
+        db,
+        student_id,
+        SCHEDULED_PLAN_CODE,
+        reason="tsk-301 авто: появилось занятие в расписании",
+    )
+
+
+async def change_plan(
+    db: AsyncSession,
+    student_id: int,
+    plan_code: str,
+    *,
+    reason: str,
+    changed_by: Optional[int] = None,
+) -> bool:
+    """Перевести ученика на другой тариф: закрыть действующую строку, открыть новую.
+
+    Единственный штатный путь смены. Прямой `UPDATE student_subscription SET
+    plan_id = …` запрещён: история тарифов держится строками, а не полем
+    «предыдущий» (см. `StudentSubscription`), и правка на месте стирает, по какой
+    группе считался прошлый месяц.
+
+    Закрытие и открытие идут одним savepoint. Порознь их разорвало бы на гонке:
+    вставка падает на частичном уникальном индексе, а старая строка уже закрыта —
+    ученик остаётся без действующей подписки, то есть без прав, и заметно это
+    станет по жалобе.
+
+    **Деньги не пересчитываются здесь намеренно.** Смена тарифа меняет группу
+    на будущее; переписывать уже названную человеку сумму текущего месяца —
+    отдельный спорный вопрос (tsk-585, решение 14). Возвращает False, если план
+    не найден или подписку сменили параллельно.
+    """
+    savepoint = await db.begin_nested()
+    try:
         await db.execute(
             text(
                 "UPDATE student_subscription SET ends_on = CURRENT_DATE "
@@ -153,7 +199,15 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
             ),
             {"sid": student_id},
         )
-    return await _assign(
-        db, student_id, SCHEDULED_PLAN_CODE,
-        reason="tsk-301 авто: появилось занятие в расписании",
-    )
+        assigned = await _assign(
+            db, student_id, plan_code, reason=reason, changed_by=changed_by
+        )
+        if not assigned:
+            await savepoint.rollback()
+            return False
+    except Exception:
+        if savepoint.is_active:
+            await savepoint.rollback()
+        raise
+    await savepoint.commit()
+    return True

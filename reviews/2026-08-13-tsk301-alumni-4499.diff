@@ -1,0 +1,182 @@
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index e86a06d..2af99eb 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -54,7 +54,12 @@ async def _current_plan_code(db: AsyncSession, student_id: int) -> Optional[str]
+ 
+ 
+ async def _assign(
+-    db: AsyncSession, student_id: int, plan_code: str, *, reason: str
++    db: AsyncSession,
++    student_id: int,
++    plan_code: str,
++    *,
++    reason: str,
++    changed_by: Optional[int] = None,
+ ) -> bool:
+     """Открыть подписку на план. Возвращает False, если план не найден.
+ 
+@@ -83,10 +88,17 @@ async def _assign(
+             await db.execute(
+                 text(
+                     "INSERT INTO student_subscription "
+-                    "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
+-                    "VALUES (:s, :p, :g, CURRENT_DATE, :r)"
++                    "  (student_id, plan_id, pricing_group_id, starts_on, reason, "
++                    "   changed_by) "
++                    "VALUES (:s, :p, :g, CURRENT_DATE, :r, :by)"
+                 ),
+-                {"s": student_id, "p": row.id, "g": row.pricing_group_id, "r": reason},
++                {
++                    "s": student_id,
++                    "p": row.id,
++                    "g": row.pricing_group_id,
++                    "r": reason,
++                    "by": changed_by,
++                },
+             )
+     except IntegrityError:
+         # Подписка появилась параллельно — это не ошибка, а именно то, чего мы
+@@ -145,7 +157,41 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
+     if has_slot is None:
+         return False
+ 
+-    if current is not None:
++    return await change_plan(
++        db,
++        student_id,
++        SCHEDULED_PLAN_CODE,
++        reason="tsk-301 авто: появилось занятие в расписании",
++    )
++
++
++async def change_plan(
++    db: AsyncSession,
++    student_id: int,
++    plan_code: str,
++    *,
++    reason: str,
++    changed_by: Optional[int] = None,
++) -> bool:
++    """Перевести ученика на другой тариф: закрыть действующую строку, открыть новую.
++
++    Единственный штатный путь смены. Прямой `UPDATE student_subscription SET
++    plan_id = …` запрещён: история тарифов держится строками, а не полем
++    «предыдущий» (см. `StudentSubscription`), и правка на месте стирает, по какой
++    группе считался прошлый месяц.
++
++    Закрытие и открытие идут одним savepoint. Порознь их разорвало бы на гонке:
++    вставка падает на частичном уникальном индексе, а старая строка уже закрыта —
++    ученик остаётся без действующей подписки, то есть без прав, и заметно это
++    станет по жалобе.
++
++    **Деньги не пересчитываются здесь намеренно.** Смена тарифа меняет группу
++    на будущее; переписывать уже названную человеку сумму текущего месяца —
++    отдельный спорный вопрос (tsk-585, решение 14). Возвращает False, если план
++    не найден или подписку сменили параллельно.
++    """
++    savepoint = await db.begin_nested()
++    try:
+         await db.execute(
+             text(
+                 "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+@@ -153,7 +199,15 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
+             ),
+             {"sid": student_id},
+         )
+-    return await _assign(
+-        db, student_id, SCHEDULED_PLAN_CODE,
+-        reason="tsk-301 авто: появилось занятие в расписании",
+-    )
++        assigned = await _assign(
++            db, student_id, plan_code, reason=reason, changed_by=changed_by
++        )
++        if not assigned:
++            await savepoint.rollback()
++            return False
++    except Exception:
++        if savepoint.is_active:
++            await savepoint.rollback()
++        raise
++    await savepoint.commit()
++    return True
+diff --git a/tests/test_tsk301_auto_plan.py b/tests/test_tsk301_auto_plan.py
+index 684d7a2..994b7ca 100644
+--- a/tests/test_tsk301_auto_plan.py
++++ b/tests/test_tsk301_auto_plan.py
+@@ -245,3 +245,75 @@ async def test_upgrade_switches_pricing_group(
+         )
+     ).scalar()
+     assert group_name == "Базовый 2026"
++
++
++# ──────────────────── Ручная смена тарифа (change_plan) ─────────────────────
++
++
++async def test_change_plan_closes_previous_and_opens_new(db: AsyncSession) -> None:
++    """Смена тарифа — это две строки, а не правка одной.
++
++    Проверяем ровно то, ради чего запрещён прямой UPDATE: прошлая строка
++    остаётся в истории с датой закрытия, действующей остаётся одна.
++    """
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "base")
++
++    assert await subs.change_plan(
++        db, student_id, "alumni", reason="закончил обучение"
++    ) is True
++    assert await _plan_of(db, student_id) == "alumni"
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT p.code, s.ends_on IS NULL AS is_current, s.pricing_group_id "
++                "  FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                " WHERE s.student_id = :s ORDER BY s.id"
++            ),
++            {"s": student_id},
++        )
++    ).all()
++    assert [(r.code, r.is_current) for r in rows] == [
++        ("base", False),
++        ("alumni", True),
++    ]
++    assert rows[1].pricing_group_id is None, (
++        "у «Выпускника» тарифной группы нет — значит и начислений не будет"
++    )
++
++
++async def test_change_plan_records_author(db: AsyncSession) -> None:
++    """Кто перевёл — записывается: иначе смену тарифа не с кого спросить."""
++    student_id = await _new_user(db, with_role=True)
++    author_id = await _new_user(db, with_role=False)
++    await _subscribe(db, student_id, "base")
++
++    await subs.change_plan(
++        db, student_id, "alumni", reason="закончил обучение", changed_by=author_id
++    )
++    assert (
++        await db.execute(
++            text(
++                "SELECT changed_by FROM student_subscription "
++                " WHERE student_id = :s AND ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).scalar() == author_id
++
++
++async def test_change_plan_keeps_old_row_when_plan_unknown(db: AsyncSession) -> None:
++    """Несуществующий тариф не должен оставить ученика без подписки вовсе.
++
++    Закрытие и открытие идут одним savepoint именно поэтому: порознь ученик
++    потерял бы права на несуществующем коде, и узнали бы мы об этом по жалобе.
++    """
++    student_id = await _new_user(db, with_role=True)
++    await _subscribe(db, student_id, "base")
++
++    assert await subs.change_plan(
++        db, student_id, "no_such_plan", reason="опечатка в коде тарифа"
++    ) is False
++    assert await _plan_of(db, student_id) == "base", "прежняя подписка обязана уцелеть"

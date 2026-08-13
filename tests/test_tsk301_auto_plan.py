@@ -245,3 +245,75 @@ async def test_upgrade_switches_pricing_group(
         )
     ).scalar()
     assert group_name == "Базовый 2026"
+
+
+# ──────────────────── Ручная смена тарифа (change_plan) ─────────────────────
+
+
+async def test_change_plan_closes_previous_and_opens_new(db: AsyncSession) -> None:
+    """Смена тарифа — это две строки, а не правка одной.
+
+    Проверяем ровно то, ради чего запрещён прямой UPDATE: прошлая строка
+    остаётся в истории с датой закрытия, действующей остаётся одна.
+    """
+    student_id = await _new_user(db, with_role=True)
+    await _subscribe(db, student_id, "base")
+
+    assert await subs.change_plan(
+        db, student_id, "alumni", reason="закончил обучение"
+    ) is True
+    assert await _plan_of(db, student_id) == "alumni"
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT p.code, s.ends_on IS NULL AS is_current, s.pricing_group_id "
+                "  FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                " WHERE s.student_id = :s ORDER BY s.id"
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    assert [(r.code, r.is_current) for r in rows] == [
+        ("base", False),
+        ("alumni", True),
+    ]
+    assert rows[1].pricing_group_id is None, (
+        "у «Выпускника» тарифной группы нет — значит и начислений не будет"
+    )
+
+
+async def test_change_plan_records_author(db: AsyncSession) -> None:
+    """Кто перевёл — записывается: иначе смену тарифа не с кого спросить."""
+    student_id = await _new_user(db, with_role=True)
+    author_id = await _new_user(db, with_role=False)
+    await _subscribe(db, student_id, "base")
+
+    await subs.change_plan(
+        db, student_id, "alumni", reason="закончил обучение", changed_by=author_id
+    )
+    assert (
+        await db.execute(
+            text(
+                "SELECT changed_by FROM student_subscription "
+                " WHERE student_id = :s AND ends_on IS NULL"
+            ),
+            {"s": student_id},
+        )
+    ).scalar() == author_id
+
+
+async def test_change_plan_keeps_old_row_when_plan_unknown(db: AsyncSession) -> None:
+    """Несуществующий тариф не должен оставить ученика без подписки вовсе.
+
+    Закрытие и открытие идут одним savepoint именно поэтому: порознь ученик
+    потерял бы права на несуществующем коде, и узнали бы мы об этом по жалобе.
+    """
+    student_id = await _new_user(db, with_role=True)
+    await _subscribe(db, student_id, "base")
+
+    assert await subs.change_plan(
+        db, student_id, "no_such_plan", reason="опечатка в коде тарифа"
+    ) is False
+    assert await _plan_of(db, student_id) == "base", "прежняя подписка обязана уцелеть"
