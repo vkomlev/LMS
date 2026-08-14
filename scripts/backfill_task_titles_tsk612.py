@@ -418,13 +418,22 @@ async def main() -> int:
         else:
             pending = [c for c in candidates if c["id"] not in done]
             titles = dict(done)
+            # Пакеты, потерянные на отбое модели. Считаются явно: `continue` в
+            # обработчике LLMError уносит ВОСЕМЬ заданий разом, и в прошлом
+            # прогоне 287 заданий остались без названия незамеченными — сводка
+            # показывала только успешные пакеты, а лог был усечён.
+            failed_batches = 0
             with args.out.open("a", encoding="utf-8") as fh:
                 for start in range(0, len(pending), BATCH_SIZE):
                     batch = pending[start : start + BATCH_SIZE]
                     try:
                         got, model = await generate_titles(batch)
                     except LLMError as exc:
-                        print(f"  пакет {start // BATCH_SIZE + 1}: отбой модели — {exc}")
+                        failed_batches += 1
+                        print(
+                            f"  пакет {start // BATCH_SIZE + 1}: отбой модели "
+                            f"({len(batch)} заданий без названия) — {exc}"
+                        )
                         continue
                     for item in batch:
                         title = got.get(item["id"])
@@ -455,8 +464,19 @@ async def main() -> int:
                 renamed = await resolve_duplicates(candidates, titles, fh)
             if renamed:
                 print(f"  переименовано после совпадений: {renamed}")
+            if failed_batches:
+                print(
+                    f"  ОТБИТО ПАКЕТОВ: {failed_batches} — "
+                    f"перезапусти скрипт с тем же --out, он доберёт пропущенные"
+                )
 
         print(f"Готовых названий к записи: {len(titles)}")
+        without = len(candidates) - len(titles)
+        if without:
+            print(
+                f"БЕЗ НАЗВАНИЯ ОСТАЛОСЬ: {without} из {len(candidates)} — "
+                f"перезапуск с тем же --out доберёт их"
+            )
         for item in candidates[:10]:
             title = titles.get(item["id"])
             if title:
