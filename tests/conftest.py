@@ -287,12 +287,81 @@ OTHER_OPTOUT_MODULES: dict[str, str] = {
 }
 
 
+# tsk-611: часть тестов требует живого Redis (гостевые сессии Y-5, лимит демо-
+# заданий, окно благодати на ротацию refresh). Без него они падали не своим
+# сообщением, а внутренностями драйвера — `OSError: Connect call failed
+# ('127.0.0.1', 6379)` в 25 ошибках + 1 несовпадении ожидания. Со стороны это
+# выглядит как регрессия кода; на доказательство обратного уходит полчаса.
+#
+# Поэтому доступность Redis проверяется ОДИН раз на этапе сборки тестов, а
+# помеченные `requires_redis` пропускаются с внятной причиной. Пропуск виден в
+# итоговой строке прогона (`N skipped`) — зелёный прогон без Redis не должен
+# выглядеть как полное покрытие.
+_REDIS_PROBE_TIMEOUT_S = 1.5
+_redis_probe_result: bool | None = None
+
+
+def _redis_url() -> str:
+    """URL Redis для тестов: переменная окружения главнее дефолта Settings."""
+    return os.getenv("REDIS_URL") or _settings.redis_url
+
+
+def _redis_url_safe(url: str) -> str:
+    """URL без логина/пароля — причина пропуска попадает в вывод прогона."""
+    if "@" in url and "//" in url:
+        scheme, _, rest = url.partition("//")
+        return f"{scheme}//{rest.rpartition('@')[2]}"
+    return url
+
+
+def _redis_available() -> bool:
+    """Отвечает ли Redis из REDIS_URL на PING. Результат кешируется на прогон."""
+    global _redis_probe_result
+    if _redis_probe_result is None:
+        url = _redis_url()
+        try:
+            import redis as _redis_sync  # синхронный клиент из того же redis-py
+
+            client = _redis_sync.Redis.from_url(
+                url,
+                socket_connect_timeout=_REDIS_PROBE_TIMEOUT_S,
+                socket_timeout=_REDIS_PROBE_TIMEOUT_S,
+            )
+            try:
+                client.ping()
+                _redis_probe_result = True
+            finally:
+                client.close()
+        except Exception as exc:  # недоступен, не тот порт, битый URL
+            _logger.warning(
+                "tsk-611: Redis недоступен (%s): %s — тесты с маркером "
+                "requires_redis будут пропущены",
+                _redis_url_safe(url),
+                exc,
+            )
+            _redis_probe_result = False
+    return _redis_probe_result
+
+
 def pytest_collection_modifyitems(items) -> None:
-    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией."""
+    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией,
+    и пропустить `requires_redis`, если живого Redis нет."""
     optout = SELF_MANAGED_CONNECTION_MODULES | set(OTHER_OPTOUT_MODULES)
     for item in items:
         if Path(str(item.fspath)).name in optout:
             item.add_marker(pytest.mark.no_tx_isolation)
+
+    needs_redis = [item for item in items if item.get_closest_marker("requires_redis")]
+    if needs_redis and not _redis_available():
+        skip_redis = pytest.mark.skip(
+            reason=(
+                f"нужен Redis на {_redis_url_safe(_redis_url())} — не отвечает на PING. "
+                "Поднять: .\\scripts\\dev\\ensure-redis.ps1 "
+                "(или запускать прогон через .\\scripts\\dev\\run-tests.ps1)"
+            )
+        )
+        for item in needs_redis:
+            item.add_marker(skip_redis)
 
 
 @pytest_asyncio.fixture(scope="function")

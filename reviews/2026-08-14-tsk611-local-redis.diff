@@ -1,0 +1,747 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 729f233..5dd1cdc 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -45,6 +45,8 @@
+ - Пишите smoke-тесты для новых эндпойнтов
+ - Тестируйте поведение триггеров БД через интеграционные тесты
+ - Не мокируйте триггеры БД в тестах
++- Прогон запускайте через `.\scripts\dev\run-tests.ps1` — обёртка проверяет локальный Redis и поднимает его, если он не запущен (см. README, раздел «Тесты»)
++- Тесту, которому нужен живой Redis, ставьте маркер `requires_redis` — без Redis он будет пропущен с внятной причиной, а не упадёт внутренностями драйвера
+ 
+ ### 5. Документация
+ 
+diff --git a/README.md b/README.md
+index b53dbe6..571bab1 100644
+--- a/README.md
++++ b/README.md
+@@ -133,12 +133,42 @@ alembic downgrade -1
+ 
+ ## Тесты
+ 
+-```bash
+-pytest tests/
++Рекомендуемый вход — обёртка, которая перед прогоном проверяет локальный Redis и поднимает его, если он не запущен:
++
++```powershell
++.\scripts\dev\run-tests.ps1
+ ```
+ 
++Аргументы уходят в pytest как есть: `.\scripts\dev\run-tests.ps1 tests/test_y5_guest_endpoints.py -q`.
++Голый `pytest tests/` тоже работает — просто без проверки Redis.
++
+ Smoke-сценарии по эндпойнтам — в `tests/` (`.ps1` для PowerShell и `.py` для pytest).
+ 
++### Локальный Redis (нужен части тестов)
++
++Гостевые сессии Y-5, лимит демо-заданий и окно благодати на ротацию refresh-токена
++хранят состояние в Redis (`REDIS_URL`, по умолчанию `redis://localhost:6379/2`).
++Тесты, которым он нужен, помечены маркером `requires_redis`:
++
++- Redis отвечает — тесты идут обычным порядком;
++- Redis не отвечает — они **пропускаются** с причиной «нужен Redis на …», а не
++  падают внутренностями драйвера. Пропуски видны в итоговой строке прогона
++  (`N skipped`) — зелёный прогон без Redis не равен полному покрытию.
++
++Скрипты:
++
++| Скрипт | Что делает |
++|---|---|
++| `scripts\dev\ensure-redis.ps1` | Проверяет PING и поднимает Redis, если он не отвечает. Идемпотентный. |
++| `scripts\dev\run-tests.ps1` | `ensure-redis.ps1` + `pytest` из `.venv`. |
++| `scripts\dev\install-redis-autostart.ps1` | Разовая установка: задача планировщика держит Redis поднятым (вход в систему + перепроверка раз в 15 минут). Прав администратора не требует. |
++
++Сервер — [Memurai](https://www.memurai.com/) (Redis-совместимый под Windows). Его
++бесплатная Developer-редакция **сама себя выключает** после нескольких суток
++непрерывной работы, поэтому одного автозапуска службы мало — периодическая
++перепроверка обязательна. Если Memurai не установлен, подойдёт и контейнер:
++`docker run -d --name lms-redis --restart unless-stopped -p 6379:6379 redis:7`.
++
+ ## Разработка
+ 
+ Процесс и правила — в [CONTRIBUTING.md](CONTRIBUTING.md). Для AI-агентов — [docs/ai/AGENTS.md](docs/ai/AGENTS.md) + [.claude/CLAUDE.md](.claude/CLAUDE.md).
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index 0c7d635..f6fb3bc 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -40,3 +40,4 @@
+ | 2026-08-08 | LMS | tsk-396 — гибридный режим проверки; правится общий scoring-движок | SA_COM/TBL_COM с эталоном и `manual_review_required=true` засчитывался СРАЗУ на заведомо неверный ответ: `state=PASSED`, `score=max_score`, `is_correct=true` при `checked_at IS NULL`. Курс кредитовался до проверки человеком; обход tsk-395 не держал гейт, на который рассчитывал. 45 активных заданий прода | Условие оптимистичного зачёта (`attempts.py` 2.3d, tsk-210) опиралось на `check_result.is_correct is None`. У SA_COM/TBL_COM этот признак возникает по ДВУМ разным причинам: «эталона нет» (замысел) и «эталон есть, но включён ручной гейт» (tsk-230) — `_check_short_answer` короткозамыкает ДО чтения `short_answer`-правил. Вторая причина попала в условие непреднамеренно; комментарий рядом описывал ТОЛЬКО первую («SA_COM без правил») | LOGIC | S1 | Живой прогон пробы на dev (SA_COM + эталон «12 516,30», ответ «999 999») при сверке посылки задачи с контрактом `docs/frontend-contract-sa-com.md` — расхождение между тем, что задача считала намеренным поведением, и тем, что делает код | Условие переведено на признак «сверять нечем» — `not solution_rules.has_reference_answer()` (тот же единый предикат, что у UX-сигнала tsk-547). Миссии без эталона оптимистичный зачёт сохраняют; задания с эталоном + ручным гейтом больше не засчитываются вслепую. Регресс-тесты в `tests/test_partial_auto_check_tsk396.py` (обе стороны развилки) | (a) **Признак-триггер, вычисляемый несколькими путями, нельзя использовать как признак ОДНОГО из них.** `is_correct is None` означало и «нечем сверять», и «ждём человека» — условие обязано спрашивать о причине напрямую (`has_reference_answer()`), а не о её следствии. (b) Ранний `return` по флагу ДО чтения правил создаёт такие склейки — при добавлении флага в `checking_service` проверять, какие ещё ветки читают его следствия. (c) Юнит-тест на `CheckingService` (tsk-230 проверял `score=0`) НЕ ловит переопределение на слое роутера — для гейтов зачёта тест обязан идти через `POST /attempts/{id}/answers` и `GET /learning/tasks/{id}/state`, а не через сервис | FIXED |
+ | 2026-08-08 | LMS | tsk-586 — TG-боты не могли писать в LMS: legacy-дверь `get_api_key` принимала только `?api_key=` | TG_LMS с `8ceed6f` (tsk-497, 2026-08-03) перевёл клиент на заголовок `X-API-Key`, а `app/api/deps.py::get_api_key` читал ТОЛЬКО `APIKeyQuery`. С выката ботов 2026-08-07 12:53 UTC весь класс эндпоинтов на `Depends(get_db)` (~116 пар метод+путь) отвечал ботам 403, бот показывал «Недостаточно прав». Живёт бок о бок второй дефект: `hasattr` на незагруженной связи ORM в `repos/base.py::paginate` читал её и падал `MissingGreenlet` → 500 на `GET /courses/` и `GET /meta/tasks` | Транспорт авторизации поменяли на ОДНОЙ стороне (клиент), вторая осталась на старом контракте. Тесты TG_LMS мокают HTTP-клиент (329/329 зелёные при полностью сломанной авторизации), тесты LMS на этих путях ходили с query-ключом — ни один слой не проверял связку «транспорт клиента ↔ дверь сервера» | INTEGRATION | S1 | Жалоба оператора («в боте методиста невозможно привязать курс ученику») → curl с прод-сервера: те же пути заголовком 403, query 200 → обход всех маршрутов за `get_api_key` реальным ASGI-клиентом | `get_api_key` принимает заголовок И query (заголовок первым); `paginate`/`update` определяют тип через `isinstance`, а не `hasattr` | (a) **Смена транспорта авторизации — всегда двусторонняя правка**: правишь клиента — в том же охвате проверь дверь сервера, и наоборот. (b) Класс «отвалилась общая дверь» точечным тестом не ловится — нужен обход ВСЕХ маршрутов за этой дверью реальным ASGI-клиентом (`tests/test_service_key_header_gate_tsk586.py`), мок HTTP-клиента здесь бесполезен по определению. (c) `hasattr` на атрибуте-связи SQLAlchemy — не проверка наличия поля, а чтение: в async-сессии это lazy-load и `MissingGreenlet`; проверять тип через `isinstance` | FIXED |
+ | 2026-08-08 | LMS / TG_LMS / ContentBackbone | tsk-595 — ротация сервисных ключей после находки §6.4 в ревью tsk-586 | Считали, что утёк один ключ (27 строк в `app.log`). На деле открытым текстом лежали ВСЕ четыре ключа `VALID_API_KEYS`: 25 163 строки в `app.log` и ~83 000 в логах nginx, включая 77 431 строку с ключом ТГ-ботов, который по `app.log` выглядел чистым. Тем же разбором нашлись 12 строк `sudo … /usr/bin/env DATABASE_URL=… VALID_API_KEYS=… python …` в `auth.log` и журнале systemd — весь набор секретов LMS (пароль БД, ЮKassa, Resend, magic-link, ключ подписи сессий, Fernet, VK, S3, Redis, CloseRouter) | Маскировка tsk-496 — фильтр питоновского логгера LMS; access-лог nginx она не покрывает вовсе, а nginx пишет строку запроса целиком. Отдельно: секреты, переданные аргументами команды под `sudo`, попадают в аудит sudo и в `ps` | SECURITY | S1 | пересчёт по всем ключам при разборе §6.4 (проверяли только один) | Три новых ключа окном двойных ключей, старые четыре отозваны; клиенты CB и QSMImport переведены на `X-API-Key`; маскировка `api_key` добавлена в `log_format` nginx; 108 564 вхождения затёрты в файлах логов; журнал systemd обрезан до суток | Утечку секрета считать по ВСЕМ значениям переменной и по ВСЕМ приёмникам логов (приложение + nginx + auth.log + journal), а не по одному файлу; не передавать секреты аргументами команды (`sudo -u app bash -c 'set -a; . .env; set +a; …'`); ротация логов LMS подключена (`/etc/logrotate.d/lms`, `copytruncate`) | done |
++| 2026-08-14 (tsk-611) | LMS | Локальная разработка: чистый прогон `pytest tests/` на машине оператора | 1 упавший + 25 ошибок. Выглядит как регрессия кода: 19 ошибок в `test_y5_guest_endpoints.py` и 6 в `test_tsk423_demo_task_limit.py` падают внутренностями драйвера (`OSError: Connect call failed ('127.0.0.1', 6379)`), а `test_session_refresh_http_race_tsk235.py` — несовпадением ожидания (`[200, 401, 401, 401, 401]` вместо пяти 200), то есть ровно как «сломали tsk-235». На доказательство обратного (изоляция файла → изоляция теста → чтение кода grace-окна) ушло полчаса | На локальной машине не был поднят Redis, а ни один из тестов об этом не сообщал. Глубже: Redis-совместимый сервер (Memurai) установлен и служба стоит на «Автоматически», но бесплатная Developer-редакция **сама себя выключает** после нескольких суток непрерывной работы (`Memurai Developer Edition automatic shutdown` в `memurai-log.txt`, 12.08) и обратно уже не поднимается. Симптом у третьего теста другой, потому что окно благодати на ротацию refresh пишется в Redis best-effort и fail-open: без Redis окна просто нет | TEST + PROCESS | S3 (только локальная разработка; прод здоров — там Redis внешний, соединение есть) | Независимая проверка круга 14.08 | Маркер `requires_redis` + однократная проверка PING на этапе сборки тестов (`tests/conftest.py`) — помеченные тесты **пропускаются с причиной**, а не падают драйвером. Скрипты `scripts/dev/`: `ensure-redis.ps1` (идемпотентно поднимает Redis: сперва служба, потом процесс пользователя без прав администратора), `run-tests.ps1` (проверка + прогон), `install-redis-autostart.ps1` (задача планировщика: вход в систему + перепроверка раз в 15 минут). Проверено обоими способами: с Redis — 2262 passed / 11 skipped / 0 failed / 0 errors; без Redis — 2234 passed / 39 skipped / 0 failed / 0 errors (26 бывших непрозрачных падений стали явными пропусками) | (a) **Тест, которому нужна внешняя служба, обязан проверять её сам и пропускаться с причиной.** Падение внутренностями драйвера читается как регрессия кода и стоит следующему человеку тех же получаса. (b) **Пропуск обязан быть виден в итоговой строке** — зелёный прогон, где четверть сотни тестов не выполнялась, вводит в заблуждение сильнее, чем красный. (c) **«Служба стоит на автозапуске» ≠ «служба работает»**: у Memurai Developer есть самовыключение по времени работы, поэтому нужна периодическая перепроверка, а не только автозапуск. (d) Симптом «тест ждал 200, получил 401» при fail-open зависимости — сигнал искать отсутствующую внешнюю службу, а не сломанную логику | FIXED |
+diff --git a/pytest.ini b/pytest.ini
+index f6bda13..ad7420a 100644
+--- a/pytest.ini
++++ b/pytest.ini
+@@ -6,3 +6,4 @@ python_files = test_*.py
+ python_functions = test_*
+ markers =
+     no_tx_isolation: тест работает вне откатываемой транзакции (нужны параллельные соединения: гонки, блокировки, видимость между транзакциями). Обязан чистить за собой сам.
++    requires_redis: тесту нужен живой Redis по REDIS_URL (localhost:6379 по умолчанию). Без него тест пропускается с причиной, а не падает внутренностями драйвера (tsk-611).
+diff --git a/reviews/2026-08-14-tsk611-local-redis.md b/reviews/2026-08-14-tsk611-local-redis.md
+new file mode 100644
+index 0000000..ef3678a
+--- /dev/null
++++ b/reviews/2026-08-14-tsk611-local-redis.md
+@@ -0,0 +1,158 @@
++# tsk-611 — локальный Redis: подъём, проверка перед прогоном, честные пропуски
++
++Дата: 2026-08-14
++Ветка: `worktree-tsk-611-redis` (worktree `.claude/worktrees/tsk-611-redis`)
++Файл изменений: [2026-08-14-tsk611-local-redis.diff](2026-08-14-tsk611-local-redis.diff)
++
++## Что болело
++
++Чистый прогон `pytest tests/` на машине оператора давал **1 упавший и 25 ошибок**.
++Все 26 — из-за отсутствия Redis на `localhost:6379`, а не из-за кода. Ни один тест
++об этом не сообщал:
++
++- `tests/test_y5_guest_endpoints.py` — 19 ошибок, `OSError: Connect call failed ('127.0.0.1', 6379)` внутри драйвера;
++- `tests/test_tsk423_demo_task_limit.py` — 6 ошибок, то же;
++- `tests/test_session_refresh_http_race_tsk235.py` — 1 падение с другим симптомом: окно
++  благодати на ротацию refresh-токена лежит в Redis, пишется best-effort и fail-open,
++  поэтому без Redis пять одновременных продлений дают `[200, 401, 401, 401, 401]` вместо
++  пяти двухсоток. Со стороны — «сломали tsk-235».
++
++Цена — полчаса на доказательство того, что регрессии нет.
++
++## Почему Redis не было
++
++Разведка на месте (не по документации):
++
++- Redis-совместимый сервер **уже установлен** — Memurai 4.1.8 (`C:\Program Files\Memurai\`),
++  служба `Memurai` зарегистрирована и стоит на «Автоматически».
++- При этом служба была **Остановлена**, порт 6379 никто не слушал. Причина в
++  `memurai-log.txt`: `12 Aug 21:57:40 # Memurai Developer Edition automatic shutdown...` —
++  бесплатная Developer-редакция сама себя выключает после нескольких суток непрерывной
++  работы и обратно не поднимается.
++
++Отсюда вывод, который определил решение: **«служба на автозапуске» ≠ «служба работает»**.
++Одного автозапуска мало, нужна периодическая перепроверка.
++
++Прод не трогали и трогать не нужно: там Redis внешний (отдельный узел), соединение есть.
++
++## Решение
++
++### 1. Чем поднимаем — Memurai процессом пользователя
++
++Способ выбран из трёх (служба Windows / WSL / контейнер):
++
++| Вариант | Почему не он |
++|---|---|
++| Служба Memurai | Управление службой требует прав администратора: `Start-Service Memurai` из обычной сессии отдаёт «Отказано в доступе». Значит любой ручной подъём — это запрос к оператору, а требование было «без ручных действий». |
++| WSL | Из дистрибутивов установлен только `docker-desktop` (служебный, Stopped). Ставить Ubuntu ради Redis — самый тяжёлый путь. |
++| Контейнер Docker | Docker Desktop установлен, но не запущен; контейнер поднимется только после старта самого Docker Desktop. Лишнее звено, которое само может быть выключено. |
++| **Memurai процессом пользователя** | **Выбрано.** Тот же уже установленный бинарник, прав администратора не требует, стартует за ~1 секунду. Рабочий каталог — `%LOCALAPPDATA%\MemuraiDev` (в `C:\Program Files` пользователю писать нельзя). |
++
++Скрипт пробует оба пути по порядку: сперва службу (сработает, если сессия с правами
++администратора), при отказе — процесс пользователя. Контейнер остаётся запасным
++вариантом и назван в тексте ошибки, если Memurai вдруг нет.
++
++### 2. Самоподъём без участия оператора
++
++`scripts/dev/install-redis-autostart.ps1` регистрирует задачу планировщика **«LMS Dev Redis»**
++в контексте текущего пользователя (прав администратора не нужно):
++
++- триггер «при входе в систему» — закрывает перезагрузку;
++- повтор раз в 15 минут — закрывает самовыключение Memurai Developer (иначе после
++  очередного «automatic shutdown» машина осталась бы без Redis до следующей перезагрузки);
++- вызов идёт через обёртку `.vbs` в `%LOCALAPPDATA%\MemuraiDev`, чтобы окно консоли не
++  мигало каждые 15 минут.
++
++`ensure-redis.ps1` идемпотентный: если Redis отвечает на PING — не делает ничего,
++поэтому частые срабатывания ничего не стоят.
++
++### 3. Тесты больше не падают внутренностями драйвера
++
++- В `tests/conftest.py` — однократная за прогон проверка PING (синхронный клиент,
++  таймаут 1.5 с) и маркер `requires_redis`. Помеченные тесты пропускаются с причиной:
++  `нужен Redis на redis://localhost:6379/2 — не отвечает на PING. Поднять: .\scripts\dev\ensure-redis.ps1`.
++- Маркер проставлен трём модулям: `test_y5_guest_endpoints.py`, `test_tsk423_demo_task_limit.py`,
++  `test_session_refresh_http_race_tsk235.py`.
++- `test_session_refresh_grace_window_tsk235.py` не помечен намеренно: там уже есть
++  собственный пропуск на уровне фикстуры, а один из тестов файла (`test_refresh_without_redis_still_rotates_normally`)
++  проверяет поведение **именно без Redis** и обязан идти всегда.
++- Пропуски видны в итоговой строке прогона (`N skipped`) — зелёный прогон без Redis не
++  выглядит как полное покрытие.
++
++Поведение самого grace-окна не менялось — это охват [[tsk-604]].
++
++### 4. Одна команда на вход
++
++`scripts\dev\run-tests.ps1` = `ensure-redis.ps1` + `pytest` из `.venv` с `-ra`
++(чтобы причины пропусков были на виду). Аргументы уходят в pytest как есть.
++Если Redis поднять не удалось — прогон продолжается, но печатается явное предупреждение,
++что часть тестов будет пропущена.
++
++## Проверка (оба способа, полный прогон)
++
++| Прогон | Результат | Время |
++|---|---|---|
++| Полный `pytest tests/` **с** Redis | **2262 passed, 11 skipped, 0 failed, 0 errors** | 12:53 |
++| Полный `pytest tests/` **без** Redis (Memurai остановлен намеренно) | **2234 passed, 39 skipped, 0 failed, 0 errors** | 13:46 |
++
++Разбор пропусков прогона без Redis (39):
++
++- 26 — маркер `requires_redis` с причиной «нужен Redis на …» (ровно те 26, что раньше
++  падали непрозрачно: 1 упавший + 25 ошибок);
++- 3 — фикстура `redis_client` в `test_session_refresh_grace_window_tsk235.py` (свой
++  пропуск, был и до задачи);
++- 10 — пропуски, не связанные с Redis, они же есть и в прогоне с Redis (снапшот-инвариант,
++  триггерные smoke, `CB_LMS_LIVE_SMOKE_Y15`, отсутствие подходящих данных).
++
++Разница прогонов сходится точно: 2262 − 2234 = 28 = 39 − 11.
++
++Проверка скриптов вживую:
++
++- `ensure-redis.ps1` при поднятом Redis → «Redis уже отвечает на 127.0.0.1:6379 — ничего делать не нужно», код 0;
++- он же после принудительной остановки Memurai → попробовал службу («нужны права администратора»),
++  поднял процессом пользователя, дождался PONG, код 0.
++
++## Соседи: TG_LMS
++
++Заглянул, как просили. **Той же ямы в тестах нет**: `grep` по `TG_LMS/tests/` не находит
++ни одного упоминания Redis — тесты работают с замоканным HTTP-клиентом и Redis не трогают.
++Redis там нужен только **при запуске самих ботов** (`RedisStorage` для FSM в
++`src/main_bots_*.py`, `redis://localhost:6379/0`, у бота студента — БД 2). Без Redis бот
++не стартует, но падает это на старте и явно, а не 26 непрозрачными ошибками в прогоне.
++Побочная польза: та же задача планировщика держит Redis для ботов.
++
++**Чинить в этой задаче не стал — это отдельная задача**, если решим, что подъём Redis
++должен быть частью `run_bot_*.bat`.
++
++Мелкое замечание на будущее (не дефект): бот студента использует ту же БД Redis (`/2`),
++что и `REDIS_URL` LMS. Наборы ключей разные (FSM aiogram против `guest_session:*`), но
++уборка ключей в тестах LMS идёт по своим шаблонам, так что пересечений сейчас нет.
++
++## Изменённые файлы
++
++| Файл | Что |
++|---|---|
++| `tests/conftest.py` | Проверка PING (кеш на прогон), пропуск `requires_redis` с причиной |
++| `pytest.ini` | Регистрация маркера `requires_redis` |
++| `tests/test_y5_guest_endpoints.py` | `pytestmark = pytest.mark.requires_redis` |
++| `tests/test_tsk423_demo_task_limit.py` | то же |
++| `tests/test_session_refresh_http_race_tsk235.py` | то же (добавлен к существующим маркерам) |
++| `scripts/dev/ensure-redis.ps1` | Проверка и подъём Redis, идемпотентно |
++| `scripts/dev/run-tests.ps1` | Одна команда на вход: проверка Redis + pytest |
++| `scripts/dev/install-redis-autostart.ps1` | Задача планировщика (вход + раз в 15 минут) |
++| `README.md` | Раздел «Тесты» переписан: команда, маркер, таблица скриптов, про самовыключение Memurai |
++| `CONTRIBUTING.md` | Две строки в §4 «Тестирование» |
++| `docs/ai/ERRORS.md` | Запись инцидента с профилактикой |
++
++Все `.ps1` сохранены в UTF-8 **с BOM** — иначе PowerShell 5.1 читает кириллицу в cp1251
++и портит текст ещё на разборе скрипта.
++
++## Риски и что осталось
++
++- **Redis доступен на 127.0.0.1 без пароля.** Так было и раньше (`bind 127.0.0.1`,
++  `protected-mode yes`), скрипт эту рамку не расширяет: слушает только петлевой адрес.
++- **Задача планировщика привязана к пути `D:\Work\LMS\scripts\dev\ensure-redis.ps1`.**
++  Переедет репозиторий — задачу надо перерегистрировать (одна команда, описана в README).
++- **Маркер надо не забывать ставить** новым тестам, которым нужен Redis. Правило записано
++  в `CONTRIBUTING.md`; механического сторожа нет — тест без маркера снова упадёт драйвером.
++- Поведение grace-окна (fail-open запись в Redis) не трогали — это [[tsk-604]].
+diff --git a/scripts/dev/ensure-redis.ps1 b/scripts/dev/ensure-redis.ps1
+new file mode 100644
+index 0000000..74cdf0c
+--- /dev/null
++++ b/scripts/dev/ensure-redis.ps1
+@@ -0,0 +1,201 @@
++﻿<#
++.SYNOPSIS
++    Проверить, что локальный Redis отвечает, и поднять его, если он не запущен.
++
++.DESCRIPTION
++    tsk-611. Часть тестов LMS требует живого Redis (гостевые сессии Y-5, лимит
++    демо-заданий, окно благодати на ротацию refresh-токена). На машине оператора
++    установлен Memurai — Redis-совместимый сервер под Windows. Его бесплатная
++    Developer-редакция сама себя выключает после нескольких суток непрерывной
++    работы («Memurai Developer Edition automatic shutdown» в memurai-log.txt),
++    после чего служба остаётся в состоянии «Остановлена». Именно это и дало
++    26 непрозрачных падений прогона 14.08.
++
++    Скрипт идемпотентный: если Redis уже отвечает на PING — не делает ничего.
++    Иначе поднимает его, пробуя по порядку:
++      1) службу Memurai (сработает, если у сессии есть права администратора);
++      2) memurai.exe как обычный процесс пользователя (прав администратора
++         не требует, рабочий каталог — %LOCALAPPDATA%\MemuraiDev).
++
++.PARAMETER RedisHost
++    Хост Redis. По умолчанию берётся из переменной REDIS_URL, иначе 127.0.0.1.
++
++.PARAMETER Port
++    Порт Redis. По умолчанию берётся из REDIS_URL, иначе 6379.
++
++.PARAMETER TimeoutSec
++    Сколько ждать ответа PING после запуска. По умолчанию 20 секунд.
++
++.PARAMETER Quiet
++    Печатать только ошибки (для запуска из планировщика задач).
++
++.OUTPUTS
++    Код возврата 0 — Redis отвечает. Код 1 — поднять не удалось.
++
++.EXAMPLE
++    .\scripts\dev\ensure-redis.ps1
++#>
++[CmdletBinding()]
++param(
++    [string]$RedisHost,
++    [int]$Port,
++    [int]$TimeoutSec = 20,
++    [switch]$Quiet
++)
++
++[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
++$ErrorActionPreference = 'Stop'
++
++$MemuraiExe = 'C:\Program Files\Memurai\memurai.exe'
++
++function Write-Info {
++    param([string]$Text)
++    if (-not $Quiet) { Write-Host $Text }
++}
++
++function Write-Err {
++    <# Ошибка без стека PowerShell: оператору нужен текст, а не разбор вызовов. #>
++    param([string]$Text)
++    Write-Host "ОШИБКА: $Text" -ForegroundColor Red
++}
++
++function Get-RedisTarget {
++    <#
++        Хост и порт: явные параметры важнее REDIS_URL, REDIS_URL важнее дефолта.
++        Разбирается форма redis://[user:pass@]host:port[/db].
++    #>
++    $resultHost = '127.0.0.1'
++    $resultPort = 6379
++
++    $url = $env:REDIS_URL
++    if ($url) {
++        try {
++            $withoutScheme = $url -replace '^[a-zA-Z]+://', ''
++            $authority = ($withoutScheme -split '/')[0]
++            if ($authority -like '*@*') { $authority = $authority.Substring($authority.LastIndexOf('@') + 1) }
++            $parts = $authority -split ':'
++            if ($parts[0]) { $resultHost = $parts[0] }
++            if ($parts.Count -gt 1 -and $parts[1] -match '^\d+$') { $resultPort = [int]$parts[1] }
++        } catch {
++            Write-Warning "Не удалось разобрать REDIS_URL ('$url'), беру 127.0.0.1:6379"
++        }
++    }
++
++    if ($RedisHost) { $resultHost = $RedisHost }
++    if ($Port -gt 0) { $resultPort = $Port }
++
++    return [pscustomobject]@{ RedisHost = $resultHost; Port = $resultPort }
++}
++
++function Test-RedisPing {
++    <#
++        Живой ли сервер: открыть TCP-соединение и отправить команду PING.
++        Ответ '+PONG' — жив; '-NOAUTH' — тоже жив, просто требует пароль.
++        Проверка сокетом, а не через memurai-cli: так же работает и для Redis
++        в контейнере или WSL.
++    #>
++    param(
++        [string]$TargetHost,
++        [int]$TargetPort,
++        [int]$TimeoutMs = 1000
++    )
++
++    $client = New-Object System.Net.Sockets.TcpClient
++    try {
++        $connect = $client.BeginConnect($TargetHost, $TargetPort, $null, $null)
++        if (-not $connect.AsyncWaitHandle.WaitOne($TimeoutMs)) { return $false }
++        $client.EndConnect($connect)
++
++        $stream = $client.GetStream()
++        $stream.ReadTimeout = $TimeoutMs
++        $stream.WriteTimeout = $TimeoutMs
++        $payload = [System.Text.Encoding]::ASCII.GetBytes("PING`r`n")
++        $stream.Write($payload, 0, $payload.Length)
++
++        $buffer = New-Object byte[] 32
++        $read = $stream.Read($buffer, 0, $buffer.Length)
++        if ($read -le 0) { return $false }
++        $answer = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read)
++        return ($answer.StartsWith('+PONG') -or $answer.StartsWith('-NOAUTH'))
++    } catch {
++        return $false
++    } finally {
++        $client.Close()
++    }
++}
++
++function Start-MemuraiService {
++    <# Служба Memurai: сработает только при правах администратора. #>
++    $service = Get-Service -Name 'Memurai' -ErrorAction SilentlyContinue
++    if (-not $service) { return $false }
++    if ($service.Status -eq 'Running') { return $true }
++    try {
++        Start-Service -Name 'Memurai' -ErrorAction Stop
++        Write-Info 'Служба Memurai запущена.'
++        return $true
++    } catch {
++        Write-Info 'Служба Memurai есть, но запустить её не вышло (нужны права администратора) — поднимаю процессом пользователя.'
++        return $false
++    }
++}
++
++function Start-MemuraiProcess {
++    <# memurai.exe обычным процессом пользователя, без прав администратора. #>
++    param([int]$TargetPort)
++
++    if (-not (Test-Path -LiteralPath $MemuraiExe)) { return $false }
++
++    $workDir = Join-Path $env:LOCALAPPDATA 'MemuraiDev'
++    New-Item -ItemType Directory -Force -Path $workDir | Out-Null
++
++    Start-Process -FilePath $MemuraiExe -WindowStyle Hidden -ArgumentList @(
++        '--port', "$TargetPort",
++        '--bind', '127.0.0.1',
++        '--dir', $workDir,
++        '--logfile', 'memurai-dev.log'
++    )
++    Write-Info "Memurai запущен процессом пользователя (данные и лог: $workDir)."
++    return $true
++}
++
++# --- основной ход ---------------------------------------------------------
++
++$target = Get-RedisTarget
++$targetHost = $target.RedisHost
++$targetPort = $target.Port
++
++if (Test-RedisPing -TargetHost $targetHost -TargetPort $targetPort) {
++    Write-Info "Redis уже отвечает на ${targetHost}:${targetPort} — ничего делать не нужно."
++    exit 0
++}
++
++if ($targetHost -notin @('127.0.0.1', 'localhost', '::1')) {
++    Write-Err "Redis на ${targetHost}:${targetPort} не отвечает. Это не локальный адрес — поднять его отсюда нельзя, проверь REDIS_URL и доступность узла."
++    exit 1
++}
++
++Write-Info "Redis на ${targetHost}:${targetPort} не отвечает, поднимаю."
++
++$started = Start-MemuraiService
++if (-not $started) { $started = Start-MemuraiProcess -TargetPort $targetPort }
++
++if (-not $started) {
++    Write-Err @"
++Поднять Redis нечем: службы Memurai нет и файла '$MemuraiExe' тоже.
++Варианты: установить Memurai (https://www.memurai.com/get-memurai) либо поднять
++контейнер: docker run -d --name lms-redis --restart unless-stopped -p ${targetPort}:6379 redis:7
++"@
++    exit 1
++}
++
++$deadline = (Get-Date).AddSeconds($TimeoutSec)
++while ((Get-Date) -lt $deadline) {
++    Start-Sleep -Milliseconds 300
++    if (Test-RedisPing -TargetHost $targetHost -TargetPort $targetPort) {
++        Write-Info "Redis отвечает на ${targetHost}:${targetPort}."
++        exit 0
++    }
++}
++
++Write-Err "Redis не ответил на ${targetHost}:${targetPort} за $TimeoutSec с. Лог: $(Join-Path $env:LOCALAPPDATA 'MemuraiDev\memurai-dev.log')"
++exit 1
+diff --git a/scripts/dev/install-redis-autostart.ps1 b/scripts/dev/install-redis-autostart.ps1
+new file mode 100644
+index 0000000..5a81c80
+--- /dev/null
++++ b/scripts/dev/install-redis-autostart.ps1
+@@ -0,0 +1,93 @@
++﻿<#
++.SYNOPSIS
++    Зарегистрировать задачу планировщика, которая держит локальный Redis поднятым.
++
++.DESCRIPTION
++    tsk-611. Одного автозапуска службы мало: бесплатная Developer-редакция
++    Memurai сама себя выключает после нескольких суток непрерывной работы, и
++    дальше остаётся выключенной до ручного вмешательства. Поэтому задача
++    вызывает ensure-redis.ps1 не только при входе в систему, но и раз в
++    15 минут. Скрипт идемпотентный: если Redis отвечает — он не делает ничего,
++    поэтому повторные срабатывания ничего не стоят.
++
++    Задача регистрируется в контексте текущего пользователя — права
++    администратора не нужны. Чтобы окно консоли не мигало каждые 15 минут,
++    вызов идёт через маленькую обёртку .vbs в %LOCALAPPDATA%\MemuraiDev.
++
++.PARAMETER TaskName
++    Имя задачи в планировщике. По умолчанию «LMS Dev Redis».
++
++.PARAMETER IntervalMinutes
++    Как часто перепроверять Redis. По умолчанию 15 минут.
++
++.PARAMETER Uninstall
++    Снять задачу вместо установки.
++
++.EXAMPLE
++    .\scripts\dev\install-redis-autostart.ps1
++
++.EXAMPLE
++    .\scripts\dev\install-redis-autostart.ps1 -Uninstall
++#>
++[CmdletBinding()]
++param(
++    [string]$TaskName = 'LMS Dev Redis',
++    [int]$IntervalMinutes = 15,
++    [switch]$Uninstall
++)
++
++[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
++$ErrorActionPreference = 'Stop'
++
++if ($Uninstall) {
++    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
++        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
++        Write-Host "Задача '$TaskName' снята."
++    } else {
++        Write-Host "Задачи '$TaskName' и не было."
++    }
++    exit 0
++}
++
++$ensureRedis = Join-Path $PSScriptRoot 'ensure-redis.ps1'
++if (-not (Test-Path -LiteralPath $ensureRedis)) {
++    Write-Error "Не найден $ensureRedis"
++    exit 1
++}
++
++# Обёртка .vbs: запускает PowerShell полностью без окна. Файл служебный,
++# живёт вне репозитория и перезаписывается при каждой установке.
++$workDir = Join-Path $env:LOCALAPPDATA 'MemuraiDev'
++New-Item -ItemType Directory -Force -Path $workDir | Out-Null
++$vbsPath = Join-Path $workDir 'ensure-redis-silent.vbs'
++$vbsBody = @"
++Set shell = CreateObject("WScript.Shell")
++shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$ensureRedis"" -Quiet", 0, False
++"@
++Set-Content -LiteralPath $vbsPath -Value $vbsBody -Encoding ASCII
++
++$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
++
++$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
++$repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
++    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
++    -RepetitionDuration ([TimeSpan]::MaxValue)
++
++$settings = New-ScheduledTaskSettingsSet `
++    -AllowStartIfOnBatteries `
++    -DontStopIfGoingOnBatteries `
++    -StartWhenAvailable `
++    -MultipleInstances IgnoreNew `
++    -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
++    -Hidden
++
++Register-ScheduledTask `
++    -TaskName $TaskName `
++    -Action $action `
++    -Trigger @($logonTrigger, $repeatTrigger) `
++    -Settings $settings `
++    -Description 'tsk-611: держит локальный Redis (Memurai) поднятым для тестов и локального запуска LMS. Проверка при входе в систему и раз в несколько минут; если Redis отвечает — ничего не делает.' `
++    -Force | Out-Null
++
++Write-Host "Задача '$TaskName' зарегистрирована: при входе в систему и каждые $IntervalMinutes мин."
++Write-Host "Проверить: Get-ScheduledTask -TaskName '$TaskName' | Get-ScheduledTaskInfo"
+diff --git a/scripts/dev/run-tests.ps1 b/scripts/dev/run-tests.ps1
+new file mode 100644
+index 0000000..e0d95cc
+--- /dev/null
++++ b/scripts/dev/run-tests.ps1
+@@ -0,0 +1,54 @@
++﻿<#
++.SYNOPSIS
++    Запустить pytest, предварительно убедившись, что локальный Redis поднят.
++
++.DESCRIPTION
++    tsk-611. Одна команда на вход вместо голого `pytest tests/`: сначала
++    ensure-redis.ps1 (проверяет и при необходимости поднимает Redis), затем
++    прогон из виртуального окружения проекта.
++
++    Если Redis поднять не удалось — прогон всё равно идёт: тесты с маркером
++    `requires_redis` честно пропускаются с причиной (см. tests/conftest.py), а
++    не падают внутренностями драйвера. Предупреждение печатается явно, чтобы
++    пропуски не приняли за полное покрытие.
++
++.PARAMETER PytestArgs
++    Всё, что нужно передать в pytest. По умолчанию — `tests/`.
++
++.EXAMPLE
++    .\scripts\dev\run-tests.ps1
++
++.EXAMPLE
++    .\scripts\dev\run-tests.ps1 tests/test_y5_guest_endpoints.py -q
++#>
++[CmdletBinding()]
++param(
++    [Parameter(ValueFromRemainingArguments = $true)]
++    [string[]]$PytestArgs
++)
++
++[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
++
++$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
++$ensureRedis = Join-Path $PSScriptRoot 'ensure-redis.ps1'
++$python = Join-Path $projectRoot '.venv\Scripts\python.exe'
++
++& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ensureRedis
++if ($LASTEXITCODE -ne 0) {
++    Write-Warning 'Redis поднять не удалось. Прогон продолжится, но тесты, которым нужен Redis, будут ПРОПУЩЕНЫ — смотри строку "skipped" в итоге.'
++}
++
++if (-not (Test-Path -LiteralPath $python)) {
++    Write-Warning "Виртуального окружения нет ($python), беру python из PATH."
++    $python = 'python'
++}
++
++if (-not $PytestArgs -or $PytestArgs.Count -eq 0) { $PytestArgs = @('tests/') }
++
++Push-Location $projectRoot
++try {
++    & $python -m pytest @PytestArgs -ra
++    exit $LASTEXITCODE
++} finally {
++    Pop-Location
++}
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 871db6a..bdbf36f 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -287,13 +287,82 @@ OTHER_OPTOUT_MODULES: dict[str, str] = {
+ }
+ 
+ 
++# tsk-611: часть тестов требует живого Redis (гостевые сессии Y-5, лимит демо-
++# заданий, окно благодати на ротацию refresh). Без него они падали не своим
++# сообщением, а внутренностями драйвера — `OSError: Connect call failed
++# ('127.0.0.1', 6379)` в 25 ошибках + 1 несовпадении ожидания. Со стороны это
++# выглядит как регрессия кода; на доказательство обратного уходит полчаса.
++#
++# Поэтому доступность Redis проверяется ОДИН раз на этапе сборки тестов, а
++# помеченные `requires_redis` пропускаются с внятной причиной. Пропуск виден в
++# итоговой строке прогона (`N skipped`) — зелёный прогон без Redis не должен
++# выглядеть как полное покрытие.
++_REDIS_PROBE_TIMEOUT_S = 1.5
++_redis_probe_result: bool | None = None
++
++
++def _redis_url() -> str:
++    """URL Redis для тестов: переменная окружения главнее дефолта Settings."""
++    return os.getenv("REDIS_URL") or _settings.redis_url
++
++
++def _redis_url_safe(url: str) -> str:
++    """URL без логина/пароля — причина пропуска попадает в вывод прогона."""
++    if "@" in url and "//" in url:
++        scheme, _, rest = url.partition("//")
++        return f"{scheme}//{rest.rpartition('@')[2]}"
++    return url
++
++
++def _redis_available() -> bool:
++    """Отвечает ли Redis из REDIS_URL на PING. Результат кешируется на прогон."""
++    global _redis_probe_result
++    if _redis_probe_result is None:
++        url = _redis_url()
++        try:
++            import redis as _redis_sync  # синхронный клиент из того же redis-py
++
++            client = _redis_sync.Redis.from_url(
++                url,
++                socket_connect_timeout=_REDIS_PROBE_TIMEOUT_S,
++                socket_timeout=_REDIS_PROBE_TIMEOUT_S,
++            )
++            try:
++                client.ping()
++                _redis_probe_result = True
++            finally:
++                client.close()
++        except Exception as exc:  # недоступен, не тот порт, битый URL
++            _logger.warning(
++                "tsk-611: Redis недоступен (%s): %s — тесты с маркером "
++                "requires_redis будут пропущены",
++                _redis_url_safe(url),
++                exc,
++            )
++            _redis_probe_result = False
++    return _redis_probe_result
++
++
+ def pytest_collection_modifyitems(items) -> None:
+-    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией."""
++    """Проставить `no_tx_isolation` модулям, несовместимым с общей транзакцией,
++    и пропустить `requires_redis`, если живого Redis нет."""
+     optout = SELF_MANAGED_CONNECTION_MODULES | set(OTHER_OPTOUT_MODULES)
+     for item in items:
+         if Path(str(item.fspath)).name in optout:
+             item.add_marker(pytest.mark.no_tx_isolation)
+ 
++    needs_redis = [item for item in items if item.get_closest_marker("requires_redis")]
++    if needs_redis and not _redis_available():
++        skip_redis = pytest.mark.skip(
++            reason=(
++                f"нужен Redis на {_redis_url_safe(_redis_url())} — не отвечает на PING. "
++                "Поднять: .\\scripts\\dev\\ensure-redis.ps1 "
++                "(или запускать прогон через .\\scripts\\dev\\run-tests.ps1)"
++            )
++        )
++        for item in needs_redis:
++            item.add_marker(skip_redis)
++
+ 
+ @pytest_asyncio.fixture(scope="function")
+ async def db_conn(db_engine, request):
+diff --git a/tests/test_session_refresh_http_race_tsk235.py b/tests/test_session_refresh_http_race_tsk235.py
+index 8025207..33da594 100644
+--- a/tests/test_session_refresh_http_race_tsk235.py
++++ b/tests/test_session_refresh_http_race_tsk235.py
+@@ -33,7 +33,14 @@ if str(project_root) not in sys.path:
+ 
+ from app.core.config import Settings
+ 
+-pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
++# tsk-611: окно благодати на ротацию refresh лежит в Redis, запись best-effort и
++# fail-open. Без Redis окна нет — конкурентные продления дают [200, 401, 401,
++# 401, 401], и тест выглядит регрессией tsk-235, хотя код цел (см. conftest).
++pytestmark = [
++    pytest.mark.asyncio,
++    pytest.mark.no_tx_isolation,
++    pytest.mark.requires_redis,
++]
+ 
+ _settings = Settings()
+ _REFRESH_URL = "/api/v1/auth/session/refresh"
+diff --git a/tests/test_tsk423_demo_task_limit.py b/tests/test_tsk423_demo_task_limit.py
+index 0e60d32..7b06183 100644
+--- a/tests/test_tsk423_demo_task_limit.py
++++ b/tests/test_tsk423_demo_task_limit.py
+@@ -18,6 +18,9 @@ import pytest_asyncio
+ from sqlalchemy import text
+ 
+ 
++# tsk-611: счётчик гостевых заданий и rate-limit хранятся в Redis (см. conftest).
++pytestmark = pytest.mark.requires_redis
++
+ _DEMO_COURSE_UID = "pytest:tsk423-limited-demo"
+ _TASK_A_EXT = "pytest:tsk423:task-a"
+ _TASK_B_EXT = "pytest:tsk423:task-b"
+diff --git a/tests/test_y5_guest_endpoints.py b/tests/test_y5_guest_endpoints.py
+index c92048e..958d2cc 100644
+--- a/tests/test_y5_guest_endpoints.py
++++ b/tests/test_y5_guest_endpoints.py
+@@ -18,6 +18,10 @@ import pytest_asyncio
+ from sqlalchemy import text
+ 
+ 
++# tsk-611: гостевые сессии и rate-limit Y-5 живут в Redis. Без него весь модуль
++# падал внутренностями драйвера — теперь честно пропускается (см. conftest).
++pytestmark = pytest.mark.requires_redis
++
+ _DEMO_COURSE_UID = "pytest:y5-public-demo"
+ _DEMO_TASK_ID_SC = 0
+ _DEMO_TASK_EXTERNAL_UID_SC = "pytest:y5-public-demo:sc"

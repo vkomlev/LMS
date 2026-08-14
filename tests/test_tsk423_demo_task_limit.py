@@ -18,6 +18,9 @@ import pytest_asyncio
 from sqlalchemy import text
 
 
+# tsk-611: счётчик гостевых заданий и rate-limit хранятся в Redis (см. conftest).
+pytestmark = pytest.mark.requires_redis
+
 _DEMO_COURSE_UID = "pytest:tsk423-limited-demo"
 _TASK_A_EXT = "pytest:tsk423:task-a"
 _TASK_B_EXT = "pytest:tsk423:task-b"
