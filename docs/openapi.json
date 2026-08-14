@@ -33431,6 +33431,102 @@
         }
       }
     },
+    "/api/v1/payments/yookassa/ai-package": {
+      "post": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Купить пакет обращений к ИИ-наставнику",
+        "description": "Завести платёж за пакет. Зачисление — по уведомлению, а не здесь.\n\nПакет продаётся только тому, кому он что-то даёт: на тарифе со счётным\nлимитом. На `demo`/`alumni` наставника нет вовсе, на `test`/`flagship` он\nбезлимитный — в обоих случаях деньги взять было бы нечестно.",
+        "operationId": "start_ai_package_payment_api_v1_payments_yookassa_ai_package_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayPaymentStart"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Пакет не имеет смысла на текущем тарифе"
+          },
+          "503": {
+            "description": "Оплата картой выключена"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payments/yookassa/webhook": {
       "post": {
         "tags": [

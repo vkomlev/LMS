@@ -211,3 +211,58 @@ async def change_plan(
         raise
     await savepoint.commit()
     return True
+
+
+async def grant_ai_package(
+    db: AsyncSession,
+    student_id: int,
+    *,
+    units: int,
+    gateway_payment_id: Optional[str] = None,
+    granted_by: Optional[int] = None,
+    note: Optional[str] = None,
+) -> bool:
+    """Зачислить купленный пакет обращений к наставнику.
+
+    Идемпотентность держит уникальный `gateway_payment_id`, а не проверка в коде:
+    платёжный сервис повторяет доставку уведомления, пока не получит 200, и две
+    доставки приходят одновременно чаще, чем кажется. Повтор — не ошибка, а
+    штатный исход: возвращаем False, и вызывающий отвечает «уже зачислено».
+
+    Ручная выдача персоналом идёт без номера платежа — тогда идемпотентности нет
+    и быть не может: две одинаковые выдачи это две разные договорённости.
+
+    Returns:
+        True — пакет зачислен сейчас; False — этот платёж уже зачислен раньше.
+    """
+    if units <= 0:
+        raise ValueError("объём пакета должен быть положительным")
+
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "INSERT INTO student_ai_grant "
+                    "  (student_id, granted, gateway_payment_id, granted_by, note) "
+                    "VALUES (:s, :g, :p, :by, :n)"
+                ),
+                {
+                    "s": student_id,
+                    "g": units,
+                    "p": gateway_payment_id,
+                    "by": granted_by,
+                    "n": note,
+                },
+            )
+    except IntegrityError:
+        logger.info(
+            "tsk-301: пакет по платежу %s уже зачислен ученику %s — повтор доставки",
+            gateway_payment_id, student_id,
+        )
+        return False
+
+    logger.info(
+        "tsk-301: ученику %s зачислен пакет на %s обращений (платёж %s)",
+        student_id, units, gateway_payment_id or "выдан вручную",
+    )
+    return True

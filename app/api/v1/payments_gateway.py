@@ -19,7 +19,12 @@ from app.api.deps import CurrentUser, get_current_user
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.payment import GatewayPaymentStart, PaymentStartRequest
-from app.services import payment_service, yookassa_service
+from app.services import (
+    entitlements_service,
+    payment_service,
+    subscription_service,
+    yookassa_service,
+)
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -118,6 +123,89 @@ async def start_gateway_payment(
     )
 
 
+#: Назначение платежа в `metadata`. Без него уведомление о пакете было бы
+#: неотличимо от уведомления об оплате месяца — а зачисляются они по-разному.
+_PURPOSE_AI_PACKAGE = "ai_package"
+
+
+@router.post(
+    "/payments/yookassa/ai-package",
+    response_model=GatewayPaymentStart,
+    summary="Купить пакет обращений к ИИ-наставнику",
+    responses={
+        403: {"description": "Пакет не имеет смысла на текущем тарифе"},
+        503: {"description": "Оплата картой выключена"},
+    },
+)
+async def start_ai_package_payment(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> GatewayPaymentStart:
+    """Завести платёж за пакет. Зачисление — по уведомлению, а не здесь.
+
+    Пакет продаётся только тому, кому он что-то даёт: на тарифе со счётным
+    лимитом. На `demo`/`alumni` наставника нет вовсе, на `test`/`flagship` он
+    безлимитный — в обоих случаях деньги взять было бы нечестно.
+    """
+    if current_user.is_service:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Оплата принимается только от пользователя, не от сервисного ключа",
+        )
+    if not yookassa_service.is_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Оплата картой сейчас недоступна"
+        )
+
+    decision = await entitlements_service.check(
+        db, student_id=current_user.id, capability="ai_tutor"
+    )
+    if decision.limit is None:
+        # Признак — наличие ЧИСЛЕННОГО лимита. По `allowed` эти случаи не
+        # различить: при исчерпанном лимите он тоже False, а пакет там как раз
+        # и нужен.
+        #
+        # `should_block` здесь намеренно не зовётся: это правило продажи, а не
+        # гейт доступа. Оно не должно зависеть от режима выката — продавать
+        # пакет безлимитному тарифу нечестно и при выключенном гейте.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            decision.upgrade_hint
+            or "На вашем тарифе пакет обращений к наставнику не нужен",
+        )
+
+    units = settings.ai_package_units
+    try:
+        payment = await yookassa_service.create_payment(
+            amount_minor=settings.ai_package_price_minor,
+            description=f"Пакет обращений к наставнику, {units} шт.",
+            return_url=f"{settings.public_base_url}/me/subscription",
+            metadata={
+                "purpose": _PURPOSE_AI_PACKAGE,
+                "student_id": str(current_user.id),
+                "units": str(units),
+            },
+        )
+    except yookassa_service.GatewayDisabledError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except yookassa_service.GatewayError as exc:
+        logger.warning("tsk-301: не удалось завести платёж за пакет: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не ответил, попробуйте позже"
+        ) from exc
+
+    if payment.confirmation_url is None:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не вернул ссылку на оплату"
+        )
+    return GatewayPaymentStart(
+        payment_id=payment.id,
+        confirmation_url=payment.confirmation_url,
+        amount_minor=payment.amount_minor,
+        test_mode=payment.test,
+    )
+
+
 @router.post(
     "/payments/yookassa/webhook",
     status_code=status.HTTP_200_OK,
@@ -166,6 +254,9 @@ async def yookassa_webhook(
 
     # Данные берём из ОТВЕТА шлюза, а не из тела уведомления: тело мог прислать
     # кто угодно, ответ приходит по нашему запросу с нашими ключами.
+    if payment.metadata.get("purpose") == _PURPOSE_AI_PACKAGE:
+        return await _record_ai_package(db, payment)
+
     charge_id = _as_int(payment.metadata.get("charge_id"))
     if charge_id is None:
         logger.error("tsk-010: платёж %s без ссылки на начисление", payment_id)
@@ -190,6 +281,50 @@ async def yookassa_webhook(
         gateway_payment_id=payment.id,
         paid_on=date.today(),
     )
+    return {"status": "recorded" if created else "already_recorded"}
+
+
+async def _record_ai_package(db: AsyncSession, payment) -> dict:
+    """Зачислить оплаченный пакет обращений (пробел П6 контракта).
+
+    **«Деньги списаны, грант не создан» — главный риск этого пути.** Поэтому
+    любой сбой зачисления отвечает 5xx, а не 200: платёжный сервис повторит
+    доставку, и пакет доедет сам. Проглотить ошибку молча значило бы взять
+    деньги и не дать за них ничего — а узнать об этом можно было бы только по
+    жалобе человека.
+
+    Повторная доставка того же платежа безопасна: уникальный
+    `gateway_payment_id` не даст зачислить пакет дважды.
+    """
+    student_id = _as_int(payment.metadata.get("student_id"))
+    units = _as_int(payment.metadata.get("units"))
+    if student_id is None or units is None or units <= 0:
+        # Чинить нечем: в ответе шлюза нет, кому и сколько зачислять. Повторять
+        # доставку бессмысленно — отвечаем 200, но громко, чтобы это нашли.
+        logger.error(
+            "tsk-301: платёж %s за пакет без ученика или объёма (metadata=%s)",
+            payment.id, payment.metadata,
+        )
+        return {"status": "ignored"}
+
+    try:
+        created = await subscription_service.grant_ai_package(
+            db, student_id, units=units, gateway_payment_id=payment.id,
+            note="оплачено картой",
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "tsk-301: ДЕНЬГИ СПИСАНЫ, ПАКЕТ НЕ ЗАЧИСЛЕН — платёж %s, ученик %s, "
+            "%s обращений: %s",
+            payment.id, student_id, units, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось зачислить пакет, повторите доставку уведомления",
+        ) from exc
+
     return {"status": "recorded" if created else "already_recorded"}
 
 
