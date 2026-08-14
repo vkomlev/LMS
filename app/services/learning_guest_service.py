@@ -83,10 +83,41 @@ async def _enforce_demo_task_limit(
         )
 
 
+async def _demo_tasks_used(
+    db: AsyncSession, guest_session_id: Optional[UUID], course_id: int
+) -> int:
+    """Сколько РАЗНЫХ заданий курса гость уже проверял.
+
+    Считается тем же способом, что и в `_enforce_demo_task_limit`: иначе счётчик
+    на экране и лимит на сервере разошлись бы, и человек упирался бы в стену,
+    видя перед собой «осталось 2».
+    """
+    if guest_session_id is None:
+        return 0
+
+    from app.models.guest_attempt import GuestAttempt  # noqa: PLC0415
+
+    result = await db.execute(
+        select(GuestAttempt.task_id)
+        .join(Tasks, Tasks.id == GuestAttempt.task_id)
+        .where(
+            GuestAttempt.guest_session_id == guest_session_id,
+            Tasks.course_id == course_id,
+        )
+        .distinct()
+    )
+    return len({row[0] for row in result if row[0] is not None})
+
+
 async def get_demo_course_info(
-    db: AsyncSession, course_uid: str
+    db: AsyncSession, course_uid: str, guest_session_id: Optional[UUID] = None
 ) -> Optional[GuestCourseInfoResponse]:
-    """Вернуть info о demo-курсе или None если не существует / не публичный."""
+    """Вернуть info о demo-курсе или None если не существует / не публичный.
+
+    tsk-301: вместе с курсом отдаём остаток демо-лимита. До этого гость узнавал о
+    лимите, только упёршись в него, — то есть в худший момент для первого
+    разговора о цене.
+    """
     result = await db.execute(
         select(Courses).where(
             Courses.course_uid == course_uid,
@@ -100,6 +131,8 @@ async def get_demo_course_info(
         course_uid=course.course_uid or "",
         title=course.title,
         is_public_demo=True,
+        demo_task_limit=course.demo_task_limit,
+        demo_tasks_used=await _demo_tasks_used(db, guest_session_id, course.id),
     )
 
 

@@ -19,13 +19,17 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 from sqlalchemy import text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+
+if TYPE_CHECKING:  # только для аннотации: импорт схемы в рантайме создал бы
+    # лишнюю связь сервиса с представлением.
+    from app.schemas.me import MyEntitlements
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -84,7 +88,7 @@ _ERROR_TECHNICAL = Decision(allowed=True, outcome="error_technical")
 
 
 _PLAN_SQL = text("""
-    SELECT p.code, p.ai_tutor_limit, p.code_review, p.teacher_escalation,
+    SELECT p.code, p.name, p.ai_tutor_limit, p.code_review, p.teacher_escalation,
            p.lessons, p.content, p.upgrade_hint
       FROM student_subscription s
       JOIN subscription_plan p ON p.id = s.plan_id
@@ -462,3 +466,65 @@ def should_block(decision: Decision, *, capability: str = "", student_id: int | 
         return mode == "guests" and decision.outcome == "denied_no_plan"
 
     return True
+
+
+#: Доля остатка, ниже которой ученика предупреждают ДО исчерпания. Порог считает
+#: сервер, а не каждый клиент: иначе веб и бот однажды предупредят на разных
+#: числах, и это будет выглядеть как ошибка в счётчике.
+WARN_REMAINING_SHARE = 0.2
+
+#: Подсказка, когда тарифа нет вовсе. Взять её из плана неоткуда, а «недоступно»
+#: без объяснения — тупик: человек не понимает, он что-то сломал или так задумано.
+NO_PLAN_HINT = "Тариф не назначен — напишите преподавателю, он подключит доступ."
+
+
+async def snapshot(db: AsyncSession, *, student_id: int) -> "MyEntitlements":
+    """Права ученика целиком — один ответ на все кнопки интерфейса.
+
+    Собирается ЧЕРЕЗ ТУ ЖЕ дверь, что и сами гейты. Считать права для показа
+    отдельным запросом нельзя: интерфейс показывал бы доступное там, где сервер
+    откажет, и человек нажимал бы кнопку в ошибку вместо объяснения.
+    """
+    from app.schemas.me import CapabilityState, MyEntitlements  # noqa: PLC0415
+
+    plan = await _load_plan(db, student_id)
+    caps: dict[str, CapabilityState] = {}
+    for capability in GATED_CAPABILITIES:
+        decision = await check(db, student_id=student_id, capability=capability)
+        limit, remaining = decision.limit, decision.remaining
+        warn = bool(
+            limit and remaining is not None
+            and remaining <= max(1, int(limit * WARN_REMAINING_SHARE))
+        )
+        caps[capability] = CapabilityState(
+            allowed=decision.allowed,
+            reason=decision.outcome,
+            limit=limit,
+            remaining=remaining,
+            warn=warn,
+            upgrade_hint=(
+                decision.upgrade_hint
+                or (NO_PLAN_HINT if decision.outcome == "denied_no_plan" else None)
+            ),
+        )
+
+    # Пакет предлагаем там же, где он продаётся: по наличию ЧИСЛЕННОГО лимита.
+    # Правило одно с эндпоинтом покупки — разъехавшись, они дали бы кнопку,
+    # которая ведёт в отказ.
+    tutor = caps["ai_tutor"]
+    offer = (
+        {
+            "units": settings.ai_package_units,
+            "price_minor": settings.ai_package_price_minor,
+        }
+        if tutor.limit is not None
+        else None
+    )
+
+    return MyEntitlements(
+        plan_code=plan["code"] if plan else None,
+        plan_name=plan.get("name") if plan else None,
+        content=(plan or {}).get("content") or "full",
+        capabilities=caps,
+        package_offer=offer,
+    )

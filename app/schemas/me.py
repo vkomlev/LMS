@@ -1,6 +1,6 @@
 """Pydantic схемы для /me эндпоинтов (Phase Y-1 + Y-3 + Y-6.2 + tsk-427)."""
 from datetime import date, datetime
-from typing import Literal, Union
+from typing import Literal, Optional, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, Field, field_validator
@@ -349,5 +349,45 @@ class SyllabusStatesResponse(BaseModel):
             "Depth-first walk дерева курса с metadata подкурсов "
             "(course_id, title, depth, parent_course_id, order_number). "
             "Order — тот же, по которому emit'ятся items. Phase Y-6.2 SPW."
+        ),
+    )
+
+
+# ──────────────── tsk-301 Фаза 8: витрина прав подписки ─────────────────────
+
+
+class CapabilityState(BaseModel):
+    """Состояние одной возможности для интерфейса ученика.
+
+    `remaining` и `limit` заполнены только у счётной возможности. `warn` —
+    признак «осталось мало»: порог считает сервер, а не каждый клиент по-своему,
+    иначе веб и бот однажды предупредят на разных числах.
+    """
+
+    allowed: bool = Field(..., description="Можно пользоваться прямо сейчас")
+    reason: str = Field(..., description="allowed | denied_no_plan | denied_not_in_plan | denied_limit")
+    limit: Optional[int] = Field(None, description="Лимит в месяц; null — безлимит или неприменимо")
+    remaining: Optional[int] = Field(None, description="Остаток с учётом купленных пакетов")
+    warn: bool = Field(False, description="Остаток мал — предупредить ДО исчерпания")
+    upgrade_hint: Optional[str] = Field(
+        None, description="Что даёт апгрейд. Показывать вместо «недоступно»"
+    )
+
+
+class MyEntitlements(BaseModel):
+    """Права ученика целиком — один запрос на все кнопки."""
+
+    plan_code: Optional[str] = Field(None, description="Код тарифа; null — тарифа нет")
+    plan_name: Optional[str] = Field(None, description="Имя тарифа для человека")
+    content: str = Field("full", description="full | demo — уровень доступа к материалам")
+    capabilities: dict[str, CapabilityState] = Field(
+        default_factory=dict,
+        description="Ключ — возможность (ai_tutor, code_review, teacher_escalation)",
+    )
+    package_offer: Optional[dict] = Field(
+        None,
+        description=(
+            "Предложение докупить пакет обращений: {units, price_minor}. "
+            "null — на этом тарифе пакет не продаётся"
         ),
     )

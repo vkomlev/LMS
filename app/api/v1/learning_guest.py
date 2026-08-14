@@ -89,10 +89,23 @@ async def create_guest_session(
 )
 async def get_guest_course_info(
     course_uid: str = Path(..., description="course_uid публичного demo-курса"),
+    guest_session: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_bare_db),
 ) -> GuestCourseInfoResponse:
-    """Вернуть info о demo-курсе (для SPW UX)."""
-    info = await learning_guest_service.get_demo_course_info(db, course_uid)
+    """Вернуть info о demo-курсе (для SPW UX).
+
+    tsk-301: вместе с курсом отдаётся остаток демо-лимита. Cookie разбирается так
+    же мягко, как в выдаче задания: без неё считать историю не по чему, и это не
+    ошибка — просто «использовано 0».
+    """
+    gs_uuid: UUID | None = None
+    if guest_session:
+        try:
+            gs_uuid = UUID(guest_session)
+        except ValueError:
+            pass
+
+    info = await learning_guest_service.get_demo_course_info(db, course_uid, gs_uuid)
     if info is None:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_authenticated
 from app.auth.current_user import CurrentUser
+from app.services import entitlements_service
 from app.services.courses_acl_service import assert_course_access
 from app.core.config import Settings
 from app.schemas.auth import (
@@ -46,6 +47,7 @@ from app.schemas.me import (
     LastPositionRead,
     MeResponse,
     MeUpdateRequest,
+    MyEntitlements,
     StreakRead,
     SyllabusStatesResponse,
 )
@@ -868,3 +870,25 @@ async def attribute_guest(
         attributed_count=result.attributed_count,
         already_attributed=result.already_attributed,
     )
+
+
+# ─────────────────── tsk-301 Фаза 8: витрина прав подписки ──────────────────
+
+
+@router.get(
+    "/entitlements",
+    response_model=MyEntitlements,
+    summary="Что даёт мой тариф и сколько осталось",
+)
+async def my_entitlements(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(require_authenticated),
+) -> MyEntitlements:
+    """Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.
+
+    Собирается из той же двери прав, что и сами гейты, — иначе кнопка и запрет
+    разъехались бы: интерфейс показывал бы доступное там, где сервер откажет.
+    Именно так и выглядит худший вид расхождения — человек нажимает и получает
+    ошибку вместо объяснения.
+    """
+    return await entitlements_service.snapshot(db, student_id=current_user.id)

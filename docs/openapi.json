@@ -23787,6 +23787,96 @@
         }
       }
     },
+    "/api/v1/me/entitlements": {
+      "get": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Что даёт мой тариф и сколько осталось",
+        "description": "Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.\n\nСобирается из той же двери прав, что и сами гейты, — иначе кнопка и запрет\nразъехались бы: интерфейс показывал бы доступное там, где сервер откажет.\nИменно так и выглядит худший вид расхождения — человек нажимает и получает\nошибку вместо объяснения.",
+        "operationId": "my_entitlements_api_v1_me_entitlements_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyEntitlements"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/notifications/unread-count": {
       "get": {
         "tags": [
@@ -24250,7 +24340,7 @@
           "learning-guest"
         ],
         "summary": "Get Guest Course Info",
-        "description": "Вернуть info о demo-курсе (для SPW UX).",
+        "description": "Вернуть info о demo-курсе (для SPW UX).\n\ntsk-301: вместе с курсом отдаётся остаток демо-лимита. Cookie разбирается так\nже мягко, как в выдаче задания: без неё считать историю не по чему, и это не\nошибка — просто «использовано 0».",
         "operationId": "get_guest_course_info_api_v1_learning_guest_courses__course_uid__get",
         "parameters": [
           {
@@ -24263,6 +24353,22 @@
               "title": "Course Uid"
             },
             "description": "course_uid публичного demo-курса"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
           }
         ],
         "responses": {
@@ -37635,6 +37741,69 @@
         "title": "BrowserTimezoneResponse",
         "description": "Ответ PUT /me/timezone/auto — что в итоге записано в профиле."
       },
+      "CapabilityState": {
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed",
+            "description": "Можно пользоваться прямо сейчас"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "description": "allowed | denied_no_plan | denied_not_in_plan | denied_limit"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit",
+            "description": "Лимит в месяц; null — безлимит или неприменимо"
+          },
+          "remaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining",
+            "description": "Остаток с учётом купленных пакетов"
+          },
+          "warn": {
+            "type": "boolean",
+            "title": "Warn",
+            "description": "Остаток мал — предупредить ДО исчерпания",
+            "default": false
+          },
+          "upgrade_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upgrade Hint",
+            "description": "Что даёт апгрейд. Показывать вместо «недоступно»"
+          }
+        },
+        "type": "object",
+        "required": [
+          "allowed",
+          "reason"
+        ],
+        "title": "CapabilityState",
+        "description": "Состояние одной возможности для интерфейса ученика.\n\n`remaining` и `limit` заполнены только у счётной возможности. `warn` —\nпризнак «осталось мало»: порог считает сервер, а не каждый клиент по-своему,\nиначе веб и бот однажды предупредят на разных числах."
+      },
       "ChargeRead": {
         "properties": {
           "id": {
@@ -40755,6 +40924,24 @@
             "type": "boolean",
             "title": "Is Public Demo",
             "description": "Гарантированно True (404 если курс не demo)"
+          },
+          "demo_task_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Demo Task Limit",
+            "description": "tsk-301: сколько заданий курса можно проверить без регистрации. null — лимита нет"
+          },
+          "demo_tasks_used": {
+            "type": "integer",
+            "title": "Demo Tasks Used",
+            "description": "Сколько уже израсходовано этой гостевой сессией. Показывается ДО исчерпания: узнавать о лимите, упёршись в стену, — худший момент для первого знакомства с ценой",
+            "default": 0
           }
         },
         "type": "object",
@@ -45167,6 +45354,64 @@
         },
         "type": "object",
         "title": "MessageUpdate"
+      },
+      "MyEntitlements": {
+        "properties": {
+          "plan_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Code",
+            "description": "Код тарифа; null — тарифа нет"
+          },
+          "plan_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Name",
+            "description": "Имя тарифа для человека"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "full | demo — уровень доступа к материалам",
+            "default": "full"
+          },
+          "capabilities": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityState"
+            },
+            "type": "object",
+            "title": "Capabilities",
+            "description": "Ключ — возможность (ai_tutor, code_review, teacher_escalation)"
+          },
+          "package_offer": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Package Offer",
+            "description": "Предложение докупить пакет обращений: {units, price_minor}. null — на этом тарифе пакет не продаётся"
+          }
+        },
+        "type": "object",
+        "title": "MyEntitlements",
+        "description": "Права ученика целиком — один запрос на все кнопки."
       },
       "MyLessonOccurrenceRead": {
         "properties": {

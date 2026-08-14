@@ -31,6 +31,21 @@ class GuestCourseInfoResponse(BaseModel):
     course_uid: str
     title: str
     is_public_demo: bool = Field(..., description="Гарантированно True (404 если курс не demo)")
+    demo_task_limit: Optional[int] = Field(
+        None,
+        description=(
+            "tsk-301: сколько заданий курса можно проверить без регистрации. "
+            "null — лимита нет"
+        ),
+    )
+    demo_tasks_used: int = Field(
+        0,
+        description=(
+            "Сколько уже израсходовано этой гостевой сессией. Показывается ДО "
+            "исчерпания: узнавать о лимите, упёршись в стену, — худший момент "
+            "для первого знакомства с ценой"
+        ),
+    )
 
 
 class GuestTaskOption(BaseModel):
