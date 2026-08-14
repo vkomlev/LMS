@@ -33,7 +33,14 @@ if str(project_root) not in sys.path:
 
 from app.core.config import Settings
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
+# tsk-611: окно благодати на ротацию refresh лежит в Redis, запись best-effort и
+# fail-open. Без Redis окна нет — конкурентные продления дают [200, 401, 401,
+# 401, 401], и тест выглядит регрессией tsk-235, хотя код цел (см. conftest).
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.no_tx_isolation,
+    pytest.mark.requires_redis,
+]
 
 _settings = Settings()
 _REFRESH_URL = "/api/v1/auth/session/refresh"

@@ -18,6 +18,10 @@ import pytest_asyncio
 from sqlalchemy import text
 
 
+# tsk-611: гостевые сессии и rate-limit Y-5 живут в Redis. Без него весь модуль
+# падал внутренностями драйвера — теперь честно пропускается (см. conftest).
+pytestmark = pytest.mark.requires_redis
+
 _DEMO_COURSE_UID = "pytest:y5-public-demo"
 _DEMO_TASK_ID_SC = 0
 _DEMO_TASK_EXTERNAL_UID_SC = "pytest:y5-public-demo:sc"
