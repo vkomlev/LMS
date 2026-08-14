@@ -208,6 +208,11 @@ async def create_lesson_slot(
         )
 
     await db.commit()
+    # tsk-301: слот можно создать СРАЗУ с учениками, и это тоже «появилось
+    # занятие». Без пересчёта такой ученик оставался бы на demo и невидимым для
+    # денег — ровно случай Грабовского, только другим путём (найдено сторожем
+    # `test_tsk301_schedule_hook_guard`, а не жалобой).
+    await _recalculate_money_for(db, *(student_ids or []))
     await db.refresh(row)
     logger.info(
         "lesson_slot создан: id=%s teacher=%s weekday=%s start=%s participants=%s",
@@ -531,6 +536,10 @@ async def transfer_slot_participant(
         db, target_slot_id, student_id, added_by=added_by
     )
     await db.commit()
+    # tsk-301/tsk-548: перевод между слотами меняет и частоту занятий, и сам факт
+    # их наличия. Без пересчёта сумма осталась бы от прежнего слота, а тариф — от
+    # состояния «занятий нет».
+    await _recalculate_money_for(db, student_id)
     await db.refresh(row)
     return row
 
