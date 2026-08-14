@@ -107,6 +107,14 @@ class SubscriptionPlan(Base):
         Integer,
         comment="Группа для расчёта месяца. NULL = начисления не создаются вовсе",
     )
+    billing_exempt: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"),
+        comment=(
+            "Денег не берут ОСОЗНАННО: страж «ходит, но не выставлен» молчит "
+            "про таких (tsk-610). Не то же, что pricing_group_id IS NULL — "
+            "у demo группы тоже нет, но ученик на нём как раз аномалия"
+        ),
+    )
     upgrade_hint: Mapped[Optional[str]] = mapped_column(
         Text,
         comment="Что даёт апгрейд — текст для заблокированной кнопки вместо «недоступно»",

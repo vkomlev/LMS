@@ -1,0 +1,2419 @@
+diff --git a/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py b/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py
+new file mode 100644
+index 0000000..bc051e2
+--- /dev/null
++++ b/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py
+@@ -0,0 +1,47 @@
++"""tsk-610: признак «денег не берут осознанно» у тарифа.
++
++Страж «ходит, но не выставлен» (tsk-596) сообщал про ученика на тарифе `test`
++каждый день — законно: оператор решил денег с него не брать. В списке из двух
++строк одна была всегда ложной, и уведомление три дня подряд провисело
++непрочитанным вместе с настоящим случаем (Грабовский на `demo` с занятиями).
++Предупреждение, которое не умеет молчать, перестают открывать.
++
++Почему признак в данных, а не набором кодов в коде: следующий «денег не берём»
++тариф не должен требовать релиза. `demo` намеренно НЕ помечается — ученик на
++демо с реальными занятиями и есть та дыра, ради которой страж написан.
++`alumni` тоже нет: выпускник с активным расписанием — сигнал, а не норма.
++
++Rollback: `alembic downgrade tsk588_timezone_source` — колонка снимается,
++детектор возвращается к прежнему поведению (лишний шум, деньги не затронуты).
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk610_billing_exempt"
++down_revision: Union[str, None] = "tsk588_timezone_source"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++
++def upgrade() -> None:
++    op.add_column(
++        "subscription_plan",
++        sa.Column(
++            "billing_exempt",
++            sa.Boolean(),
++            nullable=False,
++            server_default=sa.text("false"),
++            comment=(
++                "Денег не берут ОСОЗНАННО: страж «ходит, но не выставлен» молчит "
++                "про таких (tsk-610). Не то же, что pricing_group_id IS NULL — "
++                "у demo группы тоже нет, но ученик на нём как раз аномалия"
++            ),
++        ),
++    )
++    op.execute("UPDATE subscription_plan SET billing_exempt = true WHERE code = 'test'")
++
++
++def downgrade() -> None:
++    op.drop_column("subscription_plan", "billing_exempt")
+diff --git a/app/models/subscription.py b/app/models/subscription.py
+index bebad73..c3f78a6 100644
+--- a/app/models/subscription.py
++++ b/app/models/subscription.py
+@@ -107,6 +107,14 @@ class SubscriptionPlan(Base):
+         Integer,
+         comment="Группа для расчёта месяца. NULL = начисления не создаются вовсе",
+     )
++    billing_exempt: Mapped[bool] = mapped_column(
++        Boolean, nullable=False, server_default=text("false"),
++        comment=(
++            "Денег не берут ОСОЗНАННО: страж «ходит, но не выставлен» молчит "
++            "про таких (tsk-610). Не то же, что pricing_group_id IS NULL — "
++            "у demo группы тоже нет, но ученик на нём как раз аномалия"
++        ),
++    )
+     upgrade_hint: Mapped[Optional[str]] = mapped_column(
+         Text,
+         comment="Что даёт апгрейд — текст для заблокированной кнопки вместо «недоступно»",
+diff --git a/app/services/charge_cron_service.py b/app/services/charge_cron_service.py
+index 0543cc4..91358d1 100644
+--- a/app/services/charge_cron_service.py
++++ b/app/services/charge_cron_service.py
+@@ -101,6 +101,14 @@ _scheduler: Optional[AsyncIOScheduler] = None
+ #: живёт дальше с другими учениками, а выбывшего от него отвязывают — на проде
+ #: трое из пяти «невыставленных» оказались именно такими, и по слоту без этого
+ #: фильтра выглядели как действующие.
++#:
++#: tsk-610: `subscription_plan.billing_exempt` — тариф, по которому денег не
++#: берут ОСОЗНАННО (сейчас `test`). Такой ученик попадал в предупреждение каждый
++#: день законно, и список из двух строк, где одна всегда ложная, приучает не
++#: открывать уведомление вовсе: три дня подряд оно висело непрочитанным, а рядом
++#: с постоянным пунктом стоял настоящий случай. Признак живёт в ДАННЫХ, а не
++#: набором кодов в коде: новый «денег не берём» тариф не должен требовать релиза.
++#: `demo` намеренно НЕ exempt — ученик на демо с занятиями и есть та самая дыра.
+ _ANOMALY_SQL = """
+ WITH staff AS (
+     SELECT DISTINCT ur.user_id
+@@ -122,7 +130,8 @@ future_lessons AS (
+      GROUP BY 1
+ ),
+ sub AS (
+-    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code
++    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code,
++           sp.billing_exempt
+       FROM student_subscription s
+       JOIN subscription_plan sp ON sp.id = s.plan_id
+      WHERE s.ends_on IS NULL
+@@ -148,6 +157,7 @@ SELECT u.id                                   AS student_id,
+   LEFT JOIN sub            ON sub.student_id = u.id
+  WHERE u.is_active
+    AND u.id NOT IN (SELECT user_id FROM staff)
++   AND NOT COALESCE(sub.billing_exempt, false)
+    AND (COALESCE(active_slots.n, 0) > 0 OR COALESCE(future_lessons.n, 0) > 0)
+    AND NOT EXISTS (
+            SELECT 1 FROM student_monthly_charge ch
+diff --git a/app/services/user_merge_service.py b/app/services/user_merge_service.py
+index 9c1ffdf..dacc8a9 100644
+--- a/app/services/user_merge_service.py
++++ b/app/services/user_merge_service.py
+@@ -7,6 +7,13 @@
+ `scripts/merge_users.py` (CLI-обёртка над этим модулем, ручной запуск по
+ протоколу /db-check).
+ 
++tsk-610: списки переноса — не «всё, что связано с человеком», а перечисление,
++которое надо пополнять вместе со схемой. Подписка (tsk-301) и перерыв (tsk-511)
++появились после них и потому не переезжали, а `verify_merge` этого не видел:
++он проверял ровно те же таблицы, что и переносил. Живой случай — Грабовский
++4525→4560: занятия, курсы и расписание уехали на новую учётку, тариф с тарифной
++группой остался на слитой, и человек две недели ходил, невидимый для денег.
++
+ tsk-455: та же логика используется автоматически сразу после регистрации
+ нового аккаунта (`check_and_merge_duplicate_on_registration`), когда пара
+ проходит порог автослияния (`users_dedup_service.select_auto_merge_pairs`) —
+@@ -29,6 +36,10 @@ logger = logging.getLogger("app.user_merge")
+ # Прямой перенос — свой `id` PK у таблицы, FK на users без доп. уникальности.
+ SIMPLE_MOVES = [
+     ("identity_link", "user_id"),
++    # tsk-610: перерыв — основание, по которому месяц считается неполным.
++    # Оставшись у слитой учётки, он молча пропадает из денег живой: расписание
++    # уже переехало, а причина пропусков — нет (прод, Грабовский 4525→4560).
++    ("student_break", "student_id"),
+     ("attempts", "user_id"),
+     ("task_results", "user_id"),
+     ("messages", "sender_id"),
+@@ -73,6 +84,10 @@ CONFLICT_MOVES = [
+ # Не переносится — удаляется у source (форсированный логаут деактивируемой учётки).
+ DELETE_ON_MERGE = [
+     ("user_session", "user_id"),
++    # tsk-610: `student_course_state` — производный кеш доступности подкурсов, а
++    # не история. У target он свой и пересчитывается сам; строки source остались
++    # бы мусором, который никто уже не обновляет.
++    ("student_course_state", "student_id"),
+ ]
+ 
+ 
+@@ -153,7 +168,10 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
+     if target_plan is not None and target_plan != DEFAULT_PLAN_CODE:
+         await db.execute(
+             text(
+-                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
++                # GREATEST — из-за CHECK `ends_on >= starts_on` (tsk-610):
++                # подписка, открытая будущей датой, иначе уронила бы слияние.
++                "UPDATE student_subscription "
++                "   SET ends_on = GREATEST(starts_on, CURRENT_DATE) "
+                 " WHERE student_id = :s AND ends_on IS NULL"
+             ),
+             {"s": source_id},
+@@ -162,7 +180,10 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
+         # У цели пусто или автоматический `demo` — уступает тарифу источника.
+         await db.execute(
+             text(
+-                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
++                # GREATEST — из-за CHECK `ends_on >= starts_on` (tsk-610):
++                # подписка, открытая будущей датой, иначе уронила бы слияние.
++                "UPDATE student_subscription "
++                "   SET ends_on = GREATEST(starts_on, CURRENT_DATE) "
+                 " WHERE student_id = :s AND ends_on IS NULL"
+             ),
+             {"s": target_id},
+@@ -317,6 +338,13 @@ async def verify_merge(db: AsyncSession, source_id: int, target_id: int) -> None
+         leftover += await count_rows(db, table, column, source_id)
+     for table, column in DELETE_ON_MERGE:
+         leftover += await count_rows(db, table, column, source_id)
++    # tsk-610: того, что переносит `_move_subscription`, в списках нет — эти
++    # таблицы проверяем отдельно. Верификация, которая смотрит ровно туда же,
++    # куда писала, потерю тарифа не заметила: на проде она отрапортовала «всё
++    # перенесено», пока платёжная принадлежность человека лежала на слитой
++    # учётке (4525 → 4560).
++    for table in ("student_subscription", "student_ai_quota", "student_ai_grant"):
++        leftover += await count_rows(db, table, "student_id", source_id)
+     assert leftover == 0, f"верификация провалена: у source осталось {leftover} строк"
+ 
+ 
+@@ -371,12 +399,34 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
+         await db.flush()
+         await verify_merge(db, source_id, target_id)
+ 
++    # tsk-610: расписание приехало слиянием, а не правкой календаря — значит
++    # автоприсвоение тарифа по расписанию (tsk-301) о нём не узнало: его зовёт
++    # только `lesson_calendar_service`. Ученик с занятиями оставался на `demo`.
++    # Повышает по-прежнему лишь с `demo`/«тарифа нет», так что legacy-цену и
++    # осознанно выданные тарифы это не трогает.
++    # Свой savepoint и мягкий отказ — по той же причине, по которой в savepoint
++    # обёрнута сама запись слияния: слияние зовётся ВНУТРИ транзакции
++    # регистрации, и любое исключение здесь оставило бы её отравленной —
++    # `try/except` в роутере поймал бы ошибку, а следующий `commit()` упал бы
++    # снова, и только что созданный пользователь не сохранился бы. Тариф важен,
++    # но не важнее регистрации: не присвоился — это увидит суточный страж.
++    from app.services import charge_service, subscription_service
++
++    try:
++        async with db.begin_nested():
++            await subscription_service.upgrade_on_schedule(db, target_id)
++    except Exception:
++        logger.warning(
++            "tsk-610: автоприсвоение тарифа после слияния %s → %s не выполнено",
++            source_id,
++            target_id,
++            exc_info=True,
++        )
++
+     # tsk-548: расписание переехало — значит сумма месяца у target изменилась.
+     # Без этого шага живая учётка остаётся вообще без начисления (на проде так
+     # и вышло: у слитого «Лазаря» висели 5 500 ₽, а у настоящего ученика с
+     # двумя занятиями в неделю долга не было вовсе).
+-    from app.services import charge_service
+-
+     await charge_service.recalculate_open_months_for_student(db, student_id=target_id)
+     return True
+ 
+diff --git a/reviews/2026-08-14-tsk610-grabovsky.diff b/reviews/2026-08-14-tsk610-grabovsky.diff
+new file mode 100644
+index 0000000..4cf8254
+--- /dev/null
++++ b/reviews/2026-08-14-tsk610-grabovsky.diff
+@@ -0,0 +1,1264 @@
++diff --git a/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py b/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py
++new file mode 100644
++index 0000000..bc051e2
++--- /dev/null
+++++ b/app/db/migrations/versions/20260814_010000_tsk610_billing_exempt.py
++@@ -0,0 +1,47 @@
+++"""tsk-610: признак «денег не берут осознанно» у тарифа.
+++
+++Страж «ходит, но не выставлен» (tsk-596) сообщал про ученика на тарифе `test`
+++каждый день — законно: оператор решил денег с него не брать. В списке из двух
+++строк одна была всегда ложной, и уведомление три дня подряд провисело
+++непрочитанным вместе с настоящим случаем (Грабовский на `demo` с занятиями).
+++Предупреждение, которое не умеет молчать, перестают открывать.
+++
+++Почему признак в данных, а не набором кодов в коде: следующий «денег не берём»
+++тариф не должен требовать релиза. `demo` намеренно НЕ помечается — ученик на
+++демо с реальными занятиями и есть та дыра, ради которой страж написан.
+++`alumni` тоже нет: выпускник с активным расписанием — сигнал, а не норма.
+++
+++Rollback: `alembic downgrade tsk588_timezone_source` — колонка снимается,
+++детектор возвращается к прежнему поведению (лишний шум, деньги не затронуты).
+++"""
+++from typing import Sequence, Union
+++
+++import sqlalchemy as sa
+++from alembic import op
+++
+++revision: str = "tsk610_billing_exempt"
+++down_revision: Union[str, None] = "tsk588_timezone_source"
+++branch_labels: Union[str, Sequence[str], None] = None
+++depends_on: Union[str, Sequence[str], None] = None
+++
+++
+++def upgrade() -> None:
+++    op.add_column(
+++        "subscription_plan",
+++        sa.Column(
+++            "billing_exempt",
+++            sa.Boolean(),
+++            nullable=False,
+++            server_default=sa.text("false"),
+++            comment=(
+++                "Денег не берут ОСОЗНАННО: страж «ходит, но не выставлен» молчит "
+++                "про таких (tsk-610). Не то же, что pricing_group_id IS NULL — "
+++                "у demo группы тоже нет, но ученик на нём как раз аномалия"
+++            ),
+++        ),
+++    )
+++    op.execute("UPDATE subscription_plan SET billing_exempt = true WHERE code = 'test'")
+++
+++
+++def downgrade() -> None:
+++    op.drop_column("subscription_plan", "billing_exempt")
++diff --git a/app/models/subscription.py b/app/models/subscription.py
++index bebad73..c3f78a6 100644
++--- a/app/models/subscription.py
+++++ b/app/models/subscription.py
++@@ -107,6 +107,14 @@ class SubscriptionPlan(Base):
++         Integer,
++         comment="Группа для расчёта месяца. NULL = начисления не создаются вовсе",
++     )
+++    billing_exempt: Mapped[bool] = mapped_column(
+++        Boolean, nullable=False, server_default=text("false"),
+++        comment=(
+++            "Денег не берут ОСОЗНАННО: страж «ходит, но не выставлен» молчит "
+++            "про таких (tsk-610). Не то же, что pricing_group_id IS NULL — "
+++            "у demo группы тоже нет, но ученик на нём как раз аномалия"
+++        ),
+++    )
++     upgrade_hint: Mapped[Optional[str]] = mapped_column(
++         Text,
++         comment="Что даёт апгрейд — текст для заблокированной кнопки вместо «недоступно»",
++diff --git a/app/services/charge_cron_service.py b/app/services/charge_cron_service.py
++index 0543cc4..91358d1 100644
++--- a/app/services/charge_cron_service.py
+++++ b/app/services/charge_cron_service.py
++@@ -101,6 +101,14 @@ _scheduler: Optional[AsyncIOScheduler] = None
++ #: живёт дальше с другими учениками, а выбывшего от него отвязывают — на проде
++ #: трое из пяти «невыставленных» оказались именно такими, и по слоту без этого
++ #: фильтра выглядели как действующие.
+++#:
+++#: tsk-610: `subscription_plan.billing_exempt` — тариф, по которому денег не
+++#: берут ОСОЗНАННО (сейчас `test`). Такой ученик попадал в предупреждение каждый
+++#: день законно, и список из двух строк, где одна всегда ложная, приучает не
+++#: открывать уведомление вовсе: три дня подряд оно висело непрочитанным, а рядом
+++#: с постоянным пунктом стоял настоящий случай. Признак живёт в ДАННЫХ, а не
+++#: набором кодов в коде: новый «денег не берём» тариф не должен требовать релиза.
+++#: `demo` намеренно НЕ exempt — ученик на демо с занятиями и есть та самая дыра.
++ _ANOMALY_SQL = """
++ WITH staff AS (
++     SELECT DISTINCT ur.user_id
++@@ -122,7 +130,8 @@ future_lessons AS (
++      GROUP BY 1
++ ),
++ sub AS (
++-    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code
+++    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code,
+++           sp.billing_exempt
++       FROM student_subscription s
++       JOIN subscription_plan sp ON sp.id = s.plan_id
++      WHERE s.ends_on IS NULL
++@@ -148,6 +157,7 @@ SELECT u.id                                   AS student_id,
++   LEFT JOIN sub            ON sub.student_id = u.id
++  WHERE u.is_active
++    AND u.id NOT IN (SELECT user_id FROM staff)
+++   AND NOT COALESCE(sub.billing_exempt, false)
++    AND (COALESCE(active_slots.n, 0) > 0 OR COALESCE(future_lessons.n, 0) > 0)
++    AND NOT EXISTS (
++            SELECT 1 FROM student_monthly_charge ch
++diff --git a/app/services/user_merge_service.py b/app/services/user_merge_service.py
++index fbfc681..0c0b312 100644
++--- a/app/services/user_merge_service.py
+++++ b/app/services/user_merge_service.py
++@@ -7,6 +7,13 @@
++ `scripts/merge_users.py` (CLI-обёртка над этим модулем, ручной запуск по
++ протоколу /db-check).
++ 
+++tsk-610: списки переноса — не «всё, что связано с человеком», а перечисление,
+++которое надо пополнять вместе со схемой. Подписка (tsk-301) и перерыв (tsk-511)
+++появились после них и потому не переезжали, а `verify_merge` этого не видел:
+++он проверял ровно те же таблицы, что и переносил. Живой случай — Грабовский
+++4525→4560: занятия, курсы и расписание уехали на новую учётку, тариф с тарифной
+++группой остался на слитой, и человек две недели ходил, невидимый для денег.
+++
++ tsk-455: та же логика используется автоматически сразу после регистрации
++ нового аккаунта (`check_and_merge_duplicate_on_registration`), когда пара
++ проходит порог автослияния (`users_dedup_service.select_auto_merge_pairs`) —
++@@ -19,7 +26,7 @@ from __future__ import annotations
++ 
++ import logging
++ from dataclasses import dataclass
++-from typing import Optional
+++from typing import Any, Optional
++ 
++ from sqlalchemy import text
++ from sqlalchemy.ext.asyncio import AsyncSession
++@@ -29,6 +36,10 @@ logger = logging.getLogger("app.user_merge")
++ # Прямой перенос — свой `id` PK у таблицы, FK на users без доп. уникальности.
++ SIMPLE_MOVES = [
++     ("identity_link", "user_id"),
+++    # tsk-610: перерыв — основание, по которому месяц считается неполным.
+++    # Оставшись у слитой учётки, он молча пропадает из денег живой: расписание
+++    # уже переехало, а причина пропусков — нет (прод, Грабовский 4525→4560).
+++    ("student_break", "student_id"),
++     ("attempts", "user_id"),
++     ("task_results", "user_id"),
++     ("messages", "sender_id"),
++@@ -73,6 +84,10 @@ CONFLICT_MOVES = [
++ # Не переносится — удаляется у source (форсированный логаут деактивируемой учётки).
++ DELETE_ON_MERGE = [
++     ("user_session", "user_id"),
+++    # tsk-610: `student_course_state` — производный кеш доступности подкурсов, а
+++    # не история. У target он свой и пересчитывается сам; строки source остались
+++    # бы мусором, который никто уже не обновляет.
+++    ("student_course_state", "student_id"),
++ ]
++ 
++ 
++@@ -108,6 +123,89 @@ async def count_rows(db: AsyncSession, table: str, column: str, user_id: int) ->
++     ).scalar_one()
++ 
++ 
+++def losing_subscription_id(source_row: Any, target_row: Any) -> int:
+++    """Какая из двух действующих подписок закрывается при слиянии (tsk-610).
+++
+++    Обе учётки — один человек, а действующая подписка на человека может быть
+++    только одна (`uq_student_subscription_active`). Правило выбора:
+++
+++    * **побеждает биллингуемая.** Тариф без тарифной группы означает «денег не
+++      берут» (`demo`, `test`, `alumni`), и он не должен молча отменять тариф, по
+++      которому человека реально выставляют к оплате. Ровно это и случилось на
+++      проде: `demo`, выданный автоматом при регистрации второй учётки, пережил
+++      слияние, а `base_legacy` с группой 1 остался на слитой;
+++    * **обе биллингуемые → более ранняя.** Слияние восстанавливает историю
+++      одного человека, а ранняя договорённость и есть настоящая: на
+++      `base_legacy` держится старая цена, и потерять её значит молча поднять
+++      человеку тариф;
+++    * **обе без группы → остаётся у target.** Деньги не меняются ни в одном
+++      исходе, живую учётку зря не дёргаем.
+++    """
+++    source_billable = source_row.pricing_group_id is not None
+++    target_billable = target_row.pricing_group_id is not None
+++    if source_billable != target_billable:
+++        return target_row.id if source_billable else source_row.id
+++    if source_billable and source_row.starts_on < target_row.starts_on:
+++        return target_row.id
+++    return source_row.id
+++
+++
+++async def _merge_subscriptions(
+++    db: AsyncSession, *, source_id: int, target_id: int
+++) -> None:
+++    """Перенести подписки source на target, оставив действующей одну (tsk-610).
+++
+++    Подписка (tsk-301) появилась позже самого слияния (tsk-442/455) и в списки
+++    переноса не попала. На проде это стоило денег: расписание, курсы и занятия
+++    переехали на живую учётку, а платёжная принадлежность осталась на слитой —
+++    ученик почти две недели ходил на занятия, невидимый для начислений.
+++
+++    Закрытые строки переносятся как есть: это история тарифов, и она тоже
+++    принадлежит человеку, а не строке в таблице.
+++    """
+++    rows = (
+++        await db.execute(
+++            text(
+++                "SELECT id, student_id, pricing_group_id, starts_on "
+++                "  FROM student_subscription "
+++                " WHERE student_id IN (:source, :target) AND ends_on IS NULL"
+++            ),
+++            {"source": source_id, "target": target_id},
+++        )
+++    ).all()
+++    source_row = next((r for r in rows if r.student_id == source_id), None)
+++    target_row = next((r for r in rows if r.student_id == target_id), None)
+++
+++    if source_row is not None and target_row is not None:
+++        loser_id = losing_subscription_id(source_row, target_row)
+++        # Закрываем ДО переноса: уникальный индекс «одна действующая подписка»
+++        # не даст двум строкам приехать к одному ученику.
+++        #
+++        # `GREATEST(starts_on, CURRENT_DATE)` — из-за CHECK `ends_on >=
+++        # starts_on`: подписка, открытая будущей датой, иначе уронила бы слияние.
+++        await db.execute(
+++            text(
+++                "UPDATE student_subscription "
+++                "   SET ends_on = GREATEST(starts_on, CURRENT_DATE) "
+++                " WHERE id = :id"
+++            ),
+++            {"id": loser_id},
+++        )
+++        logger.info(
+++            "tsk-610: слияние %s → %s, действующей оставлена подписка %s, "
+++            "закрыта %s",
+++            source_id,
+++            target_id,
+++            target_row.id if loser_id == source_row.id else source_row.id,
+++            loser_id,
+++        )
+++
+++    await db.execute(
+++        text("UPDATE student_subscription SET student_id = :t WHERE student_id = :s"),
+++        {"t": target_id, "s": source_id},
+++    )
+++
+++
++ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
++     for table, column in SIMPLE_MOVES:
++         await db.execute(
++@@ -136,6 +234,10 @@ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
++             {"source": source_id},
++         )
++ 
+++    # tsk-610: подписка переносится своим правилом, а не списком: действующая
+++    # у человека может быть только одна, и выбирать её приходится по смыслу.
+++    await _merge_subscriptions(db, source_id=source_id, target_id=target_id)
+++
++     # tsk-548: начисления. Расписание уже переехало к target, поэтому суммы
++     # source посчитаны по расписанию, которого у него больше нет — переносить
++     # их значило бы принести чужую цифру. Открытые месяцы source убираем и
++@@ -217,6 +319,11 @@ async def verify_merge(db: AsyncSession, source_id: int, target_id: int) -> None
++         leftover += await count_rows(db, table, column, source_id)
++     for table, column in DELETE_ON_MERGE:
++         leftover += await count_rows(db, table, column, source_id)
+++    # tsk-610: подписки в списках нет — её проверяем отдельно. Верификация,
+++    # которая смотрит ровно туда же, куда писала, и не заметила потерю тарифа:
+++    # на проде она отрапортовала «всё перенесено», пока платёжная принадлежность
+++    # человека лежала на слитой учётке.
+++    leftover += await count_rows(db, "student_subscription", "student_id", source_id)
++     assert leftover == 0, f"верификация провалена: у source осталось {leftover} строк"
++ 
++ 
++@@ -271,12 +378,34 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
++         await db.flush()
++         await verify_merge(db, source_id, target_id)
++ 
+++    # tsk-610: расписание приехало слиянием, а не правкой календаря — значит
+++    # автоприсвоение тарифа по расписанию (tsk-301) о нём не узнало: его зовёт
+++    # только `lesson_calendar_service`. Ученик с занятиями оставался на `demo`.
+++    # Повышает по-прежнему лишь с `demo`/«тарифа нет», так что legacy-цену и
+++    # осознанно выданные тарифы это не трогает.
+++    # Свой savepoint и мягкий отказ — по той же причине, по которой в savepoint
+++    # обёрнута сама запись слияния: слияние зовётся ВНУТРИ транзакции
+++    # регистрации, и любое исключение здесь оставило бы её отравленной —
+++    # `try/except` в роутере поймал бы ошибку, а следующий `commit()` упал бы
+++    # снова, и только что созданный пользователь не сохранился бы. Тариф важен,
+++    # но не важнее регистрации: не присвоился — это увидит суточный страж.
+++    from app.services import charge_service, subscription_service
+++
+++    try:
+++        async with db.begin_nested():
+++            await subscription_service.upgrade_on_schedule(db, target_id)
+++    except Exception:
+++        logger.warning(
+++            "tsk-610: автоприсвоение тарифа после слияния %s → %s не выполнено",
+++            source_id,
+++            target_id,
+++            exc_info=True,
+++        )
+++
++     # tsk-548: расписание переехало — значит сумма месяца у target изменилась.
++     # Без этого шага живая учётка остаётся вообще без начисления (на проде так
++     # и вышло: у слитого «Лазаря» висели 5 500 ₽, а у настоящего ученика с
++     # двумя занятиями в неделю долга не было вовсе).
++-    from app.services import charge_service
++-
++     await charge_service.recalculate_open_months_for_student(db, student_id=target_id)
++     return True
++ 
++diff --git a/reviews/2026-08-14-tsk610-grabovsky.md b/reviews/2026-08-14-tsk610-grabovsky.md
++new file mode 100644
++index 0000000..e87d03a
++--- /dev/null
+++++ b/reviews/2026-08-14-tsk610-grabovsky.md
++@@ -0,0 +1,204 @@
+++# tsk-610 — Грабовский: потерянный тариф, начисление за август и молчание стража
+++
+++**Дата:** 2026-08-14
+++**Задача:** `tsk-610` (P1, деньги)
+++**Автор:** Claude (`/db-check` + `/fastapi-api-developer`)
+++**Прод-данные:** сняты read-only через MCP `learn_prod_db` 2026-08-14
+++
+++---
+++
+++## 1. Что нашли (разведка до любой записи)
+++
+++### 1.1. Слияние дублей уже произошло — само
+++
+++| Факт | Значение |
+++|---|---|
+++| 4525 «Владимир Грабовский» | `is_active = false`, `merged_into_user_id = 4560`, `email = NULL` |
+++| 4560 «Грабовский Владимир Антонович» | активен, заведён 10.08 через magic-link |
+++
+++Слил автомат при регистрации — `user_merge_service.check_and_merge_duplicate_on_registration`
+++(tsk-455). Признак того, что это не ручная правка: строки `lesson_slot_student`
+++у 4560 имеют `created_at = 2026-07-26`, то есть дату, когда учётки 4560 ещё не
+++существовало. Их не создавали заново — им переписали `student_id`.
+++
+++Отдельной задачи «слить дубли» нет: она закрыта до её постановки. Проверять
+++нужно было не «слить ли», а **что слияние потеряло**.
+++
+++### 1.2. Что слияние не перенесло
+++
+++Списки переноса в `user_merge_service` (`SIMPLE_MOVES`, `CONFLICT_MOVES`) —
+++это перечисление таблиц, а не «всё, что связано с человеком». Таблицы, которые
+++появились позже самих списков, в них не попали:
+++
+++| Осталось на слитой 4525 | Что это значит |
+++|---|---|
+++| `student_subscription` id 39 — `base_legacy`, **тарифная группа 1**, с 08.08 | платёжная принадлежность человека |
+++| `student_break` id 2 — **22.07–04.08, «Отъезд»** | основание неполного месяца |
+++| `student_course_state` — 12 строк | производный кеш, мусор |
+++
+++На живой 4560 осталась только `demo` с `pricing_group_id = NULL`. Для такой
+++подписки `pricing_service.billing_group_ids` возвращает **пустой список** —
+++начисления не создаются вовсе. Ученик ходил на занятия и был невидим для денег.
+++
+++`verify_merge` при этом отрапортовал «всё перенесено»: он пересчитывает строки
+++ровно тех таблиц, в которые сам же и писал. Проверка, смотрящая туда же, куда
+++пишет, пропустит именно то, что забыли.
+++
+++### 1.3. Почему не сработало автоприсвоение тарифа из tsk-301
+++
+++`subscription_service.upgrade_on_schedule` («появилось расписание → `base`»)
+++зовётся из одного места — `lesson_calendar_service` при правке расписания.
+++Расписание 4560 приехало **слиянием** (UPDATE `student_id`), календарь его не
+++трогал, и правило не узнало о нём вовсе.
+++
+++То есть дыра двойная: подписка не переехала, а механизм, который мог бы это
+++починить сам, о событии не знал.
+++
+++### 1.4. Занятия: 8 прошедших, но подтверждённых два
+++
+++| Дата | Слот | Статус |
+++|---|---|---|
+++| 27.07, 29.07, 01.08, 03.08 | утренние | `no_show` — внутри перерыва 22.07–04.08 |
+++| 08.08 (сб 11:00), 10.08 (пн 11:00) | утренние | `no_show` |
+++| **10.08 17:00** (слот 12), **12.08 18:00** (слот 5) | вечерние | `confirmed` |
+++
+++Действующих привязок к слотам ровно две — пн 11:00 и сб 11:00, как и сказал
+++оператор. Ещё две привязки существуют, но `lesson_slot_student.is_active = false`.
+++
+++**Наблюдение вне охвата задачи:** подтверждённая явка — на вечерних слотах, к
+++которым действующих привязок нет; на утренних, по которым считаются деньги, —
+++сплошной `no_show`. Расписание стоит поправить в кабинете, иначе сентябрь
+++посчитается по дням, в которые человек не ходит.
+++
+++### 1.5. Страж отработал, сигнал утонул
+++
+++`unbilled_active_students` писал уведомления 11, 12 и 13 августа, все —
+++непрочитаны. В списке было две строки, и одна из них (Пряхин, тариф `test`)
+++попадала туда **каждый день законно**: оператор решил денег не брать.
+++Предупреждение, которое не умеет молчать, перестают открывать.
+++
+++---
+++
+++## 2. Решения оператора (2026-08-14)
+++
+++1. Грабовский — старый ученик, вернувшийся после перерыва. Тариф — **группа 1,
+++   «2 раза в неделю», 5 500 ₽**.
+++2. Август — **5 500 ₽ полностью**. Перерыв «Отъезд» на живую учётку не
+++   переносим, он остаётся историей на 4525.
+++3. Дата начала подписки — **08.08**: переносим ту самую строку, которую должно
+++   было перенести слияние.
+++
+++### Расчёт, показанный до записи
+++
+++| Что | Значение |
+++|---|---|
+++| База тарифа (группа 1, `attendance_frequency = 2`) | 5 500 ₽ |
+++| Занятий в августе по постоянному расписанию (5 сб + 5 пн) | 10 |
+++| Из них в перерыве — если перерыв перенести | 2 (1 и 3 августа) |
+++| Сумма с перерывом: 5500 × 8 ÷ 10 | 4 400 ₽ |
+++| **Сумма без переноса перерыва (выбор оператора)** | **5 500 ₽** |
+++
+++Проверено на живых данных тем же SQL, что и в `charge_service.lesson_counts_for_period`.
+++
+++**Важная поправка к постановке:** дата начала подписки на сумму августа **не
+++влияет**. Пропорция считается только по перерывам (`_prorate`), а тарифная
+++группа берётся у любой действующей подписки (`ends_on IS NULL`). Дата выбирается
+++по правде, а не ради денег.
+++
+++Если перерыв когда-нибудь перенести на 4560, открытый август пересчитается сам
+++и станет 4 400 ₽ — это штатное поведение, а не сюрприз.
+++
+++---
+++
+++## 3. Что сделано
+++
+++### 3.1. Прод-данные — `scripts/fix_grabovsky_subscription_tsk610.py`
+++
+++Одноразовый скрипт по протоколу `/db-check` (сухой прогон → план → `--apply` →
+++поштучная верификация отдельной сессией):
+++
+++1. закрыть `demo` у 4560 (`ends_on = 2026-08-10`, днём выдачи: действовала ноль
+++   дней, выдана ошибочно);
+++2. перенести подписку 39 (`base_legacy`, группа 1, с 08.08) на 4560;
+++3. позвать штатный `charge_service.recalculate_for_student`.
+++
+++Сумма **не проставляется руками** (`manual_minor` не трогается): 5 500 ₽ обязаны
+++получиться расчётом — это же и есть проверка, что механизм работает.
+++
+++Предпроверки-стоп: ФИО обеих учёток, факт слияния, состав обеих подписок,
+++отсутствие начисления за август, отсутствие платежей, число занятий в месяце
+++(10) и в перерыве (0). Любое расхождение — запись не выполняется.
+++
+++### 3.2. Durable: слияние больше не теряет деньги
+++
+++`app/services/user_merge_service.py`:
+++
+++- `student_break` → `SIMPLE_MOVES`: перерыв едет с человеком;
+++- `student_course_state` → `DELETE_ON_MERGE`: производный кеш не тащим;
+++- новое правило `losing_subscription_id` + `_merge_subscriptions`:
+++  - побеждает **биллингуемая** подписка (тариф без группы не отменяет реальный),
+++  - обе биллингуемые → **более ранняя** (legacy-цена не должна молча подорожать),
+++  - обе без группы → остаётся у target;
+++  - проигравшая закрывается `GREATEST(starts_on, CURRENT_DATE)` — из-за CHECK
+++    `ends_on >= starts_on` подписка с будущей датой иначе уронила бы слияние;
+++- `verify_merge` теперь считает и `student_subscription`;
+++- после слияния зовётся `subscription_service.upgrade_on_schedule(target)` —
+++  расписание, приехавшее слиянием, включает автоприсвоение тарифа. Повышает
+++  по-прежнему только с `demo`/«тарифа нет», legacy-цену не трогает.
+++
+++### 3.3. Durable: страж умеет молчать
+++
+++`subscription_plan.billing_exempt` (миграция `tsk610_billing_exempt`) —
+++«денег не берут осознанно». Проставлен `test`. Детектор исключает таких.
+++
+++Почему признак в данных, а не набором кодов в коде: следующий «денег не берём»
+++тариф не должен требовать релиза.
+++
+++`demo` намеренно **не** exempt — ученик на демо с занятиями и есть та дыра, ради
+++которой страж написан. `alumni` тоже нет: выпускник с активным расписанием —
+++сигнал, а не норма.
+++
+++### 3.4. Тесты
+++
+++`tests/test_tsk610_merge_keeps_subscription.py` (5):
+++перенос биллингуемой подписки и закрытие demo; повышение тарифа, когда
+++расписание приехало слиянием; перенос перерыва; удаление кеша; правило выбора
+++подписки по веткам.
+++
+++`tests/test_tsk596_charge_cron.py` (+2): страж молчит про `billing_exempt`, но
+++по-прежнему находит ученика на `demo`.
+++
+++---
+++
+++## 4. Проверки
+++
+++```bash
+++python -m pytest tests/test_tsk610_merge_keeps_subscription.py -q          # 5 passed
+++python -m pytest tests/ -q -k "charge or merge or dedup or tsk301 or pricing or break"
+++```
+++
+++Второй прогон: 296 passed, 1 failed — `test_hint_events_stage36::test_record_hint_open_deduplicated`.
+++Падение **не связано** с правками: тест берёт последнее событие `hint_open` из
+++общей dev-БД и ломается от соседнего прогона (`feedback_pytest_flaky_when_neighbour_session_runs`);
+++поодиночке проходит и в этом worktree, и на нетронутом `main`.
+++
+++Полный прогон намеренно не запускался: dev-БД занята соседним чипом tsk-611.
+++
+++---
+++
+++## 5. Риски и что осталось
+++
+++| Риск | Оценка |
+++|---|---|
+++| Правило выбора подписки меняет поведение автослияния для всех будущих дублей | Ожидаемо: без него слияние теряет деньги. Ветки покрыты тестами |
+++| `student_course_state` у source удаляется | Кеш, пересчитывается; история не теряется |
+++| Миграция добавляет колонку с `server_default` | Обратимая, `downgrade` есть, деньги не затрагивает |
+++
+++Осталось за рамками задачи (в трекер, не сюда):
+++
+++1. **Расписание Грабовского не совпадает с фактом** — ходит на вечерние слоты,
+++   привязки к утренним. Правка в кабинете, не в коде.
+++2. **Канал доставки предупреждения** — три дня непрочитанных уведомлений это про
+++   канал, а не про людей (п. 6 исходной декомпозиции, только наблюдение).
+++3. **Перерыв 22.07–04.08 остался на 4525** — по решению оператора. Перенос
+++   изменил бы август на 4 400 ₽.
++diff --git a/scripts/fix_grabovsky_subscription_tsk610.py b/scripts/fix_grabovsky_subscription_tsk610.py
++new file mode 100644
++index 0000000..ca9ac34
++--- /dev/null
+++++ b/scripts/fix_grabovsky_subscription_tsk610.py
++@@ -0,0 +1,402 @@
+++"""tsk-610: вернуть Грабовскому платёжную принадлежность и выставить август (прод).
+++
+++**Что произошло.** Ученик уже был в базе — 4525 «Владимир Грабовский», тариф
+++`base_legacy` с тарифной группой 1 (старая цена 5 500 ₽ при двух занятиях в
+++неделю). 10.08 он зарегистрировался сам, получил учётку 4560, и автослияние
+++дублей при регистрации (tsk-455) увело на неё расписание, курсы, занятия и почту.
+++Подписка и перерыв в списках переноса не значились — обе таблицы появились позже
+++самих списков, — поэтому на живой учётке остался `demo` без тарифной группы.
+++`billing_group_ids` для такого возвращает пусто: ученик ходил на занятия и был
+++невидим для начислений, а страж (tsk-596) три дня подряд писал об этом в
+++непрочитанное уведомление.
+++
+++**Решение оператора 2026-08-14** (разбор — `reviews/2026-08-14-tsk610-grabovsky.md`):
+++
+++* тариф — **группа 1, «2 раза в неделю», 5 500 ₽**: у ученика ровно две
+++  действующие привязки к слотам, сумма выходит сама, руками её ставить не нужно;
+++* дата начала — **08.08**, как у подписки на слитой учётке: переносим ту самую
+++  строку, которую должно было перенести слияние, а не заводим новую «сегодня»;
+++* август — **полный, 5 500 ₽**. Перерыв «Отъезд» 22.07–04.08 остаётся на слитой
+++  учётке 4525 и на деньги не влияет — это осознанный выбор оператора, а не
+++  недосмотр. Если перерыв когда-нибудь перенести, открытый месяц пересчитается
+++  сам и станет 4 400 ₽ (10 занятий по расписанию, 2 из них в перерыве).
+++
+++Сумма НЕ проставляется руками (`manual_minor` не трогается): она должна
+++получиться расчётом `charge_service`, и это же служит проверкой, что механизм
+++работает. Скрипт только возвращает подписку на место и зовёт штатный пересчёт.
+++
+++Протокол (`/db-check`, режим записи):
+++    python scripts/fix_grabovsky_subscription_tsk610.py            # сухой прогон
+++    DBCHECK_OK=1 python scripts/fix_grabovsky_subscription_tsk610.py --apply
+++
+++Запускать на сервере под `app` (R-009 operator-runbook):
+++    ssh lms-spw-vds 'sudo -u app bash -lc "cd /opt/lms && venv/bin/python \\
+++        scripts/fix_grabovsky_subscription_tsk610.py"'
+++
+++Проверка после записи — поштучная, отдельной сессией, по каждой строке
+++отдельно, а не агрегатом (урок `feedback_backfill_verify_every_row`).
+++
+++Одноразовый скрипт: durable-часть (слияние переносит подписку и перерыв, страж
+++молчит про тарифы «денег не берут») живёт в `user_merge_service` и
+++`charge_cron_service`, а не здесь.
+++"""
+++from __future__ import annotations
+++
+++import argparse
+++import asyncio
+++import logging
+++import sys
+++from datetime import date
+++from pathlib import Path
+++
+++project_root = Path(__file__).resolve().parents[1]
+++sys.path.insert(0, str(project_root))
+++
+++from dotenv import load_dotenv  # noqa: E402
+++
+++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
+++
+++from sqlalchemy import text  # noqa: E402
+++
+++from app.db.session import async_session_factory  # noqa: E402
+++from app.services import charge_service  # noqa: E402
+++
+++logging.basicConfig(level=logging.INFO, format="%(message)s")
+++logger = logging.getLogger("tsk610.fix")
+++
+++PERIOD = date(2026, 8, 1)
+++
+++SOURCE_ID = 4525  # слитая учётка, на ней остался тариф
+++TARGET_ID = 4560  # живая учётка, на ней расписание и занятия
+++SOURCE_NAME = "Владимир Грабовский"
+++TARGET_NAME = "Грабовский Владимир Антонович"
+++
+++EXPECTED_PLAN = "base_legacy"
+++EXPECTED_GROUP = 1
+++EXPECTED_STARTS_ON = date(2026, 8, 8)
+++DEMO_PLAN = "demo"
+++#: Демо закрывается днём своей выдачи: она действовала ноль дней и выдана
+++#: ошибочно — человек уже был учеником, просто на другой учётке.
+++DEMO_ENDS_ON = date(2026, 8, 10)
+++EXPECTED_CALCULATED_MINOR = 550_000
+++EXPECTED_LESSONS = 10
+++EXPECTED_BREAK_LESSONS = 0
+++
+++REASON_SUFFIX = "; tsk-610: перенос со слитой учётки 4525 (слияние подписку не переносило)"
+++
+++
+++async def _preflight(db) -> bool:
+++    """Сверить состояние прода с тем, что оператор принимал глазами.
+++
+++    Любое расхождение — стоп до записи: за время между разбором и запуском
+++    данные мог тронуть кто угодно, включая суточный проход начислений.
+++    """
+++    ok = True
+++
+++    users = {
+++        int(r.id): r
+++        for r in (
+++            await db.execute(
+++                text(
+++                    "SELECT id, full_name, is_active, merged_into_user_id "
+++                    "  FROM users WHERE id IN (:s, :t)"
+++                ),
+++                {"s": SOURCE_ID, "t": TARGET_ID},
+++            )
+++        ).all()
+++    }
+++    for uid, name in ((SOURCE_ID, SOURCE_NAME), (TARGET_ID, TARGET_NAME)):
+++        row = users.get(uid)
+++        if row is None:
+++            logger.error("СТОП: пользователь %s не найден", uid)
+++            ok = False
+++        elif row.full_name != name:
+++            logger.error(
+++                "СТОП: у %s ФИО «%s», ожидалось «%s»", uid, row.full_name, name
+++            )
+++            ok = False
+++
+++    source = users.get(SOURCE_ID)
+++    if source is not None and source.merged_into_user_id != TARGET_ID:
+++        logger.error(
+++            "СТОП: %s не слита в %s (merged_into_user_id=%s)",
+++            SOURCE_ID, TARGET_ID, source.merged_into_user_id,
+++        )
+++        ok = False
+++    target = users.get(TARGET_ID)
+++    if target is not None and not target.is_active:
+++        logger.error("СТОП: живая учётка %s неактивна", TARGET_ID)
+++        ok = False
+++
+++    subs = (
+++        await db.execute(
+++            text(
+++                "SELECT s.id, s.student_id, p.code, s.pricing_group_id, s.starts_on "
+++                "  FROM student_subscription s "
+++                "  JOIN subscription_plan p ON p.id = s.plan_id "
+++                " WHERE s.student_id IN (:s, :t) AND s.ends_on IS NULL "
+++                " ORDER BY s.student_id"
+++            ),
+++            {"s": SOURCE_ID, "t": TARGET_ID},
+++        )
+++    ).all()
+++    source_sub = next((r for r in subs if r.student_id == SOURCE_ID), None)
+++    target_sub = next((r for r in subs if r.student_id == TARGET_ID), None)
+++
+++    if source_sub is None:
+++        logger.error("СТОП: у слитой %s нет действующей подписки — переносить нечего", SOURCE_ID)
+++        ok = False
+++    else:
+++        if source_sub.code != EXPECTED_PLAN or source_sub.pricing_group_id != EXPECTED_GROUP:
+++            logger.error(
+++                "СТОП: у %s подписка «%s»/группа %s, ожидалось «%s»/группа %s",
+++                SOURCE_ID, source_sub.code, source_sub.pricing_group_id,
+++                EXPECTED_PLAN, EXPECTED_GROUP,
+++            )
+++            ok = False
+++        if source_sub.starts_on != EXPECTED_STARTS_ON:
+++            logger.error(
+++                "СТОП: подписка %s начинается %s, ожидалось %s",
+++                source_sub.id, source_sub.starts_on, EXPECTED_STARTS_ON,
+++            )
+++            ok = False
+++
+++    if target_sub is None:
+++        logger.error("СТОП: у живой %s нет действующей подписки — состояние изменилось", TARGET_ID)
+++        ok = False
+++    elif target_sub.code != DEMO_PLAN:
+++        logger.error(
+++            "СТОП: у живой %s тариф «%s», а не «%s» — кто-то уже правил",
+++            TARGET_ID, target_sub.code, DEMO_PLAN,
+++        )
+++        ok = False
+++
+++    charges = (
+++        await db.execute(
+++            text(
+++                "SELECT id, group_id, calculated_minor, manual_minor, status "
+++                "  FROM student_monthly_charge "
+++                " WHERE student_id = :t AND period = :p"
+++            ),
+++            {"t": TARGET_ID, "p": PERIOD},
+++        )
+++    ).all()
+++    if charges:
+++        logger.error(
+++            "СТОП: у %s уже есть начисление за %s (%s строк) — разбирать руками",
+++            TARGET_ID, PERIOD, len(charges),
+++        )
+++        ok = False
+++
+++    payments = (
+++        await db.execute(
+++            text(
+++                "SELECT count(*) FROM student_payment WHERE student_id IN (:s, :t)"
+++            ),
+++            {"s": SOURCE_ID, "t": TARGET_ID},
+++        )
+++    ).scalar_one()
+++    if payments:
+++        logger.error("СТОП: за учётками числятся платежи (%s) — деньги молча не трогаем", payments)
+++        ok = False
+++
+++    counts = await charge_service.lesson_counts_for_month(
+++        db, student_id=TARGET_ID, period=PERIOD
+++    )
+++    logger.info(
+++        "Расписание августа у %s: занятий по слотам %s, из них в перерыве %s",
+++        TARGET_ID, counts.expected, counts.on_break,
+++    )
+++    if counts.expected != EXPECTED_LESSONS or counts.on_break != EXPECTED_BREAK_LESSONS:
+++        logger.error(
+++            "СТОП: ожидалось %s занятий и %s в перерыве — расписание или перерыв изменились",
+++            EXPECTED_LESSONS, EXPECTED_BREAK_LESSONS,
+++        )
+++        ok = False
+++
+++    logger.info("")
+++    logger.info("ПЛАН ЗАПИСИ:")
+++    logger.info(
+++        "  1. Закрыть подписку %s («%s» у %s): ends_on = %s",
+++        getattr(target_sub, "id", "?"), DEMO_PLAN, TARGET_ID, DEMO_ENDS_ON,
+++    )
+++    logger.info(
+++        "  2. Перенести подписку %s («%s», группа %s, с %s) на ученика %s",
+++        getattr(source_sub, "id", "?"), EXPECTED_PLAN, EXPECTED_GROUP,
+++        EXPECTED_STARTS_ON, TARGET_ID,
+++    )
+++    logger.info("  3. Пересчёт августа штатным charge_service (сумма не ставится руками)")
+++    logger.info(
+++        "  Ожидаемый итог: %s ₽ (расчёт %s коп., перерыв на деньги не влияет)",
+++        EXPECTED_CALCULATED_MINOR // 100, EXPECTED_CALCULATED_MINOR,
+++    )
+++    logger.info("")
+++    return ok
+++
+++
+++async def _apply(db) -> None:
+++    """Записать: закрыть demo, перенести подписку, позвать штатный пересчёт."""
+++    closed = await db.execute(
+++        text(
+++            "UPDATE student_subscription SET ends_on = :d "
+++            " WHERE student_id = :t AND ends_on IS NULL"
+++        ),
+++        {"d": DEMO_ENDS_ON, "t": TARGET_ID},
+++    )
+++    logger.info("Закрыто действующих подписок у %s: %s", TARGET_ID, closed.rowcount)
+++
+++    moved = await db.execute(
+++        text(
+++            "UPDATE student_subscription "
+++            "   SET student_id = :t, changed_by = 2, "
+++            "       reason = COALESCE(reason, '') || :suffix "
+++            " WHERE student_id = :s"
+++        ),
+++        {"t": TARGET_ID, "s": SOURCE_ID, "suffix": REASON_SUFFIX},
+++    )
+++    logger.info("Перенесено подписок %s → %s: %s", SOURCE_ID, TARGET_ID, moved.rowcount)
+++
+++    # Пересчёт коммитит сам — сумма приходит из кода сервиса, а не из SQL скрипта.
+++    await charge_service.recalculate_for_student(db, student_id=TARGET_ID, period=PERIOD)
+++    logger.info("Пересчёт августа выполнен")
+++
+++
+++async def _verify() -> bool:
+++    """Проверка ОТДЕЛЬНОЙ сессией и построчно: что реально легло в базу."""
+++    ok = True
+++    async with async_session_factory() as db:
+++        sub = (
+++            await db.execute(
+++                text(
+++                    "SELECT s.id, p.code, s.pricing_group_id, s.starts_on "
+++                    "  FROM student_subscription s "
+++                    "  JOIN subscription_plan p ON p.id = s.plan_id "
+++                    " WHERE s.student_id = :t AND s.ends_on IS NULL"
+++                ),
+++                {"t": TARGET_ID},
+++            )
+++        ).all()
+++        if len(sub) != 1:
+++            logger.error("ПРОВАЛ: действующих подписок у %s — %s, ждали одну", TARGET_ID, len(sub))
+++            ok = False
+++        else:
+++            row = sub[0]
+++            if (row.code, row.pricing_group_id, row.starts_on) != (
+++                EXPECTED_PLAN, EXPECTED_GROUP, EXPECTED_STARTS_ON
+++            ):
+++                logger.error(
+++                    "ПРОВАЛ: подписка «%s»/группа %s/с %s, ждали «%s»/%s/%s",
+++                    row.code, row.pricing_group_id, row.starts_on,
+++                    EXPECTED_PLAN, EXPECTED_GROUP, EXPECTED_STARTS_ON,
+++                )
+++                ok = False
+++            else:
+++                logger.info(
+++                    "OK: тариф %s — «%s», группа %s, с %s",
+++                    TARGET_ID, row.code, row.pricing_group_id, row.starts_on,
+++                )
+++
+++        left = (
+++            await db.execute(
+++                text("SELECT count(*) FROM student_subscription WHERE student_id = :s"),
+++                {"s": SOURCE_ID},
+++            )
+++        ).scalar_one()
+++        if left:
+++            logger.error("ПРОВАЛ: на слитой %s осталось подписок: %s", SOURCE_ID, left)
+++            ok = False
+++        else:
+++            logger.info("OK: на слитой %s подписок не осталось", SOURCE_ID)
+++
+++        demo = (
+++            await db.execute(
+++                text(
+++                    "SELECT s.id, s.ends_on FROM student_subscription s "
+++                    "  JOIN subscription_plan p ON p.id = s.plan_id "
+++                    " WHERE s.student_id = :t AND p.code = :c"
+++                ),
+++                {"t": TARGET_ID, "c": DEMO_PLAN},
+++            )
+++        ).all()
+++        for row in demo:
+++            if row.ends_on != DEMO_ENDS_ON:
+++                logger.error(
+++                    "ПРОВАЛ: demo %s закрыта %s, ждали %s", row.id, row.ends_on, DEMO_ENDS_ON
+++                )
+++                ok = False
+++            else:
+++                logger.info("OK: demo %s закрыта %s", row.id, row.ends_on)
+++
+++        charges = (
+++            await db.execute(
+++                text(
+++                    "SELECT id, group_id, calculated_minor, manual_minor, "
+++                    "       expected_lessons, break_lessons, status "
+++                    "  FROM student_monthly_charge "
+++                    " WHERE student_id = :t AND period = :p"
+++                ),
+++                {"t": TARGET_ID, "p": PERIOD},
+++            )
+++        ).all()
+++        if len(charges) != 1:
+++            logger.error("ПРОВАЛ: строк начисления за %s — %s, ждали одну", PERIOD, len(charges))
+++            ok = False
+++        else:
+++            ch = charges[0]
+++            expected = (
+++                EXPECTED_GROUP, EXPECTED_CALCULATED_MINOR, None,
+++                EXPECTED_LESSONS, EXPECTED_BREAK_LESSONS, "open",
+++            )
+++            actual = (
+++                ch.group_id, ch.calculated_minor, ch.manual_minor,
+++                ch.expected_lessons, ch.break_lessons, ch.status,
+++            )
+++            if actual != expected:
+++                logger.error("ПРОВАЛ: начисление %s, ждали %s", actual, expected)
+++                ok = False
+++            else:
+++                logger.info(
+++                    "OK: август %s — %s ₽ расчётом (занятий %s, в перерыве %s, %s)",
+++                    TARGET_ID, ch.calculated_minor // 100,
+++                    ch.expected_lessons, ch.break_lessons, ch.status,
+++                )
+++
+++        # Перерыв ОСТАЁТСЯ на слитой учётке — решение оператора, а не забытая строка.
+++        brk = (
+++            await db.execute(
+++                text(
+++                    "SELECT count(*) FROM student_break WHERE student_id = :s"
+++                ),
+++                {"s": SOURCE_ID},
+++            )
+++        ).scalar_one()
+++        logger.info(
+++            "Справочно: перерывов на слитой %s — %s (по решению оператора не переносим)",
+++            SOURCE_ID, brk,
+++        )
+++    return ok
+++
+++
+++async def main(apply: bool) -> int:
+++    async with async_session_factory() as db:
+++        if not await _preflight(db):
+++            logger.error("Предпроверка не пройдена — запись не выполняется")
+++            return 1
+++        if not apply:
+++            logger.info("Сухой прогон: ничего не записано. Повторить с --apply.")
+++            return 0
+++        try:
+++            await _apply(db)
+++        except Exception:
+++            await db.rollback()
+++            logger.exception("Запись откачена")
+++            return 1
+++
+++    return 0 if await _verify() else 1
+++
+++
+++if __name__ == "__main__":
+++    parser = argparse.ArgumentParser(description=__doc__)
+++    parser.add_argument("--apply", action="store_true", help="выполнить запись")
+++    args = parser.parse_args()
+++    raise SystemExit(asyncio.run(main(args.apply)))
++diff --git a/tests/test_tsk596_charge_cron.py b/tests/test_tsk596_charge_cron.py
++index 14d5a30..76ddf07 100644
++--- a/tests/test_tsk596_charge_cron.py
+++++ b/tests/test_tsk596_charge_cron.py
++@@ -276,6 +276,61 @@ async def test_detector_skips_staff(db):
++     assert all(f["student_id"] != teacher_id for f in found)
++ 
++ 
+++async def test_detector_silent_for_billing_exempt_plan(db):
+++    """Тариф «денег не берут осознанно» в находки не попадает (tsk-610).
+++
+++    Пряхин (4498) на тарифе `test` попадал в предупреждение каждый день —
+++    законно, оператор решил денег не брать. В списке из двух строк одна была
+++    всегда ложной, и три дня подряд уведомление висело непрочитанным вместе с
+++    настоящим случаем. Предупреждение, которое не умеет молчать, не читают.
+++    """
+++    teacher_id, _ = await _new_user(db, role="teacher", name="t-exempt")
+++    student_id, _ = await _new_user(db, role="student", name="s-exempt")
+++    await db.execute(
+++        text(
+++            "INSERT INTO student_subscription "
+++            "  (student_id, plan_id, pricing_group_id, starts_on) "
+++            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
+++            "  FROM subscription_plan WHERE code = 'test'"
+++        ),
+++        {"s": student_id},
+++    )
+++    await db.commit()
+++    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
+++
+++    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
+++
+++    assert all(f["student_id"] != student_id for f in found)
+++
+++
+++async def test_detector_still_finds_demo_student(db):
+++    """А `demo` с занятиями — по-прежнему находка, и это главный случай tsk-610.
+++
+++    Соблазн «исключить все тарифы без группы» убил бы весь смысл стража:
+++    ученик на демо, который ходит на занятия, и есть та дыра, через которую
+++    человек проходит молча (прод, Грабовский 4560 — почти две недели).
+++    """
+++    teacher_id, _ = await _new_user(db, role="teacher", name="t-demo")
+++    student_id, _ = await _new_user(db, role="student", name="s-demo")
+++    await db.execute(
+++        text(
+++            "INSERT INTO student_subscription "
+++            "  (student_id, plan_id, pricing_group_id, starts_on) "
+++            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
+++            "  FROM subscription_plan WHERE code = 'demo'"
+++        ),
+++        {"s": student_id},
+++    )
+++    await db.commit()
+++    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
+++
+++    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
+++
+++    mine = next((f for f in found if f["student_id"] == student_id), None)
+++    assert mine is not None, "ученик на demo с занятиями обязан находиться"
+++    assert "demo" in mine["reason"]
+++
+++
++ async def test_detector_silent_for_billed_student(db, db_session_factory):
++     """Выставленный ученик находкой не считается — иначе шум перекроет сигнал."""
++     env = await _paying_student(db, f"billed{random.randint(10**6, 10**7)}")
++diff --git a/tests/test_tsk610_merge_keeps_subscription.py b/tests/test_tsk610_merge_keeps_subscription.py
++new file mode 100644
++index 0000000..8f74445
++--- /dev/null
+++++ b/tests/test_tsk610_merge_keeps_subscription.py
++@@ -0,0 +1,266 @@
+++"""tsk-610: слияние учёток не должно терять тариф и перерыв.
+++
+++Прод-случай: ученик 4525 («Владимир Грабовский», тариф `base_legacy` с тарифной
+++группой 1) зарегистрировался заново — 4560. Автослияние при регистрации
+++(tsk-455) перенесло расписание, курсы, занятия и почту, но подписка и перерыв в
+++списках переноса не значились: обе таблицы (tsk-301, tsk-511) появились позже
+++самих списков. В итоге на живой учётке остался `demo` без тарифной группы,
+++`billing_group_ids` вернул пусто, и человек две недели ходил на занятия,
+++невидимый для начислений. `verify_merge` при этом молчал: он проверял ровно те
+++же таблицы, в которые писал.
+++
+++Проверяем не «функция вызвалась», а сами инварианты:
+++
+++- биллингуемая подписка переезжает и остаётся действующей, `demo` закрывается;
+++- **старая цена не превращается в новую**: `base_legacy` переживает слияние, и
+++  автоприсвоение по расписанию его не трогает (иначе 5 500 ₽ молча стали бы
+++  6 000 ₽ — ровно та беда, ради которой в tsk-301 написан `UPGRADABLE_FROM`);
+++- перерыв уезжает на живую учётку: без него месяц считается полным, хотя
+++  человек не занимался;
+++- расписание, приехавшее слиянием, включает автоприсвоение тарифа — раньше его
+++  звал только календарь, и «ученик с занятиями на demo» не чинился сам.
+++"""
+++from __future__ import annotations
+++
+++import uuid
+++from dataclasses import dataclass
+++from datetime import date
+++
+++import pytest
+++from sqlalchemy import text
+++from sqlalchemy.ext.asyncio import AsyncSession
+++
+++from app.services.user_merge_service import losing_subscription_id, merge_users
+++
+++pytestmark = pytest.mark.asyncio
+++
+++
+++async def _new_user(db: AsyncSession, name: str) -> int:
+++    return int(
+++        (
+++            await db.execute(
+++                text(
+++                    "INSERT INTO users (full_name, email, is_active) "
+++                    "VALUES (:n, :e, true) RETURNING id"
+++                ),
+++                {"n": name, "e": f"tsk610-{uuid.uuid4().hex[:12]}@example.test"},
+++            )
+++        ).scalar_one()
+++    )
+++
+++
+++async def _subscribe(
+++    db: AsyncSession, student_id: int, plan_code: str, *, starts_on: date
+++) -> int:
+++    return int(
+++        (
+++            await db.execute(
+++                text(
+++                    "INSERT INTO student_subscription "
+++                    "  (student_id, plan_id, pricing_group_id, starts_on) "
+++                    "SELECT :s, id, pricing_group_id, :d "
+++                    "  FROM subscription_plan WHERE code = :c "
+++                    "RETURNING id"
+++                ),
+++                {"s": student_id, "c": plan_code, "d": starts_on},
+++            )
+++        ).scalar_one()
+++    )
+++
+++
+++async def _slot(db: AsyncSession, student_id: int, teacher_id: int) -> None:
+++    slot_id = (
+++        await db.execute(
+++            text(
+++                "INSERT INTO lesson_slot "
+++                "(teacher_id, weekday, start_time, duration_minutes, timezone, is_active) "
+++                "VALUES (:t, 0, '11:00', 60, 'Europe/Moscow', true) RETURNING id"
+++            ),
+++            {"t": teacher_id},
+++        )
+++    ).scalar_one()
+++    await db.execute(
+++        text(
+++            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active) "
+++            "VALUES (:s, :u, true)"
+++        ),
+++        {"s": slot_id, "u": student_id},
+++    )
+++
+++
+++async def _active_plan(db: AsyncSession, student_id: int) -> tuple[str | None, int | None]:
+++    row = (
+++        await db.execute(
+++            text(
+++                "SELECT p.code, s.pricing_group_id FROM student_subscription s "
+++                "  JOIN subscription_plan p ON p.id = s.plan_id "
+++                " WHERE s.student_id = :s AND s.ends_on IS NULL"
+++            ),
+++            {"s": student_id},
+++        )
+++    ).first()
+++    return (row.code, row.pricing_group_id) if row else (None, None)
+++
+++
+++async def test_billable_subscription_moves_and_demo_closes(db: AsyncSession):
+++    """Тариф с группой переезжает на живую учётку, `demo` закрывается.
+++
+++    Дословный прод-сценарий 4525 → 4560.
+++    """
+++    teacher_id = await _new_user(db, "tsk610 преподаватель")
+++    source_id = await _new_user(db, "Владимир Грабовский")
+++    target_id = await _new_user(db, "Грабовский Владимир Антонович")
+++    await _subscribe(db, source_id, "base_legacy", starts_on=date(2026, 8, 8))
+++    demo_id = await _subscribe(db, target_id, "demo", starts_on=date(2026, 8, 10))
+++    await _slot(db, target_id, teacher_id)
+++    await db.commit()
+++
+++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
+++    await db.commit()
+++
+++    code, group_id = await _active_plan(db, target_id)
+++    assert code == "base_legacy", "тариф с тарифной группой обязан пережить слияние"
+++    assert group_id is not None, "без группы ученик снова невидим для денег"
+++
+++    closed = (
+++        await db.execute(
+++            text("SELECT ends_on FROM student_subscription WHERE id = :i"),
+++            {"i": demo_id},
+++        )
+++    ).scalar()
+++    assert closed is not None, "demo обязан закрыться: действующая подписка одна"
+++
+++    left = (
+++        await db.execute(
+++            text("SELECT count(*) FROM student_subscription WHERE student_id = :s"),
+++            {"s": source_id},
+++        )
+++    ).scalar_one()
+++    assert left == 0, "на слитой учётке подписок остаться не должно"
+++
+++
+++async def test_schedule_upgrade_fires_when_schedule_arrives_by_merge(db: AsyncSession):
+++    """Расписание приехало слиянием → автоприсвоение тарифа сработало.
+++
+++    Раньше `upgrade_on_schedule` звал только календарь, поэтому ученик, чьё
+++    расписание появилось при слиянии, оставался на `demo` навсегда.
+++    """
+++    teacher_id = await _new_user(db, "tsk610 преподаватель-2")
+++    source_id = await _new_user(db, "Пустая учётка")
+++    target_id = await _new_user(db, "Живая учётка")
+++    await _subscribe(db, target_id, "demo", starts_on=date(2026, 8, 10))
+++    await _slot(db, source_id, teacher_id)
+++    await db.commit()
+++
+++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
+++    await db.commit()
+++
+++    code, group_id = await _active_plan(db, target_id)
+++    assert code == "base", "расписание переехало — тариф обязан подняться с demo"
+++    assert group_id is not None
+++
+++
+++async def test_break_moves_to_live_account(db: AsyncSession):
+++    """Перерыв — основание неполного месяца, он обязан уехать вместе с человеком."""
+++    source_id = await _new_user(db, "Отъезд источник")
+++    target_id = await _new_user(db, "Отъезд цель")
+++    await db.execute(
+++        text(
+++            "INSERT INTO student_break (student_id, starts_on, ends_on, note) "
+++            "VALUES (:s, DATE '2026-07-22', DATE '2026-08-04', 'Отъезд')"
+++        ),
+++        {"s": source_id},
+++    )
+++    await db.commit()
+++
+++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
+++    await db.commit()
+++
+++    moved = (
+++        await db.execute(
+++            text("SELECT count(*) FROM student_break WHERE student_id = :s"),
+++            {"s": target_id},
+++        )
+++    ).scalar_one()
+++    assert moved == 1
+++    left = (
+++        await db.execute(
+++            text("SELECT count(*) FROM student_break WHERE student_id = :s"),
+++            {"s": source_id},
+++        )
+++    ).scalar_one()
+++    assert left == 0
+++
+++
+++async def test_course_state_cache_is_dropped_not_carried(db: AsyncSession):
+++    """Кеш доступности подкурсов у слитой учётки удаляется, а не тащится.
+++
+++    Он производный: у живой учётки свой, и он пересчитывается. Строки source
+++    иначе остались бы мусором, который никто не обновляет.
+++    """
+++    source_id = await _new_user(db, "Кеш источник")
+++    target_id = await _new_user(db, "Кеш цель")
+++    course_id = (
+++        await db.execute(
+++            text(
+++                "INSERT INTO courses (title, access_level) "
+++                "VALUES ('tsk610 курс', 'self_guided') RETURNING id"
+++            )
+++        )
+++    ).scalar_one()
+++    await db.execute(
+++        text(
+++            "INSERT INTO student_course_state (student_id, course_id, state) "
+++            "VALUES (:s, :c, 'NOT_STARTED')"
+++        ),
+++        {"s": source_id, "c": course_id},
+++    )
+++    await db.commit()
+++
+++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
+++    await db.commit()
+++
+++    left = (
+++        await db.execute(
+++            text("SELECT count(*) FROM student_course_state WHERE student_id = :s"),
+++            {"s": source_id},
+++        )
+++    ).scalar_one()
+++    assert left == 0
+++
+++
+++@dataclass
+++class _Sub:
+++    """Строка подписки в объёме, который нужен правилу выбора."""
+++
+++    id: int
+++    pricing_group_id: int | None
+++    starts_on: date
+++
+++
+++async def test_losing_subscription_rules():
+++    """Правило выбора действующей подписки — по веткам, без базы.
+++
+++    Три ветки, и каждая отвечает за свою беду: потерянный биллинг, молчаливое
+++    подорожание legacy-цены, лишний дёрганый апдейт живой учётки.
+++    """
+++    early = date(2026, 7, 1)
+++    late = date(2026, 8, 10)
+++
+++    billable_source = _Sub(id=1, pricing_group_id=1, starts_on=early)
+++    free_target = _Sub(id=2, pricing_group_id=None, starts_on=late)
+++    assert losing_subscription_id(billable_source, free_target) == 2
+++
+++    free_source = _Sub(id=3, pricing_group_id=None, starts_on=early)
+++    billable_target = _Sub(id=4, pricing_group_id=6, starts_on=late)
+++    assert losing_subscription_id(free_source, billable_target) == 3
+++
+++    legacy_source = _Sub(id=5, pricing_group_id=1, starts_on=early)
+++    new_target = _Sub(id=6, pricing_group_id=6, starts_on=late)
+++    assert losing_subscription_id(legacy_source, new_target) == 6, (
+++        "обе биллингуемые — остаётся ранняя: это и есть договорённость с человеком"
+++    )
+++
+++    free_a = _Sub(id=7, pricing_group_id=None, starts_on=early)
+++    free_b = _Sub(id=8, pricing_group_id=None, starts_on=late)
+++    assert losing_subscription_id(free_a, free_b) == 7
+diff --git a/reviews/2026-08-14-tsk610-grabovsky.md b/reviews/2026-08-14-tsk610-grabovsky.md
+new file mode 100644
+index 0000000..28ebeaa
+--- /dev/null
++++ b/reviews/2026-08-14-tsk610-grabovsky.md
+@@ -0,0 +1,209 @@
++# tsk-610 — Грабовский: потерянный тариф, начисление за август и молчание стража
++
++**Дата:** 2026-08-14
++**Задача:** `tsk-610` (P1, деньги)
++**Автор:** Claude (`/db-check` + `/fastapi-api-developer`)
++**Прод-данные:** сняты read-only через MCP `learn_prod_db` 2026-08-14
++
++---
++
++## 1. Что нашли (разведка до любой записи)
++
++### 1.1. Слияние дублей уже произошло — само
++
++| Факт | Значение |
++|---|---|
++| 4525 «Владимир Грабовский» | `is_active = false`, `merged_into_user_id = 4560`, `email = NULL` |
++| 4560 «Грабовский Владимир Антонович» | активен, заведён 10.08 через magic-link |
++
++Слил автомат при регистрации — `user_merge_service.check_and_merge_duplicate_on_registration`
++(tsk-455). Признак того, что это не ручная правка: строки `lesson_slot_student`
++у 4560 имеют `created_at = 2026-07-26`, то есть дату, когда учётки 4560 ещё не
++существовало. Их не создавали заново — им переписали `student_id`.
++
++Отдельной задачи «слить дубли» нет: она закрыта до её постановки. Проверять
++нужно было не «слить ли», а **что слияние потеряло**.
++
++### 1.2. Что слияние не перенесло
++
++Списки переноса в `user_merge_service` (`SIMPLE_MOVES`, `CONFLICT_MOVES`) —
++это перечисление таблиц, а не «всё, что связано с человеком». Таблицы, которые
++появились позже самих списков, в них не попали:
++
++| Осталось на слитой 4525 | Что это значит |
++|---|---|
++| `student_subscription` id 39 — `base_legacy`, **тарифная группа 1**, с 08.08 | платёжная принадлежность человека |
++| `student_break` id 2 — **22.07–04.08, «Отъезд»** | основание неполного месяца |
++| `student_course_state` — 12 строк | производный кеш, мусор |
++
++На живой 4560 осталась только `demo` с `pricing_group_id = NULL`. Для такой
++подписки `pricing_service.billing_group_ids` возвращает **пустой список** —
++начисления не создаются вовсе. Ученик ходил на занятия и был невидим для денег.
++
++`verify_merge` при этом отрапортовал «всё перенесено»: он пересчитывает строки
++ровно тех таблиц, в которые сам же и писал. Проверка, смотрящая туда же, куда
++пишет, пропустит именно то, что забыли.
++
++### 1.3. Почему не сработало автоприсвоение тарифа из tsk-301
++
++`subscription_service.upgrade_on_schedule` («появилось расписание → `base`»)
++зовётся из одного места — `lesson_calendar_service` при правке расписания.
++Расписание 4560 приехало **слиянием** (UPDATE `student_id`), календарь его не
++трогал, и правило не узнало о нём вовсе.
++
++То есть дыра двойная: подписка не переехала, а механизм, который мог бы это
++починить сам, о событии не знал.
++
++### 1.4. Занятия: 8 прошедших, но подтверждённых два
++
++| Дата | Слот | Статус |
++|---|---|---|
++| 27.07, 29.07, 01.08, 03.08 | утренние | `no_show` — внутри перерыва 22.07–04.08 |
++| 08.08 (сб 11:00), 10.08 (пн 11:00) | утренние | `no_show` |
++| **10.08 17:00** (слот 12), **12.08 18:00** (слот 5) | вечерние | `confirmed` |
++
++Действующих привязок к слотам ровно две — пн 11:00 и сб 11:00, как и сказал
++оператор. Ещё две привязки существуют, но `lesson_slot_student.is_active = false`.
++
++**Наблюдение вне охвата задачи:** подтверждённая явка — на вечерних слотах, к
++которым действующих привязок нет; на утренних, по которым считаются деньги, —
++сплошной `no_show`. Расписание стоит поправить в кабинете, иначе сентябрь
++посчитается по дням, в которые человек не ходит.
++
++### 1.5. Страж отработал, сигнал утонул
++
++`unbilled_active_students` писал уведомления 11, 12 и 13 августа, все —
++непрочитаны. В списке было две строки, и одна из них (Пряхин, тариф `test`)
++попадала туда **каждый день законно**: оператор решил денег не брать.
++Предупреждение, которое не умеет молчать, перестают открывать.
++
++---
++
++## 2. Решения оператора (2026-08-14)
++
++1. Грабовский — старый ученик, вернувшийся после перерыва. Тариф — **группа 1,
++   «2 раза в неделю», 5 500 ₽**.
++2. Август — **5 500 ₽ полностью**. Перерыв «Отъезд» на живую учётку не
++   переносим, он остаётся историей на 4525.
++3. Дата начала подписки — **08.08**: переносим ту самую строку, которую должно
++   было перенести слияние.
++
++### Расчёт, показанный до записи
++
++| Что | Значение |
++|---|---|
++| База тарифа (группа 1, `attendance_frequency = 2`) | 5 500 ₽ |
++| Занятий в августе по постоянному расписанию (5 сб + 5 пн) | 10 |
++| Из них в перерыве — если перерыв перенести | 2 (1 и 3 августа) |
++| Сумма с перерывом: 5500 × 8 ÷ 10 | 4 400 ₽ |
++| **Сумма без переноса перерыва (выбор оператора)** | **5 500 ₽** |
++
++Проверено на живых данных тем же SQL, что и в `charge_service.lesson_counts_for_period`.
++
++**Важная поправка к постановке:** дата начала подписки на сумму августа **не
++влияет**. Пропорция считается только по перерывам (`_prorate`), а тарифная
++группа берётся у любой действующей подписки (`ends_on IS NULL`). Дата выбирается
++по правде, а не ради денег.
++
++Если перерыв когда-нибудь перенести на 4560, открытый август пересчитается сам
++и станет 4 400 ₽ — это штатное поведение, а не сюрприз.
++
++---
++
++## 3. Что сделано
++
++### 3.1. Прод-данные — `scripts/fix_grabovsky_subscription_tsk610.py`
++
++Одноразовый скрипт по протоколу `/db-check` (сухой прогон → план → `--apply` →
++поштучная верификация отдельной сессией):
++
++1. закрыть `demo` у 4560 (`ends_on = 2026-08-10`, днём выдачи: действовала ноль
++   дней, выдана ошибочно);
++2. перенести подписку 39 (`base_legacy`, группа 1, с 08.08) на 4560;
++3. позвать штатный `charge_service.recalculate_for_student`.
++
++Сумма **не проставляется руками** (`manual_minor` не трогается): 5 500 ₽ обязаны
++получиться расчётом — это же и есть проверка, что механизм работает.
++
++Предпроверки-стоп: ФИО обеих учёток, факт слияния, состав обеих подписок,
++отсутствие начисления за август, отсутствие платежей, число занятий в месяце
++(10) и в перерыве (0). Любое расхождение — запись не выполняется.
++
++### 3.2. Durable: слияние больше не теряет деньги
++
++`app/services/user_merge_service.py`:
++
++- `student_break` → `SIMPLE_MOVES`: перерыв едет с человеком;
++- `student_course_state` → `DELETE_ON_MERGE`: производный кеш не тащим;
++- перенос самой подписки — из параллельной правки tsk-301 (`_move_subscription`,
++  коммит `7d1b1ce`): её делала соседняя сессия с той же прод-находки. Две
++  реализации сведены в одну, взято её правило — **автоматический `demo` уступает
++  тарифу источника, а осознанно выбранный тариф цели остаётся**. Оно точнее моего
++  первоначального («побеждает биллингуемая, при двух — более ранняя»): свежее
++  ручное назначение на живой учётке не должно откатываться тарифом со слитой.
++  Из моей версии в неё добавлено закрытие через `GREATEST(starts_on,
++  CURRENT_DATE)` — из-за CHECK `ends_on >= starts_on` подписка с будущей датой
++  иначе уронила бы слияние. Перенос квоты ИИ-наставника (складывается) и
++  оплаченных пакетов — тоже оттуда;
++- `verify_merge` теперь считает `student_subscription`, `student_ai_quota` и
++  `student_ai_grant` — всё, что переносится вне списков;
++- после слияния зовётся `subscription_service.upgrade_on_schedule(target)` —
++  расписание, приехавшее слиянием, включает автоприсвоение тарифа. Повышает
++  по-прежнему только с `demo`/«тарифа нет», legacy-цену не трогает.
++
++### 3.3. Durable: страж умеет молчать
++
++`subscription_plan.billing_exempt` (миграция `tsk610_billing_exempt`) —
++«денег не берут осознанно». Проставлен `test`. Детектор исключает таких.
++
++Почему признак в данных, а не набором кодов в коде: следующий «денег не берём»
++тариф не должен требовать релиза.
++
++`demo` намеренно **не** exempt — ученик на демо с занятиями и есть та дыра, ради
++которой страж написан. `alumni` тоже нет: выпускник с активным расписанием —
++сигнал, а не норма.
++
++### 3.4. Тесты
++
++`tests/test_tsk610_merge_keeps_subscription.py` (4): `base_legacy` переживает
++слияние и не превращается в `base`; повышение тарифа, когда расписание приехало
++слиянием; перенос перерыва; удаление кеша курсов. Правило выбора подписки
++покрыто соседним `test_tsk301_merge_subscription.py`.
++
++`tests/test_tsk596_charge_cron.py` (+2): страж молчит про `billing_exempt`, но
++по-прежнему находит ученика на `demo`.
++
++---
++
++## 4. Проверки
++
++```bash
++python -m pytest tests/test_tsk610_merge_keeps_subscription.py -q          # 5 passed
++python -m pytest tests/ -q -k "charge or merge or dedup or tsk301 or pricing or break"
++```
++
++Второй прогон: 296 passed, 1 failed — `test_hint_events_stage36::test_record_hint_open_deduplicated`.
++Падение **не связано** с правками: тест берёт последнее событие `hint_open` из
++общей dev-БД и ломается от соседнего прогона (`feedback_pytest_flaky_when_neighbour_session_runs`);
++поодиночке проходит и в этом worktree, и на нетронутом `main`.
++
++Полный прогон намеренно не запускался: dev-БД занята соседним чипом tsk-611.
++
++---
++
++## 5. Риски и что осталось
++
++| Риск | Оценка |
++|---|---|
++| Правило выбора подписки меняет поведение автослияния для всех будущих дублей | Ожидаемо: без него слияние теряет деньги. Ветки покрыты тестами (tsk-301 + tsk-610, 52 зелёных) |
++| `student_course_state` у source удаляется | Кеш, пересчитывается; история не теряется |
++| Миграция добавляет колонку с `server_default` | Обратимая, `downgrade` есть, деньги не затрагивает |
++
++Осталось за рамками задачи (в трекер, не сюда):
++
++1. **Расписание Грабовского не совпадает с фактом** — ходит на вечерние слоты,
++   привязки к утренним. Правка в кабинете, не в коде.
++2. **Канал доставки предупреждения** — три дня непрочитанных уведомлений это про
++   канал, а не про людей (п. 6 исходной декомпозиции, только наблюдение).
++3. **Перерыв 22.07–04.08 остался на 4525** — по решению оператора. Перенос
++   изменил бы август на 4 400 ₽.
+diff --git a/scripts/fix_grabovsky_subscription_tsk610.py b/scripts/fix_grabovsky_subscription_tsk610.py
+new file mode 100644
+index 0000000..ca9ac34
+--- /dev/null
++++ b/scripts/fix_grabovsky_subscription_tsk610.py
+@@ -0,0 +1,402 @@
++"""tsk-610: вернуть Грабовскому платёжную принадлежность и выставить август (прод).
++
++**Что произошло.** Ученик уже был в базе — 4525 «Владимир Грабовский», тариф
++`base_legacy` с тарифной группой 1 (старая цена 5 500 ₽ при двух занятиях в
++неделю). 10.08 он зарегистрировался сам, получил учётку 4560, и автослияние
++дублей при регистрации (tsk-455) увело на неё расписание, курсы, занятия и почту.
++Подписка и перерыв в списках переноса не значились — обе таблицы появились позже
++самих списков, — поэтому на живой учётке остался `demo` без тарифной группы.
++`billing_group_ids` для такого возвращает пусто: ученик ходил на занятия и был
++невидим для начислений, а страж (tsk-596) три дня подряд писал об этом в
++непрочитанное уведомление.
++
++**Решение оператора 2026-08-14** (разбор — `reviews/2026-08-14-tsk610-grabovsky.md`):
++
++* тариф — **группа 1, «2 раза в неделю», 5 500 ₽**: у ученика ровно две
++  действующие привязки к слотам, сумма выходит сама, руками её ставить не нужно;
++* дата начала — **08.08**, как у подписки на слитой учётке: переносим ту самую
++  строку, которую должно было перенести слияние, а не заводим новую «сегодня»;
++* август — **полный, 5 500 ₽**. Перерыв «Отъезд» 22.07–04.08 остаётся на слитой
++  учётке 4525 и на деньги не влияет — это осознанный выбор оператора, а не
++  недосмотр. Если перерыв когда-нибудь перенести, открытый месяц пересчитается
++  сам и станет 4 400 ₽ (10 занятий по расписанию, 2 из них в перерыве).
++
++Сумма НЕ проставляется руками (`manual_minor` не трогается): она должна
++получиться расчётом `charge_service`, и это же служит проверкой, что механизм
++работает. Скрипт только возвращает подписку на место и зовёт штатный пересчёт.
++
++Протокол (`/db-check`, режим записи):
++    python scripts/fix_grabovsky_subscription_tsk610.py            # сухой прогон
++    DBCHECK_OK=1 python scripts/fix_grabovsky_subscription_tsk610.py --apply
++
++Запускать на сервере под `app` (R-009 operator-runbook):
++    ssh lms-spw-vds 'sudo -u app bash -lc "cd /opt/lms && venv/bin/python \\
++        scripts/fix_grabovsky_subscription_tsk610.py"'
++
++Проверка после записи — поштучная, отдельной сессией, по каждой строке
++отдельно, а не агрегатом (урок `feedback_backfill_verify_every_row`).
++
++Одноразовый скрипт: durable-часть (слияние переносит подписку и перерыв, страж
++молчит про тарифы «денег не берут») живёт в `user_merge_service` и
++`charge_cron_service`, а не здесь.
++"""
++from __future__ import annotations
++
++import argparse
++import asyncio
++import logging
++import sys
++from datetime import date
++from pathlib import Path
++
++project_root = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(project_root))
++
++from dotenv import load_dotenv  # noqa: E402
++
++load_dotenv(dotenv_path=project_root / ".env", encoding="utf-8-sig")
++
++from sqlalchemy import text  # noqa: E402
++
++from app.db.session import async_session_factory  # noqa: E402
++from app.services import charge_service  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(message)s")
++logger = logging.getLogger("tsk610.fix")
++
++PERIOD = date(2026, 8, 1)
++
++SOURCE_ID = 4525  # слитая учётка, на ней остался тариф
++TARGET_ID = 4560  # живая учётка, на ней расписание и занятия
++SOURCE_NAME = "Владимир Грабовский"
++TARGET_NAME = "Грабовский Владимир Антонович"
++
++EXPECTED_PLAN = "base_legacy"
++EXPECTED_GROUP = 1
++EXPECTED_STARTS_ON = date(2026, 8, 8)
++DEMO_PLAN = "demo"
++#: Демо закрывается днём своей выдачи: она действовала ноль дней и выдана
++#: ошибочно — человек уже был учеником, просто на другой учётке.
++DEMO_ENDS_ON = date(2026, 8, 10)
++EXPECTED_CALCULATED_MINOR = 550_000
++EXPECTED_LESSONS = 10
++EXPECTED_BREAK_LESSONS = 0
++
++REASON_SUFFIX = "; tsk-610: перенос со слитой учётки 4525 (слияние подписку не переносило)"
++
++
++async def _preflight(db) -> bool:
++    """Сверить состояние прода с тем, что оператор принимал глазами.
++
++    Любое расхождение — стоп до записи: за время между разбором и запуском
++    данные мог тронуть кто угодно, включая суточный проход начислений.
++    """
++    ok = True
++
++    users = {
++        int(r.id): r
++        for r in (
++            await db.execute(
++                text(
++                    "SELECT id, full_name, is_active, merged_into_user_id "
++                    "  FROM users WHERE id IN (:s, :t)"
++                ),
++                {"s": SOURCE_ID, "t": TARGET_ID},
++            )
++        ).all()
++    }
++    for uid, name in ((SOURCE_ID, SOURCE_NAME), (TARGET_ID, TARGET_NAME)):
++        row = users.get(uid)
++        if row is None:
++            logger.error("СТОП: пользователь %s не найден", uid)
++            ok = False
++        elif row.full_name != name:
++            logger.error(
++                "СТОП: у %s ФИО «%s», ожидалось «%s»", uid, row.full_name, name
++            )
++            ok = False
++
++    source = users.get(SOURCE_ID)
++    if source is not None and source.merged_into_user_id != TARGET_ID:
++        logger.error(
++            "СТОП: %s не слита в %s (merged_into_user_id=%s)",
++            SOURCE_ID, TARGET_ID, source.merged_into_user_id,
++        )
++        ok = False
++    target = users.get(TARGET_ID)
++    if target is not None and not target.is_active:
++        logger.error("СТОП: живая учётка %s неактивна", TARGET_ID)
++        ok = False
++
++    subs = (
++        await db.execute(
++            text(
++                "SELECT s.id, s.student_id, p.code, s.pricing_group_id, s.starts_on "
++                "  FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                " WHERE s.student_id IN (:s, :t) AND s.ends_on IS NULL "
++                " ORDER BY s.student_id"
++            ),
++            {"s": SOURCE_ID, "t": TARGET_ID},
++        )
++    ).all()
++    source_sub = next((r for r in subs if r.student_id == SOURCE_ID), None)
++    target_sub = next((r for r in subs if r.student_id == TARGET_ID), None)
++
++    if source_sub is None:
++        logger.error("СТОП: у слитой %s нет действующей подписки — переносить нечего", SOURCE_ID)
++        ok = False
++    else:
++        if source_sub.code != EXPECTED_PLAN or source_sub.pricing_group_id != EXPECTED_GROUP:
++            logger.error(
++                "СТОП: у %s подписка «%s»/группа %s, ожидалось «%s»/группа %s",
++                SOURCE_ID, source_sub.code, source_sub.pricing_group_id,
++                EXPECTED_PLAN, EXPECTED_GROUP,
++            )
++            ok = False
++        if source_sub.starts_on != EXPECTED_STARTS_ON:
++            logger.error(
++                "СТОП: подписка %s начинается %s, ожидалось %s",
++                source_sub.id, source_sub.starts_on, EXPECTED_STARTS_ON,
++            )
++            ok = False
++
++    if target_sub is None:
++        logger.error("СТОП: у живой %s нет действующей подписки — состояние изменилось", TARGET_ID)
++        ok = False
++    elif target_sub.code != DEMO_PLAN:
++        logger.error(
++            "СТОП: у живой %s тариф «%s», а не «%s» — кто-то уже правил",
++            TARGET_ID, target_sub.code, DEMO_PLAN,
++        )
++        ok = False
++
++    charges = (
++        await db.execute(
++            text(
++                "SELECT id, group_id, calculated_minor, manual_minor, status "
++                "  FROM student_monthly_charge "
++                " WHERE student_id = :t AND period = :p"
++            ),
++            {"t": TARGET_ID, "p": PERIOD},
++        )
++    ).all()
++    if charges:
++        logger.error(
++            "СТОП: у %s уже есть начисление за %s (%s строк) — разбирать руками",
++            TARGET_ID, PERIOD, len(charges),
++        )
++        ok = False
++
++    payments = (
++        await db.execute(
++            text(
++                "SELECT count(*) FROM student_payment WHERE student_id IN (:s, :t)"
++            ),
++            {"s": SOURCE_ID, "t": TARGET_ID},
++        )
++    ).scalar_one()
++    if payments:
++        logger.error("СТОП: за учётками числятся платежи (%s) — деньги молча не трогаем", payments)
++        ok = False
++
++    counts = await charge_service.lesson_counts_for_month(
++        db, student_id=TARGET_ID, period=PERIOD
++    )
++    logger.info(
++        "Расписание августа у %s: занятий по слотам %s, из них в перерыве %s",
++        TARGET_ID, counts.expected, counts.on_break,
++    )
++    if counts.expected != EXPECTED_LESSONS or counts.on_break != EXPECTED_BREAK_LESSONS:
++        logger.error(
++            "СТОП: ожидалось %s занятий и %s в перерыве — расписание или перерыв изменились",
++            EXPECTED_LESSONS, EXPECTED_BREAK_LESSONS,
++        )
++        ok = False
++
++    logger.info("")
++    logger.info("ПЛАН ЗАПИСИ:")
++    logger.info(
++        "  1. Закрыть подписку %s («%s» у %s): ends_on = %s",
++        getattr(target_sub, "id", "?"), DEMO_PLAN, TARGET_ID, DEMO_ENDS_ON,
++    )
++    logger.info(
++        "  2. Перенести подписку %s («%s», группа %s, с %s) на ученика %s",
++        getattr(source_sub, "id", "?"), EXPECTED_PLAN, EXPECTED_GROUP,
++        EXPECTED_STARTS_ON, TARGET_ID,
++    )
++    logger.info("  3. Пересчёт августа штатным charge_service (сумма не ставится руками)")
++    logger.info(
++        "  Ожидаемый итог: %s ₽ (расчёт %s коп., перерыв на деньги не влияет)",
++        EXPECTED_CALCULATED_MINOR // 100, EXPECTED_CALCULATED_MINOR,
++    )
++    logger.info("")
++    return ok
++
++
++async def _apply(db) -> None:
++    """Записать: закрыть demo, перенести подписку, позвать штатный пересчёт."""
++    closed = await db.execute(
++        text(
++            "UPDATE student_subscription SET ends_on = :d "
++            " WHERE student_id = :t AND ends_on IS NULL"
++        ),
++        {"d": DEMO_ENDS_ON, "t": TARGET_ID},
++    )
++    logger.info("Закрыто действующих подписок у %s: %s", TARGET_ID, closed.rowcount)
++
++    moved = await db.execute(
++        text(
++            "UPDATE student_subscription "
++            "   SET student_id = :t, changed_by = 2, "
++            "       reason = COALESCE(reason, '') || :suffix "
++            " WHERE student_id = :s"
++        ),
++        {"t": TARGET_ID, "s": SOURCE_ID, "suffix": REASON_SUFFIX},
++    )
++    logger.info("Перенесено подписок %s → %s: %s", SOURCE_ID, TARGET_ID, moved.rowcount)
++
++    # Пересчёт коммитит сам — сумма приходит из кода сервиса, а не из SQL скрипта.
++    await charge_service.recalculate_for_student(db, student_id=TARGET_ID, period=PERIOD)
++    logger.info("Пересчёт августа выполнен")
++
++
++async def _verify() -> bool:
++    """Проверка ОТДЕЛЬНОЙ сессией и построчно: что реально легло в базу."""
++    ok = True
++    async with async_session_factory() as db:
++        sub = (
++            await db.execute(
++                text(
++                    "SELECT s.id, p.code, s.pricing_group_id, s.starts_on "
++                    "  FROM student_subscription s "
++                    "  JOIN subscription_plan p ON p.id = s.plan_id "
++                    " WHERE s.student_id = :t AND s.ends_on IS NULL"
++                ),
++                {"t": TARGET_ID},
++            )
++        ).all()
++        if len(sub) != 1:
++            logger.error("ПРОВАЛ: действующих подписок у %s — %s, ждали одну", TARGET_ID, len(sub))
++            ok = False
++        else:
++            row = sub[0]
++            if (row.code, row.pricing_group_id, row.starts_on) != (
++                EXPECTED_PLAN, EXPECTED_GROUP, EXPECTED_STARTS_ON
++            ):
++                logger.error(
++                    "ПРОВАЛ: подписка «%s»/группа %s/с %s, ждали «%s»/%s/%s",
++                    row.code, row.pricing_group_id, row.starts_on,
++                    EXPECTED_PLAN, EXPECTED_GROUP, EXPECTED_STARTS_ON,
++                )
++                ok = False
++            else:
++                logger.info(
++                    "OK: тариф %s — «%s», группа %s, с %s",
++                    TARGET_ID, row.code, row.pricing_group_id, row.starts_on,
++                )
++
++        left = (
++            await db.execute(
++                text("SELECT count(*) FROM student_subscription WHERE student_id = :s"),
++                {"s": SOURCE_ID},
++            )
++        ).scalar_one()
++        if left:
++            logger.error("ПРОВАЛ: на слитой %s осталось подписок: %s", SOURCE_ID, left)
++            ok = False
++        else:
++            logger.info("OK: на слитой %s подписок не осталось", SOURCE_ID)
++
++        demo = (
++            await db.execute(
++                text(
++                    "SELECT s.id, s.ends_on FROM student_subscription s "
++                    "  JOIN subscription_plan p ON p.id = s.plan_id "
++                    " WHERE s.student_id = :t AND p.code = :c"
++                ),
++                {"t": TARGET_ID, "c": DEMO_PLAN},
++            )
++        ).all()
++        for row in demo:
++            if row.ends_on != DEMO_ENDS_ON:
++                logger.error(
++                    "ПРОВАЛ: demo %s закрыта %s, ждали %s", row.id, row.ends_on, DEMO_ENDS_ON
++                )
++                ok = False
++            else:
++                logger.info("OK: demo %s закрыта %s", row.id, row.ends_on)
++
++        charges = (
++            await db.execute(
++                text(
++                    "SELECT id, group_id, calculated_minor, manual_minor, "
++                    "       expected_lessons, break_lessons, status "
++                    "  FROM student_monthly_charge "
++                    " WHERE student_id = :t AND period = :p"
++                ),
++                {"t": TARGET_ID, "p": PERIOD},
++            )
++        ).all()
++        if len(charges) != 1:
++            logger.error("ПРОВАЛ: строк начисления за %s — %s, ждали одну", PERIOD, len(charges))
++            ok = False
++        else:
++            ch = charges[0]
++            expected = (
++                EXPECTED_GROUP, EXPECTED_CALCULATED_MINOR, None,
++                EXPECTED_LESSONS, EXPECTED_BREAK_LESSONS, "open",
++            )
++            actual = (
++                ch.group_id, ch.calculated_minor, ch.manual_minor,
++                ch.expected_lessons, ch.break_lessons, ch.status,
++            )
++            if actual != expected:
++                logger.error("ПРОВАЛ: начисление %s, ждали %s", actual, expected)
++                ok = False
++            else:
++                logger.info(
++                    "OK: август %s — %s ₽ расчётом (занятий %s, в перерыве %s, %s)",
++                    TARGET_ID, ch.calculated_minor // 100,
++                    ch.expected_lessons, ch.break_lessons, ch.status,
++                )
++
++        # Перерыв ОСТАЁТСЯ на слитой учётке — решение оператора, а не забытая строка.
++        brk = (
++            await db.execute(
++                text(
++                    "SELECT count(*) FROM student_break WHERE student_id = :s"
++                ),
++                {"s": SOURCE_ID},
++            )
++        ).scalar_one()
++        logger.info(
++            "Справочно: перерывов на слитой %s — %s (по решению оператора не переносим)",
++            SOURCE_ID, brk,
++        )
++    return ok
++
++
++async def main(apply: bool) -> int:
++    async with async_session_factory() as db:
++        if not await _preflight(db):
++            logger.error("Предпроверка не пройдена — запись не выполняется")
++            return 1
++        if not apply:
++            logger.info("Сухой прогон: ничего не записано. Повторить с --apply.")
++            return 0
++        try:
++            await _apply(db)
++        except Exception:
++            await db.rollback()
++            logger.exception("Запись откачена")
++            return 1
++
++    return 0 if await _verify() else 1
++
++
++if __name__ == "__main__":
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--apply", action="store_true", help="выполнить запись")
++    args = parser.parse_args()
++    raise SystemExit(asyncio.run(main(args.apply)))
+diff --git a/tests/test_tsk596_charge_cron.py b/tests/test_tsk596_charge_cron.py
+index 14d5a30..76ddf07 100644
+--- a/tests/test_tsk596_charge_cron.py
++++ b/tests/test_tsk596_charge_cron.py
+@@ -276,6 +276,61 @@ async def test_detector_skips_staff(db):
+     assert all(f["student_id"] != teacher_id for f in found)
+ 
+ 
++async def test_detector_silent_for_billing_exempt_plan(db):
++    """Тариф «денег не берут осознанно» в находки не попадает (tsk-610).
++
++    Пряхин (4498) на тарифе `test` попадал в предупреждение каждый день —
++    законно, оператор решил денег не брать. В списке из двух строк одна была
++    всегда ложной, и три дня подряд уведомление висело непрочитанным вместе с
++    настоящим случаем. Предупреждение, которое не умеет молчать, не читают.
++    """
++    teacher_id, _ = await _new_user(db, role="teacher", name="t-exempt")
++    student_id, _ = await _new_user(db, role="student", name="s-exempt")
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
++            "  FROM subscription_plan WHERE code = 'test'"
++        ),
++        {"s": student_id},
++    )
++    await db.commit()
++    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
++
++    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
++
++    assert all(f["student_id"] != student_id for f in found)
++
++
++async def test_detector_still_finds_demo_student(db):
++    """А `demo` с занятиями — по-прежнему находка, и это главный случай tsk-610.
++
++    Соблазн «исключить все тарифы без группы» убил бы весь смысл стража:
++    ученик на демо, который ходит на занятия, и есть та дыра, через которую
++    человек проходит молча (прод, Грабовский 4560 — почти две недели).
++    """
++    teacher_id, _ = await _new_user(db, role="teacher", name="t-demo")
++    student_id, _ = await _new_user(db, role="student", name="s-demo")
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
++            "  FROM subscription_plan WHERE code = 'demo'"
++        ),
++        {"s": student_id},
++    )
++    await db.commit()
++    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
++
++    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
++
++    mine = next((f for f in found if f["student_id"] == student_id), None)
++    assert mine is not None, "ученик на demo с занятиями обязан находиться"
++    assert "demo" in mine["reason"]
++
++
+ async def test_detector_silent_for_billed_student(db, db_session_factory):
+     """Выставленный ученик находкой не считается — иначе шум перекроет сигнал."""
+     env = await _paying_student(db, f"billed{random.randint(10**6, 10**7)}")
+diff --git a/tests/test_tsk610_merge_keeps_subscription.py b/tests/test_tsk610_merge_keeps_subscription.py
+new file mode 100644
+index 0000000..696ee39
+--- /dev/null
++++ b/tests/test_tsk610_merge_keeps_subscription.py
+@@ -0,0 +1,230 @@
++"""tsk-610: слияние учёток не должно терять тариф и перерыв.
++
++Прод-случай: ученик 4525 («Владимир Грабовский», тариф `base_legacy` с тарифной
++группой 1) зарегистрировался заново — 4560. Автослияние при регистрации
++(tsk-455) перенесло расписание, курсы, занятия и почту, но подписка и перерыв в
++списках переноса не значились: обе таблицы (tsk-301, tsk-511) появились позже
++самих списков. В итоге на живой учётке остался `demo` без тарифной группы,
++`billing_group_ids` вернул пусто, и человек две недели ходил на занятия,
++невидимый для начислений. `verify_merge` при этом молчал: он проверял ровно те
++же таблицы, в которые писал.
++
++Сам перенос подписки, квоты и пакетов проверяет соседний файл
++`test_tsk301_merge_subscription.py` (правило «автоматический `demo` уступает,
++осознанный тариф цели остаётся»). Здесь — то, что к нему примыкает:
++
++- **старая цена не превращается в новую**: `base_legacy` переживает слияние, и
++  автоприсвоение по расписанию его не трогает (иначе 5 500 ₽ молча стали бы
++  6 000 ₽ — ровно та беда, ради которой в tsk-301 написан `UPGRADABLE_FROM`);
++- перерыв уезжает на живую учётку: без него месяц считается полным, хотя
++  человек не занимался;
++- кеш доступности подкурсов у слитой учётки удаляется, а не тащится;
++- расписание, приехавшее слиянием, включает автоприсвоение тарифа — раньше его
++  звал только календарь, и «ученик с занятиями на demo» не чинился сам.
++"""
++from __future__ import annotations
++
++import uuid
++from datetime import date
++
++import pytest
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.services.user_merge_service import merge_users
++
++pytestmark = pytest.mark.asyncio
++
++
++async def _new_user(db: AsyncSession, name: str) -> int:
++    return int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES (:n, :e, true) RETURNING id"
++                ),
++                {"n": name, "e": f"tsk610-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++    )
++
++
++async def _subscribe(
++    db: AsyncSession, student_id: int, plan_code: str, *, starts_on: date
++) -> int:
++    return int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO student_subscription "
++                    "  (student_id, plan_id, pricing_group_id, starts_on) "
++                    "SELECT :s, id, pricing_group_id, :d "
++                    "  FROM subscription_plan WHERE code = :c "
++                    "RETURNING id"
++                ),
++                {"s": student_id, "c": plan_code, "d": starts_on},
++            )
++        ).scalar_one()
++    )
++
++
++async def _slot(db: AsyncSession, student_id: int, teacher_id: int) -> None:
++    slot_id = (
++        await db.execute(
++            text(
++                "INSERT INTO lesson_slot "
++                "(teacher_id, weekday, start_time, duration_minutes, timezone, is_active) "
++                "VALUES (:t, 0, '11:00', 60, 'Europe/Moscow', true) RETURNING id"
++            ),
++            {"t": teacher_id},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active) "
++            "VALUES (:s, :u, true)"
++        ),
++        {"s": slot_id, "u": student_id},
++    )
++
++
++async def _active_plan(db: AsyncSession, student_id: int) -> tuple[str | None, int | None]:
++    row = (
++        await db.execute(
++            text(
++                "SELECT p.code, s.pricing_group_id FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                " WHERE s.student_id = :s AND s.ends_on IS NULL"
++            ),
++            {"s": student_id},
++        )
++    ).first()
++    return (row.code, row.pricing_group_id) if row else (None, None)
++
++
++async def test_billable_subscription_moves_and_demo_closes(db: AsyncSession):
++    """Тариф с группой переезжает на живую учётку, `demo` закрывается.
++
++    Дословный прод-сценарий 4525 → 4560.
++    """
++    teacher_id = await _new_user(db, "tsk610 преподаватель")
++    source_id = await _new_user(db, "Владимир Грабовский")
++    target_id = await _new_user(db, "Грабовский Владимир Антонович")
++    await _subscribe(db, source_id, "base_legacy", starts_on=date(2026, 8, 8))
++    demo_id = await _subscribe(db, target_id, "demo", starts_on=date(2026, 8, 10))
++    await _slot(db, target_id, teacher_id)
++    await db.commit()
++
++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
++    await db.commit()
++
++    code, group_id = await _active_plan(db, target_id)
++    assert code == "base_legacy", "тариф с тарифной группой обязан пережить слияние"
++    assert group_id is not None, "без группы ученик снова невидим для денег"
++
++    closed = (
++        await db.execute(
++            text("SELECT ends_on FROM student_subscription WHERE id = :i"),
++            {"i": demo_id},
++        )
++    ).scalar()
++    assert closed is not None, "demo обязан закрыться: действующая подписка одна"
++
++    left = (
++        await db.execute(
++            text("SELECT count(*) FROM student_subscription WHERE student_id = :s"),
++            {"s": source_id},
++        )
++    ).scalar_one()
++    assert left == 0, "на слитой учётке подписок остаться не должно"
++
++
++async def test_schedule_upgrade_fires_when_schedule_arrives_by_merge(db: AsyncSession):
++    """Расписание приехало слиянием → автоприсвоение тарифа сработало.
++
++    Раньше `upgrade_on_schedule` звал только календарь, поэтому ученик, чьё
++    расписание появилось при слиянии, оставался на `demo` навсегда.
++    """
++    teacher_id = await _new_user(db, "tsk610 преподаватель-2")
++    source_id = await _new_user(db, "Пустая учётка")
++    target_id = await _new_user(db, "Живая учётка")
++    await _subscribe(db, target_id, "demo", starts_on=date(2026, 8, 10))
++    await _slot(db, source_id, teacher_id)
++    await db.commit()
++
++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
++    await db.commit()
++
++    code, group_id = await _active_plan(db, target_id)
++    assert code == "base", "расписание переехало — тариф обязан подняться с demo"
++    assert group_id is not None
++
++
++async def test_break_moves_to_live_account(db: AsyncSession):
++    """Перерыв — основание неполного месяца, он обязан уехать вместе с человеком."""
++    source_id = await _new_user(db, "Отъезд источник")
++    target_id = await _new_user(db, "Отъезд цель")
++    await db.execute(
++        text(
++            "INSERT INTO student_break (student_id, starts_on, ends_on, note) "
++            "VALUES (:s, DATE '2026-07-22', DATE '2026-08-04', 'Отъезд')"
++        ),
++        {"s": source_id},
++    )
++    await db.commit()
++
++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
++    await db.commit()
++
++    moved = (
++        await db.execute(
++            text("SELECT count(*) FROM student_break WHERE student_id = :s"),
++            {"s": target_id},
++        )
++    ).scalar_one()
++    assert moved == 1
++    left = (
++        await db.execute(
++            text("SELECT count(*) FROM student_break WHERE student_id = :s"),
++            {"s": source_id},
++        )
++    ).scalar_one()
++    assert left == 0
++
++
++async def test_course_state_cache_is_dropped_not_carried(db: AsyncSession):
++    """Кеш доступности подкурсов у слитой учётки удаляется, а не тащится.
++
++    Он производный: у живой учётки свой, и он пересчитывается. Строки source
++    иначе остались бы мусором, который никто не обновляет.
++    """
++    source_id = await _new_user(db, "Кеш источник")
++    target_id = await _new_user(db, "Кеш цель")
++    course_id = (
++        await db.execute(
++            text(
++                "INSERT INTO courses (title, access_level) "
++                "VALUES ('tsk610 курс', 'self_guided') RETURNING id"
++            )
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO student_course_state (student_id, course_id, state) "
++            "VALUES (:s, :c, 'NOT_STARTED')"
++        ),
++        {"s": source_id, "c": course_id},
++    )
++    await db.commit()
++
++    assert await merge_users(db, source_id=source_id, target_id=target_id) is True
++    await db.commit()
++
++    left = (
++        await db.execute(
++            text("SELECT count(*) FROM student_course_state WHERE student_id = :s"),
++            {"s": source_id},
++        )
++    ).scalar_one()
++    assert left == 0

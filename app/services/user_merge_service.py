@@ -7,6 +7,13 @@
 `scripts/merge_users.py` (CLI-обёртка над этим модулем, ручной запуск по
 протоколу /db-check).
 
+tsk-610: списки переноса — не «всё, что связано с человеком», а перечисление,
+которое надо пополнять вместе со схемой. Подписка (tsk-301) и перерыв (tsk-511)
+появились после них и потому не переезжали, а `verify_merge` этого не видел:
+он проверял ровно те же таблицы, что и переносил. Живой случай — Грабовский
+4525→4560: занятия, курсы и расписание уехали на новую учётку, тариф с тарифной
+группой остался на слитой, и человек две недели ходил, невидимый для денег.
+
 tsk-455: та же логика используется автоматически сразу после регистрации
 нового аккаунта (`check_and_merge_duplicate_on_registration`), когда пара
 проходит порог автослияния (`users_dedup_service.select_auto_merge_pairs`) —
@@ -29,6 +36,10 @@ logger = logging.getLogger("app.user_merge")
 # Прямой перенос — свой `id` PK у таблицы, FK на users без доп. уникальности.
 SIMPLE_MOVES = [
     ("identity_link", "user_id"),
+    # tsk-610: перерыв — основание, по которому месяц считается неполным.
+    # Оставшись у слитой учётки, он молча пропадает из денег живой: расписание
+    # уже переехало, а причина пропусков — нет (прод, Грабовский 4525→4560).
+    ("student_break", "student_id"),
     ("attempts", "user_id"),
     ("task_results", "user_id"),
     ("messages", "sender_id"),
@@ -73,6 +84,10 @@ CONFLICT_MOVES = [
 # Не переносится — удаляется у source (форсированный логаут деактивируемой учётки).
 DELETE_ON_MERGE = [
     ("user_session", "user_id"),
+    # tsk-610: `student_course_state` — производный кеш доступности подкурсов, а
+    # не история. У target он свой и пересчитывается сам; строки source остались
+    # бы мусором, который никто уже не обновляет.
+    ("student_course_state", "student_id"),
 ]
 
 
@@ -153,7 +168,10 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
     if target_plan is not None and target_plan != DEFAULT_PLAN_CODE:
         await db.execute(
             text(
-                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+                # GREATEST — из-за CHECK `ends_on >= starts_on` (tsk-610):
+                # подписка, открытая будущей датой, иначе уронила бы слияние.
+                "UPDATE student_subscription "
+                "   SET ends_on = GREATEST(starts_on, CURRENT_DATE) "
                 " WHERE student_id = :s AND ends_on IS NULL"
             ),
             {"s": source_id},
@@ -162,7 +180,10 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
         # У цели пусто или автоматический `demo` — уступает тарифу источника.
         await db.execute(
             text(
-                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+                # GREATEST — из-за CHECK `ends_on >= starts_on` (tsk-610):
+                # подписка, открытая будущей датой, иначе уронила бы слияние.
+                "UPDATE student_subscription "
+                "   SET ends_on = GREATEST(starts_on, CURRENT_DATE) "
                 " WHERE student_id = :s AND ends_on IS NULL"
             ),
             {"s": target_id},
@@ -317,6 +338,13 @@ async def verify_merge(db: AsyncSession, source_id: int, target_id: int) -> None
         leftover += await count_rows(db, table, column, source_id)
     for table, column in DELETE_ON_MERGE:
         leftover += await count_rows(db, table, column, source_id)
+    # tsk-610: того, что переносит `_move_subscription`, в списках нет — эти
+    # таблицы проверяем отдельно. Верификация, которая смотрит ровно туда же,
+    # куда писала, потерю тарифа не заметила: на проде она отрапортовала «всё
+    # перенесено», пока платёжная принадлежность человека лежала на слитой
+    # учётке (4525 → 4560).
+    for table in ("student_subscription", "student_ai_quota", "student_ai_grant"):
+        leftover += await count_rows(db, table, "student_id", source_id)
     assert leftover == 0, f"верификация провалена: у source осталось {leftover} строк"
 
 
@@ -371,12 +399,34 @@ async def merge_users(db: AsyncSession, *, source_id: int, target_id: int) -> bo
         await db.flush()
         await verify_merge(db, source_id, target_id)
 
+    # tsk-610: расписание приехало слиянием, а не правкой календаря — значит
+    # автоприсвоение тарифа по расписанию (tsk-301) о нём не узнало: его зовёт
+    # только `lesson_calendar_service`. Ученик с занятиями оставался на `demo`.
+    # Повышает по-прежнему лишь с `demo`/«тарифа нет», так что legacy-цену и
+    # осознанно выданные тарифы это не трогает.
+    # Свой savepoint и мягкий отказ — по той же причине, по которой в savepoint
+    # обёрнута сама запись слияния: слияние зовётся ВНУТРИ транзакции
+    # регистрации, и любое исключение здесь оставило бы её отравленной —
+    # `try/except` в роутере поймал бы ошибку, а следующий `commit()` упал бы
+    # снова, и только что созданный пользователь не сохранился бы. Тариф важен,
+    # но не важнее регистрации: не присвоился — это увидит суточный страж.
+    from app.services import charge_service, subscription_service
+
+    try:
+        async with db.begin_nested():
+            await subscription_service.upgrade_on_schedule(db, target_id)
+    except Exception:
+        logger.warning(
+            "tsk-610: автоприсвоение тарифа после слияния %s → %s не выполнено",
+            source_id,
+            target_id,
+            exc_info=True,
+        )
+
     # tsk-548: расписание переехало — значит сумма месяца у target изменилась.
     # Без этого шага живая учётка остаётся вообще без начисления (на проде так
     # и вышло: у слитого «Лазаря» висели 5 500 ₽, а у настоящего ученика с
     # двумя занятиями в неделю долга не было вовсе).
-    from app.services import charge_service
-
     await charge_service.recalculate_open_months_for_student(db, student_id=target_id)
     return True
 

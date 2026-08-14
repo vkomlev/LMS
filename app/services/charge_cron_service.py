@@ -101,6 +101,14 @@ _scheduler: Optional[AsyncIOScheduler] = None
 #: живёт дальше с другими учениками, а выбывшего от него отвязывают — на проде
 #: трое из пяти «невыставленных» оказались именно такими, и по слоту без этого
 #: фильтра выглядели как действующие.
+#:
+#: tsk-610: `subscription_plan.billing_exempt` — тариф, по которому денег не
+#: берут ОСОЗНАННО (сейчас `test`). Такой ученик попадал в предупреждение каждый
+#: день законно, и список из двух строк, где одна всегда ложная, приучает не
+#: открывать уведомление вовсе: три дня подряд оно висело непрочитанным, а рядом
+#: с постоянным пунктом стоял настоящий случай. Признак живёт в ДАННЫХ, а не
+#: набором кодов в коде: новый «денег не берём» тариф не должен требовать релиза.
+#: `demo` намеренно НЕ exempt — ученик на демо с занятиями и есть та самая дыра.
 _ANOMALY_SQL = """
 WITH staff AS (
     SELECT DISTINCT ur.user_id
@@ -122,7 +130,8 @@ future_lessons AS (
      GROUP BY 1
 ),
 sub AS (
-    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code
+    SELECT s.student_id, s.pricing_group_id, sp.code AS plan_code,
+           sp.billing_exempt
       FROM student_subscription s
       JOIN subscription_plan sp ON sp.id = s.plan_id
      WHERE s.ends_on IS NULL
@@ -148,6 +157,7 @@ SELECT u.id                                   AS student_id,
   LEFT JOIN sub            ON sub.student_id = u.id
  WHERE u.is_active
    AND u.id NOT IN (SELECT user_id FROM staff)
+   AND NOT COALESCE(sub.billing_exempt, false)
    AND (COALESCE(active_slots.n, 0) > 0 OR COALESCE(future_lessons.n, 0) > 0)
    AND NOT EXISTS (
            SELECT 1 FROM student_monthly_charge ch

@@ -276,6 +276,61 @@ async def test_detector_skips_staff(db):
     assert all(f["student_id"] != teacher_id for f in found)
 
 
+async def test_detector_silent_for_billing_exempt_plan(db):
+    """Тариф «денег не берут осознанно» в находки не попадает (tsk-610).
+
+    Пряхин (4498) на тарифе `test` попадал в предупреждение каждый день —
+    законно, оператор решил денег не брать. В списке из двух строк одна была
+    всегда ложной, и три дня подряд уведомление висело непрочитанным вместе с
+    настоящим случаем. Предупреждение, которое не умеет молчать, не читают.
+    """
+    teacher_id, _ = await _new_user(db, role="teacher", name="t-exempt")
+    student_id, _ = await _new_user(db, role="student", name="s-exempt")
+    await db.execute(
+        text(
+            "INSERT INTO student_subscription "
+            "  (student_id, plan_id, pricing_group_id, starts_on) "
+            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
+            "  FROM subscription_plan WHERE code = 'test'"
+        ),
+        {"s": student_id},
+    )
+    await db.commit()
+    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
+
+    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
+
+    assert all(f["student_id"] != student_id for f in found)
+
+
+async def test_detector_still_finds_demo_student(db):
+    """А `demo` с занятиями — по-прежнему находка, и это главный случай tsk-610.
+
+    Соблазн «исключить все тарифы без группы» убил бы весь смысл стража:
+    ученик на демо, который ходит на занятия, и есть та дыра, через которую
+    человек проходит молча (прод, Грабовский 4560 — почти две недели).
+    """
+    teacher_id, _ = await _new_user(db, role="teacher", name="t-demo")
+    student_id, _ = await _new_user(db, role="student", name="s-demo")
+    await db.execute(
+        text(
+            "INSERT INTO student_subscription "
+            "  (student_id, plan_id, pricing_group_id, starts_on) "
+            "SELECT :s, id, pricing_group_id, CURRENT_DATE "
+            "  FROM subscription_plan WHERE code = 'demo'"
+        ),
+        {"s": student_id},
+    )
+    await db.commit()
+    await _slot(db, student_id=student_id, teacher_id=teacher_id, weekday=1)
+
+    found = await charge_cron_service.find_unbilled_active_students(db, period=PERIOD)
+
+    mine = next((f for f in found if f["student_id"] == student_id), None)
+    assert mine is not None, "ученик на demo с занятиями обязан находиться"
+    assert "demo" in mine["reason"]
+
+
 async def test_detector_silent_for_billed_student(db, db_session_factory):
     """Выставленный ученик находкой не считается — иначе шум перекроет сигнал."""
     env = await _paying_student(db, f"billed{random.randint(10**6, 10**7)}")
