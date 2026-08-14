@@ -108,6 +108,104 @@ async def count_rows(db: AsyncSession, table: str, column: str, user_id: int) ->
     ).scalar_one()
 
 
+async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -> None:
+    """Перенести тариф, квоту наставника и купленные пакеты на целевую учётку.
+
+    **Найдено на проде 2026-08-14, tsk-301.** Слияние переносило расписание и курс,
+    но не подписку: старый аккаунт с тарифом `base_legacy` уходил в неактивные, а
+    новый оставался с `demo`, выданным при регистрации. `demo` денежной привязки не
+    имеет и перекрывает группу курса — ученик, ходивший два раза в неделю, остался
+    вообще без начисления, и заметно это стало только при разборе.
+
+    **Тариф — договорённость с человеком, а не свойство строки** (та же логика, что
+    у ручной цены в `CONFLICT_MOVES`). Поэтому `demo` у цели считается пустым
+    местом: он не выбран, а проставлен автоматически при регистрации. Любой другой
+    тариф цели — осознанное решение, его не трогаем.
+
+    Квота складывается, а не затирается: расход обеих учёток в одном месяце — это
+    расход одного человека. Пакеты переезжают всегда, они оплачены.
+    """
+    from app.services.subscription_service import DEFAULT_PLAN_CODE  # noqa: PLC0415
+
+    source_plan = (
+        await db.execute(
+            text(
+                "SELECT p.code FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                " WHERE s.student_id = :s AND s.ends_on IS NULL"
+            ),
+            {"s": source_id},
+        )
+    ).scalar()
+    target_plan = (
+        await db.execute(
+            text(
+                "SELECT p.code FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                " WHERE s.student_id = :s AND s.ends_on IS NULL"
+            ),
+            {"s": target_id},
+        )
+    ).scalar()
+
+    # У цели тариф выбран человеком — он и остаётся; действующую строку источника
+    # закрываем, чтобы после переноса истории не оказалось двух действующих.
+    if target_plan is not None and target_plan != DEFAULT_PLAN_CODE:
+        await db.execute(
+            text(
+                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+                " WHERE student_id = :s AND ends_on IS NULL"
+            ),
+            {"s": source_id},
+        )
+    elif source_plan is not None:
+        # У цели пусто или автоматический `demo` — уступает тарифу источника.
+        await db.execute(
+            text(
+                "UPDATE student_subscription SET ends_on = CURRENT_DATE "
+                " WHERE student_id = :s AND ends_on IS NULL"
+            ),
+            {"s": target_id},
+        )
+
+    # Историю переносим целиком: по ней видно, по какой группе считался прошлый
+    # месяц, а это единственный источник правды для закрытых начислений.
+    await db.execute(
+        text(
+            "UPDATE student_subscription SET student_id = :t WHERE student_id = :s"
+        ),
+        {"t": target_id, "s": source_id},
+    )
+
+    # Квота: сложить расход за общие месяцы, остальные строки перенести.
+    await db.execute(
+        text(
+            "UPDATE student_ai_quota t SET used = t.used + s.used, updated_at = now() "
+            "  FROM student_ai_quota s "
+            " WHERE t.student_id = :t AND s.student_id = :s AND s.period = t.period"
+        ),
+        {"t": target_id, "s": source_id},
+    )
+    await db.execute(
+        text(
+            "DELETE FROM student_ai_quota s WHERE s.student_id = :s AND EXISTS "
+            "  (SELECT 1 FROM student_ai_quota t "
+            "    WHERE t.student_id = :t AND t.period = s.period)"
+        ),
+        {"t": target_id, "s": source_id},
+    )
+    await db.execute(
+        text("UPDATE student_ai_quota SET student_id = :t WHERE student_id = :s"),
+        {"t": target_id, "s": source_id},
+    )
+
+    # Пакеты оплачены — переезжают без условий.
+    await db.execute(
+        text("UPDATE student_ai_grant SET student_id = :t WHERE student_id = :s"),
+        {"t": target_id, "s": source_id},
+    )
+
+
 async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
     for table, column in SIMPLE_MOVES:
         await db.execute(
@@ -162,6 +260,8 @@ async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
         ),
         {"source": source_id},
     )
+
+    await _move_subscription(db, source_id, target_id)
 
     # Карточные поля: почта и ФИО переезжают, если у target их нет (tsk-433,
     # 2026-07-30). Раньше слияние переносило только связанные строки, а
