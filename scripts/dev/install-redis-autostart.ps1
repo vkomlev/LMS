@@ -55,23 +55,27 @@ if (-not (Test-Path -LiteralPath $ensureRedis)) {
     exit 1
 }
 
-# Обёртка .vbs: запускает PowerShell полностью без окна. Файл служебный,
-# живёт вне репозитория и перезаписывается при каждой установке.
-$workDir = Join-Path $env:LOCALAPPDATA 'MemuraiDev'
-New-Item -ItemType Directory -Force -Path $workDir | Out-Null
-$vbsPath = Join-Path $workDir 'ensure-redis-silent.vbs'
-$vbsBody = @"
-Set shell = CreateObject("WScript.Shell")
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$ensureRedis"" -Quiet", 0, False
-"@
-Set-Content -LiteralPath $vbsPath -Value $vbsBody -Encoding ASCII
+# Запуск PowerShell напрямую. Обёртка .vbs (вариант «совсем без мигания окна»)
+# проверку не прошла: wscript.exe после `shell.Run` не завершался, задача
+# оставалась в состоянии «выполняется», а при MultipleInstances=IgnoreNew это
+# глушило все последующие срабатывания — то есть автоподъём молча не работал.
+$action = New-ScheduledTaskAction `
+    -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ensureRedis`" -Quiet"
 
-$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
+# Повтор внутри суток. Бесконечную длительность ([TimeSpan]::MaxValue) планировщик
+# не принимает — «value is incorrectly formatted or out of range», поэтому окно
+# ровно сутки, а заводится оно заново каждый день (ежедневный триггер ниже) и при
+# каждом входе в систему.
+$repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+        -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
 
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
-    -RepetitionDuration ([TimeSpan]::MaxValue)
+$logonTrigger.Repetition = $repetition
+
+$dailyTrigger = New-ScheduledTaskTrigger -Daily -At '00:05'
+$dailyTrigger.Repetition = $repetition
 
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
@@ -84,7 +88,7 @@ $settings = New-ScheduledTaskSettingsSet `
 Register-ScheduledTask `
     -TaskName $TaskName `
     -Action $action `
-    -Trigger @($logonTrigger, $repeatTrigger) `
+    -Trigger @($logonTrigger, $dailyTrigger) `
     -Settings $settings `
     -Description 'tsk-611: держит локальный Redis (Memurai) поднятым для тестов и локального запуска LMS. Проверка при входе в систему и раз в несколько минут; если Redis отвечает — ничего не делает.' `
     -Force | Out-Null

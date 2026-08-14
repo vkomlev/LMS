@@ -1,0 +1,94 @@
+diff --git a/reviews/2026-08-14-tsk611-local-redis.md b/reviews/2026-08-14-tsk611-local-redis.md
+index ef3678a..7704f09 100644
+--- a/reviews/2026-08-14-tsk611-local-redis.md
++++ b/reviews/2026-08-14-tsk611-local-redis.md
+@@ -60,8 +60,17 @@
+ - триггер «при входе в систему» — закрывает перезагрузку;
+ - повтор раз в 15 минут — закрывает самовыключение Memurai Developer (иначе после
+   очередного «automatic shutdown» машина осталась бы без Redis до следующей перезагрузки);
+-- вызов идёт через обёртку `.vbs` в `%LOCALAPPDATA%\MemuraiDev`, чтобы окно консоли не
+-  мигало каждые 15 минут.
++- второй триггер, ежедневный в 00:05, заводит суточное окно повторов заново на машине,
++  которую не перезагружают: бесконечную длительность повтора планировщик не принимает
++  («value is incorrectly formatted or out of range» на `TimeSpan::MaxValue`).
++
++Две вещи всплыли только на живой проверке и были переделаны:
++
++1. **Обёртка `.vbs` (чтобы окно консоли не мигало) не годится.** `wscript.exe` после
++   `shell.Run` не завершался, задача оставалась в состоянии «выполняется», а при
++   `MultipleInstances=IgnoreNew` это глушило все последующие срабатывания — автоподъём
++   молча не работал бы. Задача зовёт `powershell.exe` напрямую с `-WindowStyle Hidden`.
++2. **Бесконечная длительность повтора** — см. выше, заменена на суточное окно + ежедневный триггер.
+ 
+ `ensure-redis.ps1` идемпотентный: если Redis отвечает на PING — не делает ничего,
+ поэтому частые срабатывания ничего не стоят.
+@@ -110,7 +119,12 @@
+ 
+ - `ensure-redis.ps1` при поднятом Redis → «Redis уже отвечает на 127.0.0.1:6379 — ничего делать не нужно», код 0;
+ - он же после принудительной остановки Memurai → попробовал службу («нужны права администратора»),
+-  поднял процессом пользователя, дождался PONG, код 0.
++  поднял процессом пользователя, дождался PONG, код 0;
++- он же при `REDIS_URL` на недоступный нелокальный адрес → внятная ошибка без стека PowerShell, код 1;
++- `run-tests.ps1` из корня проекта → «Redis уже отвечает…», затем прогон (6 passed);
++- он же при недоступном Redis → предупреждение «тесты будут ПРОПУЩЕНЫ» и 6 пропусков вместо ошибок;
++- **задача планировщика проверена вживую**: Memurai остановлен → `Start-ScheduledTask 'LMS Dev Redis'`
++  → через 10 секунд порт 6379 отвечает, `LastTaskResult = 0`, следующий запуск назначен через 15 минут.
+ 
+ ## Соседи: TG_LMS
+ 
+diff --git a/scripts/dev/install-redis-autostart.ps1 b/scripts/dev/install-redis-autostart.ps1
+index 5a81c80..263d8b4 100644
+--- a/scripts/dev/install-redis-autostart.ps1
++++ b/scripts/dev/install-redis-autostart.ps1
+@@ -55,23 +55,27 @@ if (-not (Test-Path -LiteralPath $ensureRedis)) {
+     exit 1
+ }
+ 
+-# Обёртка .vbs: запускает PowerShell полностью без окна. Файл служебный,
+-# живёт вне репозитория и перезаписывается при каждой установке.
+-$workDir = Join-Path $env:LOCALAPPDATA 'MemuraiDev'
+-New-Item -ItemType Directory -Force -Path $workDir | Out-Null
+-$vbsPath = Join-Path $workDir 'ensure-redis-silent.vbs'
+-$vbsBody = @"
+-Set shell = CreateObject("WScript.Shell")
+-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""$ensureRedis"" -Quiet", 0, False
+-"@
+-Set-Content -LiteralPath $vbsPath -Value $vbsBody -Encoding ASCII
+-
+-$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument "`"$vbsPath`""
++# Запуск PowerShell напрямую. Обёртка .vbs (вариант «совсем без мигания окна»)
++# проверку не прошла: wscript.exe после `shell.Run` не завершался, задача
++# оставалась в состоянии «выполняется», а при MultipleInstances=IgnoreNew это
++# глушило все последующие срабатывания — то есть автоподъём молча не работал.
++$action = New-ScheduledTaskAction `
++    -Execute 'powershell.exe' `
++    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ensureRedis`" -Quiet"
++
++# Повтор внутри суток. Бесконечную длительность ([TimeSpan]::MaxValue) планировщик
++# не принимает — «value is incorrectly formatted or out of range», поэтому окно
++# ровно сутки, а заводится оно заново каждый день (ежедневный триггер ниже) и при
++# каждом входе в систему.
++$repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) `
++        -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
++        -RepetitionDuration (New-TimeSpan -Days 1)).Repetition
+ 
+ $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+-$repeatTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+-    -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+-    -RepetitionDuration ([TimeSpan]::MaxValue)
++$logonTrigger.Repetition = $repetition
++
++$dailyTrigger = New-ScheduledTaskTrigger -Daily -At '00:05'
++$dailyTrigger.Repetition = $repetition
+ 
+ $settings = New-ScheduledTaskSettingsSet `
+     -AllowStartIfOnBatteries `
+@@ -84,7 +88,7 @@ $settings = New-ScheduledTaskSettingsSet `
+ Register-ScheduledTask `
+     -TaskName $TaskName `
+     -Action $action `
+-    -Trigger @($logonTrigger, $repeatTrigger) `
++    -Trigger @($logonTrigger, $dailyTrigger) `
+     -Settings $settings `
+     -Description 'tsk-611: держит локальный Redis (Memurai) поднятым для тестов и локального запуска LMS. Проверка при входе в систему и раз в несколько минут; если Redis отвечает — ничего не делает.' `
+     -Force | Out-Null
