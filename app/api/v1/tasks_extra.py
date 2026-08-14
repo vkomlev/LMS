@@ -291,7 +291,7 @@ async def grading_gaps(
                 course_title=row.course_title,
                 task_type=task_type,
                 order_position=row.order_position,
-                stem_preview=_stem_preview(content.get("stem")),
+                stem_preview=_gap_label(content),
                 requires_attachment=needs_file,
             )
         )
@@ -309,6 +309,18 @@ async def grading_gaps(
         by_course=by_course,
         items=gaps[offset : offset + limit],
     )
+
+
+def _gap_label(content: dict, *, limit: int = 160) -> str:
+    """Подпись задания в инвентаре пробелов: название, иначе начало условия.
+
+    Приоритет тот же, что у `humanize_task_title` (tsk-612), но чистка своя:
+    здесь снимаются ещё и мягкие переносы ЕГЭ, которых общий хелпер не знает.
+    """
+    title = content.get("title")
+    if isinstance(title, str) and title.strip():
+        return " ".join(title.split())[:limit]
+    return _stem_preview(content.get("stem"), limit=limit)
 
 
 def _stem_preview(stem: Any, *, limit: int = 160) -> str:

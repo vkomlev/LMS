@@ -1,0 +1,302 @@
+warning: in the working copy of 'app/services/tasks_service.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index c6ca346..292fe4b 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -291,7 +291,7 @@ async def grading_gaps(
+                 course_title=row.course_title,
+                 task_type=task_type,
+                 order_position=row.order_position,
+-                stem_preview=_stem_preview(content.get("stem")),
++                stem_preview=_gap_label(content),
+                 requires_attachment=needs_file,
+             )
+         )
+@@ -311,6 +311,18 @@ async def grading_gaps(
+     )
+ 
+ 
++def _gap_label(content: dict, *, limit: int = 160) -> str:
++    """Подпись задания в инвентаре пробелов: название, иначе начало условия.
++
++    Приоритет тот же, что у `humanize_task_title` (tsk-612), но чистка своя:
++    здесь снимаются ещё и мягкие переносы ЕГЭ, которых общий хелпер не знает.
++    """
++    title = content.get("title")
++    if isinstance(title, str) and title.strip():
++        return " ".join(title.split())[:limit]
++    return _stem_preview(content.get("stem"), limit=limit)
++
++
+ def _stem_preview(stem: Any, *, limit: int = 160) -> str:
+     """Короткая подпись задания для списка: без разметки и мягких переносов.
+ 
+diff --git a/app/services/tasks_service.py b/app/services/tasks_service.py
+index 4f3ef2a..471b160 100644
+--- a/app/services/tasks_service.py
++++ b/app/services/tasks_service.py
+@@ -23,6 +23,46 @@ MANUALLY_EDITABLE_TASK_FIELDS: frozenset[str] = frozenset(
+ )
+ 
+ 
++def _is_blank_title(value: Any) -> bool:
++    """True, если названия фактически нет: ключ отсутствует, null или пробелы."""
++    return not isinstance(value, str) or not value.strip()
++
++
++def keep_curated_title(incoming: Any, existing: Tasks) -> Any:
++    """Сохранить уже заведённое название задания, если импорт его не прислал.
++
++    Конвейеры публикации отправляют `title` пустой строкой (ContentBackbone:
++    `lms_import_file.py`, `wp_nav_import.py`) — источники заданий названий не
++    знают. Схема приводит пустую строку к `None` (tsk-107), а UPDATE в
++    `bulk_upsert` перезаписывает `task_content` целиком, поэтому переиздание
++    курса стирало бы названия, заведённые методистом или бэкфиллом tsk-612.
++
++    Название — редакторское свойство задания, а не свойство источника: молчание
++    источника означает «нечего сказать», а не «стереть». Поэтому старое
++    название переносится во входящий контент. Непустое название ИЗ ИМПОРТА
++    имеет приоритет — так источник, который названия всё-таки умеет (sdamgia),
++    остаётся хозяином своего поля.
++
++    Полем `content_provenance` эту защиту закрыть нельзя: пометка `manual_web`
++    замораживает `task_content` целиком, то есть заодно и условие задачи —
++    импорт перестал бы обновлять стем ради одного названия.
++
++    :param incoming: `task_content` из импорта (уже провалидированный dict).
++    :param existing: строка задания из БД.
++    :returns: `task_content` с сохранённым названием.
++    """
++    if not isinstance(incoming, dict) or not _is_blank_title(incoming.get("title")):
++        return incoming
++    current = (existing.task_content or {}).get("title")
++    if _is_blank_title(current):
++        return incoming
++    logger_provenance.info(
++        "tsk-612: импорт не прислал название задания %s — сохраняю заведённое",
++        getattr(existing, "id", None),
++    )
++    return {**incoming, "title": current}
++
++
+ def _manually_edited_task_fields(existing: Tasks) -> frozenset[str]:
+     """Поля задания, поправленные вручную и защищённые от перезаписи импортом.
+ 
+@@ -366,7 +406,7 @@ class TasksService(BaseService[Tasks]):
+                 obj_in = {
+                     "course_id": data["course_id"],
+                     "difficulty_id": data["difficulty_id"],
+-                    "task_content": data["task_content"],
++                    "task_content": keep_curated_title(data["task_content"], existing),
+                     "solution_rules": data.get("solution_rules"),
+                     "max_score": data.get("max_score"),
+                 }
+diff --git a/components/methodist/CourseDetail.tsx b/components/methodist/CourseDetail.tsx
+index e37c187..cdcb52a 100644
+--- a/components/methodist/CourseDetail.tsx
++++ b/components/methodist/CourseDetail.tsx
+@@ -136,9 +136,10 @@ export function CourseDetail({ courseId }: { courseId: number }) {
+   const foundMaterials = allMaterials.filter((m) =>
+     matches(query, m.title, m.external_uid, m.id),
+   );
+-  const foundTasks = allTasks.filter((t) =>
+-    matches(query, taskLabel(parseReviewTaskContent(t.task_content)?.stem, t.id), t.external_uid, t.id),
+-  );
++  const foundTasks = allTasks.filter((t) => {
++    const tc = parseReviewTaskContent(t.task_content);
++    return matches(query, taskLabel(tc?.title, tc?.stem, t.id), t.external_uid, t.id);
++  });
+   const materialsTrimmed = !showAllMaterials && foundMaterials.length > LIST_PREVIEW;
+   const tasksTrimmed = !showAllTasks && foundTasks.length > LIST_PREVIEW;
+   const shownMaterials = materialsTrimmed ? foundMaterials.slice(0, LIST_PREVIEW) : foundMaterials;
+@@ -349,29 +350,32 @@ export function CourseDetail({ courseId }: { courseId: number }) {
+                 ? "Активных заданий нет — возможно, все выключены. Переключитесь на «Все»."
+                 : "Выключенных заданий нет — все, что есть, активны."
+           }
+-          renderItem={(t: TaskRead, i: number, all: TaskRead[]) => (
+-            <TaskRow
+-              task={t}
+-              actions={
+-                canReorderTasks ? (
+-                  <ReorderControls
+-                    index={i}
+-                    total={all.length}
+-                    disabled={reorderTasks.isPending}
+-                    label={`Задание #${t.id}`}
+-                    onMove={(dir) =>
+-                      reorderTasks.mutate(
+-                        moveItem(all, i, dir).map((x, pos) => ({
+-                          task_id: x.id,
+-                          order_position: pos + 1,
+-                        })),
+-                      )
+-                    }
+-                  />
+-                ) : undefined
+-              }
+-            />
+-          )}
++          renderItem={(t: TaskRead, i: number, all: TaskRead[]) => {
++            const tc = parseReviewTaskContent(t.task_content);
++            return (
++              <TaskRow
++                task={t}
++                actions={
++                  canReorderTasks ? (
++                    <ReorderControls
++                      index={i}
++                      total={all.length}
++                      disabled={reorderTasks.isPending}
++                      label={taskLabel(tc?.title, tc?.stem, t.id)}
++                      onMove={(dir) =>
++                        reorderTasks.mutate(
++                          moveItem(all, i, dir).map((x, pos) => ({
++                            task_id: x.id,
++                            order_position: pos + 1,
++                          })),
++                        )
++                      }
++                    />
++                  ) : undefined
++                }
++              />
++            );
++          }}
+         />
+         {tasksTrimmed && (
+           <ShowAllButton
+@@ -551,7 +555,7 @@ function TaskRow({ task, actions }: { task: TaskRead; actions?: React.ReactNode
+             активных заданий. Рендерить её здесь нельзя — строка однострочная и
+             обрезается, поэтому теги снимаются, а не отрисовываются. */}
+         <p className="truncate text-sm font-medium" data-testid="task-row-label">
+-          {taskLabel(content?.stem, task.id)}
++          {taskLabel(content?.title, content?.stem, task.id)}
+         </p>
+         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+           <span className="font-mono">#{task.id}</span>
+diff --git a/components/methodist/MethodistGlobalSearch.tsx b/components/methodist/MethodistGlobalSearch.tsx
+index e4a9f61..b24d43b 100644
+--- a/components/methodist/MethodistGlobalSearch.tsx
++++ b/components/methodist/MethodistGlobalSearch.tsx
+@@ -275,7 +275,9 @@ function TaskSearchRow({ task }: { task: TaskRead }) {
+       className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/50 hover:bg-muted/40"
+     >
+       <div className="min-w-0 flex-1 space-y-0.5">
+-        <p className="truncate text-sm font-medium">{taskLabel(content?.stem, task.id)}</p>
++        <p className="truncate text-sm font-medium">
++          {taskLabel(content?.title, content?.stem, task.id)}
++        </p>
+         <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+           <span className="font-mono">#{task.id}</span>
+           {task.external_uid ? <span className="font-mono">{task.external_uid}</span> : null}
+diff --git a/components/methodist/TaskDetail.tsx b/components/methodist/TaskDetail.tsx
+index bfeb783..085be12 100644
+--- a/components/methodist/TaskDetail.tsx
++++ b/components/methodist/TaskDetail.tsx
+@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
+ import { StatTile } from "@/components/ui/stat-tile";
+ import { SiblingNav } from "@/components/ui/sibling-nav";
+ import { parseReviewTaskContent } from "@/lib/teacher/task-content";
++import { taskLabel } from "@/lib/task/plain-label";
+ import { TaskContentRenderer } from "@/components/task/TaskContentRenderer";
+ import { useTask, useTaskStats, useCourseTasks } from "@/lib/methodist/use-methodist-content";
+ import {
+@@ -93,9 +94,13 @@ export function TaskDetail({ taskId }: { taskId: number }) {
+       <div className="flex flex-wrap items-start justify-between gap-3">
+         <div className="space-y-1">
+           <h1 className="font-heading text-xl font-semibold md:text-2xl">
+-            Задание #{t.id}
++            {taskLabel(content?.title, content?.stem, t.id)}
+           </h1>
+           <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
++            {/* Номер переехал сюда из заголовка (tsk-612): заголовок занят
++                названием, а номер методисту всё ещё нужен — по нему ищут
++                задание и на него ссылаются в переписке. */}
++            <span className="font-mono">#{t.id}</span>
+             {t.external_uid ? <span className="font-mono">{t.external_uid}</span> : null}
+             {content?.type ? <span>{content.type}</span> : null}
+             {t.max_score != null ? <span>макс. балл {t.max_score}</span> : null}
+diff --git a/lib/task/plain-label.ts b/lib/task/plain-label.ts
+index 3d65b5f..befc025 100644
+--- a/lib/task/plain-label.ts
++++ b/lib/task/plain-label.ts
+@@ -77,9 +77,20 @@ export function toPlainLabel(stem: string | null | undefined): string {
+ }
+ 
+ /**
+- * Подпись задания для списка: очищенное условие либо запасной вариант
+- * «Задание #id», если чистить нечего.
++ * Подпись задания для списка: собственное название задания, иначе очищенное
++ * условие, иначе запасной вариант «Задание #id».
++ *
++ * Порядок тот же, что у бэкенда (`LMS/app/utils/task_title.py::humanize_task_title`),
++ * и это не совпадение: часть экранов получает подпись готовой с сервера, часть
++ * собирает её здесь из `task_content`. Разойдись эти приоритеты — одно и то же
++ * задание подписывалось бы в очереди преподавателя и в списке курса по-разному.
+  */
+-export function taskLabel(stem: string | null | undefined, taskId: number): string {
++export function taskLabel(
++  title: string | null | undefined,
++  stem: string | null | undefined,
++  taskId: number,
++): string {
++  const curated = title?.trim();
++  if (curated) return curated;
+   return toPlainLabel(stem) || `Задание #${taskId}`;
+ }
+diff --git a/lib/teacher/task-content.ts b/lib/teacher/task-content.ts
+index 4b80312..2c28fff 100644
+--- a/lib/teacher/task-content.ts
++++ b/lib/teacher/task-content.ts
+@@ -48,6 +48,8 @@ export interface ReviewTaskContent {
+   type: TaskType;
+   stem: string;
+   options: TaskOption[];
++  /** Собственное название задания, если оно заведено (tsk-612). */
++  title: string | null;
+   /** Число столбцов табличного ответа (TBL_COM), если задано заданием. */
+   tableColumns?: number;
+ }
+@@ -62,6 +64,7 @@ export function parseReviewTaskContent(raw: unknown): ReviewTaskContent | null {
+     type: r.data.type,
+     stem: r.data.stem,
+     options: (r.data.options ?? []) as TaskOption[],
++    title: r.data.title ?? null,
+     ...(r.data.table ? { tableColumns: r.data.table.columns } : {}),
+   };
+ }
+diff --git a/tests/unit/task-plain-label.test.ts b/tests/unit/task-plain-label.test.ts
+index 942de76..09ddec1 100644
+--- a/tests/unit/task-plain-label.test.ts
++++ b/tests/unit/task-plain-label.test.ts
+@@ -74,11 +74,27 @@ describe("toPlainLabel", () => {
+ 
+ describe("taskLabel", () => {
+   it("пустое условие даёт запасную подпись с номером", () => {
+-    expect(taskLabel(null, 5382)).toBe("Задание #5382");
+-    expect(taskLabel('<p><img src="x.png" alt=""></p>', 77)).toBe("Задание #77");
++    expect(taskLabel(null, null, 5382)).toBe("Задание #5382");
++    expect(taskLabel(null, '<p><img src="x.png" alt=""></p>', 77)).toBe("Задание #77");
+   });
+ 
+   it("непустое условие возвращается очищенным", () => {
+-    expect(taskLabel(STEM_WITH_HTML, 5382)).toContain('print("Привет!")');
++    expect(taskLabel(null, STEM_WITH_HTML, 5382)).toContain('print("Привет!")');
++  });
++
++  it("название задания важнее условия (tsk-612)", () => {
++    expect(taskLabel("Остаток от деления 17 на 5", STEM_WITH_HTML, 5382)).toBe(
++      "Остаток от деления 17 на 5",
++    );
++  });
++
++  it("пробельное название не считается названием", () => {
++    // Импорт присылал title="" (нормализуется в LMS), но пробелы в curated
++    // названии может оставить и человек — тогда подпись обязана вернуться
++    // к условию, а не стать пустой строкой в списке.
++    expect(taskLabel("   ", "Сколько будет два плюс два?", 5382)).toBe(
++      "Сколько будет два плюс два?",
++    );
++    expect(taskLabel("  ", null, 91)).toBe("Задание #91");
+   });
+ });

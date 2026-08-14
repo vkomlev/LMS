@@ -23,6 +23,46 @@ MANUALLY_EDITABLE_TASK_FIELDS: frozenset[str] = frozenset(
 )
 
 
+def _is_blank_title(value: Any) -> bool:
+    """True, если названия фактически нет: ключ отсутствует, null или пробелы."""
+    return not isinstance(value, str) or not value.strip()
+
+
+def keep_curated_title(incoming: Any, existing: Tasks) -> Any:
+    """Сохранить уже заведённое название задания, если импорт его не прислал.
+
+    Конвейеры публикации отправляют `title` пустой строкой (ContentBackbone:
+    `lms_import_file.py`, `wp_nav_import.py`) — источники заданий названий не
+    знают. Схема приводит пустую строку к `None` (tsk-107), а UPDATE в
+    `bulk_upsert` перезаписывает `task_content` целиком, поэтому переиздание
+    курса стирало бы названия, заведённые методистом или бэкфиллом tsk-612.
+
+    Название — редакторское свойство задания, а не свойство источника: молчание
+    источника означает «нечего сказать», а не «стереть». Поэтому старое
+    название переносится во входящий контент. Непустое название ИЗ ИМПОРТА
+    имеет приоритет — так источник, который названия всё-таки умеет (sdamgia),
+    остаётся хозяином своего поля.
+
+    Полем `content_provenance` эту защиту закрыть нельзя: пометка `manual_web`
+    замораживает `task_content` целиком, то есть заодно и условие задачи —
+    импорт перестал бы обновлять стем ради одного названия.
+
+    :param incoming: `task_content` из импорта (уже провалидированный dict).
+    :param existing: строка задания из БД.
+    :returns: `task_content` с сохранённым названием.
+    """
+    if not isinstance(incoming, dict) or not _is_blank_title(incoming.get("title")):
+        return incoming
+    current = (existing.task_content or {}).get("title")
+    if _is_blank_title(current):
+        return incoming
+    logger_provenance.info(
+        "tsk-612: импорт не прислал название задания %s — сохраняю заведённое",
+        getattr(existing, "id", None),
+    )
+    return {**incoming, "title": current}
+
+
 def _manually_edited_task_fields(existing: Tasks) -> frozenset[str]:
     """Поля задания, поправленные вручную и защищённые от перезаписи импортом.
 
@@ -366,7 +406,7 @@ class TasksService(BaseService[Tasks]):
                 obj_in = {
                     "course_id": data["course_id"],
                     "difficulty_id": data["difficulty_id"],
-                    "task_content": data["task_content"],
+                    "task_content": keep_curated_title(data["task_content"], existing),
                     "solution_rules": data.get("solution_rules"),
                     "max_score": data.get("max_score"),
                 }
