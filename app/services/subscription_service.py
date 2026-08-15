@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
@@ -190,6 +191,12 @@ async def change_plan(
     отдельный спорный вопрос (tsk-585, решение 14). Возвращает False, если план
     не найден или подписку сменили параллельно.
     """
+    # Перевод на тариф, который уже действует, — пустая операция. Без этого
+    # повторная доставка уведомления плодила бы строки истории: закрыла бы
+    # действующую и открыла точно такую же (tsk-301, Фаза 8).
+    if await _current_plan_code(db, student_id) == plan_code:
+        return False
+
     savepoint = await db.begin_nested()
     try:
         await db.execute(
@@ -264,5 +271,145 @@ async def grant_ai_package(
     logger.info(
         "tsk-301: ученику %s зачислен пакет на %s обращений (платёж %s)",
         student_id, units, gateway_payment_id or "выдан вручную",
+    )
+    return True
+
+
+#: Тарифы, которые человек может купить сам. Признак — есть тарифная группа
+#: (значит, есть цена) и НЕТ занятий: расписание заводит методист, и продавать
+#: его через кнопку нельзя — обещание, которое некому выполнить.
+async def purchasable_plans(db: AsyncSession) -> list[dict]:
+    rows = (
+        await db.execute(
+            text(
+                "SELECT p.code, p.name, p.upgrade_hint, p.ai_tutor_limit, "
+                "       t.price_minor, g.name AS group_name "
+                "  FROM subscription_plan p "
+                "  JOIN pricing_group g ON g.id = p.pricing_group_id "
+                "  JOIN pricing_tariff t ON t.group_id = g.id AND t.is_active "
+                "                       AND t.match_kind IS NULL "
+                " WHERE p.is_active AND NOT p.lessons "
+                " ORDER BY t.price_minor"
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def purchase_plan(
+    db: AsyncSession,
+    student_id: int,
+    plan_code: str,
+    *,
+    gateway_payment_id: str,
+    amount_minor: int,
+    today: Optional[date] = None,
+) -> bool:
+    """Зачислить оплаченную подписку: права сразу, деньги — по правилу месяца.
+
+    Замыкает круг «оплатил → начислено → доступ». Разорвать его в любом месте
+    значит либо дать доступ даром, либо взять деньги и не дать ничего.
+
+    **Правило первого месяца** (решение оператора 2026-08-08): покупка до 20-го
+    числа включительно оплачивает текущий месяц; позже — первое начисление
+    ставится за следующий, а остаток текущего даётся бесплатно. Человек не
+    должен платить полную цену за три дня ровно в тот момент, когда впервые
+    расстаётся с деньгами.
+
+    Идемпотентность держит уникальность платежа в `student_payment`: повторная
+    доставка уведомления вернёт False и ничего не изменит.
+
+    Returns:
+        True — подписка выдана и платёж зачтён; False — этот платёж уже учтён.
+    """
+    from app.core.config import Settings  # noqa: PLC0415
+    from app.services import charge_service, payment_service  # noqa: PLC0415
+
+    settings = Settings()
+    today = today or date.today()
+
+    # Правило продажи ровно то же, что и в витрине `purchasable_plans`: есть
+    # цена И нет занятий. Ослабить его здесь нельзя — сервис последняя линия, а
+    # код тарифа приходит из тела уведомления, то есть снаружи. Первая редакция
+    # проверяла только наличие цены, и через подделанное поле можно было бы
+    # получить «Базовый» по цене Self (поймано тестом до выката).
+    plan = (
+        await db.execute(
+            text(
+                "SELECT id, pricing_group_id FROM subscription_plan "
+                " WHERE code = :c AND is_active AND pricing_group_id IS NOT NULL "
+                "   AND NOT lessons"
+            ),
+            {"c": plan_code},
+        )
+    ).first()
+    if plan is None:
+        raise ValueError(f"тариф {plan_code!r} нельзя купить самостоятельно")
+
+    group_id = int(plan.pricing_group_id)
+    period = (
+        date(today.year, today.month, 1)
+        if today.day <= settings.first_month_charge_cutoff_day
+        else charge_service.next_month(date(today.year, today.month, 1))
+    )
+
+    # Порядок продиктован схемой: `student_payment` ссылается на строку
+    # начисления внешним ключом, поэтому записать платёж раньше, чем появится
+    # начисление, нельзя. Значит замком идемпотентности платёж быть не может —
+    # проверяем его существование ЯВНО, до всякой работы.
+    already = (
+        await db.execute(
+            text(
+                "SELECT 1 FROM student_payment "
+                " WHERE gateway = 'yookassa' AND gateway_payment_id = :txn"
+            ),
+            {"txn": gateway_payment_id},
+        )
+    ).first()
+    if already is not None:
+        logger.info(
+            "tsk-301: платёж %s за подписку уже учтён — повтор доставки",
+            gateway_payment_id,
+        )
+        return False
+
+    # Ранняя проверка выше не отменяет уникальный индекс ниже: между ними
+    # проходит гонка двух одновременных доставок (урок tsk-574).
+    await change_plan(
+        db, student_id, plan_code,
+        reason=f"tsk-301: самостоятельная покупка, платёж {gateway_payment_id}",
+    )
+    await db.commit()
+
+    # Начисление создаём ПОСЛЕ выдачи тарифа: расчёт берёт группу из
+    # действующей подписки, а до смены её там ещё нет. Считаем ИМЕННО целевой
+    # период: «открытые месяцы» следующий месяц не покрывают, а при покупке
+    # после порога платёж относится как раз к нему.
+    await charge_service.recalculate_student_group(
+        db, student_id=student_id, group_id=group_id, period=period
+    )
+    await db.commit()
+
+    recorded = await payment_service.record_gateway_payment(
+        db,
+        student_id=student_id,
+        group_id=group_id,
+        period=period,
+        amount_minor=amount_minor,
+        gateway="yookassa",
+        gateway_payment_id=gateway_payment_id,
+        paid_on=today,
+    )
+    if not recorded:
+        # Гонка: параллельная доставка успела записать платёж. Тариф уже выдан
+        # — это то же самое состояние, к которому шла и она.
+        logger.info(
+            "tsk-301: платёж %s записан параллельной доставкой", gateway_payment_id
+        )
+        return False
+    await db.commit()
+    logger.info(
+        "tsk-301: ученику %s выдана подписка %s за %s ₽, период %s",
+        student_id, plan_code, amount_minor // 100, period,
     )
     return True

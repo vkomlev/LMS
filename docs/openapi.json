@@ -33633,6 +33633,138 @@
         }
       }
     },
+    "/api/v1/payments/plans": {
+      "get": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Тарифы, которые можно купить самому",
+        "description": "Витрина самостоятельной покупки.\n\nОткрыта без авторизации намеренно: человек с улицы выбирает тариф ДО того,\nкак заведёт учётную запись. Секретов здесь нет — те же цены на сайте.",
+        "operationId": "purchasable_plans_api_v1_payments_plans_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Purchasable Plans Api V1 Payments Plans Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/payments/yookassa/subscription": {
+      "post": {
+        "tags": [
+          "payments_gateway"
+        ],
+        "summary": "Купить или сменить тариф самостоятельно",
+        "description": "Завести платёж за тариф. Права выдаются по уведомлению, а не здесь.\n\nСамому продаются только тарифы без занятий: расписание заводит методист, и\nпродавать через кнопку то, что некому выполнить, нельзя.",
+        "operationId": "start_subscription_payment_api_v1_payments_yookassa_subscription_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "plan_code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plan Code"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GatewayPaymentStart"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Этот тариф самому не купить"
+          },
+          "503": {
+            "description": "Оплата картой выключена"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/payments/yookassa/webhook": {
       "post": {
         "tags": [

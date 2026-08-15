@@ -206,6 +206,92 @@ async def start_ai_package_payment(
     )
 
 
+_PURPOSE_SUBSCRIPTION = "subscription"
+
+
+@router.get(
+    "/payments/plans",
+    summary="Тарифы, которые можно купить самому",
+)
+async def purchasable_plans(
+    db: AsyncSession = Depends(get_async_db),
+) -> list[dict]:
+    """Витрина самостоятельной покупки.
+
+    Открыта без авторизации намеренно: человек с улицы выбирает тариф ДО того,
+    как заведёт учётную запись. Секретов здесь нет — те же цены на сайте.
+    """
+    return await subscription_service.purchasable_plans(db)
+
+
+@router.post(
+    "/payments/yookassa/subscription",
+    response_model=GatewayPaymentStart,
+    summary="Купить или сменить тариф самостоятельно",
+    responses={
+        403: {"description": "Этот тариф самому не купить"},
+        503: {"description": "Оплата картой выключена"},
+    },
+)
+async def start_subscription_payment(
+    plan_code: str,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> GatewayPaymentStart:
+    """Завести платёж за тариф. Права выдаются по уведомлению, а не здесь.
+
+    Самому продаются только тарифы без занятий: расписание заводит методист, и
+    продавать через кнопку то, что некому выполнить, нельзя.
+    """
+    if current_user.is_service:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Оплата принимается только от пользователя, не от сервисного ключа",
+        )
+    if not yookassa_service.is_enabled():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, "Оплата картой сейчас недоступна"
+        )
+
+    plans = {p["code"]: p for p in await subscription_service.purchasable_plans(db)}
+    plan = plans.get(plan_code)
+    if plan is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Этот тариф нельзя купить самостоятельно — напишите преподавателю",
+        )
+
+    try:
+        payment = await yookassa_service.create_payment(
+            amount_minor=int(plan["price_minor"]),
+            description=f"Тариф «{plan['name']}», месяц",
+            return_url=f"{settings.public_base_url}/me/subscription",
+            metadata={
+                "purpose": _PURPOSE_SUBSCRIPTION,
+                "student_id": str(current_user.id),
+                "plan_code": plan_code,
+            },
+        )
+    except yookassa_service.GatewayDisabledError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    except yookassa_service.GatewayError as exc:
+        logger.warning("tsk-301: не удалось завести платёж за тариф: %s", exc)
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не ответил, попробуйте позже"
+        ) from exc
+
+    if payment.confirmation_url is None:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, "Платёжный сервис не вернул ссылку на оплату"
+        )
+    return GatewayPaymentStart(
+        payment_id=payment.id,
+        confirmation_url=payment.confirmation_url,
+        amount_minor=payment.amount_minor,
+        test_mode=payment.test,
+    )
+
+
 @router.post(
     "/payments/yookassa/webhook",
     status_code=status.HTTP_200_OK,
@@ -256,6 +342,8 @@ async def yookassa_webhook(
     # кто угодно, ответ приходит по нашему запросу с нашими ключами.
     if payment.metadata.get("purpose") == _PURPOSE_AI_PACKAGE:
         return await _record_ai_package(db, payment)
+    if payment.metadata.get("purpose") == _PURPOSE_SUBSCRIPTION:
+        return await _record_subscription(db, payment)
 
     charge_id = _as_int(payment.metadata.get("charge_id"))
     if charge_id is None:
@@ -323,6 +411,50 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "Не удалось зачислить пакет, повторите доставку уведомления",
+        ) from exc
+
+    return {"status": "recorded" if created else "already_recorded"}
+
+
+async def _record_subscription(db: AsyncSession, payment) -> dict:
+    """Выдать оплаченный тариф (пробел П6 контракта, вторая его половина).
+
+    Тот же принцип, что и у пакета: сбой отвечает 5xx, чтобы платёжный сервис
+    повторил доставку. Здесь цена ошибки выше — человек остался бы без доступа,
+    за который заплатил, и первым об этом узнал бы он сам.
+    """
+    student_id = _as_int(payment.metadata.get("student_id"))
+    plan_code = (payment.metadata.get("plan_code") or "").strip()
+    if student_id is None or not plan_code:
+        logger.error(
+            "tsk-301: платёж %s за тариф без ученика или кода тарифа (metadata=%s)",
+            payment.id, payment.metadata,
+        )
+        return {"status": "ignored"}
+
+    try:
+        created = await subscription_service.purchase_plan(
+            db, student_id, plan_code,
+            gateway_payment_id=payment.id,
+            amount_minor=payment.amount_minor,
+        )
+    except ValueError as exc:
+        # Тариф исчез или стал непродаваемым между заведением платежа и
+        # уведомлением. Повторять бессмысленно — нужен человек.
+        logger.error(
+            "tsk-301: ДЕНЬГИ СПИСАНЫ, ТАРИФ НЕ ВЫДАН — платёж %s, ученик %s, "
+            "тариф %s: %s", payment.id, student_id, plan_code, exc,
+        )
+        return {"status": "ignored"}
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "tsk-301: ДЕНЬГИ СПИСАНЫ, ТАРИФ НЕ ВЫДАН — платёж %s, ученик %s, "
+            "тариф %s: %s", payment.id, student_id, plan_code, exc, exc_info=True,
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Не удалось выдать тариф, повторите доставку уведомления",
         ) from exc
 
     return {"status": "recorded" if created else "already_recorded"}
