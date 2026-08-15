@@ -35,7 +35,15 @@ from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_PROJECT_ROOT))
+
+# Настройки берём из `.env` рядом с проектом — как это делает сам сервис. Без
+# этого скрипт падает на «нет DATABASE_URL» ещё на импорте: секреты в командную
+# строку не передаём (они уходят в аудит sudo и в `ps`, урок tsk-595).
+from dotenv import load_dotenv  # noqa: E402
+
+load_dotenv(dotenv_path=_PROJECT_ROOT / ".env", encoding="utf-8-sig")
 
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
