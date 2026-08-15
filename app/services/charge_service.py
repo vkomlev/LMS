@@ -149,12 +149,15 @@ async def lesson_counts_for_period(
 
 
 async def _base_price_minor(
-    db: AsyncSession, *, student_id: int, group_id: int
+    db: AsyncSession, *, student_id: int, group_id: int, period: date
 ) -> Optional[int]:
     """База месяца: ручная цена группы, иначе расчёт по тарифу.
 
     Ручная цена НЕ пропорционируется перерывом — договорённость с человеком не
     должна тихо уезжать. Расчётная цена пропорционируется.
+
+    `period` обязателен: расчёт берёт группу подписки, действовавшей на первое
+    число месяца, а не сегодняшнюю (контракт прав §7, tsk-585).
     """
     override = (
         await db.execute(
@@ -168,7 +171,7 @@ async def _base_price_minor(
     if override is not None:
         return int(override.price_minor)
 
-    for student in await pricing_service.list_student_pricing(db):
+    for student in await pricing_service.list_student_pricing(db, period=period):
         if student.student_id != student_id:
             continue
         for group in student.groups:
@@ -215,7 +218,9 @@ async def recalculate_student_group(
     Возвращает итог месяца в копейках либо None, если считать не из чего.
     """
     period = month_start(period)
-    base = await _base_price_minor(db, student_id=student_id, group_id=group_id)
+    base = await _base_price_minor(
+        db, student_id=student_id, group_id=group_id, period=period
+    )
     if base is None:
         # Считать больше не из чего (сняли ручную цену, курс перестал продаваться).
         # Открытую строку убираем: иначе она замрёт со старой суммой и останется
@@ -372,7 +377,9 @@ async def _ensure_charge_row(
     Намеренно без рекурсии в `recalculate_student_group`: цепочка закрытых
     месяцев не должна раскручиваться сама на себя.
     """
-    base = await _base_price_minor(db, student_id=student_id, group_id=group_id)
+    base = await _base_price_minor(
+        db, student_id=student_id, group_id=group_id, period=period
+    )
     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
     calculated = 0 if base is None else (
         base
@@ -461,9 +468,19 @@ async def recalculate_open_months_for_group(
                   FROM student_subscription s
                   JOIN users u ON u.id = s.student_id AND u.is_active
                  WHERE s.ends_on IS NULL AND s.pricing_group_id = :g
+                UNION
+                -- tsk-585: текущий месяц считается по группе, действовавшей на
+                -- первое число. Ученик, ушедший с этой группы среди месяца, всё
+                -- ещё считается по ней — правка её тарифа касается и его.
+                SELECT DISTINCT s.student_id
+                  FROM student_subscription s
+                  JOIN users u ON u.id = s.student_id AND u.is_active
+                 WHERE s.pricing_group_id = :g
+                   AND s.starts_on <= :p
+                   AND (s.ends_on IS NULL OR s.ends_on >= :p)
                 """
             ),
-            {"g": group_id},
+            {"g": group_id, "p": month_start(date.today())},
         )
     ).all()
     for row in students:
@@ -480,8 +497,11 @@ async def recalculate_for_student(
     """
     period = month_start(period or date.today())
     # tsk-301: группа берётся из подписки, если она есть, иначе из проданных
-    # курсов (прежнее поведение).
-    target_groups = await pricing_service.billing_group_ids(db, student_id=student_id)
+    # курсов (прежнее поведение). tsk-585: из подписки, действовавшей на ПЕРВОЕ
+    # ЧИСЛО периода, — смена тарифа посреди месяца текущий месяц не переписывает.
+    target_groups = await pricing_service.billing_group_ids(
+        db, student_id=student_id, period=period
+    )
 
     # К целевым добавляем группы, по которым у ученика УЖЕ есть открытая строка.
     # Без этого смена тарифа оставила бы прежнее начисление нетронутым: цикл
@@ -524,7 +544,7 @@ async def recalculate_for_student(
 async def recalculate_month(db: AsyncSession, *, period: date) -> int:
     """Пересчитать месяц по всем ученикам. Возвращает число затронутых строк."""
     period = month_start(period)
-    students = await pricing_service.list_student_pricing(db)
+    students = await pricing_service.list_student_pricing(db, period=period)
     touched = 0
     for student in students:
         for group in student.groups:

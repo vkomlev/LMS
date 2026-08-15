@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import text
@@ -67,26 +68,74 @@ __all__ = [
 # ------------------------------------------------- группа из подписки (tsk-301)
 
 
-async def active_subscription_groups(db: AsyncSession) -> dict[int, Optional[int]]:
-    """`student_id` → тарифная группа действующей подписки.
+#: Строка подписки, действовавшая на первое число расчётного месяца. `DISTINCT ON`
+#: с сортировкой по `starts_on DESC, id DESC` нужен из-за того, что смена тарифа
+#: закрывает старую строку и открывает новую ОДНОЙ И ТОЙ ЖЕ датой
+#: (`subscription_service.change_plan`): в день смены под условие попадают обе, и
+#: выиграть обязана новая — смена ровно первого числа действует с этого же месяца.
+_SUBSCRIPTION_AT_PERIOD_START = """
+WITH at_start AS (
+    SELECT DISTINCT ON (student_id) student_id, pricing_group_id
+      FROM student_subscription
+     WHERE starts_on <= :p AND (ends_on IS NULL OR ends_on >= :p)
+     ORDER BY student_id, starts_on DESC, id DESC
+),
+current_row AS (
+    SELECT student_id, pricing_group_id
+      FROM student_subscription
+     WHERE ends_on IS NULL
+)
+SELECT COALESCE(a.student_id, c.student_id)               AS student_id,
+       COALESCE(a.pricing_group_id, c.pricing_group_id)   AS pricing_group_id
+  FROM at_start a
+  FULL JOIN current_row c ON c.student_id = a.student_id
+"""
+
+
+async def active_subscription_groups(
+    db: AsyncSession, *, period: Optional[date] = None
+) -> dict[int, Optional[int]]:
+    """`student_id` → тарифная группа подписки.
 
     **Наличие ключа означает «подписка есть»**, а значение `None` — «денег нет
     вовсе» (Test, Demo, Выпускник). Различать это обязательно: отсутствие ключа
     возвращает ученика к прежнему поведению (группа из курса), а `None` деньги
     отменяет.
+
+    `period` разводит две разные вещи (контракт прав §7, tsk-585):
+
+    * **без периода** — строка, действующая СЕГОДНЯ. Так спрашивают права и
+      витрина: апгрейд включает возможности сразу;
+    * **с периодом** (первое число расчётного месяца) — так спрашивают ДЕНЬГИ.
+      Берётся группа строки, действовавшей на первое число; если на первое число
+      платной группы не было (первая покупка среди месяца), берётся текущая — это
+      «появление тарифа», оно начисление как раз создаёт.
+
+    Отсюда само собой выходит решение 14 брифа «права при апгрейде сразу, деньги
+    со следующего месяца»: смена тарифа посреди месяца не переписывает уже
+    названную человеку сумму, потому что расчёт смотрит на первое число.
     """
-    rows = (
-        await db.execute(
-            text(
-                "SELECT student_id, pricing_group_id FROM student_subscription "
-                " WHERE ends_on IS NULL"
+    if period is None:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT student_id, pricing_group_id FROM student_subscription "
+                    " WHERE ends_on IS NULL"
+                )
             )
-        )
-    ).all()
+        ).all()
+    else:
+        rows = (
+            await db.execute(
+                text(_SUBSCRIPTION_AT_PERIOD_START), {"p": period.replace(day=1)}
+            )
+        ).all()
     return {int(r.student_id): r.pricing_group_id for r in rows}
 
 
-async def billing_group_ids(db: AsyncSession, *, student_id: int) -> list[int]:
+async def billing_group_ids(
+    db: AsyncSession, *, student_id: int, period: Optional[date] = None
+) -> list[int]:
     """Группы, по которым считается месяц ученика. Подписка перекрывает курсы.
 
     Три исхода, и их нельзя схлопнуть в два:
@@ -99,8 +148,12 @@ async def billing_group_ids(db: AsyncSession, *, student_id: int) -> list[int]:
 
     Пока подписки никому не присвоены (до Фазы 5), третья ветка работает для
     всех — поэтому правка ничего не меняет в деньгах до самого присвоения.
+
+    `period` (первое число расчётного месяца) обязателен там, где считаются
+    деньги: без него смена тарифа посреди месяца немедленно переписала бы уже
+    открытое начисление (tsk-585).
     """
-    subs = await active_subscription_groups(db)
+    subs = await active_subscription_groups(db, period=period)
     if student_id in subs:
         group_id = subs[student_id]
         return [int(group_id)] if group_id is not None else []
@@ -355,11 +408,17 @@ async def set_course_pricing(
 # ---------------------------------------------------------------- расчёт по ученикам
 
 
-async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
+async def list_student_pricing(
+    db: AsyncSession, *, period: Optional[date] = None
+) -> list[StudentPricingRead]:
     """Расчётная цена по каждому ученику с активным зачислением на платный курс.
 
     Экран только для просмотра: он существует, чтобы расхождение расчёта с
     реальностью было видно глазами ДО того, как на эту модель сядут деньги.
+
+    `period` пробрасывается в резолвер группы: без него берётся действующая
+    подписка (витрина маркетолога — «как сейчас»), с ним — группа, действовавшая
+    на первое число месяца (расчёт денег, tsk-585).
     """
     rows = (
         await db.execute(
@@ -393,40 +452,46 @@ async def list_student_pricing(db: AsyncSession) -> list[StudentPricingRead]:
     # отбрасываем целиком и заменяем одной — по группе подписки. Дописывать
     # рядом нельзя: ученик Self, зачисленный на курс группы «Базовый», получил
     # бы два начисления за один продукт.
-    subs = await active_subscription_groups(db)
+    subs = await active_subscription_groups(db, period=period)
     if subs:
         rows = [r for r in rows if r.student_id not in subs]
-        rows = list(rows) + list(
-            (
-                await db.execute(
-                    text(
-                        """
-                        SELECT u.id                AS student_id,
-                               u.full_name,
-                               s.pricing_group_id  AS group_id,
-                               pg.name             AS group_name,
-                               (SELECT string_agg(c.title, ' · ' ORDER BY c.title)
-                                  FROM user_courses uc
-                                  JOIN courses c ON c.id = uc.course_id
-                                 WHERE uc.user_id = u.id AND uc.is_active)
-                                                   AS course_title,
-                               (SELECT count(*)
-                                  FROM lesson_slot_student lss
-                                  JOIN lesson_slot ls ON ls.id = lss.slot_id
-                                 WHERE lss.student_id = u.id
-                                   AND lss.is_active
-                                   AND ls.is_active) AS weekly_lessons
-                          FROM student_subscription s
-                          JOIN users u ON u.id = s.student_id AND u.is_active
-                          JOIN pricing_group pg ON pg.id = s.pricing_group_id
-                         WHERE s.ends_on IS NULL
-                           AND s.pricing_group_id IS NOT NULL
-                         ORDER BY u.full_name
-                        """
+        # Группы берём ИЗ РЕЗОЛВЕРА, а не повторным запросом по `ends_on IS NULL`:
+        # копия правила в двух местах разъезжается ровно тогда, когда правило
+        # меняется — а оно только что и поменялось (tsk-585).
+        paid = {sid: int(gid) for sid, gid in subs.items() if gid is not None}
+        if paid:
+            ids = sorted(paid)
+            rows = list(rows) + list(
+                (
+                    await db.execute(
+                        text(
+                            """
+                            SELECT u.id                AS student_id,
+                                   u.full_name,
+                                   m.group_id,
+                                   pg.name             AS group_name,
+                                   (SELECT string_agg(c.title, ' · ' ORDER BY c.title)
+                                      FROM user_courses uc
+                                      JOIN courses c ON c.id = uc.course_id
+                                     WHERE uc.user_id = u.id AND uc.is_active)
+                                                       AS course_title,
+                                   (SELECT count(*)
+                                      FROM lesson_slot_student lss
+                                      JOIN lesson_slot ls ON ls.id = lss.slot_id
+                                     WHERE lss.student_id = u.id
+                                       AND lss.is_active
+                                       AND ls.is_active) AS weekly_lessons
+                              FROM unnest(CAST(:ids AS int[]), CAST(:gids AS int[]))
+                                     AS m(student_id, group_id)
+                              JOIN users u ON u.id = m.student_id AND u.is_active
+                              JOIN pricing_group pg ON pg.id = m.group_id
+                             ORDER BY u.full_name
+                            """
+                        ),
+                        {"ids": ids, "gids": [paid[i] for i in ids]},
                     )
-                )
-            ).all()
-        )
+                ).all()
+            )
 
     tariffs = await _load_tariffs(db, only_active=True)
 
