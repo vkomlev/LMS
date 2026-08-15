@@ -1,0 +1,1532 @@
+diff --git a/app/api/v1/marketer_payments.py b/app/api/v1/marketer_payments.py
+index 1b4cb8a..f370071 100644
+--- a/app/api/v1/marketer_payments.py
++++ b/app/api/v1/marketer_payments.py
+@@ -17,10 +17,20 @@ from app.db.session import get_async_db
+ from app.schemas.payment import (
+     PaymentDecisionRequest,
+     PaymentExportRow,
++    PaymentPurpose,
+     PaymentRead,
+     PaymentStatus,
+ )
+-from app.services import payment_reminder_service, payment_service, yookassa_service
++from app.services import (
++    payment_reminder_service,
++    payment_service,
++    subscription_service,
++    yookassa_service,
++)
++
++#: Метка разовой покупки пакета — та же, что кладётся в metadata при заведении
++#: платежа (`payments_gateway`) и в строку платежа.
++_PURPOSE_AI_PACKAGE = payment_service.PURPOSE_AI_PACKAGE
+ 
+ logger = logging.getLogger(__name__)
+ settings = Settings()
+@@ -46,17 +56,28 @@ async def _payments_gate(
+     "/payments",
+     response_model=list[PaymentRead],
+     summary="Платежи: очередь на подтверждение и история",
+-    description="Без фильтра сверху идут платежи, ждущие решения.",
++    description=(
++        "Без фильтра сверху идут платежи, ждущие решения. Разовые покупки "
++        "(пакет обращений к наставнику) идут в том же списке: у них пусты месяц "
++        "и тарифная группа, а назначение видно в поле purpose."
++    ),
+ )
+ async def list_payments(
+     payment_status: Optional[PaymentStatus] = Query(default=None, alias="status"),
+     period: Optional[date] = Query(default=None),
+     student_id: Optional[int] = Query(default=None),
++    purpose: Optional[PaymentPurpose] = Query(
++        default=None, description="Оставить только платежи этого назначения"
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_payments_gate),
+ ) -> list[PaymentRead]:
+     rows = await payment_service.list_payments(
+-        db, status=payment_status, period=period, student_id=student_id
++        db,
++        status=payment_status,
++        period=period,
++        student_id=student_id,
++        purpose=purpose,
+     )
+     return [PaymentRead(**r) for r in rows]
+ 
+@@ -243,6 +264,19 @@ async def reconcile(
+     for payment in payments:
+         if not payment.paid:
+             continue
++        # tsk-615: разовая покупка попадала сюда как «платёж без начисления» —
++        # то есть сверка сама объявляла деньги необъяснимыми. Начисления у неё
++        # нет и не будет, зато есть назначение: учитываем по нему.
++        if payment.metadata.get("purpose") == _PURPOSE_AI_PACKAGE:
++            outcome = await _reconcile_ai_package(db, payment)
++            if outcome is None:
++                # Учесть нечем — нужен человек. Отличается от «уже учтено»:
++                # иначе каждая повторная сверка объявляла бы давно закрытую
++                # покупку проблемной, и список проблем перестали бы читать.
++                skipped_no_charge.append(payment.id)
++            elif outcome:
++                added += 1
++            continue
+         charge_id = payment.metadata.get("charge_id")
+         charge = (
+             await payment_service.charge_by_id(db, charge_id=int(charge_id))
+@@ -282,6 +316,46 @@ async def reconcile(
+     }
+ 
+ 
++async def _reconcile_ai_package(db: AsyncSession, payment) -> Optional[bool]:
++    """Дозакрыть разовую покупку пакета, если уведомление не дошло (tsk-615).
++
++    Тот же путь, что и у приёма уведомления, — иначе сверка чинила бы деньги, не
++    выдавая пакет, и человек остался бы с оплаченной, но невидимой покупкой.
++
++    Три исхода, и их нельзя сводить к двум:
++      * `True` — деньги учтены сейчас;
++      * `False` — они были учтены раньше (обычный случай повторной сверки);
++      * `None` — учесть нечем: в ответе шлюза нет ученика или объёма пакета.
++
++    Только третий исход попадает в список проблемных. Если бы «уже учтено»
++    считалось проблемой, каждая следующая сверка показывала бы давно закрытую
++    покупку как расхождение — и список перестали бы читать.
++    """
++    student_id = _as_int(payment.metadata.get("student_id"))
++    units = _as_int(payment.metadata.get("units"))
++    if student_id is None or units is None or units <= 0:
++        logger.error(
++            "tsk-615: сверка нашла платёж %s за пакет без ученика или объёма "
++            "(metadata=%s) — учесть нечем",
++            payment.id, payment.metadata,
++        )
++        return None
++
++    _, recorded = await subscription_service.record_ai_package_purchase(
++        db, student_id, units=units, gateway_payment_id=payment.id,
++        amount_minor=payment.amount_minor,
++    )
++    return recorded
++
++
++def _as_int(value: object) -> Optional[int]:
++    """Число из метаданных шлюза. Чужой ввод — поэтому через попытку."""
++    try:
++        return int(str(value))
++    except (TypeError, ValueError):
++        return None
++
++
+ async def _reload(db: AsyncSession, payment_id: int) -> PaymentRead:
+     """Перечитать платёж после решения — отдаём то, что реально в базе.
+ 
+diff --git a/app/api/v1/me_payments.py b/app/api/v1/me_payments.py
+index 0754fe9..2c74097 100644
+--- a/app/api/v1/me_payments.py
++++ b/app/api/v1/me_payments.py
+@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.api.deps import CurrentUser, get_current_user
+ from app.core.config import Settings
+ from app.db.session import get_async_db
+-from app.schemas.payment import StudentChargeRead
++from app.schemas.payment import StudentChargeRead, StudentPurchaseRead
+ from app.services import attachment_storage, payment_service
+ from app.utils.exceptions import DomainError
+ 
+@@ -167,6 +167,33 @@ async def my_charges(
+     return [StudentChargeRead(**r) for r in rows]
+ 
+ 
++@router.get(
++    "/purchases",
++    response_model=list[StudentPurchaseRead],
++    summary="Мои разовые покупки",
++    description=(
++        "Оплаченное не за месяц: пакет обращений к ИИ-наставнику и всё, что "
++        "появится дальше. Отдельным списком, потому что к месяцу такие покупки "
++        "не относятся. Родитель смотрит покупки ребёнка, передав его student_id."
++    ),
++)
++async def my_purchases(
++    student_id: Optional[int] = Query(
++        default=None, description="Ребёнок родителя; своё — не указывать"
++    ),
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(get_current_user),
++) -> list[StudentPurchaseRead]:
++    if current_user.is_service:
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "Покупки доступны только пользователю, не сервисному ключу",
++        )
++    target = await _resolve_student(db, current_user=current_user, student_id=student_id)
++    rows = await payment_service.list_student_purchases(db, student_id=target)
++    return [StudentPurchaseRead(**r) for r in rows]
++
++
+ @router.post(
+     "/payments",
+     status_code=status.HTTP_201_CREATED,
+diff --git a/app/api/v1/payments_gateway.py b/app/api/v1/payments_gateway.py
+index eb84934..a36cf3a 100644
+--- a/app/api/v1/payments_gateway.py
++++ b/app/api/v1/payments_gateway.py
+@@ -125,7 +125,9 @@ async def start_gateway_payment(
+ 
+ #: Назначение платежа в `metadata`. Без него уведомление о пакете было бы
+ #: неотличимо от уведомления об оплате месяца — а зачисляются они по-разному.
+-_PURPOSE_AI_PACKAGE = "ai_package"
++#: Метка одна на весь путь денег: тем же значением помечается строка платежа
++#: (`student_payment.purpose`), по нему же сверка узнаёт разовую покупку.
++_PURPOSE_AI_PACKAGE = payment_service.PURPOSE_AI_PACKAGE
+ 
+ 
+ @router.post(
+@@ -383,6 +385,10 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
+ 
+     Повторная доставка того же платежа безопасна: уникальный
+     `gateway_payment_id` не даст зачислить пакет дважды.
++
++    tsk-615: вместе с пакетом здесь же учитываются деньги за него. Раньше
++    записывался только пакет, и выручка от покупки не попадала ни в кабинет, ни
++    в выгрузку для сверки со шлюзом.
+     """
+     student_id = _as_int(payment.metadata.get("student_id"))
+     units = _as_int(payment.metadata.get("units"))
+@@ -396,11 +402,10 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
+         return {"status": "ignored"}
+ 
+     try:
+-        created = await subscription_service.grant_ai_package(
++        granted, recorded = await subscription_service.record_ai_package_purchase(
+             db, student_id, units=units, gateway_payment_id=payment.id,
+-            note="оплачено картой",
++            amount_minor=payment.amount_minor,
+         )
+-        await db.commit()
+     except Exception as exc:
+         await db.rollback()
+         logger.error(
+@@ -413,7 +418,7 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
+             "Не удалось зачислить пакет, повторите доставку уведомления",
+         ) from exc
+ 
+-    return {"status": "recorded" if created else "already_recorded"}
++    return {"status": "recorded" if (granted or recorded) else "already_recorded"}
+ 
+ 
+ async def _record_subscription(db: AsyncSession, payment) -> dict:
+diff --git a/app/db/migrations/versions/20260816_010000_tsk615_payment_purpose.py b/app/db/migrations/versions/20260816_010000_tsk615_payment_purpose.py
+new file mode 100644
+index 0000000..3abef52
+--- /dev/null
++++ b/app/db/migrations/versions/20260816_010000_tsk615_payment_purpose.py
+@@ -0,0 +1,117 @@
++"""tsk-615: платёж не только за месяц — назначение платежа полем.
++
++16.08.2026 прошла первая живая покупка пакета обращений к наставнику (500 ₽,
++tsk-301 Фаза 8). Деньги пришли, пакет зачислен, а в учёте платежей их не
++оказалось: `student_payment` ссылается на строку помесячного начисления
++внешним ключом `(student_id, group_id, period)`, а пакет к месяцу не привязан —
++он бессрочный и переносится. Положить такой платёж в таблицу было физически
++нельзя, и выручка от него не попадала ни в кабинет ученика, ни в выгрузку для
++сверки с ЮKassa.
++
++Решение оператора (2026-08-16): деньги остаются в ОДНОЙ таблице, а различает
++их назначение — `purpose`. Месяц и тарифная группа становятся необязательными:
++у разовой покупки их нет и быть не может.
++
++**Защита месячных платежей при этом не слабеет.** Составной внешний ключ в
++PostgreSQL по умолчанию `MATCH SIMPLE`: если хотя бы одна колонка ключа пуста,
++строка проверке не подлежит. То есть разовые покупки проходят мимо ссылки на
++начисление, а месячные проверяются ровно как раньше — включая `ON DELETE
++RESTRICT`, из-за которого пересчёт не может удалить месяц с принятыми деньгами.
++Чтобы «мимо ключа» не стало лазейкой для месячного платежа, пара держится
++жёстко: `purpose = 'monthly'` ⟺ месяц и группа заполнены.
++
++Почему список назначений — в CHECK, а не свободной строкой: опечатка в коде
++(`ai_pakage`) иначе тихо создала бы третий класс денег, который не показывается
++нигде и обнаружился бы расхождением сверки. Новая разовая продажа = миграция на
++одну строку — это осознанная плата за то, чтобы деньги нельзя было потерять
++опиской.
++
++Rollback: `alembic downgrade tsk610_billing_exempt`. Откат ОСОЗНАННО падает,
++если в таблице уже есть разовые покупки: вернуть `NOT NULL` можно только
++удалив их, а это удаление денег. Сначала выгрузить такие строки
++(`SELECT * FROM student_payment WHERE purpose <> 'monthly'`) и решить, куда их
++деть, потом откатывать.
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk615_payment_purpose"
++down_revision: Union[str, None] = "tsk610_billing_exempt"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++#: Назначения платежа. `monthly` — оплата месяца обучения (весь прежний учёт),
++#: `ai_package` — разовая покупка пакета обращений к наставнику.
++_PURPOSES_SQL = "purpose IN ('monthly', 'ai_package')"
++
++
++def upgrade() -> None:
++    op.add_column(
++        "student_payment",
++        sa.Column(
++            "purpose",
++            sa.Text(),
++            nullable=False,
++            server_default=sa.text("'monthly'"),
++            comment=(
++                "За что платили: monthly — месяц обучения, ai_package — разовый "
++                "пакет обращений к наставнику (tsk-615)"
++            ),
++        ),
++    )
++    # Все восемь существующих строк — оплата месяца: другого пути в таблицу до
++    # сегодняшнего дня не было. Значение по умолчанию проставило это само.
++    op.alter_column("student_payment", "group_id", existing_type=sa.Integer(), nullable=True)
++    op.alter_column("student_payment", "period", existing_type=sa.Date(), nullable=True)
++
++    op.create_check_constraint(
++        "ck_student_payment_purpose",
++        "student_payment",
++        _PURPOSES_SQL,
++    )
++    # Ровно тот инвариант, который заменяет утраченный NOT NULL: месячный платёж
++    # обязан указывать месяц и группу (и тогда его проверит внешний ключ на
++    # начисление), разовый — обязан не указывать НИ ОДНОГО из двух.
++    #
++    # Условие записано двумя полными ветвями, а не равенством
++    # `(purpose = 'monthly') = (group_id IS NOT NULL AND period IS NOT NULL)`:
++    # то равенство пропускало разовую покупку с заполненным месяцем, но пустой
++    # группой. Внешний ключ такую строку тоже пропускает (при частично пустом
++    # ключе `MATCH SIMPLE` не проверяет ничего), и в таблице появился бы месяц,
++    # не подтверждённый ни одним начислением.
++    op.create_check_constraint(
++        "ck_student_payment_purpose_charge_link",
++        "student_payment",
++        "(purpose =  'monthly' AND group_id IS NOT NULL AND period IS NOT NULL) OR "
++        "(purpose <> 'monthly' AND group_id IS NULL     AND period IS NULL)",
++    )
++    # Разовые покупки ученика — отдельный экран в кабинете, отдельный запрос.
++    op.create_index(
++        "ix_student_payment_one_off",
++        "student_payment",
++        ["student_id", "created_at"],
++        postgresql_where=sa.text("purpose <> 'monthly'"),
++    )
++
++
++def downgrade() -> None:
++    conn = op.get_bind()
++    stuck = conn.execute(
++        sa.text("SELECT count(*) FROM student_payment WHERE purpose <> 'monthly'")
++    ).scalar_one()
++    if stuck:
++        raise RuntimeError(
++            f"Откат остановлен: в student_payment есть разовых покупок: {stuck}. "
++            "Вернуть NOT NULL на месяц можно только удалив их, а это удаление "
++            "принятых денег. Выгрузите строки "
++            "(SELECT * FROM student_payment WHERE purpose <> 'monthly') и решите, "
++            "куда их деть, до отката."
++        )
++    op.drop_index("ix_student_payment_one_off", table_name="student_payment")
++    op.drop_constraint("ck_student_payment_purpose_charge_link", "student_payment")
++    op.drop_constraint("ck_student_payment_purpose", "student_payment")
++    op.alter_column("student_payment", "period", existing_type=sa.Date(), nullable=False)
++    op.alter_column("student_payment", "group_id", existing_type=sa.Integer(), nullable=False)
++    op.drop_column("student_payment", "purpose")
+diff --git a/app/schemas/payment.py b/app/schemas/payment.py
+index 5e08634..a7af9b9 100644
+--- a/app/schemas/payment.py
++++ b/app/schemas/payment.py
+@@ -13,17 +13,27 @@ from pydantic import BaseModel, Field
+ 
+ PaymentMethod = Literal["manual", "gateway"]
+ PaymentStatus = Literal["pending", "confirmed", "rejected"]
++#: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
++#: разовая покупка, у которой месяца нет.
++PaymentPurpose = Literal["monthly", "ai_package"]
+ 
+ 
+ class PaymentRead(BaseModel):
+-    """Платёж глазами кабинета маркетолога."""
++    """Платёж глазами кабинета маркетолога.
++
++    Месяц и тарифная группа пусты у разовой покупки: пакет обращений к
++    наставнику не относится ни к какому месяцу (tsk-615).
++    """
+ 
+     id: int
+     student_id: int
+     full_name: Optional[str] = None
+-    group_id: int
+-    group_name: str
+-    period: date
++    group_id: Optional[int] = None
++    group_name: Optional[str] = None
++    period: Optional[date] = None
++    purpose: PaymentPurpose = "monthly"
++    #: Назначение словами — чтобы на экране не стоял машинный код.
++    purpose_name: str = "Обучение за месяц"
+     amount_minor: int
+     method: PaymentMethod
+     status: PaymentStatus
+@@ -42,8 +52,9 @@ class PaymentRead(BaseModel):
+     #: Сумма месяца и остаток по нему БЕЗ учёта этого платежа. Без них решение
+     #: принимается вслепую: платёж на 55 000 вместо 5 500 и второй такой же чек
+     #: выглядят на экране нормально, если не с чем сравнить.
+-    charge_total_minor: int
+-    charge_due_minor: int
++    #: У разовой покупки пусто, а не ноль: ноль читался бы как «месяц оплачен».
++    charge_total_minor: Optional[int] = None
++    charge_due_minor: Optional[int] = None
+ 
+ 
+ class StudentPaymentRead(BaseModel):
+@@ -62,6 +73,28 @@ class StudentPaymentRead(BaseModel):
+     created_at: datetime
+ 
+ 
++class StudentPurchaseRead(BaseModel):
++    """Разовая покупка глазами того, кто платил (tsk-615).
++
++    Месяца здесь нет намеренно: покупка к нему не относится, и колонка «период»
++    в таком списке только сбивала бы с толку.
++    """
++
++    id: int
++    purpose: PaymentPurpose
++    #: Что именно купили — словами.
++    purpose_name: str
++    amount_minor: int
++    method: PaymentMethod
++    status: PaymentStatus
++    payer_note: Optional[str] = None
++    paid_on: Optional[date] = None
++    #: Почему отклонили — иначе отказ выглядит как пропавшие деньги.
++    review_note: Optional[str] = None
++    reviewed_at: Optional[datetime] = None
++    created_at: datetime
++
++
+ class StudentChargeRead(BaseModel):
+     """Месяц в кабинете ученика: сколько начислено, сколько пришло, что осталось."""
+ 
+@@ -112,13 +145,19 @@ class PaymentDecisionRequest(BaseModel):
+ 
+ 
+ class PaymentExportRow(BaseModel):
+-    """Строка выгрузки для сверки с чеками «Мой налог»."""
++    """Строка выгрузки для сверки с чеками «Мой налог» и с приходом в ЮKassa.
++
++    Разовые покупки идут здесь же — у них пусты месяц и группа, а назначение
++    показывает, за что взяты деньги.
++    """
+ 
+     id: int
+     on_date: date
+     full_name: Optional[str] = None
+-    group_name: str
+-    period: date
++    group_name: Optional[str] = None
++    period: Optional[date] = None
++    purpose: PaymentPurpose = "monthly"
++    purpose_name: str = "Обучение за месяц"
+     amount_minor: int
+     method: PaymentMethod
+     gateway: Optional[str] = None
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index 2a10942..6e4f961 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -7,6 +7,16 @@
+ Оплаченность не хранится полем: она каждый раз выводится суммой подтверждённых
+ платежей против итога начисления. Так частичная оплата, правка суммы месяца и
+ перенос с прошлого месяца не разъезжаются между двумя источниками правды.
++
++tsk-615: не всякий платёж относится к месяцу. Разовая покупка (пакет обращений
++к наставнику и всё, что дальше продадим не за месяц) живёт в этой же таблице,
++но с `purpose <> 'monthly'` и пустыми `group_id`/`period`. Разные таблицы под
++разные продажи разъехались бы: сверку со шлюзом, выгрузку для «Мой налог» и
++кабинет пришлось бы держать в двух местах, а номер платежа ЮKassa перестал бы
++быть уникальным на все деньги сразу.
++
++Отсюда правило для всех подсчётов месяца: они фильтруют по `period`/`group_id`,
++поэтому разовая покупка в них не попадает сама собой — и не гасит чужой долг.
+ """
+ 
+ from __future__ import annotations
+@@ -28,6 +38,9 @@ settings = Settings()
+ 
+ __all__ = [
+     "PaymentStatus",
++    "PaymentPurpose",
++    "PURPOSE_AI_PACKAGE",
++    "PURPOSE_NAMES",
+     "DuplicatePaymentError",
+     "ChargePaymentState",
+     "due_date_for",
+@@ -36,6 +49,7 @@ __all__ = [
+     "attach_payment_state",
+     "charge_for_student",
+     "list_student_charges",
++    "list_student_purchases",
+     "create_manual_payment",
+     "record_gateway_payment",
+     "record_staff_payment",
+@@ -50,6 +64,23 @@ __all__ = [
+ 
+ PaymentStatus = Literal["pending", "confirmed", "rejected"]
+ 
++#: За что заплатили. Список закрыт и продублирован в CHECK таблицы: новая
++#: разовая продажа добавляется сюда И миграцией — чтобы описка не создала класс
++#: денег, который не показывается нигде (tsk-615).
++PaymentPurpose = Literal["monthly", "ai_package"]
++
++#: Разовая покупка пакета обращений. Тем же значением помечается платёж в
++#: `metadata` ЮKassa — одна метка на оба конца: по ней и приём уведомления, и
++#: сверка понимают, что начисления у этих денег нет и искать его не нужно.
++PURPOSE_AI_PACKAGE = "ai_package"
++
++#: Назначение человеку — в кабинет ученика и в выгрузку. Иначе в списке
++#: покупок стоял бы машинный код.
++PURPOSE_NAMES: dict[str, str] = {
++    "monthly": "Обучение за месяц",
++    "ai_package": "Пакет обращений к ИИ-наставнику",
++}
++
+ 
+ class DuplicatePaymentError(RuntimeError):
+     """Такой же чек уже отправлен и ещё не разобран."""
+@@ -125,6 +156,11 @@ async def _totals_by_charge(
+ 
+     Одним запросом на весь список: иначе экран начислений дал бы запрос на
+     строку и разъехался бы по времени между строками.
++
++    Разовые покупки сюда не идут: у них нет месяца, и деньги за пакет не должны
++    гасить долг за обучение. Фильтр по `purpose` стоит явно, а не полагается на
++    то, что NULL-месяц не сойдётся с ключом группировки, — иначе связь была бы
++    случайной и первая же строка с частично заполненным месяцем всё сломала бы.
+     """
+     rows = (
+         await db.execute(
+@@ -136,7 +172,8 @@ async def _totals_by_charge(
+                   FROM student_payment
+                  -- CAST на параметре: у необязательного фильтра asyncpg иначе
+                  -- не может вывести тип NULL и роняет запрос целиком.
+-                 WHERE (CAST(:p AS date) IS NULL OR period = CAST(:p AS date))
++                 WHERE purpose = 'monthly'
++                   AND (CAST(:p AS date) IS NULL OR period = CAST(:p AS date))
+                    AND (CAST(:s AS integer) IS NULL OR student_id = CAST(:s AS integer))
+                  GROUP BY student_id, group_id, period
+                 """
+@@ -276,7 +313,11 @@ async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dic
+ async def _payments_by_charge(
+     db: AsyncSession, *, student_id: int
+ ) -> dict[tuple[int, date], list[dict]]:
+-    """История платежей ученика, разложенная по месяцам и группам."""
++    """История платежей ЗА МЕСЯЦЫ, разложенная по месяцам и группам.
++
++    Разовые покупки живут в той же таблице, но месяца у них нет — их отдаёт
++    `list_student_purchases` отдельным списком.
++    """
+     rows = (
+         await db.execute(
+             text(
+@@ -285,7 +326,7 @@ async def _payments_by_charge(
+                        receipt_name, payer_note, paid_on, review_note,
+                        reviewed_at, created_at
+                   FROM student_payment
+-                 WHERE student_id = :s
++                 WHERE student_id = :s AND purpose = 'monthly'
+                  ORDER BY created_at DESC
+                 """
+             ),
+@@ -311,6 +352,36 @@ async def _payments_by_charge(
+     return grouped
+ 
+ 
++async def list_student_purchases(db: AsyncSession, *, student_id: int) -> list[dict]:
++    """Разовые покупки ученика — то, что оплачено не за месяц (tsk-615).
++
++    Отдельный список, а не строки внутри месяцев: у покупки нет месяца, и
++    приписать её к какому-нибудь ближайшему значило бы соврать в обе стороны —
++    и в истории покупок, и в оплаченности того месяца.
++
++    Отклонённые не прячем: человек, отправивший деньги, должен видеть, что с
++    ними стало, иначе покупка выглядит пропавшей.
++    """
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT id, purpose, amount_minor, method, status,
++                       payer_note, paid_on, review_note, reviewed_at, created_at
++                  FROM student_payment
++                 WHERE student_id = :s AND purpose <> 'monthly'
++                 ORDER BY COALESCE(paid_on, created_at::date) DESC, id DESC
++                """
++            ),
++            {"s": student_id},
++        )
++    ).all()
++    return [
++        {**dict(r._mapping), "purpose_name": PURPOSE_NAMES.get(r.purpose, r.purpose)}
++        for r in rows
++    ]
++
++
+ async def create_manual_payment(
+     db: AsyncSession,
+     *,
+@@ -384,12 +455,14 @@ async def record_gateway_payment(
+     db: AsyncSession,
+     *,
+     student_id: int,
+-    group_id: int,
+-    period: date,
++    group_id: Optional[int],
++    period: Optional[date],
+     amount_minor: int,
+     gateway: str,
+     gateway_payment_id: str,
+     paid_on: Optional[date],
++    purpose: PaymentPurpose = "monthly",
++    review_note: str = "Оплата картой, подтверждена шлюзом",
+ ) -> bool:
+     """Зачесть платёж, пришедший от шлюза. `True` — записали, `False` — уже был.
+ 
+@@ -400,17 +473,25 @@ async def record_gateway_payment(
+     Идемпотентность держится на уникальном индексе по паре «шлюз + номер
+     транзакции», а не на проверке в коде: повторная доставка уведомления —
+     обычное дело, и две одновременные доставки не должны разойтись в гонке.
++
++    tsk-615: у разовой покупки (`purpose <> 'monthly'`) месяца и группы нет —
++    передаются пустыми. Пару «назначение ↔ месяц» держит CHECK таблицы, поэтому
++    перепутать здесь нельзя молча: месячный платёж без месяца не запишется.
++
++    **CAST на месяце и группе обязателен**: у разовой покупки оба параметра
++    приходят пустыми, и без явного типа asyncpg не выводит тип NULL — запрос
++    падает целиком (та же гоча, что у необязательных фильтров выше).
+     """
+     res = await db.execute(
+         text(
+             """
+             INSERT INTO student_payment
+                    (student_id, group_id, period, amount_minor, method,
+-                    gateway, gateway_payment_id, paid_on,
++                    gateway, gateway_payment_id, paid_on, purpose,
+                     status, reviewed_at, review_note)
+-            VALUES (:s, :g, :p, :amt, 'gateway',
+-                    :gw, :txn, :paid_on,
+-                    'confirmed', now(), 'Оплата картой, подтверждена шлюзом')
++            VALUES (:s, CAST(:g AS integer), CAST(:p AS date), :amt, 'gateway',
++                    :gw, :txn, :paid_on, :purpose,
++                    'confirmed', now(), :note)
+             ON CONFLICT (gateway, gateway_payment_id)
+                 WHERE gateway_payment_id IS NOT NULL
+             DO NOTHING
+@@ -425,6 +506,8 @@ async def record_gateway_payment(
+             "gw": gateway,
+             "txn": gateway_payment_id,
+             "paid_on": paid_on,
++            "purpose": purpose,
++            "note": review_note,
+         },
+     )
+     row = res.first()
+@@ -437,10 +520,11 @@ async def record_gateway_payment(
+         )
+         return False
+     logger.info(
+-        "tsk-010: платёж картой %s зачтён ученику %s за %s на %s коп. (транзакция %s)",
++        "tsk-010: платёж картой %s зачтён ученику %s (%s, %s) на %s коп. (транзакция %s)",
+         row.id,
+         student_id,
+-        period,
++        purpose,
++        period or "без месяца",
+         amount_minor,
+         gateway_payment_id,
+     )
+@@ -524,6 +608,7 @@ async def list_payments(
+     period: Optional[date] = None,
+     student_id: Optional[int] = None,
+     payment_id: Optional[int] = None,
++    purpose: Optional[str] = None,
+ ) -> list[dict]:
+     """Платежи для кабинета маркетолога: очередь и история.
+ 
+@@ -533,6 +618,11 @@ async def list_payments(
+ 
+     Фильтры складываются в самом запросе, а не постфильтром в Python: иначе
+     ограничение выборки молча срезало бы часть строк ещё до фильтрации.
++
++    tsk-615: разовые покупки идут в том же списке — это и есть деньги школы, а
++    не отдельная касса. Начисление и тарифная группа у них пусты, поэтому оба
++    соединения ЛЕВЫЕ: внутреннее молча выбрасывало бы такие строки из списка, и
++    учёт остался бы ровно так же невидим, как до этой задачи.
+     """
+     rows = (
+         await db.execute(
+@@ -544,6 +634,7 @@ async def list_payments(
+                        p.group_id,
+                        pg.name AS group_name,
+                        p.period,
++                       p.purpose,
+                        p.amount_minor,
+                        p.method,
+                        p.status,
+@@ -568,8 +659,8 @@ async def list_payments(
+                        COALESCE(paid.total, 0)      AS charge_paid_minor
+                   FROM student_payment p
+                   JOIN users u ON u.id = p.student_id
+-                  JOIN pricing_group pg ON pg.id = p.group_id
+-                  JOIN student_monthly_charge ch
++                  LEFT JOIN pricing_group pg ON pg.id = p.group_id
++                  LEFT JOIN student_monthly_charge ch
+                        ON ch.student_id = p.student_id
+                       AND ch.group_id = p.group_id
+                       AND ch.period = p.period
+@@ -595,10 +686,17 @@ async def list_payments(
+                    AND (CAST(:p AS date) IS NULL OR p.period = CAST(:p AS date))
+                    AND (CAST(:s AS integer) IS NULL OR p.student_id = CAST(:s AS integer))
+                    AND (CAST(:id AS integer) IS NULL OR p.id = CAST(:id AS integer))
++                   AND (CAST(:pu AS text) IS NULL OR p.purpose = CAST(:pu AS text))
+                  ORDER BY (p.status = 'pending') DESC, p.created_at DESC
+                 """
+             ),
+-            {"st": status, "p": period, "s": student_id, "id": payment_id},
++            {
++                "st": status,
++                "p": period,
++                "s": student_id,
++                "id": payment_id,
++                "pu": purpose,
++            },
+         )
+     ).all()
+     result: list[dict] = []
+@@ -607,12 +705,21 @@ async def list_payments(
+         calculated_minor = row.pop("calculated_minor")
+         manual_minor = row.pop("manual_minor")
+         adjustments_minor = int(row.pop("adjustments_minor"))
++        paid = int(row.pop("charge_paid_minor"))
++        row["purpose_name"] = PURPOSE_NAMES.get(row["purpose"], row["purpose"])
++        if calculated_minor is None:
++            # Разовая покупка: месяца нет, значит нет ни суммы месяца, ни
++            # остатка по нему. Ноль тут был бы хуже пустоты — он читается как
++            # «месяц оплачен полностью» и превратил бы экран в неправду.
++            row["charge_total_minor"] = None
++            row["charge_due_minor"] = None
++            result.append(row)
++            continue
+         total = charge_service.charge_total_minor(
+             calculated_minor=calculated_minor,
+             manual_minor=manual_minor,
+             adjustments_minor=adjustments_minor,
+         )
+-        paid = int(row.pop("charge_paid_minor"))
+         row["charge_total_minor"] = total
+         # Остаток — фактический на сейчас: у ожидающего платежа он ещё не
+         # учитывает его самого (видно, что закроется по нажатию «получены»), у
+@@ -710,6 +817,11 @@ async def export_confirmed(
+     Дата берётся по дню платежа, а не по дню подтверждения: сверяем с тем, когда
+     деньги реально пришли. Если день платежа не указан, подставляем день
+     заведения записи — иначе такой платёж выпал бы из выгрузки совсем.
++
++    tsk-615: разовые покупки входят в выгрузку наравне с месяцами — именно по
++    ней сверяют приход со шлюзом, и пропуск класса платежей означал бы, что
++    сумма в ЮKassa всегда больше, чем в системе. Соединение с тарифной группой
++    ЛЕВОЕ: у покупки группы нет, а внутреннее её бы отбросило.
+     """
+     rows = (
+         await db.execute(
+@@ -720,6 +832,7 @@ async def export_confirmed(
+                        u.full_name,
+                        pg.name AS group_name,
+                        p.period,
++                       p.purpose,
+                        p.amount_minor,
+                        p.method,
+                        p.gateway,
+@@ -727,7 +840,7 @@ async def export_confirmed(
+                        p.reviewed_at
+                   FROM student_payment p
+                   JOIN users u ON u.id = p.student_id
+-                  JOIN pricing_group pg ON pg.id = p.group_id
++                  LEFT JOIN pricing_group pg ON pg.id = p.group_id
+                  WHERE p.status = 'confirmed'
+                    AND COALESCE(p.paid_on, p.created_at::date) BETWEEN :d1 AND :d2
+                  ORDER BY on_date, u.full_name
+@@ -736,7 +849,10 @@ async def export_confirmed(
+             {"d1": date_from, "d2": date_to},
+         )
+     ).all()
+-    return [dict(r._mapping) for r in rows]
++    return [
++        {**dict(r._mapping), "purpose_name": PURPOSE_NAMES.get(r.purpose, r.purpose)}
++        for r in rows
++    ]
+ 
+ 
+ async def student_ids_for_parent(db: AsyncSession, *, parent_id: int) -> list[int]:
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index ac7305b..caf528a 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -275,6 +275,60 @@ async def grant_ai_package(
+     return True
+ 
+ 
++async def record_ai_package_purchase(
++    db: AsyncSession,
++    student_id: int,
++    *,
++    units: int,
++    gateway_payment_id: str,
++    amount_minor: int,
++    paid_on: Optional[date] = None,
++) -> tuple[bool, bool]:
++    """Зачислить оплаченный пакет И учесть деньги за него (tsk-615).
++
++    Пакет и платёж — две половины одного события, поэтому они здесь вместе и в
++    одной транзакции: до tsk-615 зачислялся только пакет, и первая же живая
++    покупка (500 ₽, 16.08.2026) осталась вне учёта — в ЮKassa деньги были, в
++    LMS их не было нигде.
++
++    Платёж пишется БЕЗ месяца: покупка бессрочная и к месяцу не относится.
++    Коммит происходит внутри записи платежа и закрепляет обе вставки разом —
++    иначе сбой между ними оставил бы пакет без денег или деньги без пакета.
++
++    Повтор доставки уведомления безопасен с любой стороны: у пакета уникален
++    номер платежа, у платежа — пара «шлюз + номер». Если пакет уже был, а
++    платёж почему-то нет (так выглядят покупки до этой задачи), запишется
++    только платёж — ровно то, что нужно для сверки.
++
++    Returns:
++        Пара «зачислен ли пакет сейчас, записан ли платёж сейчас».
++    """
++    from app.services import payment_service  # noqa: PLC0415
++
++    granted = await grant_ai_package(
++        db, student_id, units=units,
++        gateway_payment_id=gateway_payment_id, note="оплачено картой",
++    )
++    recorded = await payment_service.record_gateway_payment(
++        db,
++        student_id=student_id,
++        group_id=None,
++        period=None,
++        amount_minor=amount_minor,
++        gateway="yookassa",
++        gateway_payment_id=gateway_payment_id,
++        paid_on=paid_on or date.today(),
++        purpose="ai_package",
++        review_note="Пакет обращений к наставнику, оплачен картой",
++    )
++    if not granted and not recorded:
++        logger.info(
++            "tsk-615: платёж %s за пакет уже учтён целиком — повтор доставки",
++            gateway_payment_id,
++        )
++    return granted, recorded
++
++
+ #: Тарифы, которые человек может купить сам. Признак — есть тарифная группа
+ #: (значит, есть цена) и НЕТ занятий: расписание заводит методист, и продавать
+ #: его через кнопку нельзя — обещание, которое некому выполнить.
+diff --git a/app/services/yookassa_service.py b/app/services/yookassa_service.py
+index 7deef5d..032595c 100644
+--- a/app/services/yookassa_service.py
++++ b/app/services/yookassa_service.py
+@@ -18,7 +18,7 @@ from __future__ import annotations
+ import logging
+ import uuid
+ from dataclasses import dataclass
+-from datetime import date
++from datetime import date, datetime
+ from typing import Any, Optional
+ 
+ import httpx
+@@ -64,6 +64,10 @@ class GatewayPayment:
+     #: Признак тестового платежа. Боевой контур обязан на него смотреть.
+     test: bool
+     metadata: dict[str, Any]
++    #: Когда деньги реально захвачены, по данным шлюза (UTC). Нужна там, где
++    #: платёж учитывается задним числом: «сегодня» тогда не дата платежа, а
++    #: дата разбора, и сверка с чеками разъедется на эту разницу (tsk-615).
++    captured_at: Optional[datetime] = None
+ 
+ 
+ def is_test_mode() -> bool:
+@@ -110,9 +114,25 @@ def _parse(payload: dict[str, Any]) -> GatewayPayment:
+         confirmation_url=confirmation.get("confirmation_url"),
+         test=bool(payload.get("test")),
+         metadata=dict(payload.get("metadata") or {}),
++        captured_at=_as_datetime(payload.get("captured_at") or payload.get("created_at")),
+     )
+ 
+ 
++def _as_datetime(raw: Any) -> Optional[datetime]:
++    """Дата из ответа шлюза. Формат ISO с `Z`, который `fromisoformat` не берёт.
++
++    Разбор не должен ронять приём платежа: дата — сведение для сверки, а не
++    условие зачисления денег. Не разобралось — считаем, что её нет.
++    """
++    if not raw:
++        return None
++    try:
++        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
++    except ValueError:
++        logger.warning("tsk-615: шлюз прислал дату в непонятном виде: %r", raw)
++        return None
++
++
+ async def create_payment(
+     *,
+     amount_minor: int,
+diff --git a/scripts/backfill_tsk615_package_payments.py b/scripts/backfill_tsk615_package_payments.py
+new file mode 100644
+index 0000000..098f6ff
+--- /dev/null
++++ b/scripts/backfill_tsk615_package_payments.py
+@@ -0,0 +1,187 @@
++"""tsk-615: внести деньги за уже случившиеся покупки пакетов задним числом.
++
++Покупки, прошедшие ДО этой задачи, оставили след только в `student_ai_grant`:
++пакет зачислен, платежа нет. На 16.08.2026 такая покупка одна — 500 ₽, ученик 2,
++ЮKassa `3212eaa2-000f-5001-9000-172b9dbd5454`. Пока её нет в учёте, сверка с
++приходом в шлюзе не сходится с самого первого платежа.
++
++**Сумма и дата берутся у ЮKassa, а не с рук.** Это то же правило, на котором
++стоит приём уведомлений (tsk-010): подтверждением платежа считается ответ API
++на наш запрос, а не то, что кто-то ввёл или прислал. Здесь оно тем более важно,
++что запись идёт задним числом и проверить её потом будет нечем, кроме этого же
++шлюза.
++
++Дата платежа — день захвата денег ПО МОСКВЕ: сверять придётся с чеками «Мой
++налог», а они выбиваются по местному времени. Живая покупка это ровно тот
++случай, где разница видна: захват 2026-08-15 21:15 UTC — это 16 августа в
++Москве, и день в отчёте отличался бы на сутки.
++
++Запуск (на сервере, под пользователем `app`, из `/opt/lms`):
++
++    python scripts/backfill_tsk615_package_payments.py            # только показать
++    DBCHECK_OK=1 python scripts/backfill_tsk615_package_payments.py --apply
++
++Без `--apply` не пишет ничего. Повторный запуск безопасен: уникальность пары
++«шлюз + номер платежа» не даст завести деньги дважды.
++"""
++
++from __future__ import annotations
++
++import argparse
++import asyncio
++import logging
++import sys
++from datetime import date
++from pathlib import Path
++from zoneinfo import ZoneInfo
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
++
++from sqlalchemy import text  # noqa: E402
++from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
++
++from app.core.config import Settings  # noqa: E402
++from app.services import payment_service, yookassa_service  # noqa: E402
++
++logging.basicConfig(level=logging.INFO, format="%(message)s")
++logger = logging.getLogger("tsk615")
++
++#: Время школы. Дата платежа для сверки считается по нему, а не по UTC.
++_SCHOOL_TZ = ZoneInfo("Europe/Moscow")
++
++#: Гранты, купленные картой, у которых нет строки платежа. Ручные выдачи
++#: персоналом (`gateway_payment_id IS NULL`) сюда не попадают — за ними денег и
++#: не было.
++_ORPHAN_GRANTS = """
++    SELECT g.id, g.student_id, g.granted, g.purchased_at, g.gateway_payment_id
++      FROM student_ai_grant g
++     WHERE g.gateway_payment_id IS NOT NULL
++       AND NOT EXISTS (
++             SELECT 1 FROM student_payment p
++              WHERE p.gateway_payment_id = g.gateway_payment_id
++           )
++     ORDER BY g.purchased_at
++"""
++
++
++async def _run(apply: bool) -> int:
++    settings = Settings()
++    engine = create_async_engine(settings.database_url, echo=False)
++    session_factory = async_sessionmaker(engine, expire_on_commit=False)
++
++    written = 0
++    async with session_factory() as db:
++        orphans = (await db.execute(text(_ORPHAN_GRANTS))).all()
++        if not orphans:
++            logger.info("Пакетов без учтённых денег нет — сверять нечего.")
++            await engine.dispose()
++            return 0
++
++        logger.info("Пакетов без учтённых денег: %s", len(orphans))
++        for row in orphans:
++            txn = row.gateway_payment_id
++            try:
++                payment = await yookassa_service.fetch_payment(txn)
++            except yookassa_service.GatewayError as exc:
++                logger.error("  %s — шлюз не ответил (%s). Пропускаю.", txn, exc)
++                continue
++            except yookassa_service.GatewayDisabledError as exc:
++                logger.error("Оплата картой выключена в этом окружении: %s", exc)
++                break
++
++            if payment.status != "succeeded" or not payment.paid:
++                # Пакет есть, а денег у шлюза нет — это не пропущенный учёт, а
++                # расхождение, которое должен разобрать человек.
++                logger.error(
++                    "  %s — у шлюза статус %s, оплачен=%s. НЕ ВНОШУ, нужен разбор.",
++                    txn, payment.status, payment.paid,
++                )
++                continue
++
++            paid_on = (
++                payment.captured_at.astimezone(_SCHOOL_TZ).date()
++                if payment.captured_at is not None
++                # Запасной вариант: день покупки пакета из нашей же базы. Хуже
++                # даты шлюза, но всё равно ближе к правде, чем «сегодня».
++                else row.purchased_at.astimezone(_SCHOOL_TZ).date()
++            )
++            logger.info(
++                "  ученик %s, %s ₽, %s обращений, день платежа %s, платёж %s",
++                row.student_id, payment.amount_minor / 100, row.granted, paid_on, txn,
++            )
++            if not apply:
++                continue
++
++            recorded = await payment_service.record_gateway_payment(
++                db,
++                student_id=int(row.student_id),
++                group_id=None,
++                period=None,
++                amount_minor=payment.amount_minor,
++                gateway="yookassa",
++                gateway_payment_id=txn,
++                paid_on=paid_on,
++                purpose=payment_service.PURPOSE_AI_PACKAGE,
++                review_note="tsk-615: внесено задним числом, сверено с ЮKassa",
++            )
++            written += int(recorded)
++
++        if apply:
++            await _verify(db)
++
++    await engine.dispose()
++    return written
++
++
++async def _verify(db) -> None:
++    """Проверка ПОСЛЕ записи: каждый пакет получил свои деньги.
++
++    Проверяется поштучно, а не «стало столько-то строк»: совпадение количеств
++    ничего не доказывает, если одна покупка учтена дважды, а другая не учтена.
++    """
++    left = (await db.execute(text(_ORPHAN_GRANTS))).all()
++    if left:
++        logger.error(
++            "ОСТАЛИСЬ БЕЗ ДЕНЕГ: %s — %s",
++            len(left), ", ".join(r.gateway_payment_id for r in left),
++        )
++    else:
++        logger.info("Проверка: у каждого купленного пакета есть строка платежа.")
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT p.id, p.student_id, p.amount_minor, p.paid_on, p.status, "
++                "       p.gateway_payment_id "
++                "  FROM student_payment p WHERE p.purpose = :pu ORDER BY p.id"
++            ),
++            {"pu": payment_service.PURPOSE_AI_PACKAGE},
++        )
++    ).all()
++    logger.info("Разовых покупок в учёте: %s", len(rows))
++    for r in rows:
++        logger.info(
++            "  #%s ученик %s %s ₽ %s %s (%s)",
++            r.id, r.student_id, r.amount_minor / 100, r.paid_on, r.status,
++            r.gateway_payment_id,
++        )
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument(
++        "--apply",
++        action="store_true",
++        help="записать платежи (без флага — только показать, что будет сделано)",
++    )
++    args = parser.parse_args()
++
++    written = asyncio.run(_run(args.apply))
++    if args.apply:
++        logger.info("Записано платежей: %s (сегодня %s)", written, date.today())
++    else:
++        logger.info("Пробный прогон. Для записи — тот же запуск с --apply.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tests/test_tsk615_one_off_payments.py b/tests/test_tsk615_one_off_payments.py
+new file mode 100644
+index 0000000..417c6a4
+--- /dev/null
++++ b/tests/test_tsk615_one_off_payments.py
+@@ -0,0 +1,439 @@
++"""tsk-615 — деньги за разовую покупку видны в учёте наравне с месяцами.
++
++16.08.2026 прошла первая живая покупка пакета обращений к наставнику (500 ₽).
++Пакет зачислился, деньги — нет: `student_payment` умела только платежи за
++месяц. Здесь проверяется не «записалась ли строка», а то, ради чего задача
++делалась: сумма в LMS сходится с суммой в шлюзе, и при этом разовая покупка
++не притворяется оплатой месяца.
++
++Проверяются границы, а не счастливый путь:
++ * разовая покупка НЕ гасит долг за месяц (иначе пакет закрывал бы обучение);
++ * повтор доставки уведомления не заводит вторые деньги;
++ * покупка видна и ученику, и маркетологу, и в выгрузке для сверки;
++ * сверка со шлюзом дозакрывает покупку, если уведомление не дошло, — раньше
++   такой платёж объявлялся «без начисления», то есть необъяснимым;
++ * схема не даёт перепутать назначение с месяцем ни в одну сторону.
++"""
++
++from __future__ import annotations
++
++import uuid
++from datetime import date
++
++import pytest
++from sqlalchemy import text
++from sqlalchemy.exc import IntegrityError
++
++from app.services import payment_service, subscription_service, yookassa_service
++from app.services.yookassa_service import GatewayPayment
++from tests.test_tsk505_marketer_pricing import _auth
++from tests.test_tsk511_charges_breaks import _setup, PERIOD
++from tests.test_tsk010_payments import _charge_id, _login_as, _recalc
++
++pytestmark = pytest.mark.asyncio
++
++#: Цена пакета в живом прогоне 16.08.2026 — 500 ₽.
++PACKAGE_MINOR = 50000
++PACKAGE_UNITS = 40
++
++
++def _package_payment(
++    *, payment_id: str, student_id: int, units: int = PACKAGE_UNITS,
++    amount_minor: int = PACKAGE_MINOR, paid: bool = True,
++) -> GatewayPayment:
++    """Ответ шлюза о покупке пакета — ровно тот, что пришёл в живом прогоне."""
++    return GatewayPayment(
++        id=payment_id,
++        status="succeeded",
++        amount_minor=amount_minor,
++        paid=paid,
++        confirmation_url=f"https://yoomoney.test/checkout/{payment_id}",
++        test=True,
++        metadata={
++            "purpose": payment_service.PURPOSE_AI_PACKAGE,
++            "student_id": str(student_id),
++            "units": str(units),
++        },
++    )
++
++
++async def _webhook(client, payment_id: str):
++    body = {"type": "notification", "event": "payment.succeeded",
++            "object": {"id": payment_id}}
++    return await client.post("/api/v1/payments/yookassa/webhook", json=body)
++
++
++async def _payment_rows(db, student_id: int) -> list[dict]:
++    rows = (
++        await db.execute(
++            text(
++                "SELECT purpose, group_id, period, amount_minor, status, method, "
++                "       gateway_payment_id "
++                "  FROM student_payment WHERE student_id = :s ORDER BY id"
++            ),
++            {"s": student_id},
++        )
++    ).all()
++    return [dict(r._mapping) for r in rows]
++
++
++@pytest.fixture
++def gateway_on(monkeypatch):
++    """Включить оплату картой с тестовым ключом."""
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_shop_id", "1426025")
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_secret_key", "test_secret")
++    monkeypatch.setattr(yookassa_service.settings, "yookassa_allow_live", False)
++    return True
++
++
++async def test_package_purchase_lands_in_payments(db, client, monkeypatch, gateway_on):
++    """Купленный пакет оставляет след В ДЕНЬГАХ, а не только в правах.
++
++    Это ровно тот случай, который прошёл живьём и не попал в учёт: пакет
++    зачислен, `student_payment` пуст.
++    """
++    env = await _setup(db, "p615-land", price=550000)
++    student_id = env["student_id"]
++    txn = f"pkg-{uuid.uuid4().hex[:12]}"
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++
++    resp = await _webhook(client, txn)
++    assert resp.status_code == 200, resp.text
++    assert resp.json()["status"] == "recorded"
++
++    rows = await _payment_rows(db, student_id)
++    assert len(rows) == 1, "деньги за пакет снова не попали в учёт"
++    row = rows[0]
++    assert row["purpose"] == "ai_package"
++    assert row["amount_minor"] == PACKAGE_MINOR
++    assert row["status"] == "confirmed", "деньги на счёте — подтверждать нечего"
++    assert row["gateway_payment_id"] == txn
++    # Месяца у покупки нет и быть не должно: она бессрочная и переносится.
++    assert row["group_id"] is None and row["period"] is None
++
++    granted = (
++        await db.execute(
++            text("SELECT granted FROM student_ai_grant WHERE gateway_payment_id = :t"),
++            {"t": txn},
++        )
++    ).scalar_one()
++    assert granted == PACKAGE_UNITS, "деньги учли, а пакет потеряли"
++
++
++async def test_package_money_does_not_pay_for_the_month(db, client, monkeypatch, gateway_on):
++    """Пакет за 500 ₽ не закрывает долг за обучение.
++
++    Самая дорогая ошибка этой схемы: разовая покупка, попавшая в подсчёт месяца,
++    молча уменьшает долг — человек считается заплатившим за то, за что не платил.
++    """
++    env = await _setup(db, "p615-debt", price=550000)
++    student_id = env["student_id"]
++    await _recalc(db, student_id=student_id)
++    await _charge_id(db, student_id=student_id)
++
++    before = await payment_service.list_student_charges(db, student_id=student_id)
++    due_before = before[0]["due_minor"]
++    assert due_before > 0, "проверять нечего: месяц и так без долга"
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    assert (await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")).status_code == 200
++
++    after = await payment_service.list_student_charges(db, student_id=student_id)
++    assert after[0]["due_minor"] == due_before, "покупка пакета погасила долг за месяц"
++    assert after[0]["paid_minor"] == 0
++    assert after[0]["payments"] == [], "покупка встала в историю платежей месяца"
++
++
++async def test_repeat_delivery_does_not_double_the_money(db, client, monkeypatch, gateway_on):
++    """Повтор доставки — штатный исход, а не вторые 500 ₽."""
++    env = await _setup(db, "p615-idem", price=550000)
++    student_id = env["student_id"]
++    txn = f"pkg-{uuid.uuid4().hex[:12]}"
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++
++    first = await _webhook(client, txn)
++    second = await _webhook(client, txn)
++    assert first.json()["status"] == "recorded"
++    assert second.json()["status"] == "already_recorded"
++
++    rows = await _payment_rows(db, student_id)
++    assert len(rows) == 1, "повторное уведомление завело вторые деньги"
++    grants = (
++        await db.execute(
++            text("SELECT count(*) FROM student_ai_grant WHERE student_id = :s"),
++            {"s": student_id},
++        )
++    ).scalar_one()
++    assert grants == 1
++
++
++async def test_missed_notification_is_closed_by_reconcile(db, client, monkeypatch, gateway_on):
++    """Сверка дозакрывает покупку, о которой уведомление не дошло.
++
++    До tsk-615 такой платёж возвращался в `without_charge` — сверка сама
++    объявляла живые деньги необъяснимыми, и разница со шлюзом оставалась.
++    """
++    env = await _setup(db, "p615-recon", price=550000)
++    student_id = env["student_id"]
++    txn = f"pkg-{uuid.uuid4().hex[:12]}"
++
++    async def fake_list(*, created_from: date, created_to: date):
++        return [_package_payment(payment_id=txn, student_id=student_id)]
++
++    monkeypatch.setattr(yookassa_service, "list_succeeded", fake_list)
++
++    today = date.today().isoformat()
++    resp = await client.post(
++        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
++        headers=_auth(env["token"]),
++    )
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert body["added"] == 1, body
++    assert body["without_charge"] == [], "покупка снова объявлена платежом без начисления"
++
++    rows = await _payment_rows(db, student_id)
++    assert [r["purpose"] for r in rows] == ["ai_package"]
++    granted = (
++        await db.execute(
++            text("SELECT granted FROM student_ai_grant WHERE gateway_payment_id = :t"),
++            {"t": txn},
++        )
++    ).scalar_one()
++    assert granted == PACKAGE_UNITS, "сверка учла деньги, но не выдала пакет"
++
++    # Повторная сверка — обычное дело: маркетолог запускает её регулярно. Уже
++    # закрытая покупка не должна объявляться расхождением, иначе список проблем
++    # растёт с каждым прогоном и его перестают читать.
++    again = await client.post(
++        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
++        headers=_auth(env["token"]),
++    )
++    assert again.status_code == 200, again.text
++    body2 = again.json()
++    assert body2["added"] == 0
++    assert body2["without_charge"] == [], "учтённая покупка помечена проблемной"
++    assert body2["already_recorded"] == 1, body2
++    assert len(await _payment_rows(db, student_id)) == 1
++
++
++async def test_student_sees_the_purchase(db, client, monkeypatch, gateway_on):
++    """Ученик видит, за что списаны деньги, — иначе покупка выглядит пропавшей."""
++    env = await _setup(db, "p615-see", price=550000)
++    student_id = env["student_id"]
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")
++
++    _, token = await _login_as(db, student_id)
++    resp = await client.get("/api/v1/me/purchases", headers=_auth(token))
++    assert resp.status_code == 200, resp.text
++    body = resp.json()
++    assert len(body) == 1
++    assert body[0]["amount_minor"] == PACKAGE_MINOR
++    assert body[0]["purpose"] == "ai_package"
++    assert body[0]["purpose_name"] == "Пакет обращений к ИИ-наставнику"
++    assert body[0]["status"] == "confirmed"
++
++
++async def test_purchase_list_is_not_shared_between_students(db, client, monkeypatch, gateway_on):
++    """Чужие покупки не видны: список денег строится по владельцу, а не по всем."""
++    buyer = await _setup(db, "p615-own", price=550000)
++    stranger = await _setup(db, "p615-alien", price=550000)
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=buyer["student_id"])
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")
++
++    _, token = await _login_as(db, stranger["student_id"])
++    resp = await client.get("/api/v1/me/purchases", headers=_auth(token))
++    assert resp.status_code == 200
++    assert resp.json() == []
++
++
++async def test_marketer_sees_purchase_in_the_same_list(db, client, monkeypatch, gateway_on):
++    """Разовая покупка идёт в общем списке платежей, а не в отдельной кассе.
++
++    Соединения с начислением и тарифной группой должны быть левыми: внутреннее
++    молча выбросило бы такую строку, и учёт остался бы ровно так же невидим.
++    """
++    env = await _setup(db, "p615-mkt", price=550000)
++    student_id = env["student_id"]
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")
++
++    resp = await client.get(
++        f"/api/v1/marketer/payments?student_id={student_id}", headers=_auth(env["token"])
++    )
++    assert resp.status_code == 200, resp.text
++    rows = resp.json()
++    assert len(rows) == 1, "покупка выпала из списка маркетолога"
++    row = rows[0]
++    assert row["purpose"] == "ai_package"
++    assert row["period"] is None and row["group_id"] is None
++    # Не ноль: ноль читался бы как «месяц оплачен полностью».
++    assert row["charge_total_minor"] is None
++    assert row["charge_due_minor"] is None
++
++    only_monthly = await client.get(
++        f"/api/v1/marketer/payments?student_id={student_id}&purpose=monthly",
++        headers=_auth(env["token"]),
++    )
++    assert only_monthly.json() == [], "фильтр по назначению не работает"
++
++
++async def test_export_covers_one_off_purchases(db, client, monkeypatch, gateway_on):
++    """Выгрузка для сверки включает покупку — иначе шлюз всегда богаче системы."""
++    env = await _setup(db, "p615-export", price=550000)
++    student_id = env["student_id"]
++
++    async def fake_fetch(payment_id: str) -> GatewayPayment:
++        return _package_payment(payment_id=payment_id, student_id=student_id)
++
++    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
++    await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")
++
++    today = date.today()
++    rows = await payment_service.export_confirmed(db, date_from=today, date_to=today)
++    mine = [r for r in rows if r["id"] in {p["id"] for p in await _ids(db, student_id)}]
++    assert mine, "покупка не попала в выгрузку за день платежа"
++    assert mine[0]["purpose"] == "ai_package"
++    assert mine[0]["period"] is None
++    assert mine[0]["group_name"] is None
++
++
++async def _ids(db, student_id: int) -> list[dict]:
++    rows = (
++        await db.execute(
++            text("SELECT id FROM student_payment WHERE student_id = :s"),
++            {"s": student_id},
++        )
++    ).all()
++    return [{"id": int(r.id)} for r in rows]
++
++
++async def test_schema_keeps_purpose_and_month_in_sync(db):
++    """Схема не даёт перепутать назначение с месяцем ни в одну сторону.
++
++    Это замена утраченному `NOT NULL`: месячный платёж без месяца выпал бы из
++    подсчёта оплаченности, а разовый С месяцем — наоборот, погасил бы чужой долг.
++    """
++    student_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk615 схема', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk615-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++    )
++    await db.commit()
++
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_payment (student_id, amount_minor, method, "
++                    "                             purpose, status) "
++                    "VALUES (:s, 100, 'manual', 'monthly', 'pending')"
++                ),
++                {"s": student_id},
++            )
++
++    # Разовая покупка с месяцем: группа пуста, поэтому внешний ключ такую строку
++    # не проверяет вовсе (`MATCH SIMPLE`) — отбить её обязан именно CHECK.
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_payment (student_id, period, amount_minor, "
++                    "                             method, purpose, status) "
++                    "VALUES (:s, DATE '2026-08-01', 100, 'manual', 'ai_package', 'pending')"
++                ),
++                {"s": student_id},
++            )
++
++
++async def test_unknown_purpose_is_rejected_by_the_database(db):
++    """Описка в назначении не создаёт третий класс денег, невидимый нигде."""
++    student_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk615 описка', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk615-typo-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++    )
++    await db.commit()
++
++    with pytest.raises(IntegrityError):
++        async with db.begin_nested():
++            await db.execute(
++                text(
++                    "INSERT INTO student_payment (student_id, amount_minor, method, "
++                    "                             purpose, status) "
++                    "VALUES (:s, 100, 'manual', 'ai_pakage', 'pending')"
++                ),
++                {"s": student_id},
++            )
++
++
++async def test_grant_without_payment_is_still_repaired(db):
++    """Пакет уже выдан, а денег нет — сверка обязана дописать именно деньги.
++
++    Так выглядят покупки, случившиеся до этой задачи: грант в базе есть,
++    платежа нет. Повторный проход не должен ни выдать второй пакет, ни
++    промолчать про деньги.
++    """
++    student_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk615 задним числом', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk615-back-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++    )
++    txn = f"pkg-old-{uuid.uuid4().hex[:12]}"
++    await subscription_service.grant_ai_package(
++        db, student_id, units=PACKAGE_UNITS, gateway_payment_id=txn, note="оплачено картой"
++    )
++    await db.commit()
++
++    granted, recorded = await subscription_service.record_ai_package_purchase(
++        db, student_id, units=PACKAGE_UNITS, gateway_payment_id=txn,
++        amount_minor=PACKAGE_MINOR,
++    )
++    assert granted is False, "выдан второй пакет за те же деньги"
++    assert recorded is True, "деньги остались неучтёнными"
++
++    rows = await _payment_rows(db, student_id)
++    assert [r["purpose"] for r in rows] == ["ai_package"]
++    assert rows[0]["amount_minor"] == PACKAGE_MINOR

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 import httpx
@@ -64,6 +64,10 @@ class GatewayPayment:
     #: Признак тестового платежа. Боевой контур обязан на него смотреть.
     test: bool
     metadata: dict[str, Any]
+    #: Когда деньги реально захвачены, по данным шлюза (UTC). Нужна там, где
+    #: платёж учитывается задним числом: «сегодня» тогда не дата платежа, а
+    #: дата разбора, и сверка с чеками разъедется на эту разницу (tsk-615).
+    captured_at: Optional[datetime] = None
 
 
 def is_test_mode() -> bool:
@@ -110,7 +114,23 @@ def _parse(payload: dict[str, Any]) -> GatewayPayment:
         confirmation_url=confirmation.get("confirmation_url"),
         test=bool(payload.get("test")),
         metadata=dict(payload.get("metadata") or {}),
+        captured_at=_as_datetime(payload.get("captured_at") or payload.get("created_at")),
     )
+
+
+def _as_datetime(raw: Any) -> Optional[datetime]:
+    """Дата из ответа шлюза. Формат ISO с `Z`, который `fromisoformat` не берёт.
+
+    Разбор не должен ронять приём платежа: дата — сведение для сверки, а не
+    условие зачисления денег. Не разобралось — считаем, что её нет.
+    """
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        logger.warning("tsk-615: шлюз прислал дату в непонятном виде: %r", raw)
+        return None
 
 
 async def create_payment(

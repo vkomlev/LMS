@@ -13,17 +13,27 @@ from pydantic import BaseModel, Field
 
 PaymentMethod = Literal["manual", "gateway"]
 PaymentStatus = Literal["pending", "confirmed", "rejected"]
+#: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
+#: разовая покупка, у которой месяца нет.
+PaymentPurpose = Literal["monthly", "ai_package"]
 
 
 class PaymentRead(BaseModel):
-    """Платёж глазами кабинета маркетолога."""
+    """Платёж глазами кабинета маркетолога.
+
+    Месяц и тарифная группа пусты у разовой покупки: пакет обращений к
+    наставнику не относится ни к какому месяцу (tsk-615).
+    """
 
     id: int
     student_id: int
     full_name: Optional[str] = None
-    group_id: int
-    group_name: str
-    period: date
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+    period: Optional[date] = None
+    purpose: PaymentPurpose = "monthly"
+    #: Назначение словами — чтобы на экране не стоял машинный код.
+    purpose_name: str = "Обучение за месяц"
     amount_minor: int
     method: PaymentMethod
     status: PaymentStatus
@@ -42,8 +52,9 @@ class PaymentRead(BaseModel):
     #: Сумма месяца и остаток по нему БЕЗ учёта этого платежа. Без них решение
     #: принимается вслепую: платёж на 55 000 вместо 5 500 и второй такой же чек
     #: выглядят на экране нормально, если не с чем сравнить.
-    charge_total_minor: int
-    charge_due_minor: int
+    #: У разовой покупки пусто, а не ноль: ноль читался бы как «месяц оплачен».
+    charge_total_minor: Optional[int] = None
+    charge_due_minor: Optional[int] = None
 
 
 class StudentPaymentRead(BaseModel):
@@ -57,6 +68,28 @@ class StudentPaymentRead(BaseModel):
     payer_note: Optional[str] = None
     paid_on: Optional[date] = None
     #: Почему отклонили — иначе отказ выглядит как сбой.
+    review_note: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class StudentPurchaseRead(BaseModel):
+    """Разовая покупка глазами того, кто платил (tsk-615).
+
+    Месяца здесь нет намеренно: покупка к нему не относится, и колонка «период»
+    в таком списке только сбивала бы с толку.
+    """
+
+    id: int
+    purpose: PaymentPurpose
+    #: Что именно купили — словами.
+    purpose_name: str
+    amount_minor: int
+    method: PaymentMethod
+    status: PaymentStatus
+    payer_note: Optional[str] = None
+    paid_on: Optional[date] = None
+    #: Почему отклонили — иначе отказ выглядит как пропавшие деньги.
     review_note: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     created_at: datetime
@@ -112,13 +145,19 @@ class PaymentDecisionRequest(BaseModel):
 
 
 class PaymentExportRow(BaseModel):
-    """Строка выгрузки для сверки с чеками «Мой налог»."""
+    """Строка выгрузки для сверки с чеками «Мой налог» и с приходом в ЮKassa.
+
+    Разовые покупки идут здесь же — у них пусты месяц и группа, а назначение
+    показывает, за что взяты деньги.
+    """
 
     id: int
     on_date: date
     full_name: Optional[str] = None
-    group_name: str
-    period: date
+    group_name: Optional[str] = None
+    period: Optional[date] = None
+    purpose: PaymentPurpose = "monthly"
+    purpose_name: str = "Обучение за месяц"
     amount_minor: int
     method: PaymentMethod
     gateway: Optional[str] = None

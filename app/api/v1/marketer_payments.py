@@ -17,10 +17,20 @@ from app.db.session import get_async_db
 from app.schemas.payment import (
     PaymentDecisionRequest,
     PaymentExportRow,
+    PaymentPurpose,
     PaymentRead,
     PaymentStatus,
 )
-from app.services import payment_reminder_service, payment_service, yookassa_service
+from app.services import (
+    payment_reminder_service,
+    payment_service,
+    subscription_service,
+    yookassa_service,
+)
+
+#: Метка разовой покупки пакета — та же, что кладётся в metadata при заведении
+#: платежа (`payments_gateway`) и в строку платежа.
+_PURPOSE_AI_PACKAGE = payment_service.PURPOSE_AI_PACKAGE
 
 logger = logging.getLogger(__name__)
 settings = Settings()
@@ -46,17 +56,28 @@ async def _payments_gate(
     "/payments",
     response_model=list[PaymentRead],
     summary="Платежи: очередь на подтверждение и история",
-    description="Без фильтра сверху идут платежи, ждущие решения.",
+    description=(
+        "Без фильтра сверху идут платежи, ждущие решения. Разовые покупки "
+        "(пакет обращений к наставнику) идут в том же списке: у них пусты месяц "
+        "и тарифная группа, а назначение видно в поле purpose."
+    ),
 )
 async def list_payments(
     payment_status: Optional[PaymentStatus] = Query(default=None, alias="status"),
     period: Optional[date] = Query(default=None),
     student_id: Optional[int] = Query(default=None),
+    purpose: Optional[PaymentPurpose] = Query(
+        default=None, description="Оставить только платежи этого назначения"
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_payments_gate),
 ) -> list[PaymentRead]:
     rows = await payment_service.list_payments(
-        db, status=payment_status, period=period, student_id=student_id
+        db,
+        status=payment_status,
+        period=period,
+        student_id=student_id,
+        purpose=purpose,
     )
     return [PaymentRead(**r) for r in rows]
 
@@ -243,6 +264,19 @@ async def reconcile(
     for payment in payments:
         if not payment.paid:
             continue
+        # tsk-615: разовая покупка попадала сюда как «платёж без начисления» —
+        # то есть сверка сама объявляла деньги необъяснимыми. Начисления у неё
+        # нет и не будет, зато есть назначение: учитываем по нему.
+        if payment.metadata.get("purpose") == _PURPOSE_AI_PACKAGE:
+            outcome = await _reconcile_ai_package(db, payment)
+            if outcome is None:
+                # Учесть нечем — нужен человек. Отличается от «уже учтено»:
+                # иначе каждая повторная сверка объявляла бы давно закрытую
+                # покупку проблемной, и список проблем перестали бы читать.
+                skipped_no_charge.append(payment.id)
+            elif outcome:
+                added += 1
+            continue
         charge_id = payment.metadata.get("charge_id")
         charge = (
             await payment_service.charge_by_id(db, charge_id=int(charge_id))
@@ -280,6 +314,46 @@ async def reconcile(
         "already_recorded": len(payments) - added - len(skipped_no_charge),
         "without_charge": skipped_no_charge,
     }
+
+
+async def _reconcile_ai_package(db: AsyncSession, payment) -> Optional[bool]:
+    """Дозакрыть разовую покупку пакета, если уведомление не дошло (tsk-615).
+
+    Тот же путь, что и у приёма уведомления, — иначе сверка чинила бы деньги, не
+    выдавая пакет, и человек остался бы с оплаченной, но невидимой покупкой.
+
+    Три исхода, и их нельзя сводить к двум:
+      * `True` — деньги учтены сейчас;
+      * `False` — они были учтены раньше (обычный случай повторной сверки);
+      * `None` — учесть нечем: в ответе шлюза нет ученика или объёма пакета.
+
+    Только третий исход попадает в список проблемных. Если бы «уже учтено»
+    считалось проблемой, каждая следующая сверка показывала бы давно закрытую
+    покупку как расхождение — и список перестали бы читать.
+    """
+    student_id = _as_int(payment.metadata.get("student_id"))
+    units = _as_int(payment.metadata.get("units"))
+    if student_id is None or units is None or units <= 0:
+        logger.error(
+            "tsk-615: сверка нашла платёж %s за пакет без ученика или объёма "
+            "(metadata=%s) — учесть нечем",
+            payment.id, payment.metadata,
+        )
+        return None
+
+    _, recorded = await subscription_service.record_ai_package_purchase(
+        db, student_id, units=units, gateway_payment_id=payment.id,
+        amount_minor=payment.amount_minor,
+    )
+    return recorded
+
+
+def _as_int(value: object) -> Optional[int]:
+    """Число из метаданных шлюза. Чужой ввод — поэтому через попытку."""
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 async def _reload(db: AsyncSession, payment_id: int) -> PaymentRead:

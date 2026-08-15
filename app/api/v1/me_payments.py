@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, get_current_user
 from app.core.config import Settings
 from app.db.session import get_async_db
-from app.schemas.payment import StudentChargeRead
+from app.schemas.payment import StudentChargeRead, StudentPurchaseRead
 from app.services import attachment_storage, payment_service
 from app.utils.exceptions import DomainError
 
@@ -165,6 +165,33 @@ async def my_charges(
     target = await _resolve_student(db, current_user=current_user, student_id=student_id)
     rows = await payment_service.list_student_charges(db, student_id=target)
     return [StudentChargeRead(**r) for r in rows]
+
+
+@router.get(
+    "/purchases",
+    response_model=list[StudentPurchaseRead],
+    summary="Мои разовые покупки",
+    description=(
+        "Оплаченное не за месяц: пакет обращений к ИИ-наставнику и всё, что "
+        "появится дальше. Отдельным списком, потому что к месяцу такие покупки "
+        "не относятся. Родитель смотрит покупки ребёнка, передав его student_id."
+    ),
+)
+async def my_purchases(
+    student_id: Optional[int] = Query(
+        default=None, description="Ребёнок родителя; своё — не указывать"
+    ),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(get_current_user),
+) -> list[StudentPurchaseRead]:
+    if current_user.is_service:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Покупки доступны только пользователю, не сервисному ключу",
+        )
+    target = await _resolve_student(db, current_user=current_user, student_id=student_id)
+    rows = await payment_service.list_student_purchases(db, student_id=target)
+    return [StudentPurchaseRead(**r) for r in rows]
 
 
 @router.post(

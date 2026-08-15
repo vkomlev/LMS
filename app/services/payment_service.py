@@ -7,6 +7,16 @@
 Оплаченность не хранится полем: она каждый раз выводится суммой подтверждённых
 платежей против итога начисления. Так частичная оплата, правка суммы месяца и
 перенос с прошлого месяца не разъезжаются между двумя источниками правды.
+
+tsk-615: не всякий платёж относится к месяцу. Разовая покупка (пакет обращений
+к наставнику и всё, что дальше продадим не за месяц) живёт в этой же таблице,
+но с `purpose <> 'monthly'` и пустыми `group_id`/`period`. Разные таблицы под
+разные продажи разъехались бы: сверку со шлюзом, выгрузку для «Мой налог» и
+кабинет пришлось бы держать в двух местах, а номер платежа ЮKassa перестал бы
+быть уникальным на все деньги сразу.
+
+Отсюда правило для всех подсчётов месяца: они фильтруют по `period`/`group_id`,
+поэтому разовая покупка в них не попадает сама собой — и не гасит чужой долг.
 """
 
 from __future__ import annotations
@@ -28,6 +38,9 @@ settings = Settings()
 
 __all__ = [
     "PaymentStatus",
+    "PaymentPurpose",
+    "PURPOSE_AI_PACKAGE",
+    "PURPOSE_NAMES",
     "DuplicatePaymentError",
     "ChargePaymentState",
     "due_date_for",
@@ -36,6 +49,7 @@ __all__ = [
     "attach_payment_state",
     "charge_for_student",
     "list_student_charges",
+    "list_student_purchases",
     "create_manual_payment",
     "record_gateway_payment",
     "record_staff_payment",
@@ -49,6 +63,23 @@ __all__ = [
 ]
 
 PaymentStatus = Literal["pending", "confirmed", "rejected"]
+
+#: За что заплатили. Список закрыт и продублирован в CHECK таблицы: новая
+#: разовая продажа добавляется сюда И миграцией — чтобы описка не создала класс
+#: денег, который не показывается нигде (tsk-615).
+PaymentPurpose = Literal["monthly", "ai_package"]
+
+#: Разовая покупка пакета обращений. Тем же значением помечается платёж в
+#: `metadata` ЮKassa — одна метка на оба конца: по ней и приём уведомления, и
+#: сверка понимают, что начисления у этих денег нет и искать его не нужно.
+PURPOSE_AI_PACKAGE = "ai_package"
+
+#: Назначение человеку — в кабинет ученика и в выгрузку. Иначе в списке
+#: покупок стоял бы машинный код.
+PURPOSE_NAMES: dict[str, str] = {
+    "monthly": "Обучение за месяц",
+    "ai_package": "Пакет обращений к ИИ-наставнику",
+}
 
 
 class DuplicatePaymentError(RuntimeError):
@@ -125,6 +156,11 @@ async def _totals_by_charge(
 
     Одним запросом на весь список: иначе экран начислений дал бы запрос на
     строку и разъехался бы по времени между строками.
+
+    Разовые покупки сюда не идут: у них нет месяца, и деньги за пакет не должны
+    гасить долг за обучение. Фильтр по `purpose` стоит явно, а не полагается на
+    то, что NULL-месяц не сойдётся с ключом группировки, — иначе связь была бы
+    случайной и первая же строка с частично заполненным месяцем всё сломала бы.
     """
     rows = (
         await db.execute(
@@ -136,7 +172,8 @@ async def _totals_by_charge(
                   FROM student_payment
                  -- CAST на параметре: у необязательного фильтра asyncpg иначе
                  -- не может вывести тип NULL и роняет запрос целиком.
-                 WHERE (CAST(:p AS date) IS NULL OR period = CAST(:p AS date))
+                 WHERE purpose = 'monthly'
+                   AND (CAST(:p AS date) IS NULL OR period = CAST(:p AS date))
                    AND (CAST(:s AS integer) IS NULL OR student_id = CAST(:s AS integer))
                  GROUP BY student_id, group_id, period
                 """
@@ -276,7 +313,11 @@ async def list_student_charges(db: AsyncSession, *, student_id: int) -> list[dic
 async def _payments_by_charge(
     db: AsyncSession, *, student_id: int
 ) -> dict[tuple[int, date], list[dict]]:
-    """История платежей ученика, разложенная по месяцам и группам."""
+    """История платежей ЗА МЕСЯЦЫ, разложенная по месяцам и группам.
+
+    Разовые покупки живут в той же таблице, но месяца у них нет — их отдаёт
+    `list_student_purchases` отдельным списком.
+    """
     rows = (
         await db.execute(
             text(
@@ -285,7 +326,7 @@ async def _payments_by_charge(
                        receipt_name, payer_note, paid_on, review_note,
                        reviewed_at, created_at
                   FROM student_payment
-                 WHERE student_id = :s
+                 WHERE student_id = :s AND purpose = 'monthly'
                  ORDER BY created_at DESC
                 """
             ),
@@ -309,6 +350,36 @@ async def _payments_by_charge(
             }
         )
     return grouped
+
+
+async def list_student_purchases(db: AsyncSession, *, student_id: int) -> list[dict]:
+    """Разовые покупки ученика — то, что оплачено не за месяц (tsk-615).
+
+    Отдельный список, а не строки внутри месяцев: у покупки нет месяца, и
+    приписать её к какому-нибудь ближайшему значило бы соврать в обе стороны —
+    и в истории покупок, и в оплаченности того месяца.
+
+    Отклонённые не прячем: человек, отправивший деньги, должен видеть, что с
+    ними стало, иначе покупка выглядит пропавшей.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT id, purpose, amount_minor, method, status,
+                       payer_note, paid_on, review_note, reviewed_at, created_at
+                  FROM student_payment
+                 WHERE student_id = :s AND purpose <> 'monthly'
+                 ORDER BY COALESCE(paid_on, created_at::date) DESC, id DESC
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+    return [
+        {**dict(r._mapping), "purpose_name": PURPOSE_NAMES.get(r.purpose, r.purpose)}
+        for r in rows
+    ]
 
 
 async def create_manual_payment(
@@ -384,12 +455,14 @@ async def record_gateway_payment(
     db: AsyncSession,
     *,
     student_id: int,
-    group_id: int,
-    period: date,
+    group_id: Optional[int],
+    period: Optional[date],
     amount_minor: int,
     gateway: str,
     gateway_payment_id: str,
     paid_on: Optional[date],
+    purpose: PaymentPurpose = "monthly",
+    review_note: str = "Оплата картой, подтверждена шлюзом",
 ) -> bool:
     """Зачесть платёж, пришедший от шлюза. `True` — записали, `False` — уже был.
 
@@ -400,17 +473,25 @@ async def record_gateway_payment(
     Идемпотентность держится на уникальном индексе по паре «шлюз + номер
     транзакции», а не на проверке в коде: повторная доставка уведомления —
     обычное дело, и две одновременные доставки не должны разойтись в гонке.
+
+    tsk-615: у разовой покупки (`purpose <> 'monthly'`) месяца и группы нет —
+    передаются пустыми. Пару «назначение ↔ месяц» держит CHECK таблицы, поэтому
+    перепутать здесь нельзя молча: месячный платёж без месяца не запишется.
+
+    **CAST на месяце и группе обязателен**: у разовой покупки оба параметра
+    приходят пустыми, и без явного типа asyncpg не выводит тип NULL — запрос
+    падает целиком (та же гоча, что у необязательных фильтров выше).
     """
     res = await db.execute(
         text(
             """
             INSERT INTO student_payment
                    (student_id, group_id, period, amount_minor, method,
-                    gateway, gateway_payment_id, paid_on,
+                    gateway, gateway_payment_id, paid_on, purpose,
                     status, reviewed_at, review_note)
-            VALUES (:s, :g, :p, :amt, 'gateway',
-                    :gw, :txn, :paid_on,
-                    'confirmed', now(), 'Оплата картой, подтверждена шлюзом')
+            VALUES (:s, CAST(:g AS integer), CAST(:p AS date), :amt, 'gateway',
+                    :gw, :txn, :paid_on, :purpose,
+                    'confirmed', now(), :note)
             ON CONFLICT (gateway, gateway_payment_id)
                 WHERE gateway_payment_id IS NOT NULL
             DO NOTHING
@@ -425,6 +506,8 @@ async def record_gateway_payment(
             "gw": gateway,
             "txn": gateway_payment_id,
             "paid_on": paid_on,
+            "purpose": purpose,
+            "note": review_note,
         },
     )
     row = res.first()
@@ -437,10 +520,11 @@ async def record_gateway_payment(
         )
         return False
     logger.info(
-        "tsk-010: платёж картой %s зачтён ученику %s за %s на %s коп. (транзакция %s)",
+        "tsk-010: платёж картой %s зачтён ученику %s (%s, %s) на %s коп. (транзакция %s)",
         row.id,
         student_id,
-        period,
+        purpose,
+        period or "без месяца",
         amount_minor,
         gateway_payment_id,
     )
@@ -524,6 +608,7 @@ async def list_payments(
     period: Optional[date] = None,
     student_id: Optional[int] = None,
     payment_id: Optional[int] = None,
+    purpose: Optional[str] = None,
 ) -> list[dict]:
     """Платежи для кабинета маркетолога: очередь и история.
 
@@ -533,6 +618,11 @@ async def list_payments(
 
     Фильтры складываются в самом запросе, а не постфильтром в Python: иначе
     ограничение выборки молча срезало бы часть строк ещё до фильтрации.
+
+    tsk-615: разовые покупки идут в том же списке — это и есть деньги школы, а
+    не отдельная касса. Начисление и тарифная группа у них пусты, поэтому оба
+    соединения ЛЕВЫЕ: внутреннее молча выбрасывало бы такие строки из списка, и
+    учёт остался бы ровно так же невидим, как до этой задачи.
     """
     rows = (
         await db.execute(
@@ -544,6 +634,7 @@ async def list_payments(
                        p.group_id,
                        pg.name AS group_name,
                        p.period,
+                       p.purpose,
                        p.amount_minor,
                        p.method,
                        p.status,
@@ -568,8 +659,8 @@ async def list_payments(
                        COALESCE(paid.total, 0)      AS charge_paid_minor
                   FROM student_payment p
                   JOIN users u ON u.id = p.student_id
-                  JOIN pricing_group pg ON pg.id = p.group_id
-                  JOIN student_monthly_charge ch
+                  LEFT JOIN pricing_group pg ON pg.id = p.group_id
+                  LEFT JOIN student_monthly_charge ch
                        ON ch.student_id = p.student_id
                       AND ch.group_id = p.group_id
                       AND ch.period = p.period
@@ -595,10 +686,17 @@ async def list_payments(
                    AND (CAST(:p AS date) IS NULL OR p.period = CAST(:p AS date))
                    AND (CAST(:s AS integer) IS NULL OR p.student_id = CAST(:s AS integer))
                    AND (CAST(:id AS integer) IS NULL OR p.id = CAST(:id AS integer))
+                   AND (CAST(:pu AS text) IS NULL OR p.purpose = CAST(:pu AS text))
                  ORDER BY (p.status = 'pending') DESC, p.created_at DESC
                 """
             ),
-            {"st": status, "p": period, "s": student_id, "id": payment_id},
+            {
+                "st": status,
+                "p": period,
+                "s": student_id,
+                "id": payment_id,
+                "pu": purpose,
+            },
         )
     ).all()
     result: list[dict] = []
@@ -607,12 +705,21 @@ async def list_payments(
         calculated_minor = row.pop("calculated_minor")
         manual_minor = row.pop("manual_minor")
         adjustments_minor = int(row.pop("adjustments_minor"))
+        paid = int(row.pop("charge_paid_minor"))
+        row["purpose_name"] = PURPOSE_NAMES.get(row["purpose"], row["purpose"])
+        if calculated_minor is None:
+            # Разовая покупка: месяца нет, значит нет ни суммы месяца, ни
+            # остатка по нему. Ноль тут был бы хуже пустоты — он читается как
+            # «месяц оплачен полностью» и превратил бы экран в неправду.
+            row["charge_total_minor"] = None
+            row["charge_due_minor"] = None
+            result.append(row)
+            continue
         total = charge_service.charge_total_minor(
             calculated_minor=calculated_minor,
             manual_minor=manual_minor,
             adjustments_minor=adjustments_minor,
         )
-        paid = int(row.pop("charge_paid_minor"))
         row["charge_total_minor"] = total
         # Остаток — фактический на сейчас: у ожидающего платежа он ещё не
         # учитывает его самого (видно, что закроется по нажатию «получены»), у
@@ -710,6 +817,11 @@ async def export_confirmed(
     Дата берётся по дню платежа, а не по дню подтверждения: сверяем с тем, когда
     деньги реально пришли. Если день платежа не указан, подставляем день
     заведения записи — иначе такой платёж выпал бы из выгрузки совсем.
+
+    tsk-615: разовые покупки входят в выгрузку наравне с месяцами — именно по
+    ней сверяют приход со шлюзом, и пропуск класса платежей означал бы, что
+    сумма в ЮKassa всегда больше, чем в системе. Соединение с тарифной группой
+    ЛЕВОЕ: у покупки группы нет, а внутреннее её бы отбросило.
     """
     rows = (
         await db.execute(
@@ -720,6 +832,7 @@ async def export_confirmed(
                        u.full_name,
                        pg.name AS group_name,
                        p.period,
+                       p.purpose,
                        p.amount_minor,
                        p.method,
                        p.gateway,
@@ -727,7 +840,7 @@ async def export_confirmed(
                        p.reviewed_at
                   FROM student_payment p
                   JOIN users u ON u.id = p.student_id
-                  JOIN pricing_group pg ON pg.id = p.group_id
+                  LEFT JOIN pricing_group pg ON pg.id = p.group_id
                  WHERE p.status = 'confirmed'
                    AND COALESCE(p.paid_on, p.created_at::date) BETWEEN :d1 AND :d2
                  ORDER BY on_date, u.full_name
@@ -736,7 +849,10 @@ async def export_confirmed(
             {"d1": date_from, "d2": date_to},
         )
     ).all()
-    return [dict(r._mapping) for r in rows]
+    return [
+        {**dict(r._mapping), "purpose_name": PURPOSE_NAMES.get(r.purpose, r.purpose)}
+        for r in rows
+    ]
 
 
 async def student_ids_for_parent(db: AsyncSession, *, parent_id: int) -> list[int]:

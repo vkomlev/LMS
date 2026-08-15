@@ -275,6 +275,60 @@ async def grant_ai_package(
     return True
 
 
+async def record_ai_package_purchase(
+    db: AsyncSession,
+    student_id: int,
+    *,
+    units: int,
+    gateway_payment_id: str,
+    amount_minor: int,
+    paid_on: Optional[date] = None,
+) -> tuple[bool, bool]:
+    """Зачислить оплаченный пакет И учесть деньги за него (tsk-615).
+
+    Пакет и платёж — две половины одного события, поэтому они здесь вместе и в
+    одной транзакции: до tsk-615 зачислялся только пакет, и первая же живая
+    покупка (500 ₽, 16.08.2026) осталась вне учёта — в ЮKassa деньги были, в
+    LMS их не было нигде.
+
+    Платёж пишется БЕЗ месяца: покупка бессрочная и к месяцу не относится.
+    Коммит происходит внутри записи платежа и закрепляет обе вставки разом —
+    иначе сбой между ними оставил бы пакет без денег или деньги без пакета.
+
+    Повтор доставки уведомления безопасен с любой стороны: у пакета уникален
+    номер платежа, у платежа — пара «шлюз + номер». Если пакет уже был, а
+    платёж почему-то нет (так выглядят покупки до этой задачи), запишется
+    только платёж — ровно то, что нужно для сверки.
+
+    Returns:
+        Пара «зачислен ли пакет сейчас, записан ли платёж сейчас».
+    """
+    from app.services import payment_service  # noqa: PLC0415
+
+    granted = await grant_ai_package(
+        db, student_id, units=units,
+        gateway_payment_id=gateway_payment_id, note="оплачено картой",
+    )
+    recorded = await payment_service.record_gateway_payment(
+        db,
+        student_id=student_id,
+        group_id=None,
+        period=None,
+        amount_minor=amount_minor,
+        gateway="yookassa",
+        gateway_payment_id=gateway_payment_id,
+        paid_on=paid_on or date.today(),
+        purpose="ai_package",
+        review_note="Пакет обращений к наставнику, оплачен картой",
+    )
+    if not granted and not recorded:
+        logger.info(
+            "tsk-615: платёж %s за пакет уже учтён целиком — повтор доставки",
+            gateway_payment_id,
+        )
+    return granted, recorded
+
+
 #: Тарифы, которые человек может купить сам. Признак — есть тарифная группа
 #: (значит, есть цена) и НЕТ занятий: расписание заводит методист, и продавать
 #: его через кнопку нельзя — обещание, которое некому выполнить.

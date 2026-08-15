@@ -125,7 +125,9 @@ async def start_gateway_payment(
 
 #: Назначение платежа в `metadata`. Без него уведомление о пакете было бы
 #: неотличимо от уведомления об оплате месяца — а зачисляются они по-разному.
-_PURPOSE_AI_PACKAGE = "ai_package"
+#: Метка одна на весь путь денег: тем же значением помечается строка платежа
+#: (`student_payment.purpose`), по нему же сверка узнаёт разовую покупку.
+_PURPOSE_AI_PACKAGE = payment_service.PURPOSE_AI_PACKAGE
 
 
 @router.post(
@@ -383,6 +385,10 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
 
     Повторная доставка того же платежа безопасна: уникальный
     `gateway_payment_id` не даст зачислить пакет дважды.
+
+    tsk-615: вместе с пакетом здесь же учитываются деньги за него. Раньше
+    записывался только пакет, и выручка от покупки не попадала ни в кабинет, ни
+    в выгрузку для сверки со шлюзом.
     """
     student_id = _as_int(payment.metadata.get("student_id"))
     units = _as_int(payment.metadata.get("units"))
@@ -396,11 +402,10 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
         return {"status": "ignored"}
 
     try:
-        created = await subscription_service.grant_ai_package(
+        granted, recorded = await subscription_service.record_ai_package_purchase(
             db, student_id, units=units, gateway_payment_id=payment.id,
-            note="оплачено картой",
+            amount_minor=payment.amount_minor,
         )
-        await db.commit()
     except Exception as exc:
         await db.rollback()
         logger.error(
@@ -413,7 +418,7 @@ async def _record_ai_package(db: AsyncSession, payment) -> dict:
             "Не удалось зачислить пакет, повторите доставку уведомления",
         ) from exc
 
-    return {"status": "recorded" if created else "already_recorded"}
+    return {"status": "recorded" if (granted or recorded) else "already_recorded"}
 
 
 async def _record_subscription(db: AsyncSession, payment) -> dict:

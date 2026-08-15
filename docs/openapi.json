@@ -32276,6 +32276,118 @@
         }
       }
     },
+    "/api/v1/me/purchases": {
+      "get": {
+        "tags": [
+          "me_payments"
+        ],
+        "summary": "Мои разовые покупки",
+        "description": "Оплаченное не за месяц: пакет обращений к ИИ-наставнику и всё, что появится дальше. Отдельным списком, потому что к месяцу такие покупки не относятся. Родитель смотрит покупки ребёнка, передав его student_id.",
+        "operationId": "my_purchases_api_v1_me_purchases_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ребёнок родителя; своё — не указывать",
+              "title": "Student Id"
+            },
+            "description": "Ребёнок родителя; своё — не указывать"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StudentPurchaseRead"
+                  },
+                  "title": "Response My Purchases Api V1 Me Purchases Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/payments": {
       "post": {
         "tags": [
@@ -32480,7 +32592,7 @@
           "marketer_payments"
         ],
         "summary": "Платежи: очередь на подтверждение и история",
-        "description": "Без фильтра сверху идут платежи, ждущие решения.",
+        "description": "Без фильтра сверху идут платежи, ждущие решения. Разовые покупки (пакет обращений к наставнику) идут в том же списке: у них пусты месяц и тарифная группа, а назначение видно в поле purpose.",
         "operationId": "list_payments_api_v1_marketer_payments_get",
         "security": [
           {
@@ -32544,6 +32656,28 @@
               ],
               "title": "Student Id"
             }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "monthly",
+                    "ai_package"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Оставить только платежи этого назначения",
+              "title": "Purpose"
+            },
+            "description": "Оставить только платежи этого назначения"
           },
           {
             "name": "token",
@@ -46541,13 +46675,41 @@
             "title": "Full Name"
           },
           "group_name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Group Name"
           },
           "period": {
-            "type": "string",
-            "format": "date",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Period"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "monthly",
+              "ai_package"
+            ],
+            "title": "Purpose",
+            "default": "monthly"
+          },
+          "purpose_name": {
+            "type": "string",
+            "title": "Purpose Name",
+            "default": "Обучение за месяц"
           },
           "amount_minor": {
             "type": "integer",
@@ -46600,13 +46762,11 @@
         "required": [
           "id",
           "on_date",
-          "group_name",
-          "period",
           "amount_minor",
           "method"
         ],
         "title": "PaymentExportRow",
-        "description": "Строка выгрузки для сверки с чеками «Мой налог»."
+        "description": "Строка выгрузки для сверки с чеками «Мой налог» и с приходом в ЮKassa.\n\nРазовые покупки идут здесь же — у них пусты месяц и группа, а назначение\nпоказывает, за что взяты деньги."
       },
       "PaymentRead": {
         "properties": {
@@ -46630,17 +46790,52 @@
             "title": "Full Name"
           },
           "group_id": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Group Id"
           },
           "group_name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Group Name"
           },
           "period": {
-            "type": "string",
-            "format": "date",
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Period"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "monthly",
+              "ai_package"
+            ],
+            "title": "Purpose",
+            "default": "monthly"
+          },
+          "purpose_name": {
+            "type": "string",
+            "title": "Purpose Name",
+            "default": "Обучение за месяц"
           },
           "amount_minor": {
             "type": "integer",
@@ -46764,11 +46959,25 @@
             "title": "Created At"
           },
           "charge_total_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Charge Total Minor"
           },
           "charge_due_minor": {
-            "type": "integer",
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Charge Due Minor"
           }
         },
@@ -46776,18 +46985,13 @@
         "required": [
           "id",
           "student_id",
-          "group_id",
-          "group_name",
-          "period",
           "amount_minor",
           "method",
           "status",
-          "created_at",
-          "charge_total_minor",
-          "charge_due_minor"
+          "created_at"
         ],
         "title": "PaymentRead",
-        "description": "Платёж глазами кабинета маркетолога."
+        "description": "Платёж глазами кабинета маркетолога.\n\nМесяц и тарифная группа пусты у разовой покупки: пакет обращений к\nнаставнику не относится ни к какому месяцу (tsk-615)."
       },
       "PaymentStartRequest": {
         "properties": {
@@ -50409,6 +50613,110 @@
           "total_price_minor"
         ],
         "title": "StudentPricingRead"
+      },
+      "StudentPurchaseRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "monthly",
+              "ai_package"
+            ],
+            "title": "Purpose"
+          },
+          "purpose_name": {
+            "type": "string",
+            "title": "Purpose Name"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "gateway"
+            ],
+            "title": "Method"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "confirmed",
+              "rejected"
+            ],
+            "title": "Status"
+          },
+          "payer_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payer Note"
+          },
+          "paid_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid On"
+          },
+          "review_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Note"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "purpose",
+          "purpose_name",
+          "amount_minor",
+          "method",
+          "status",
+          "created_at"
+        ],
+        "title": "StudentPurchaseRead",
+        "description": "Разовая покупка глазами того, кто платил (tsk-615).\n\nМесяца здесь нет намеренно: покупка к нему не относится, и колонка «период»\nв таком списке только сбивала бы с толку."
       },
       "StudentResponse": {
         "properties": {
