@@ -1,0 +1,890 @@
+diff --git a/app/api/deps.py b/app/api/deps.py
+index 5be227c..56991ad 100644
+--- a/app/api/deps.py
++++ b/app/api/deps.py
+@@ -142,6 +142,47 @@ async def require_authenticated(
+     return current_user
+ 
+ 
++def resolve_student_owner(
++    current_user: CurrentUser,
++    student_id: int | None,
++    *,
++    subject: str,
++) -> int:
++    """Кому принадлежит запрошенное — ученику из сессии или названному явно.
++
++    Ботам (TG_LMS) ученика взять неоткуда: они ходят по сервисному ключу, и
++    `get_current_user` отдаёт им `CurrentUser(id=0, is_service=True)`. Без явного
++    параметра данные всех учеников слились бы в одного несуществующего
++    пользователя 0.
++
++    Страж: параметр читается ТОЛЬКО у сервисного вызывающего. Обычный ученик,
++    подставивший чужой номер, получает 403 — иначе это сквозная дыра, дающая
++    читать чужое по подобранному числу.
++
++    Правило живёт здесь одной копией намеренно: оно повторяется на каждой
++    поверхности, доступной боту, и разъехавшись хоть в одной, дало бы дыру
++    ровно там, где её никто не ищет.
++
++    :param current_user: вызывающий (ученик или сервисный ключ).
++    :param student_id: явно названный ученик; допустим только сервисному вызову.
++    :param subject: чего лишится вызов без параметра («разговор ничей»).
++    :return: идентификатор ученика-владельца.
++    """
++    if student_id is None:
++        if current_user.is_service:
++            raise HTTPException(
++                status.HTTP_400_BAD_REQUEST,
++                f"сервисный вызов обязан указать student_id — иначе {subject}",
++            )
++        return current_user.id
++    if not current_user.is_service:
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "student_id доступен только сервисному вызову",
++        )
++    return student_id
++
++
+ # ---------------------------------------------------------------------------
+ # Централизованный роль-гейт (tsk-298, Фаза 0).
+ # Один источник проверки НАЛИЧИЯ роли вместо размазанных per-handler проверок.
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index 2659e70..6eeea3a 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -20,7 +20,12 @@ from pydantic import BaseModel, Field
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_async_db, get_current_user, require_role
++from app.api.deps import (
++    get_async_db,
++    get_current_user,
++    require_role,
++    resolve_student_owner,
++)
+ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.services import entitlements_service
+@@ -71,28 +76,14 @@ class TutorAskRequest(BaseModel):
+ def _resolve_student(current_user: CurrentUser, student_id: Optional[int]) -> int:
+     """Кому принадлежит разговор.
+ 
+-    Ботам (TG_LMS) сессии ученика взять неоткуда: они ходят по сервисному ключу,
+-    и `get_current_user` отдаёт им `CurrentUser(id=0, is_service=True)`. Без
+-    явного параметра все разговоры всех учеников слились бы в одного
+-    несуществующего пользователя 0.
+-
+-    Страж: параметр читается ТОЛЬКО у сервисного вызывающего. Обычный ученик,
+-    подставивший `?student_id=`, получает 403 — иначе это сквозная дыра, дающая
+-    читать чужие разговоры с наставником, а там ученик пишет откровенно.
++    Само правило — общий страж `resolve_student_owner`: ту же оговорку про
++    сервисный вызов повторяет каждая поверхность, доступная боту, и разойтись
++    им нельзя. Чужой разговор с наставником особенно чувствителен: там ученик
++    пишет откровенно.
+     """
+-    if student_id is None:
+-        if current_user.is_service:
+-            raise HTTPException(
+-                status.HTTP_400_BAD_REQUEST,
+-                "сервисный вызов обязан указать student_id — иначе разговор ничей",
+-            )
+-        return current_user.id
+-    if not current_user.is_service:
+-        raise HTTPException(
+-            status.HTTP_403_FORBIDDEN,
+-            "student_id доступен только сервисному вызову",
+-        )
+-    return student_id
++    return resolve_student_owner(
++        current_user, student_id, subject="разговор ничей"
++    )
+ 
+ 
+ def _enabled() -> bool:
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 2a6e548..7650046 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -21,7 +21,12 @@ from typing import Literal
+ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from app.api.deps import get_async_db, require_authenticated
++from app.api.deps import (
++    get_async_db,
++    get_current_user,
++    require_authenticated,
++    resolve_student_owner,
++)
+ from app.auth.current_user import CurrentUser
+ from app.services import entitlements_service
+ from app.services.courses_acl_service import assert_course_access
+@@ -881,8 +886,9 @@ async def attribute_guest(
+     summary="Что даёт мой тариф и сколько осталось",
+ )
+ async def my_entitlements(
++    student_id: int | None = None,
+     db: AsyncSession = Depends(get_async_db),
+-    current_user: CurrentUser = Depends(require_authenticated),
++    current_user: CurrentUser = Depends(get_current_user),
+ ) -> MyEntitlements:
+     """Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.
+ 
+@@ -890,5 +896,11 @@ async def my_entitlements(
+     разъехались бы: интерфейс показывал бы доступное там, где сервер откажет.
+     Именно так и выглядит худший вид расхождения — человек нажимает и получает
+     ошибку вместо объяснения.
++
++    `student_id` читается ТОЛЬКО у сервисного вызывающего — та же оговорка, что у
++    наставника: боты ходят по сервисному ключу, и своего `current_user` у них нет.
++    Обычный ученик, подставивший чужой номер, получает 403: иначе это сквозная
++    дыра, показывающая чужой тариф и остаток.
+     """
+-    return await entitlements_service.snapshot(db, student_id=current_user.id)
++    owner = resolve_student_owner(current_user, student_id, subject="права ничьи")
++    return await entitlements_service.snapshot(db, student_id=owner)
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 6ca0dd5..abd6737 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -23793,7 +23793,7 @@
+           "me"
+         ],
+         "summary": "Что даёт мой тариф и сколько осталось",
+-        "description": "Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.\n\nСобирается из той же двери прав, что и сами гейты, — иначе кнопка и запрет\nразъехались бы: интерфейс показывал бы доступное там, где сервер откажет.\nИменно так и выглядит худший вид расхождения — человек нажимает и получает\nошибку вместо объяснения.",
++        "description": "Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.\n\nСобирается из той же двери прав, что и сами гейты, — иначе кнопка и запрет\nразъехались бы: интерфейс показывал бы доступное там, где сервер откажет.\nИменно так и выглядит худший вид расхождения — человек нажимает и получает\nошибку вместо объяснения.\n\n`student_id` читается ТОЛЬКО у сервисного вызывающего — та же оговорка, что у\nнаставника: боты ходят по сервисному ключу, и своего `current_user` у них нет.\nОбычный ученик, подставивший чужой номер, получает 403: иначе это сквозная\nдыра, показывающая чужой тариф и остаток.",
+         "operationId": "my_entitlements_api_v1_me_entitlements_get",
+         "security": [
+           {
+@@ -23804,6 +23804,22 @@
+           }
+         ],
+         "parameters": [
++          {
++            "name": "student_id",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "integer"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Student Id"
++            }
++          },
+           {
+             "name": "token",
+             "in": "query",
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index efc381e..fa59943 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -272,7 +272,7 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ 
+ | Метод и путь | Доступ | Назначение |
+ |---|---|---|
+-| `GET /api/v1/me/entitlements` | ученик | Что положено + остатки — источник для кнопок |
++| `GET /api/v1/me/entitlements` | ученик; **сервисный ключ + `?student_id=`** | Что положено + остатки — источник для кнопок |
+ | `GET /api/v1/subscriptions/plans` | ученик, персонал | Витрина 9 планов |
+ | `POST /api/v1/subscriptions/students/{id}` | **admin, marketer** | Назначить/сменить тариф. Преподавателю запрещено (решение 10) |
+ | `GET /api/v1/subscriptions/students/{id}` | персонал | Текущий тариф и история |
+@@ -284,6 +284,14 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ Аддитивные поля в существующих ответах ломающими не считаются; `openapi.json`
+ регенерируется pre-commit-хуком.
+ 
++**`student_id` в витрине прав — только у сервисного вызова** (Фаза 8, часть 5).
++У бота своего `current_user` нет: без параметра права оказались бы ничьи, поэтому
++сервисный вызов без него получает **400**. Обычный ученик, подставивший чужой
++номер, получает **403** — иначе чужой тариф, остаток и покупки смотрел бы любой,
++кто подберёт число. Правило живёт одной копией в
++`app/api/deps.py::resolve_student_owner`; на него же переведён наставник. Вторая
++копия правила стала бы будущей дырой ровно там, где её никто не ищет.
++
+ **Три существующих пути получили ответ 403** (Фаза 3, объявлен в `responses`):
+ `GET /ai-tutor/tasks/{id}` (только при открытии **нового** разговора — свой уже
+ начатый отдаётся всегда), `POST /ai-tutor/tasks/{id}/ask`,
+diff --git a/tests/test_tsk301_entitlements_surface.py b/tests/test_tsk301_entitlements_surface.py
+index f3ac70f..e1fc7bc 100644
+--- a/tests/test_tsk301_entitlements_surface.py
++++ b/tests/test_tsk301_entitlements_surface.py
+@@ -230,3 +230,53 @@ async def test_guest_course_without_limit_reports_null(
+         await client.get(f"/api/v1/learning/guest/courses/{course_uid}")
+     ).json()
+     assert body["demo_task_limit"] is None
++
++
++# ─────────── Витрина для бота: сервисный вызов с указанием ученика ──────────
++
++
++async def test_service_call_reads_named_student(db: AsyncSession, client) -> None:
++    """Бот ходит по сервисному ключу и обязан назвать ученика явно.
++
++    Своего `current_user` у бота нет: без параметра права оказались бы ничьи.
++    """
++    from app.core.config import Settings
++
++    student_id, _token = await _student_with_plan(db, "ai")
++    key = next(iter(Settings().valid_api_keys))
++
++    response = await client.get(
++        f"/api/v1/me/entitlements?student_id={student_id}",
++        headers={"X-API-Key": key},
++    )
++    assert response.status_code == 200, response.text
++    assert response.json()["plan_code"] == "ai"
++
++
++async def test_service_call_without_student_is_rejected(
++    db: AsyncSession, client
++) -> None:
++    """Без ученика сервисный вызов — ошибка, а не «права по умолчанию»."""
++    from app.core.config import Settings
++
++    key = next(iter(Settings().valid_api_keys))
++    response = await client.get(
++        "/api/v1/me/entitlements", headers={"X-API-Key": key}
++    )
++    assert response.status_code == 400, response.text
++
++
++async def test_student_cannot_peek_at_another(db: AsyncSession, client) -> None:
++    """Ученик, подставивший чужой номер, получает отказ.
++
++    Иначе это сквозная дыра: чужой тариф, чужой остаток и чужие покупки видны
++    любому, кто подберёт число.
++    """
++    _mine, token = await _student_with_plan(db, "ai")
++    other, _ = await _student_with_plan(db, "base")
++
++    response = await client.get(
++        f"/api/v1/me/entitlements?student_id={other}",
++        headers={"Authorization": f"Bearer {token}"},
++    )
++    assert response.status_code == 403, response.text
+diff --git a/src/bots/common/dialogs/student_attempts_base.py b/src/bots/common/dialogs/student_attempts_base.py
+index 02c6a45..9f0b9aa 100644
+--- a/src/bots/common/dialogs/student_attempts_base.py
++++ b/src/bots/common/dialogs/student_attempts_base.py
+@@ -826,6 +826,32 @@ async def student_attempts_results_getter(
+         )
+ 
+     dialog_manager.dialog_data["run_results_items"] = result_items
++    # tsk-572: наставника предлагаем, только если есть что разбирать.
++    # Кнопка после безошибочной попытки — шум, который обесценивает её там,
++    # где она действительно нужна.
++    run_has_wrong = any(r.get("is_correct") is False for r in result_items)
++
++    # tsk-301: остаток обращений — на самой кнопке, ДО того как ученик упрётся
++    # в лимит. Права спрашиваем только когда кнопка будет показана: лишний
++    # запрос на каждом экране результатов — плата ни за что.
++    tutor_label = "🤔 Разобраться с наставником"
++    if run_has_wrong:
++        student_id = (
++            dd.get("student_id")
++            or dd.get("user_id")
++            or dialog_manager.middleware_data.get("current_user_id")
++        )
++        if student_id:
++            from src.common.entitlements_client import (  # noqa: PLC0415
++                fetch_entitlements,
++                tutor_button_label,
++            )
++            try:
++                view = await fetch_entitlements(int(student_id))
++            except (TypeError, ValueError):
++                view = None
++            tutor_label = tutor_button_label(view)
++
+     return {
+         "attempt_id": attempt_id,
+         "message": message,
+@@ -833,10 +859,8 @@ async def student_attempts_results_getter(
+         "run_attempts_status_line": run_attempts_status_line,
+         "result_items": result_items,
+         "has_results": len(result_items) > 0,
+-        # tsk-572: наставника предлагаем, только если есть что разбирать.
+-        # Кнопка после безошибочной попытки — шум, который обесценивает её там,
+-        # где она действительно нужна.
+-        "run_has_wrong": any(r.get("is_correct") is False for r in result_items),
++        "run_has_wrong": run_has_wrong,
++        "tutor_button_label": tutor_label,
+     }
+ 
+ 
+@@ -917,9 +941,15 @@ def build_student_attempts_dialog(config: StudentAttemptsConfig) -> Dialog:
+         reply = await ask_tutor(task_id, int(student_id))
+         # Первый ход разговора — значит показываем плашку о видимости ДО текста.
+         first_turn = not dd.get("tutor_started_for") == task_id
+-        dd["tutor_started_for"] = task_id
++        if not reply.denied:
++            dd["tutor_started_for"] = task_id
+         text = format_reply(reply, first_turn=first_turn)
+-        if reply.offer_teacher or reply.degraded:
++        # tsk-301: при отказе по тарифу свою приписку не добавляем. Что делать
++        # дальше, сказано в самом тексте отказа, и он приходит из LMS — только
++        # там известно, открыт ли этому ученику разбор с преподавателем. На
++        # тарифах без наставника он закрыт тоже, и совет «напиши преподавателю»
++        # стал бы вторым тупиком подряд.
++        if not reply.denied and (reply.offer_teacher or reply.degraded):
+             text += "\n\nЕсли не помогло — напиши преподавателю через «Запросить помощь»."
+         await c.bot.send_message(chat_id=c.message.chat.id, text=text)
+ 
+@@ -1120,14 +1150,21 @@ def build_student_attempts_dialog(config: StudentAttemptsConfig) -> Dialog:
+             resp = await les.request_help(task_id, user_id, message=message)
+         except APIClientError as e:
+             status_code = getattr(e, "status_code", None)
++            mapping = map_api_error_to_user_message(e, "Не удалось отправить запрос помощи. Попробуйте позже.")
++            # tsk-301: отказ по тарифу — не сбой, а работа правила. В журнале
++            # ошибок ему не место: он поднял бы уровень «ошибок запроса помощи»
++            # ровно в тот день, когда гейт включили, и увёл бы разбор не туда.
+             log_operation(
+-                operation="request_help_error",
++                operation=(
++                    "request_help_denied_by_plan"
++                    if mapping.is_subscription_denied
++                    else "request_help_error"
++                ),
+                 user_id=user_id,
+                 task_id=task_id,
+-                status="error",
++                status="denied" if mapping.is_subscription_denied else "error",
+                 error_code=status_code,
+             )
+-            mapping = map_api_error_to_user_message(e, "Не удалось отправить запрос помощи. Попробуйте позже.")
+             await send_error_message(event, mapping.user_message, show_alert=True)
+             await root.switch_to(sg.EXECUTE)
+             return
+@@ -1957,7 +1994,8 @@ def build_student_attempts_dialog(config: StudentAttemptsConfig) -> Dialog:
+             # предлагать наставника после безошибочной попытки незачем.
+             Row(
+                 Button(
+-                    Const("🤔 Разобраться с наставником"),
++                    # tsk-301: подпись собирает поставщик — там известен остаток.
++                    Format("{tutor_button_label}"),
+                     id="results_ask_tutor",
+                     on_click=on_results_ask_tutor,
+                     when="run_has_wrong",
+diff --git a/src/common/ai_tutor_client.py b/src/common/ai_tutor_client.py
+index ba7bc3f..c169b41 100644
+--- a/src/common/ai_tutor_client.py
++++ b/src/common/ai_tutor_client.py
+@@ -35,6 +35,13 @@ DEGRADED_TEXT = (
+     "Напиши преподавателю: он разберёт задание вместе с тобой."
+ )
+ 
++# Отказ по тарифу пришёл без объяснения — показать «недоступно» без причины
++# нельзя, это тупик. Отправляем к человеку, который назовёт нужный тариф.
++DENIED_FALLBACK_TEXT = (
++    "Разбор с наставником не входит в твой тариф. Напиши преподавателю — "
++    "он подскажет, какой тариф его открывает."
++)
++
+ VISIBILITY_NOTICE = (
+     "ℹ️ Этот разговор видят твой преподаватель и методист — они помогают, а не проверяют."
+ )
+@@ -46,11 +53,33 @@ class TutorReply:
+     """Ответ наставника плюс признаки, влияющие на то, что показать ученику."""
+ 
+     def __init__(self, text: str, *, degraded: bool = False,
+-                 truncated: bool = False, offer_teacher: bool = False) -> None:
++                 truncated: bool = False, offer_teacher: bool = False,
++                 denied: bool = False) -> None:
+         self.text = text
+         self.degraded = degraded
+         self.truncated = truncated
+         self.offer_teacher = offer_teacher
++        # tsk-301: отказ по тарифу — НЕ деградация. Сказать «сбой на нашей
++        # стороне» там, где сработало правило, значит соврать: ученик подождёт
++        # и нажмёт снова, вместо того чтобы узнать, что даёт другой тариф.
++        self.denied = denied
++
++
++def parse_denial(status: int, body: object) -> Optional[str]:
++    """Достать объяснение из отказа по тарифу; None — если отказ не про тариф.
++
++    Признак машинный (`payload.code`): продуктовые формулировки меняются, код —
++    нет. Разбор вынесен отдельно, чтобы проверяться тестом без сети.
++    """
++    if status != 403 or not isinstance(body, dict):
++        return None
++    payload = body.get("payload")
++    if not isinstance(payload, dict) or payload.get("code") != "subscription_denied":
++        return None
++    for candidate in (body.get("detail"), payload.get("upgrade_hint")):
++        if isinstance(candidate, str) and candidate.strip():
++            return candidate.strip()
++    return DENIED_FALLBACK_TEXT
+ 
+ 
+ def _url(path: str) -> str:
+@@ -110,6 +139,13 @@ async def ask_tutor(
+                         "ai_tutor: LMS ответил %s (task_id=%s, student_id=%s)",
+                         resp.status, task_id, student_id,
+                     )
++                    try:
++                        body = await resp.json(content_type=None)
++                    except Exception:  # noqa: BLE001 — тело может быть не JSON
++                        body = None
++                    hint = parse_denial(resp.status, body)
++                    if hint:
++                        return TutorReply(hint, denied=True)
+                     return TutorReply(DEGRADED_TEXT, degraded=True, offer_teacher=True)
+ 
+                 parts: list[str] = []
+@@ -152,7 +188,13 @@ def format_reply(reply: TutorReply, *, first_turn: bool) -> str:
+ 
+     Плашка о видимости — только на первом ходе и ДО текста наставника: ученик
+     должен узнать, кто это прочитает, прежде чем начнёт писать откровенно.
++
++    При отказе по тарифу разговора не будет вовсе — предупреждать о его
++    видимости не о чем, и плашка только запутает.
+     """
++    if reply.denied:
++        return reply.text
++
+     parts: list[str] = []
+     if first_turn:
+         parts.append(VISIBILITY_NOTICE)
+diff --git a/src/common/api_client.py b/src/common/api_client.py
+index 68c8c58..a4a0ead 100644
+--- a/src/common/api_client.py
++++ b/src/common/api_client.py
+@@ -157,10 +157,22 @@ class APIClientError(Exception):
+     Ошибка API-клиента.
+     Атрибут status_code = None для сетевых/таймаут-ошибок,
+     или целочисленный HTTP-код для ошибок от сервера.
++
++    `body` — разобранное тело ответа LMS, когда оно пришло в JSON (tsk-301).
++    Доменные отказы LMS несут в теле объяснение для человека
++    (`detail`) и машинный признак (`payload.code`); без него остаётся только
++    выуживать текст из строки сообщения регулярками, а на этом клиент однажды
++    покажет ученику «Недостаточно прав» вместо «что даёт апгрейд».
+     """
+-    def __init__(self, message: str, status_code: int | None = None) -> None:
++    def __init__(
++        self,
++        message: str,
++        status_code: int | None = None,
++        body: dict[str, Any] | None = None,
++    ) -> None:
+         super().__init__(message)
+         self.status_code = status_code
++        self.body: dict[str, Any] = body or {}
+ 
+ 
+ class AsyncAPIClient:
+@@ -357,6 +369,13 @@ class AsyncAPIClient:
+                     continue
+ 
+                 text = exc.response.text
++                # tsk-301: тело доменного отказа несёт объяснение для ученика.
++                # Разбираем один раз здесь, а не строкой в каждом вызывающем.
++                try:
++                    parsed = exc.response.json()
++                except ValueError:
++                    parsed = None
++                body = parsed if isinstance(parsed, dict) else None
+                 if status == 422:
+                     try:
+                         details = HTTPValidationError.model_validate(exc.response.json())
+@@ -370,6 +389,7 @@ class AsyncAPIClient:
+                 raise APIClientError(
+                     f"HTTP {status} error for {path}: {text}",
+                     status_code=status,
++                    body=body,
+                 ) from exc
+ 
+             except httpx.RequestError as exc:
+diff --git a/src/common/entitlements_client.py b/src/common/entitlements_client.py
+new file mode 100644
+index 0000000..baf5624
+--- /dev/null
++++ b/src/common/entitlements_client.py
+@@ -0,0 +1,116 @@
++"""Права тарифа для бота (tsk-301, фаза 8).
++
++Бот показывает остаток обращений к наставнику и объясняет, что даёт другой
++тариф. Все пороги, названия и предупреждения считает LMS — здесь только запрос
++и мягкая деградация.
++
++**Почему не считать у себя.** Порог предупреждения («осталось мало») и правило
++продажи пакета — продуктовые величины, они меняются без выката бота. Свой
++счётчик однажды назвал бы другое число, чем сайт и письмо, и это выглядело бы
++как сбой, а не как разная настройка.
++
++**Почему `student_id` в запросе.** Бот ходит по сервисному ключу, своего
++`current_user` у него нет. На стороне LMS параметр читается ТОЛЬКО у сервисного
++вызова: обычному ученику он даёт 403 — иначе чужой тариф и остаток смотрел бы
++любой, кто подберёт число.
++
++**Почему сбой не показывается ученику.** Витрина — украшение кнопки, а не
++разрешение. Реальный гейт стоит в LMS на самом действии: если остаток не
++доехал, ученик просто увидит кнопку без счётчика, а не отказ.
++"""
++from __future__ import annotations
++
++import logging
++from typing import Any, Optional
++
++import aiohttp
++
++from src.common.config import settings
++
++logger = logging.getLogger(__name__)
++
++_TIMEOUT = aiohttp.ClientTimeout(total=5, sock_connect=3)
++
++
++class CapabilityView:
++    """Состояние одной возможности: доступна ли, сколько осталось, что даст апгрейд."""
++
++    def __init__(self, raw: dict[str, Any]) -> None:
++        self.allowed: bool = bool(raw.get("allowed"))
++        # allowed | denied_no_plan | denied_not_in_plan | denied_limit
++        self.reason: str = str(raw.get("reason") or "")
++        self.limit: Optional[int] = raw.get("limit")
++        self.remaining: Optional[int] = raw.get("remaining")
++        self.warn: bool = bool(raw.get("warn"))
++        self.upgrade_hint: Optional[str] = raw.get("upgrade_hint")
++
++
++class EntitlementsView:
++    """Витрина прав ученика — то же, что видит веб-кабинет."""
++
++    def __init__(self, raw: dict[str, Any]) -> None:
++        self.plan_code: Optional[str] = raw.get("plan_code")
++        self.plan_name: Optional[str] = raw.get("plan_name")
++        self.capabilities: dict[str, CapabilityView] = {
++            name: CapabilityView(value)
++            for name, value in (raw.get("capabilities") or {}).items()
++            if isinstance(value, dict)
++        }
++
++    def capability(self, name: str) -> Optional[CapabilityView]:
++        return self.capabilities.get(name)
++
++
++def _url(path: str) -> str:
++    return f"{str(settings.api_url).rstrip('/')}{path}"
++
++
++async def fetch_entitlements(student_id: int) -> Optional[EntitlementsView]:
++    """Забрать права ученика. None — если LMS не ответила; это не ошибка для ученика."""
++    try:
++        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
++            async with session.get(
++                _url("/api/v1/me/entitlements"),
++                headers={"X-API-Key": str(settings.api_key)},
++                params={"student_id": str(student_id)},
++            ) as resp:
++                if resp.status != 200:
++                    logger.warning(
++                        "entitlements: LMS ответила %s (student_id=%s)",
++                        resp.status, student_id,
++                    )
++                    return None
++                raw = await resp.json()
++    except Exception as exc:  # noqa: BLE001 — витрина не роняет диалог
++        logger.warning(
++            "entitlements: не удалось получить права (student_id=%s): %s",
++            student_id, exc,
++        )
++        return None
++    if not isinstance(raw, dict):
++        return None
++    return EntitlementsView(raw)
++
++
++def tutor_button_label(view: Optional[EntitlementsView]) -> str:
++    """Подпись кнопки наставника: остаток и предупреждение до исчерпания.
++
++    Без витрины — прежняя нейтральная подпись: молчание лучше выдуманного числа.
++    Когда наставник в тариф не входит, кнопка обещает не разбор, а объяснение —
++    иначе ученик нажмёт и упрётся в отказ.
++    """
++    base = "🤔 Разобраться с наставником"
++    tutor = view.capability("ai_tutor") if view else None
++    if tutor is None:
++        return base
++    if tutor.reason == "denied_limit":
++        # Обещать разбор нечестно: обращения на месяц кончились. Но и прятать
++        # кнопку нельзя — за ней объяснение, как получить ещё.
++        return "🤔 Наставник: обращения на месяц кончились"
++    if not tutor.allowed:
++        return "🤔 Наставник: что это и как открыть"
++    if tutor.remaining is None:
++        return base  # безлимит — считать нечего
++    if tutor.warn:
++        return f"{base} (осталось {tutor.remaining})"
++    return f"{base} ({tutor.remaining} в этом месяце)"
+diff --git a/src/common/utils/dialogs.py b/src/common/utils/dialogs.py
+index 094d685..fc4e614 100644
+--- a/src/common/utils/dialogs.py
++++ b/src/common/utils/dialogs.py
+@@ -38,6 +38,38 @@ class APIErrorMapping:
+     is_time_limit: bool = False
+     is_attempt_finished: bool = False
+     is_attempt_limit: bool = False
++    is_subscription_denied: bool = False
++
++
++SUBSCRIPTION_DENIED_CODE = "subscription_denied"
++
++# Запасной текст: тариф отказал, а объяснения в теле не оказалось. Пустая
++# строка тут превратилась бы в «недоступно» без причины — тупик, ради ухода от
++# которого весь разбор и делается.
++MSG_SUBSCRIPTION_DENIED_FALLBACK = (
++    "Это не входит в твой тариф. Напиши преподавателю — он подскажет, "
++    "какой тариф открывает эту возможность."
++)
++
++
++def _subscription_denied_hint(error: Exception) -> str | None:
++    """Достать объяснение из отказа по тарифу; None — если отказ не про тариф.
++
++    Признак берём машинный (`payload.code`), а не по тексту: сообщения меняются
++    вместе с продуктовой формулировкой, а код — нет.
++    """
++    body = getattr(error, "body", None)
++    if not isinstance(body, dict):
++        return None
++    payload = body.get("payload")
++    if not isinstance(payload, dict):
++        return None
++    if payload.get("code") != SUBSCRIPTION_DENIED_CODE:
++        return None
++    detail = body.get("detail") or payload.get("upgrade_hint")
++    if isinstance(detail, str) and detail.strip():
++        return detail.strip()
++    return MSG_SUBSCRIPTION_DENIED_FALLBACK
+ 
+ 
+ def map_api_error_to_user_message(
+@@ -54,6 +86,15 @@ def map_api_error_to_user_message(
+     error_msg = str(error).strip().lower()
+     status_code = getattr(error, "status_code", None)
+ 
++    # tsk-301: отказ по тарифу — не «недостаточно прав». Прав у ученика ровно
++    # столько, сколько он купил, и единственный полезный ответ здесь — что даёт
++    # переход на другой тариф. Текст берём из тела отказа: пороги и названия
++    # тарифов считает LMS, и если бот начнёт складывать свои, однажды он назовёт
++    # другую цифру, чем сайт, — это выглядит как сбой счётчика.
++    hint = _subscription_denied_hint(error)
++    if hint:
++        return APIErrorMapping(user_message=hint, is_subscription_denied=True)
++
+     if status_code == 404:
+         return APIErrorMapping(user_message=MSG_OBJECT_NOT_FOUND)
+     if status_code == 403:
+diff --git a/tests/unit/test_tsk301_tariff_messages.py b/tests/unit/test_tsk301_tariff_messages.py
+new file mode 100644
+index 0000000..a3fb33c
+--- /dev/null
++++ b/tests/unit/test_tsk301_tariff_messages.py
+@@ -0,0 +1,199 @@
++"""tsk-301 фаза 8: что видит ученик в боте, когда упирается в тариф.
++
++Проверяется главный разрыв: отказ по тарифу и сбой сервиса — разные события,
++а бот показывал их одинаково. «Наставник недоступен, это сбой на нашей стороне»
++на тарифе без наставника — неправда: ученик подождёт и нажмёт снова вместо того,
++чтобы узнать, что даёт другой тариф. Второй такой же тупик — «Недостаточно прав»
++на запрос помощи преподавателя.
++
++Пороги и тексты считает LMS. Тесты следят, чтобы бот их доносил, а не считал
++свои: разойдясь, веб и бот назвали бы разные числа, и это выглядело бы как сбой
++счётчика, а не как разная настройка.
++"""
++from __future__ import annotations
++
++import inspect
++
++from src.bots.common.dialogs import student_attempts_base as sab
++from src.common.ai_tutor_client import (
++    DEGRADED_TEXT,
++    DENIED_FALLBACK_TEXT,
++    TutorReply,
++    VISIBILITY_NOTICE,
++    format_reply,
++    parse_denial,
++)
++# Именно `common.api_client`, а не `src.common.api_client`: под двумя именами
++# это два разных модуля с разными классами, и `isinstance` в разборе ошибок не
++# сработал бы. Рантайм бота ходит через `common.*`.
++from common.api_client import APIClientError
++from src.common.entitlements_client import (
++    EntitlementsView,
++    tutor_button_label,
++)
++from src.common.user_messages import MSG_ACCESS_DENIED
++from src.common.utils.dialogs import (
++    MSG_SUBSCRIPTION_DENIED_FALLBACK,
++    map_api_error_to_user_message,
++)
++
++
++def _denial_body(detail: str = "Занятия с преподавателем — на тарифе Base") -> dict:
++    """Тело отказа LMS ровно в том виде, в каком его отдаёт обработчик DomainError."""
++    return {
++        "error": "domain_error",
++        "detail": detail,
++        "payload": {
++            "code": "subscription_denied",
++            "outcome": "denied_not_in_plan",
++            "limit": 0,
++            "remaining": 0,
++            "upgrade_hint": detail,
++        },
++    }
++
++
++# ───────────────────── Наставник: отказ вместо «сбоя» ───────────────────────
++
++
++def test_tariff_denial_is_not_reported_as_a_failure():
++    hint = parse_denial(403, _denial_body())
++    assert hint == "Занятия с преподавателем — на тарифе Base"
++    assert hint != DEGRADED_TEXT
++
++
++def test_real_failure_is_still_a_failure():
++    """403 без признака тарифа и любой 5xx остаются деградацией."""
++    assert parse_denial(403, {"detail": "Access denied"}) is None
++    assert parse_denial(500, _denial_body()) is None
++    assert parse_denial(403, None) is None
++
++
++def test_denial_without_text_still_says_what_to_do():
++    body = {"error": "domain_error", "payload": {"code": "subscription_denied"}}
++    assert parse_denial(403, body) == DENIED_FALLBACK_TEXT
++
++
++def test_denied_reply_skips_the_visibility_notice():
++    """Разговора не будет — предупреждать о его видимости не о чем."""
++    msg = format_reply(TutorReply("Наставник — на тарифе AI", denied=True), first_turn=True)
++    assert msg == "Наставник — на тарифе AI"
++    assert VISIBILITY_NOTICE not in msg
++
++
++def test_handler_does_not_add_teacher_advice_to_a_tariff_denial():
++    """Совет «напиши преподавателю» поверх отказа — второй тупик подряд.
++
++    На тарифах без наставника разбор с преподавателем закрыт тоже, и знает об
++    этом только LMS — значит текст берётся её, без приписок бота.
++    """
++    block = inspect.getsource(sab).split("async def on_results_ask_tutor")[1]
++    block = block.split("async def ")[0]
++    assert "reply.denied" in block, "обработчик не различает отказ и сбой"
++    assert "not reply.denied and (reply.offer_teacher or reply.degraded)" in block
++
++
++# ─────────────── Запрос помощи: «что даёт тариф» вместо «нет прав» ──────────
++
++
++def test_help_request_denial_explains_instead_of_refusing():
++    error = APIClientError("HTTP 403", status_code=403, body=_denial_body())
++    mapping = map_api_error_to_user_message(error, "Не удалось отправить запрос помощи.")
++    assert mapping.is_subscription_denied is True
++    assert mapping.user_message == "Занятия с преподавателем — на тарифе Base"
++    assert mapping.user_message != MSG_ACCESS_DENIED
++
++
++def test_plain_403_still_says_access_denied():
++    """Не всякий 403 — про тариф; чужая попытка так и остаётся отказом в правах."""
++    error = APIClientError("HTTP 403", status_code=403, body={"detail": "Access denied"})
++    assert map_api_error_to_user_message(error).user_message == MSG_ACCESS_DENIED
++
++
++def test_denial_without_detail_falls_back_to_a_usable_text():
++    error = APIClientError(
++        "HTTP 403", status_code=403,
++        body={"payload": {"code": "subscription_denied"}},
++    )
++    mapping = map_api_error_to_user_message(error)
++    assert mapping.user_message == MSG_SUBSCRIPTION_DENIED_FALLBACK
++    assert mapping.is_subscription_denied is True
++
++
++def test_client_keeps_the_error_body_for_the_caller():
++    """Без разобранного тела объяснение пришлось бы выуживать регулярками."""
++    src = inspect.getsource(__import__("src.common.api_client", fromlist=["x"]))
++    assert "body=body" in src, "клиент теряет тело доменного отказа"
++
++
++# ──────────────────── Остаток на кнопке до исчерпания ───────────────────────
++
++
++def _view(**tutor) -> EntitlementsView:
++    return EntitlementsView({
++        "plan_code": "ai",
++        "capabilities": {"ai_tutor": tutor},
++    })
++
++
++def test_button_shows_remaining():
++    label = tutor_button_label(_view(allowed=True, reason="allowed", limit=40, remaining=31))
++    assert "31" in label
++
++
++def test_button_warns_before_the_limit_runs_out():
++    """Порог считает LMS: свой счётчик бота однажды разошёлся бы с сайтом."""
++    label = tutor_button_label(
++        _view(allowed=True, reason="allowed", limit=40, remaining=4, warn=True)
++    )
++    assert "осталось 4" in label
++
++
++def test_button_promises_explanation_when_the_plan_has_no_tutor():
++    """Обещать разбор там, где он закрыт, значит вести ученика в отказ."""
++    label = tutor_button_label(
++        _view(allowed=False, reason="denied_not_in_plan", limit=0, remaining=0)
++    )
++    assert "разобраться" not in label.lower()
++
++
++def test_exhausted_limit_says_so_instead_of_showing_zero():
++    label = tutor_button_label(
++        _view(allowed=False, reason="denied_limit", limit=40, remaining=0, warn=True)
++    )
++    assert "кончились" in label
++
++
++def test_unlimited_plan_shows_no_number():
++    label = tutor_button_label(_view(allowed=True, reason="allowed", limit=None, remaining=None))
++    assert any(ch.isdigit() for ch in label) is False
++
++
++def test_missing_view_falls_back_to_the_plain_label():
++    """LMS не ответила — лучше кнопка без счётчика, чем выдуманное число."""
++    assert tutor_button_label(None) == "🤔 Разобраться с наставником"
++
++
++def test_button_label_comes_from_the_getter():
++    """Без ключа в поставщике `Format` подставит пустоту — кнопка станет безымянной."""
++    src = inspect.getsource(sab)
++    assert '"tutor_button_label"' in src
++    assert 'Format("{tutor_button_label}")' in src
++
++
++def test_rights_are_requested_only_when_the_button_is_shown():
++    """Запрос прав на каждом экране результатов — плата ни за что."""
++    block = inspect.getsource(sab.student_attempts_results_getter)
++    assert "if run_has_wrong:" in block
++    assert "fetch_entitlements" in block
++
++
++def test_tariff_denial_is_not_logged_as_an_error():
++    """Иначе метрика «ошибки запроса помощи» подскочит в день включения гейта.
++
++    Разбор ушёл бы искать поломку там, где сработало правило.
++    """
++    block = inspect.getsource(sab).split("async def _do_request_help")[1]
++    block = block.split("\n    async def ")[0]
++    assert "request_help_denied_by_plan" in block
++    assert "mapping.is_subscription_denied" in block

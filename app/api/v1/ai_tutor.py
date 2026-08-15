@@ -20,7 +20,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, get_current_user, require_role
+from app.api.deps import (
+    get_async_db,
+    get_current_user,
+    require_role,
+    resolve_student_owner,
+)
 from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.services import entitlements_service
@@ -71,28 +76,14 @@ class TutorAskRequest(BaseModel):
 def _resolve_student(current_user: CurrentUser, student_id: Optional[int]) -> int:
     """Кому принадлежит разговор.
 
-    Ботам (TG_LMS) сессии ученика взять неоткуда: они ходят по сервисному ключу,
-    и `get_current_user` отдаёт им `CurrentUser(id=0, is_service=True)`. Без
-    явного параметра все разговоры всех учеников слились бы в одного
-    несуществующего пользователя 0.
-
-    Страж: параметр читается ТОЛЬКО у сервисного вызывающего. Обычный ученик,
-    подставивший `?student_id=`, получает 403 — иначе это сквозная дыра, дающая
-    читать чужие разговоры с наставником, а там ученик пишет откровенно.
+    Само правило — общий страж `resolve_student_owner`: ту же оговорку про
+    сервисный вызов повторяет каждая поверхность, доступная боту, и разойтись
+    им нельзя. Чужой разговор с наставником особенно чувствителен: там ученик
+    пишет откровенно.
     """
-    if student_id is None:
-        if current_user.is_service:
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                "сервисный вызов обязан указать student_id — иначе разговор ничей",
-            )
-        return current_user.id
-    if not current_user.is_service:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "student_id доступен только сервисному вызову",
-        )
-    return student_id
+    return resolve_student_owner(
+        current_user, student_id, subject="разговор ничей"
+    )
 
 
 def _enabled() -> bool:
