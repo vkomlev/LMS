@@ -230,3 +230,53 @@ async def test_guest_course_without_limit_reports_null(
         await client.get(f"/api/v1/learning/guest/courses/{course_uid}")
     ).json()
     assert body["demo_task_limit"] is None
+
+
+# ─────────── Витрина для бота: сервисный вызов с указанием ученика ──────────
+
+
+async def test_service_call_reads_named_student(db: AsyncSession, client) -> None:
+    """Бот ходит по сервисному ключу и обязан назвать ученика явно.
+
+    Своего `current_user` у бота нет: без параметра права оказались бы ничьи.
+    """
+    from app.core.config import Settings
+
+    student_id, _token = await _student_with_plan(db, "ai")
+    key = next(iter(Settings().valid_api_keys))
+
+    response = await client.get(
+        f"/api/v1/me/entitlements?student_id={student_id}",
+        headers={"X-API-Key": key},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["plan_code"] == "ai"
+
+
+async def test_service_call_without_student_is_rejected(
+    db: AsyncSession, client
+) -> None:
+    """Без ученика сервисный вызов — ошибка, а не «права по умолчанию»."""
+    from app.core.config import Settings
+
+    key = next(iter(Settings().valid_api_keys))
+    response = await client.get(
+        "/api/v1/me/entitlements", headers={"X-API-Key": key}
+    )
+    assert response.status_code == 400, response.text
+
+
+async def test_student_cannot_peek_at_another(db: AsyncSession, client) -> None:
+    """Ученик, подставивший чужой номер, получает отказ.
+
+    Иначе это сквозная дыра: чужой тариф, чужой остаток и чужие покупки видны
+    любому, кто подберёт число.
+    """
+    _mine, token = await _student_with_plan(db, "ai")
+    other, _ = await _student_with_plan(db, "base")
+
+    response = await client.get(
+        f"/api/v1/me/entitlements?student_id={other}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 403, response.text

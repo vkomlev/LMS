@@ -21,7 +21,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_async_db, require_authenticated
+from app.api.deps import (
+    get_async_db,
+    get_current_user,
+    require_authenticated,
+    resolve_student_owner,
+)
 from app.auth.current_user import CurrentUser
 from app.services import entitlements_service
 from app.services.courses_acl_service import assert_course_access
@@ -881,8 +886,9 @@ async def attribute_guest(
     summary="Что даёт мой тариф и сколько осталось",
 )
 async def my_entitlements(
+    student_id: int | None = None,
     db: AsyncSession = Depends(get_async_db),
-    current_user: CurrentUser = Depends(require_authenticated),
+    current_user: CurrentUser = Depends(get_current_user),
 ) -> MyEntitlements:
     """Один источник для кнопок ученика: что доступно, сколько осталось, что даст апгрейд.
 
@@ -890,5 +896,11 @@ async def my_entitlements(
     разъехались бы: интерфейс показывал бы доступное там, где сервер откажет.
     Именно так и выглядит худший вид расхождения — человек нажимает и получает
     ошибку вместо объяснения.
+
+    `student_id` читается ТОЛЬКО у сервисного вызывающего — та же оговорка, что у
+    наставника: боты ходят по сервисному ключу, и своего `current_user` у них нет.
+    Обычный ученик, подставивший чужой номер, получает 403: иначе это сквозная
+    дыра, показывающая чужой тариф и остаток.
     """
-    return await entitlements_service.snapshot(db, student_id=current_user.id)
+    owner = resolve_student_owner(current_user, student_id, subject="права ничьи")
+    return await entitlements_service.snapshot(db, student_id=owner)
