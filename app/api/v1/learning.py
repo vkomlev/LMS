@@ -232,10 +232,10 @@ async def material_complete(
     "/materials/{material_id}/skip",
     response_model=LearningSkipResponse,
     responses=_PAYMENT_403,
-    summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+    summary="Пропустить skippable-материал (идемпотентно)",
 )
 async def material_skip(
-    material_id: int = Path(..., description="ID РјР°С‚РµСЂРёР°Р»Р°"),
+    material_id: int = Path(..., description="ID материала"),
     body: LearningSkipRequest = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -250,7 +250,7 @@ async def material_skip(
     await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
     if material is None or not material.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
     if material.requirement_level != "skippable":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -258,7 +258,7 @@ async def material_skip(
         )
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎС‚СѓРґРµРЅС‚ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     progress_status, skipped_at = await set_material_skipped(db, body.student_id, material_id)
     if progress_status == "completed":
         raise HTTPException(
@@ -297,10 +297,10 @@ async def material_skip(
     "/tasks/{task_id}/skip",
     response_model=LearningSkipResponse,
     responses=_PAYMENT_403,
-    summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+    summary="Пропустить skippable-задание (идемпотентно)",
 )
 async def task_skip(
-    task_id: int = Path(..., description="ID Р·Р°РґР°РЅРёСЏ"),
+    task_id: int = Path(..., description="ID задания"),
     body: LearningSkipRequest = Body(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -315,7 +315,7 @@ async def task_skip(
     await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
     if task.requirement_level != "skippable":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -323,7 +323,7 @@ async def task_skip(
         )
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РЎС‚СѓРґРµРЅС‚ РЅРµ РЅР°Р№РґРµРЅ")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
     state_result = await learning_service.compute_task_state(db, body.student_id, task_id)
     if state_result.state == "PASSED":
         raise HTTPException(

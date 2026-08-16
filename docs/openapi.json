@@ -16830,7 +16830,7 @@
         "tags": [
           "learning"
         ],
-        "summary": "РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+        "summary": "Пропустить skippable-материал (идемпотентно)",
         "operationId": "material_skip_api_v1_learning_materials__material_id__skip_post",
         "security": [
           {
@@ -16847,10 +16847,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID РјР°С‚РµСЂРёР°Р»Р°",
+              "description": "ID материала",
               "title": "Material Id"
             },
-            "description": "ID РјР°С‚РµСЂРёР°Р»Р°"
+            "description": "ID материала"
           },
           {
             "name": "token",
@@ -16943,7 +16943,7 @@
         "tags": [
           "learning"
         ],
-        "summary": "РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+        "summary": "Пропустить skippable-задание (идемпотентно)",
         "operationId": "task_skip_api_v1_learning_tasks__task_id__skip_post",
         "security": [
           {
@@ -16960,10 +16960,10 @@
             "required": true,
             "schema": {
               "type": "integer",
-              "description": "ID Р·Р°РґР°РЅРёСЏ",
+              "description": "ID задания",
               "title": "Task Id"
             },
-            "description": "ID Р·Р°РґР°РЅРёСЏ"
+            "description": "ID задания"
           },
           {
             "name": "token",
