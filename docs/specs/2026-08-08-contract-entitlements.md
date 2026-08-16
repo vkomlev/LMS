@@ -273,7 +273,7 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
 | Метод и путь | Доступ | Назначение |
 |---|---|---|
 | `GET /api/v1/me/entitlements` | ученик; **сервисный ключ + `?student_id=`** | Что положено + остатки — источник для кнопок |
-| `GET /api/v1/subscriptions/plans` | ученик, персонал | Витрина 9 планов |
+| `GET /api/v1/subscriptions/plans` | **персонал** (marketer/admin) | Витрина 9 планов |
 | `POST /api/v1/subscriptions/students/{id}` | **admin, marketer** | Назначить/сменить тариф. Преподавателю запрещено (решение 10) |
 | `GET /api/v1/subscriptions/students/{id}` | персонал | Текущий тариф и история |
 | `POST /api/v1/payments/yookassa/ai-package` | ученик | Покупка пакета 500 ₽ |
@@ -433,6 +433,23 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
 ### 15.11. Управление тарифами персоналом (Фаза 9)
 RBAC admin/marketer, запись в `audit_event`.
 **Исполнитель:** `/fastapi-api-developer` · **Ревью:** `/techlead-code-reviewer` + `/qa-fix` (IDOR-sweep)
+
+**Сделано 2026-08-16.** Три адреса под гейтом `marketer|admin`, **сервисный ключ не
+пускается** (иначе смена шла бы с `changed_by = NULL` — «неизвестно кто»):
+
+| Метод и путь | Что |
+|---|---|
+| `GET /subscriptions/plans` | Все 9 тарифов с правами и именем группы |
+| `GET /subscriptions/students/{id}` | Действующий тариф и вся история присвоений |
+| `POST /subscriptions/students/{id}` | Смена: `{plan_code, reason}`; причина обязательна |
+
+Отказы разведены: **404** — нет такого ученика либо тарифа; **409** — уже на этом
+тарифе либо тариф сменили параллельно. Событие журнала —
+`staff.subscription.changed` (кто, кому, откуда, куда, зачем).
+
+**Витрина планов сужена до персонала** против исходной строки §11 «ученик, персонал»:
+Фаза 8 дала ученику `GET /payments/plans` (покупаемые) и `GET /me/entitlements`
+(его права), а список внутренних тарифов (`test`, `base_legacy`) ему не нужен.
 
 ## Контракт навигации
 

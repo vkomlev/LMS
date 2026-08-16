@@ -1,0 +1,2390 @@
+diff --git a/app/api/main.py b/app/api/main.py
+index 6c5d0f0..9163650 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -441,6 +441,10 @@ app.include_router(marketer_pricing_router, prefix=API_PREFIX)
+ from app.api.v1.marketer_leads import router as marketer_leads_router
+ app.include_router(marketer_leads_router, prefix=API_PREFIX)
+ 
++# tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
++from app.api.v1.subscriptions import router as subscriptions_router
++app.include_router(subscriptions_router, prefix=API_PREFIX)
++
+ # tsk-511/512 (кабинет маркетолога): помесячные начисления и ручная цена ученика
+ from app.api.v1.marketer_charges import router as marketer_charges_router
+ app.include_router(marketer_charges_router, prefix=API_PREFIX)
+diff --git a/app/api/v1/subscriptions.py b/app/api/v1/subscriptions.py
+new file mode 100644
+index 0000000..a358696
+--- /dev/null
++++ b/app/api/v1/subscriptions.py
+@@ -0,0 +1,174 @@
++"""Управление тарифами персоналом (tsk-301, Фаза 9).
++
++Гейт `marketer|admin`. **Преподавателю нельзя** (решение 10 брифа): тариф — это
++деньги и права, а не учебная работа; преподаватель распоряжается занятиями.
++Методиста здесь тоже нет — по той же границе, что и в кабинете маркетолога.
++
++Права включаются сразу, деньги — со следующего месяца (решение 14). Второе
++обеспечивает не этот код, а резолвер группы: он берёт строку подписки,
++действовавшую **на первое число расчётного месяца** (tsk-585). Поэтому смена
++тарифа посреди месяца не переписывает уже названную человеку сумму, и делать
++здесь для этого ничего не нужно — важно ровно НЕ звать пересчёт.
++"""
++from __future__ import annotations
++
++import logging
++
++from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.api.deps import get_async_db, require_role
++from app.auth.current_user import CurrentUser
++from app.schemas.subscription import (
++    StudentSubscriptionState,
++    SubscriptionChangeRequest,
++    SubscriptionPlanRead,
++)
++from app.services import audit_service, subscription_service
++
++logger = logging.getLogger(__name__)
++
++router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
++
++_ROLE_GATE = require_role("marketer", "admin")
++
++
++async def _staff_gate(
++    current_user: CurrentUser = Depends(_ROLE_GATE),
++) -> CurrentUser:
++    """Роль marketer/admin И живой человек, а не сервисный ключ.
++
++    `require_role` пропускает сервисный токен без проверки роли — это сделано
++    ради ботов. Здесь так нельзя: держатель ключа TG_LMS менял бы тарифы, а в
++    истории оставалось бы `changed_by = NULL` — то есть «неизвестно кто». Смена
++    тарифа меняет и права, и сумму месяца; безымянная смена неразбираема.
++    """
++    if current_user.is_service:
++        raise HTTPException(
++            status.HTTP_403_FORBIDDEN,
++            "Управление тарифами доступно только пользователю, не сервисному ключу",
++        )
++    return current_user
++
++
++async def _require_user(db: AsyncSession, student_id: int) -> None:
++    """404 на несуществующего ученика.
++
++    Без проверки присвоение упало бы 500 на внешнем ключе, а чтение молча
++    вернуло бы пустую историю — «тарифа нет» вместо «такого человека нет».
++    """
++    exists = await db.scalar(
++        text("SELECT 1 FROM users WHERE id = :id"), {"id": student_id}
++    )
++    if not exists:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ученик не найден")
++
++
++@router.get(
++    "/plans",
++    response_model=list[SubscriptionPlanRead],
++    summary="Все тарифы с правами — витрина персонала",
++    description=(
++        "Весь набор, включая непродаваемые (`test`, `base_legacy`, «Выпускник»). "
++        "Витрина покупки — другой адрес: `GET /payments/plans`, там только то, "
++        "что человек может купить сам."
++    ),
++)
++async def list_plans(
++    db: AsyncSession = Depends(get_async_db),
++    _staff: CurrentUser = Depends(_staff_gate),
++) -> list[SubscriptionPlanRead]:
++    """Тарифы с правами и тарифной группой."""
++    return [SubscriptionPlanRead(**row) for row in await subscription_service.list_plans(db)]
++
++
++@router.get(
++    "/students/{student_id}",
++    response_model=StudentSubscriptionState,
++    summary="Тариф ученика: действующий и история",
++)
++async def read_student_subscription(
++    student_id: int = Path(..., description="ID ученика"),
++    db: AsyncSession = Depends(get_async_db),
++    _staff: CurrentUser = Depends(_staff_gate),
++) -> StudentSubscriptionState:
++    """Что действует сейчас и как к этому пришли."""
++    await _require_user(db, student_id)
++    return StudentSubscriptionState(**await subscription_service.student_state(db, student_id))
++
++
++@router.post(
++    "/students/{student_id}",
++    response_model=StudentSubscriptionState,
++    summary="Присвоить ученику тариф",
++    description=(
++        "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги "
++        "считаются по тарифу, действовавшему на первое число месяца."
++    ),
++    responses={
++        404: {"description": "Нет такого ученика или тарифа"},
++        409: {"description": "Ученик уже на этом тарифе либо тариф сменили параллельно"},
++    },
++)
++async def change_student_subscription(
++    request: Request,
++    student_id: int = Path(..., description="ID ученика"),
++    body: SubscriptionChangeRequest = Body(...),
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_staff_gate),
++) -> StudentSubscriptionState:
++    """Сменить тариф ученику и записать, кто и зачем это сделал.
++
++    Исходы разведены намеренно: сервис отвечает одним `False` и на «нет такого
++    тарифа», и на «уже на нём», и на гонку. Для человека это три разных ответа —
++    опечатка в коде тарифа, пустое действие и «кто-то успел раньше».
++    """
++    await _require_user(db, student_id)
++
++    before = await subscription_service.student_state(db, student_id)
++    current_code = (before["current"] or {}).get("plan_code")
++
++    plan_exists = await db.scalar(
++        text("SELECT 1 FROM subscription_plan WHERE code = :c AND is_active"),
++        {"c": body.plan_code},
++    )
++    if not plan_exists:
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Тариф не найден")
++    if current_code == body.plan_code:
++        raise HTTPException(
++            status.HTTP_409_CONFLICT, f"Ученик уже на тарифе «{body.plan_code}»"
++        )
++
++    changed = await subscription_service.change_plan(
++        db,
++        student_id,
++        body.plan_code,
++        reason=body.reason,
++        changed_by=current_user.id,
++    )
++    if not changed:
++        # Проверки выше прошли, значит между ними и сменой успел кто-то ещё.
++        raise HTTPException(
++            status.HTTP_409_CONFLICT, "Тариф сменили параллельно — обновите страницу"
++        )
++
++    await audit_service.log_event(
++        db,
++        audit_service.STAFF_SUBSCRIPTION_CHANGED,
++        user_id=current_user.id,
++        ip=request.client.host if request.client else None,
++        details={
++            "student_id": student_id,
++            "from_plan": current_code,
++            "to_plan": body.plan_code,
++            "reason": body.reason,
++        },
++    )
++    await db.commit()
++    logger.info(
++        "tsk-301: %s сменил тариф ученику %s: %s → %s",
++        current_user.id, student_id, current_code, body.plan_code,
++    )
++
++    return StudentSubscriptionState(**await subscription_service.student_state(db, student_id))
+diff --git a/app/schemas/subscription.py b/app/schemas/subscription.py
+new file mode 100644
+index 0000000..af5d921
+--- /dev/null
++++ b/app/schemas/subscription.py
+@@ -0,0 +1,87 @@
++"""Схемы управления тарифами персоналом (tsk-301, Фаза 9).
++
++Тариф даёт ПРАВА, расписание порождает ДЕНЬГИ — поэтому здесь нет ни одной суммы.
++Присвоение тарифа только указывает, по какой группе считать месяц; сколько именно
++насчитать, по-прежнему решают занятия (см. ADR-0006).
++"""
++from __future__ import annotations
++
++from datetime import date
++from typing import Optional
++
++from pydantic import BaseModel, Field, field_validator
++
++
++class SubscriptionPlanRead(BaseModel):
++    """Тариф как набор прав — строка витрины персонала."""
++
++    code: str = Field(..., description="Машинный код: test | demo | self | ai | …")
++    name: str = Field(..., description="Имя для человека")
++    ai_tutor_limit: Optional[int] = Field(
++        None, description="NULL — безлимит, 0 — наставника нет, N — N обращений в месяц"
++    )
++    code_review: bool = Field(..., description="ИИ-оценка кода")
++    teacher_escalation: bool = Field(..., description="Ручной запрос помощи преподавателю")
++    lessons: bool = Field(..., description="Есть ли занятия с преподавателем")
++    content: str = Field(..., description="full | demo — уровень доступа к материалам")
++    pricing_group_id: Optional[int] = Field(
++        None, description="Группа расчёта месяца. NULL — начисления не создаются"
++    )
++    pricing_group_name: Optional[str] = Field(
++        None, description="Имя группы: «группа 6» маркетологу ни о чём не говорит"
++    )
++    upgrade_hint: Optional[str] = Field(None, description="Что даёт апгрейд")
++    sort_order: int = Field(..., description="Порядок показа")
++
++
++class SubscriptionHistoryItem(BaseModel):
++    """Одна строка истории тарифов: что действовало, когда, по чьему решению."""
++
++    id: int
++    plan_code: str
++    plan_name: str
++    starts_on: date
++    ends_on: Optional[date] = Field(None, description="NULL — строка действующая")
++    reason: Optional[str] = Field(None, description="Зачем сменили")
++    changed_by: Optional[int] = Field(None, description="Кто сменил; NULL — автоматика")
++    changed_by_name: Optional[str] = None
++    pricing_group_id: Optional[int] = None
++    pricing_group_name: Optional[str] = None
++
++
++class StudentSubscriptionState(BaseModel):
++    """Тариф ученика: действующий и вся история.
++
++    История отдаётся целиком: вопрос персонала звучит как «почему у него такой
++    тариф», и ответ на него — предыдущая строка с причиной и автором.
++    """
++
++    student_id: int
++    current: Optional[SubscriptionHistoryItem] = Field(
++        None, description="NULL — тарифа нет вовсе (права закрыты)"
++    )
++    history: list[SubscriptionHistoryItem] = Field(default_factory=list)
++
++
++class SubscriptionChangeRequest(BaseModel):
++    """Присвоение тарифа персоналом."""
++
++    plan_code: str = Field(..., description="Код тарифа из витрины планов")
++    reason: str = Field(
++        ...,
++        min_length=3,
++        max_length=500,
++        description=(
++            "Зачем меняем. Обязательна: через месяц причина «почему у него Self» "
++            "не восстанавливается ниоткуда, а тариф меняет и права, и сумму месяца"
++        ),
++    )
++
++    @field_validator("plan_code", "reason")
++    @classmethod
++    def _not_blank(cls, value: str) -> str:
++        """Пробелы — не причина и не код."""
++        stripped = value.strip()
++        if not stripped:
++            raise ValueError("значение не может быть пустым")
++        return stripped
+diff --git a/app/services/audit_service.py b/app/services/audit_service.py
+index d722f4b..f71d287 100644
+--- a/app/services/audit_service.py
++++ b/app/services/audit_service.py
+@@ -37,6 +37,11 @@ STUDENT_LESSON_ATTENDANCE_RECORDED = "student.lesson_attendance.recorded"
+ # tsk-563 event types (методист/админ правит доп. поля профиля чужого ученика)
+ ADMIN_PROFILE_EXTRA_UPDATED = "admin.profile_extra.updated"
+ 
++# tsk-301 Фаза 9: персонал сменил тариф ученику. Событие обязательно — смена
++# тарифа меняет и права, и сумму следующего месяца, а строка истории хранит
++# только «кто и зачем», без ip и без прежнего значения.
++STAFF_SUBSCRIPTION_CHANGED = "staff.subscription.changed"
++
+ 
+ async def log_event(
+     db: AsyncSession,
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index caf528a..da9c3da 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -467,3 +467,64 @@ async def purchase_plan(
+         student_id, plan_code, amount_minor // 100, period,
+     )
+     return True
++
++
++# ─────────────── Управление тарифами персоналом (Фаза 9) ────────────────────
++
++
++async def list_plans(db: AsyncSession) -> list[dict]:
++    """Все действующие тарифы с правами и тарифной группой — витрина персонала.
++
++    Отличается от `purchasable_plans` не оформлением, а смыслом: там витрина
++    покупки (только то, что человек может купить сам), здесь — весь набор, из
++    которого персонал присваивает, включая `test`, `base_legacy` и «Выпускник».
++    Свести их в один список нельзя: продавать `test` некому, а присвоить —
++    единственный способ его выдать.
++
++    Группа отдаётся именем, а не только номером: маркетолог принимает решение о
++    деньгах, и «группа 6» ему ни о чём не говорит.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT p.code, p.name, p.ai_tutor_limit, p.code_review, "
++                "       p.teacher_escalation, p.lessons, p.content, "
++                "       p.pricing_group_id, g.name AS pricing_group_name, "
++                "       p.upgrade_hint, p.sort_order "
++                "  FROM subscription_plan p "
++                "  LEFT JOIN pricing_group g ON g.id = p.pricing_group_id "
++                " WHERE p.is_active "
++                " ORDER BY p.sort_order, p.code"
++            )
++        )
++    ).mappings().all()
++    return [dict(r) for r in rows]
++
++
++async def student_state(db: AsyncSession, student_id: int) -> dict:
++    """Действующий тариф ученика и вся история присвоений.
++
++    История возвращается целиком и в обратном порядке: вопрос персонала звучит
++    как «почему у него такой тариф», и ответ на него — предыдущая строка с
++    причиной и автором, а не текущая.
++    """
++    rows = (
++        await db.execute(
++            text(
++                "SELECT s.id, p.code AS plan_code, p.name AS plan_name, "
++                "       s.starts_on, s.ends_on, s.reason, s.changed_by, "
++                "       u.full_name AS changed_by_name, "
++                "       s.pricing_group_id, g.name AS pricing_group_name "
++                "  FROM student_subscription s "
++                "  JOIN subscription_plan p ON p.id = s.plan_id "
++                "  LEFT JOIN users u ON u.id = s.changed_by "
++                "  LEFT JOIN pricing_group g ON g.id = s.pricing_group_id "
++                " WHERE s.student_id = :sid "
++                " ORDER BY s.starts_on DESC, s.id DESC"
++            ),
++            {"sid": student_id},
++        )
++    ).mappings().all()
++    history = [dict(r) for r in rows]
++    current = next((h for h in history if h["ends_on"] is None), None)
++    return {"student_id": student_id, "current": current, "history": history}
+diff --git a/docs/openapi.json b/docs/openapi.json
+index 75f0d14..772e43e 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -31285,6 +31285,316 @@
+         }
+       }
+     },
++    "/api/v1/subscriptions/plans": {
++      "get": {
++        "tags": [
++          "subscriptions"
++        ],
++        "summary": "Все тарифы с правами — витрина персонала",
++        "description": "Весь набор, включая непродаваемые (`test`, `base_legacy`, «Выпускник»). Витрина покупки — другой адрес: `GET /payments/plans`, там только то, что человек может купить сам.",
++        "operationId": "list_plans_api_v1_subscriptions_plans_get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "array",
++                  "items": {
++                    "$ref": "#/components/schemas/SubscriptionPlanRead"
++                  },
++                  "title": "Response List Plans Api V1 Subscriptions Plans Get"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
++    "/api/v1/subscriptions/students/{student_id}": {
++      "get": {
++        "tags": [
++          "subscriptions"
++        ],
++        "summary": "Тариф ученика: действующий и история",
++        "description": "Что действует сейчас и как к этому пришли.",
++        "operationId": "read_student_subscription_api_v1_subscriptions_students__student_id__get",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "student_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID ученика",
++              "title": "Student Id"
++            },
++            "description": "ID ученика"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/StudentSubscriptionState"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      },
++      "post": {
++        "tags": [
++          "subscriptions"
++        ],
++        "summary": "Присвоить ученику тариф",
++        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.",
++        "operationId": "change_student_subscription_api_v1_subscriptions_students__student_id__post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "student_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "description": "ID ученика",
++              "title": "Student Id"
++            },
++            "description": "ID ученика"
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/SubscriptionChangeRequest"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/StudentSubscriptionState"
++                }
++              }
++            }
++          },
++          "404": {
++            "description": "Нет такого ученика или тарифа"
++          },
++          "409": {
++            "description": "Ученик уже на этом тарифе либо тариф сменили параллельно"
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/marketer/charges": {
+       "get": {
+         "tags": [
+@@ -50956,6 +51266,260 @@
+         "title": "StudentResponse",
+         "description": "Ответ ученика в терминах конкретной задачи.\n\nДля разных типов задач используются разные поля:\n- SC/MC: selected_option_ids;\n- SA: value;\n- SA_COM: value + comment (comment обязателен, если не приложен файл — tsk-419);\n- TBL_COM: value — таблица одной строкой: ячейки ряда через пробел, ряды через\n  перевод строки (любые пробельные символы допустимы, сравнение поячеечное);\n  comment — то же правило, что у SA_COM;\n- TA: text."
+       },
++      "StudentSubscriptionState": {
++        "properties": {
++          "student_id": {
++            "type": "integer",
++            "title": "Student Id"
++          },
++          "current": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/SubscriptionHistoryItem"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "description": "NULL — тарифа нет вовсе (права закрыты)"
++          },
++          "history": {
++            "items": {
++              "$ref": "#/components/schemas/SubscriptionHistoryItem"
++            },
++            "type": "array",
++            "title": "History"
++          }
++        },
++        "type": "object",
++        "required": [
++          "student_id"
++        ],
++        "title": "StudentSubscriptionState",
++        "description": "Тариф ученика: действующий и вся история.\n\nИстория отдаётся целиком: вопрос персонала звучит как «почему у него такой\nтариф», и ответ на него — предыдущая строка с причиной и автором."
++      },
++      "SubscriptionChangeRequest": {
++        "properties": {
++          "plan_code": {
++            "type": "string",
++            "title": "Plan Code",
++            "description": "Код тарифа из витрины планов"
++          },
++          "reason": {
++            "type": "string",
++            "maxLength": 500,
++            "minLength": 3,
++            "title": "Reason",
++            "description": "Зачем меняем. Обязательна: через месяц причина «почему у него Self» не восстанавливается ниоткуда, а тариф меняет и права, и сумму месяца"
++          }
++        },
++        "type": "object",
++        "required": [
++          "plan_code",
++          "reason"
++        ],
++        "title": "SubscriptionChangeRequest",
++        "description": "Присвоение тарифа персоналом."
++      },
++      "SubscriptionHistoryItem": {
++        "properties": {
++          "id": {
++            "type": "integer",
++            "title": "Id"
++          },
++          "plan_code": {
++            "type": "string",
++            "title": "Plan Code"
++          },
++          "plan_name": {
++            "type": "string",
++            "title": "Plan Name"
++          },
++          "starts_on": {
++            "type": "string",
++            "format": "date",
++            "title": "Starts On"
++          },
++          "ends_on": {
++            "anyOf": [
++              {
++                "type": "string",
++                "format": "date"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Ends On",
++            "description": "NULL — строка действующая"
++          },
++          "reason": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Reason",
++            "description": "Зачем сменили"
++          },
++          "changed_by": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Changed By",
++            "description": "Кто сменил; NULL — автоматика"
++          },
++          "changed_by_name": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Changed By Name"
++          },
++          "pricing_group_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Pricing Group Id"
++          },
++          "pricing_group_name": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Pricing Group Name"
++          }
++        },
++        "type": "object",
++        "required": [
++          "id",
++          "plan_code",
++          "plan_name",
++          "starts_on"
++        ],
++        "title": "SubscriptionHistoryItem",
++        "description": "Одна строка истории тарифов: что действовало, когда, по чьему решению."
++      },
++      "SubscriptionPlanRead": {
++        "properties": {
++          "code": {
++            "type": "string",
++            "title": "Code",
++            "description": "Машинный код: test | demo | self | ai | …"
++          },
++          "name": {
++            "type": "string",
++            "title": "Name",
++            "description": "Имя для человека"
++          },
++          "ai_tutor_limit": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Ai Tutor Limit",
++            "description": "NULL — безлимит, 0 — наставника нет, N — N обращений в месяц"
++          },
++          "code_review": {
++            "type": "boolean",
++            "title": "Code Review",
++            "description": "ИИ-оценка кода"
++          },
++          "teacher_escalation": {
++            "type": "boolean",
++            "title": "Teacher Escalation",
++            "description": "Ручной запрос помощи преподавателю"
++          },
++          "lessons": {
++            "type": "boolean",
++            "title": "Lessons",
++            "description": "Есть ли занятия с преподавателем"
++          },
++          "content": {
++            "type": "string",
++            "title": "Content",
++            "description": "full | demo — уровень доступа к материалам"
++          },
++          "pricing_group_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Pricing Group Id",
++            "description": "Группа расчёта месяца. NULL — начисления не создаются"
++          },
++          "pricing_group_name": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Pricing Group Name",
++            "description": "Имя группы: «группа 6» маркетологу ни о чём не говорит"
++          },
++          "upgrade_hint": {
++            "anyOf": [
++              {
++                "type": "string"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Upgrade Hint",
++            "description": "Что даёт апгрейд"
++          },
++          "sort_order": {
++            "type": "integer",
++            "title": "Sort Order",
++            "description": "Порядок показа"
++          }
++        },
++        "type": "object",
++        "required": [
++          "code",
++          "name",
++          "code_review",
++          "teacher_escalation",
++          "lessons",
++          "content",
++          "sort_order"
++        ],
++        "title": "SubscriptionPlanRead",
++        "description": "Тариф как набор прав — строка витрины персонала."
++      },
+       "SyllabusMaterialItem": {
+         "properties": {
+           "kind": {
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index 2fb0a74..903a433 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -273,7 +273,7 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ | Метод и путь | Доступ | Назначение |
+ |---|---|---|
+ | `GET /api/v1/me/entitlements` | ученик; **сервисный ключ + `?student_id=`** | Что положено + остатки — источник для кнопок |
+-| `GET /api/v1/subscriptions/plans` | ученик, персонал | Витрина 9 планов |
++| `GET /api/v1/subscriptions/plans` | **персонал** (marketer/admin) | Витрина 9 планов |
+ | `POST /api/v1/subscriptions/students/{id}` | **admin, marketer** | Назначить/сменить тариф. Преподавателю запрещено (решение 10) |
+ | `GET /api/v1/subscriptions/students/{id}` | персонал | Текущий тариф и история |
+ | `POST /api/v1/payments/yookassa/ai-package` | ученик | Покупка пакета 500 ₽ |
+@@ -434,6 +434,23 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ RBAC admin/marketer, запись в `audit_event`.
+ **Исполнитель:** `/fastapi-api-developer` · **Ревью:** `/techlead-code-reviewer` + `/qa-fix` (IDOR-sweep)
+ 
++**Сделано 2026-08-16.** Три адреса под гейтом `marketer|admin`, **сервисный ключ не
++пускается** (иначе смена шла бы с `changed_by = NULL` — «неизвестно кто»):
++
++| Метод и путь | Что |
++|---|---|
++| `GET /subscriptions/plans` | Все 9 тарифов с правами и именем группы |
++| `GET /subscriptions/students/{id}` | Действующий тариф и вся история присвоений |
++| `POST /subscriptions/students/{id}` | Смена: `{plan_code, reason}`; причина обязательна |
++
++Отказы разведены: **404** — нет такого ученика либо тарифа; **409** — уже на этом
++тарифе либо тариф сменили параллельно. Событие журнала —
++`staff.subscription.changed` (кто, кому, откуда, куда, зачем).
++
++**Витрина планов сужена до персонала** против исходной строки §11 «ученик, персонал»:
++Фаза 8 дала ученику `GET /payments/plans` (покупаемые) и `GET /me/entitlements`
++(его права), а список внутренних тарифов (`test`, `base_legacy`) ему не нужен.
++
+ ## Контракт навигации
+ 
+ Отказ и предложение апгрейда живут **на той кнопке, которую человек нажал**. Ни одного
+diff --git a/tests/test_tsk301_staff_subscription.py b/tests/test_tsk301_staff_subscription.py
+new file mode 100644
+index 0000000..318dd3c
+--- /dev/null
++++ b/tests/test_tsk301_staff_subscription.py
+@@ -0,0 +1,357 @@
++"""tsk-301 Фаза 9: управление тарифами персоналом.
++
++Три вещи, ради которых фаза и существует, и ни одна не проверяется чтением кода:
++
++1. **Преподавателю нельзя** (решение 10). Тариф — это деньги и права; преподаватель
++   распоряжается занятиями. Гейт проверяется по каждой роли отдельно, включая
++   сервисный ключ: он пропускается `require_role` без роли вовсе, и через него
++   тариф менялся бы анонимно (`changed_by = NULL`).
++2. **Права сразу, деньги со следующего месяца** (решение 14). Смена тарифа посреди
++   месяца не должна переписывать уже названную человеку сумму — это проверяется
++   сверкой строки начисления до и после, а не рассуждением о том, что пересчёт
++   «здесь не зовётся».
++3. **След остаётся.** История получает строку с причиной и автором, `audit_event` —
++   событие. Через месяц вопрос «почему у него Self» иначе не разбирается.
++
++Тесты идут по НАСТОЯЩЕЙ БД и проверяют ТЕЛО ответа (урок tsk-302).
++"""
++from __future__ import annotations
++
++import random
++from datetime import date
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "tsk301f9"
++
++
++async def _new_user(db, *, role: str | None, name: str) -> tuple[int, str]:
++    user = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG}-{name}-{random.randint(10**6, 10**7)}",
++        tg_id=None,
++    )
++    db.add(user)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, user.id, "email", user.email)
++    token, _, _ = await create_session(db, user_id=user.id)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": user.id, "role": role},
++        )
++    await db.commit()
++    return user.id, token
++
++
++def _auth(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _assign_plan(db, student_id: int, plan_code: str) -> None:
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, pricing_group_id, CURRENT_DATE FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "c": plan_code},
++    )
++    await db.commit()
++
++
++# ───────────────────────────── Кто имеет право ──────────────────────────────
++
++
++@pytest.mark.parametrize("role", ["teacher", "methodist", "student", None])
++async def test_only_money_roles_manage_plans(db, client, role):
++    """Преподаватель, методист и ученик тарифами не управляют (решение 10).
++
++    Особенно преподаватель: он рядом с учеником каждый день, и «повысить тариф,
++    чтобы дать наставника» выглядело бы услугой — но это чужие деньги.
++    """
++    _uid, token = await _new_user(db, role=role, name=f"deny-{role}")
++    student_id, _ = await _new_user(db, role="student", name="target")
++
++    assert (await client.get("/api/v1/subscriptions/plans", headers=_auth(token))).status_code == 403
++    assert (
++        await client.get(f"/api/v1/subscriptions/students/{student_id}", headers=_auth(token))
++    ).status_code == 403
++    assert (
++        await client.post(
++            f"/api/v1/subscriptions/students/{student_id}",
++            headers=_auth(token),
++            json={"plan_code": "ai", "reason": "проба"},
++        )
++    ).status_code == 403
++
++
++@pytest.mark.parametrize("role", ["marketer", "admin"])
++async def test_marketer_and_admin_are_allowed(db, client, role):
++    _uid, token = await _new_user(db, role=role, name=f"allow-{role}")
++    response = await client.get("/api/v1/subscriptions/plans", headers=_auth(token))
++    assert response.status_code == 200, response.text
++    assert len(response.json()) >= 9, "витрина персонала обязана показывать все тарифы"
++
++
++async def test_service_key_cannot_change_plans(db, client):
++    """Ключ TG_LMS менял бы тарифы безымянно — в истории остался бы NULL."""
++    student_id, _ = await _new_user(db, role="student", name="svc-target")
++    key = next(iter(Settings().valid_api_keys))
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers={"X-API-Key": key},
++        json={"plan_code": "ai", "reason": "через ключ"},
++    )
++    assert response.status_code == 403, response.text
++
++
++async def test_anonymous_gets_401(client):
++    assert (await client.get("/api/v1/subscriptions/plans")).status_code == 401
++
++
++# ────────────────────────── Витрина тарифов ────────────────────────────────
++
++
++async def test_plans_show_rights_and_group_name(db, client):
++    """Права и ИМЯ группы: «группа 6» маркетологу ни о чём не говорит."""
++    _uid, token = await _new_user(db, role="marketer", name="plans")
++    body = (await client.get("/api/v1/subscriptions/plans", headers=_auth(token))).json()
++
++    by_code = {row["code"]: row for row in body}
++    assert by_code["demo"]["ai_tutor_limit"] == 0
++    assert by_code["ai"]["ai_tutor_limit"] == 40
++    assert by_code["flagship"]["ai_tutor_limit"] is None, "безлимит — это null, не ноль"
++    assert by_code["base"]["lessons"] is True
++    assert by_code["base"]["pricing_group_name"], "тариф с деньгами без имени группы"
++    assert by_code["demo"]["pricing_group_id"] is None, "у demo денег нет вовсе"
++
++
++async def test_staff_list_includes_unsellable_plans(db, client):
++    """Витрина персонала шире витрины покупки — иначе `test` некому выдать."""
++    _uid, token = await _new_user(db, role="admin", name="unsellable")
++    codes = {
++        row["code"]
++        for row in (await client.get("/api/v1/subscriptions/plans", headers=_auth(token))).json()
++    }
++    assert {"test", "base_legacy", "alumni"} <= codes
++
++
++# ──────────────────────── Присвоение и его след ─────────────────────────────
++
++
++async def test_change_writes_history_with_author_and_reason(db, client):
++    staff_id, token = await _new_user(db, role="marketer", name="author")
++    student_id, _ = await _new_user(db, role="student", name="changed")
++    await _assign_plan(db, student_id, "demo")
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "ai", "reason": "оплатил наставника переводом"},
++    )
++    assert response.status_code == 200, response.text
++
++    body = response.json()
++    assert body["current"]["plan_code"] == "ai"
++    assert body["current"]["changed_by"] == staff_id
++    assert body["current"]["reason"] == "оплатил наставника переводом"
++    assert body["current"]["ends_on"] is None
++
++    closed = [h for h in body["history"] if h["plan_code"] == "demo"]
++    assert closed and closed[0]["ends_on"] is not None, (
++        "прошлый тариф обязан остаться в истории закрытым, а не исчезнуть"
++    )
++
++
++async def test_change_is_recorded_in_audit(db, client):
++    """Строка истории не хранит ни прежний тариф, ни адрес — их держит журнал."""
++    staff_id, token = await _new_user(db, role="admin", name="audited")
++    student_id, _ = await _new_user(db, role="student", name="audit-target")
++    await _assign_plan(db, student_id, "demo")
++
++    await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "self", "reason": "перевёл на самостоятельный"},
++    )
++
++    row = (
++        await db.execute(
++            text(
++                "SELECT details FROM audit_event "
++                " WHERE event_type = 'staff.subscription.changed' AND user_id = :u "
++                " ORDER BY id DESC LIMIT 1"
++            ),
++            {"u": staff_id},
++        )
++    ).scalar()
++    assert row is not None, "смена тарифа не попала в журнал"
++    assert row["student_id"] == student_id
++    assert (row["from_plan"], row["to_plan"]) == ("demo", "self")
++
++
++async def test_student_without_plan_can_be_assigned(db, client):
++    """У ученика может не быть тарифа вовсе — это не ошибка, а первый случай."""
++    _staff, token = await _new_user(db, role="marketer", name="first")
++    student_id, _ = await _new_user(db, role="student", name="no-plan")
++
++    before = (
++        await client.get(f"/api/v1/subscriptions/students/{student_id}", headers=_auth(token))
++    ).json()
++    assert before["current"] is None and before["history"] == []
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "base", "reason": "начал заниматься"},
++    )
++    assert response.status_code == 200, response.text
++    assert response.json()["current"]["plan_code"] == "base"
++
++
++# ─────────────────────────── Разведённые отказы ─────────────────────────────
++
++
++async def test_same_plan_is_a_conflict_not_a_silent_success(db, client):
++    """Пустое действие обязано быть видно: иначе «нажал и ничего не произошло»."""
++    _staff, token = await _new_user(db, role="marketer", name="same")
++    student_id, _ = await _new_user(db, role="student", name="same-target")
++    await _assign_plan(db, student_id, "ai")
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "ai", "reason": "ещё раз"},
++    )
++    assert response.status_code == 409, response.text
++
++
++async def test_unknown_plan_is_404_not_500(db, client):
++    """Опечатка в коде тарифа — ответ человеку, а не падение внешнего ключа."""
++    _staff, token = await _new_user(db, role="admin", name="typo")
++    student_id, _ = await _new_user(db, role="student", name="typo-target")
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "aI ", "reason": "опечатка"},
++    )
++    assert response.status_code == 404, response.text
++
++
++async def test_unknown_student_is_404_on_both_verbs(db, client):
++    """«Тарифа нет» и «человека нет» — разные ответы."""
++    _staff, token = await _new_user(db, role="admin", name="ghost")
++    ghost = 99_000_000
++
++    assert (
++        await client.get(f"/api/v1/subscriptions/students/{ghost}", headers=_auth(token))
++    ).status_code == 404
++    assert (
++        await client.post(
++            f"/api/v1/subscriptions/students/{ghost}",
++            headers=_auth(token),
++            json={"plan_code": "ai", "reason": "кому-то"},
++        )
++    ).status_code == 404
++
++
++async def test_reason_is_required(db, client):
++    """Без причины через месяц не разобрать, почему у человека этот тариф."""
++    _staff, token = await _new_user(db, role="marketer", name="noreason")
++    student_id, _ = await _new_user(db, role="student", name="noreason-target")
++
++    for bad in ({"plan_code": "ai"}, {"plan_code": "ai", "reason": "   "}):
++        response = await client.post(
++            f"/api/v1/subscriptions/students/{student_id}", headers=_auth(token), json=bad
++        )
++        assert response.status_code == 422, response.text
++
++
++# ──────────────── Решение 14: деньги текущего месяца не трогаем ─────────────
++
++
++async def test_change_does_not_rewrite_the_open_month(db, client):
++    """Сумма, уже названная человеку, не меняется задним числом.
++
++    Это и есть решение 14. Проверяется сверкой строки начисления до и после, а
++    не рассуждением «пересчёт здесь не зовётся»: пересчёт мог бы приехать из
++    любого места, которое смена тарифа задевает.
++    """
++    _staff, token = await _new_user(db, role="marketer", name="money")
++    student_id, _ = await _new_user(db, role="student", name="money-target")
++    await _assign_plan(db, student_id, "base")
++
++    period = date.today().replace(day=1)
++    group_id = (
++        await db.execute(
++            text("SELECT pricing_group_id FROM subscription_plan WHERE code = 'base'")
++        )
++    ).scalar()
++    await db.execute(
++        text(
++            "INSERT INTO student_monthly_charge "
++            "  (student_id, group_id, period, calculated_minor, expected_lessons, status) "
++            "VALUES (:s, :g, :p, 300000, 4, 'open')"
++        ),
++        {"s": student_id, "g": group_id, "p": period},
++    )
++    await db.commit()
++
++    await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "self", "reason": "перешёл на самостоятельный с середины месяца"},
++    )
++
++    rows = (
++        await db.execute(
++            text(
++                "SELECT group_id, calculated_minor, status FROM student_monthly_charge "
++                " WHERE student_id = :s AND period = :p"
++            ),
++            {"s": student_id, "p": period},
++        )
++    ).mappings().all()
++    assert len(rows) == 1, "смена тарифа не должна плодить начисления за текущий месяц"
++    assert (rows[0]["group_id"], rows[0]["calculated_minor"]) == (group_id, 300000)
++
++
++async def test_rights_switch_on_immediately(db, client):
++    """Права включаются сразу — это вторая половина решения 14.
++
++    Деньги ждут следующего месяца, права не ждут ничего: человек, которому
++    только что открыли наставника, должен им пользоваться сегодня, а не с
++    первого числа.
++    """
++    from app.services import entitlements_service as ent
++
++    _staff, token = await _new_user(db, role="marketer", name="rights")
++    student_id, _ = await _new_user(db, role="student", name="rights-target")
++    await _assign_plan(db, student_id, "demo")
++
++    before = await ent.check(db, student_id=student_id, capability="ai_tutor")
++    assert before.allowed is False
++
++    response = await client.post(
++        f"/api/v1/subscriptions/students/{student_id}",
++        headers=_auth(token),
++        json={"plan_code": "ai", "reason": "оплатил наставника"},
++    )
++    assert response.status_code == 200, response.text
++
++    after = await ent.check(db, student_id=student_id, capability="ai_tutor")
++    assert (after.allowed, after.limit) == (True, 40)
+diff --git a/app/(marketer)/marketer/students/page.tsx b/app/(marketer)/marketer/students/page.tsx
+index 75d19e5..ea13e1c 100644
+--- a/app/(marketer)/marketer/students/page.tsx
++++ b/app/(marketer)/marketer/students/page.tsx
+@@ -2,6 +2,7 @@ import type { Metadata } from "next";
+ 
+ import { PageHeader } from "@/components/ui/page-header";
+ import { StudentPricingList } from "@/components/marketer/StudentPricingList";
++import { StudentSubscriptionPanel } from "@/components/marketer/StudentSubscriptionPanel";
+ 
+ export const metadata: Metadata = {
+   title: "Ученики — кабинет маркетолога",
+@@ -12,8 +13,9 @@ export default function MarketerStudentsPage() {
+     <main className="mx-auto w-full max-w-6xl space-y-6 px-3 py-6 md:px-6">
+       <PageHeader
+         title="Ученики"
+-        description="Расчётная цена по каждому ученику. Частота берётся из расписания, менять здесь нечего — экран для сверки."
++        description="Расчётная цена по каждому ученику и его тариф. Цена берётся из расписания — её здесь не меняют; тариф присваивают."
+       />
++      <StudentSubscriptionPanel />
+       <StudentPricingList />
+     </main>
+   );
+diff --git a/components/marketer/StudentSubscriptionPanel.tsx b/components/marketer/StudentSubscriptionPanel.tsx
+new file mode 100644
+index 0000000..ec98639
+--- /dev/null
++++ b/components/marketer/StudentSubscriptionPanel.tsx
+@@ -0,0 +1,255 @@
++"use client";
++
++import { useState } from "react";
++
++import { PersonPicker } from "@/components/methodist/PersonPickers";
++import { Button } from "@/components/ui/button";
++import { StatusBadge } from "@/components/ui/status-badge";
++import { getApiErrorMessage } from "@/lib/api-error-messages";
++import { formatShortDate } from "@/lib/format-date";
++import { SCHOOL_TIME_ZONE } from "@/lib/time-zone";
++import {
++  useMarketerStudentSearch,
++  type StudentBrief,
++} from "@/lib/marketer/use-marketer-leads";
++import {
++  useChangeStudentPlan,
++  useStudentSubscription,
++  useSubscriptionPlans,
++  type SubscriptionHistoryItem,
++  type SubscriptionPlan,
++} from "@/lib/marketer/use-marketer-subscriptions";
++
++/**
++ * tsk-301 Фаза 9 — тариф ученика: посмотреть и сменить.
++ *
++ * Живёт на экране учеников рядом с расчётной ценой: это один и тот же вопрос с
++ * двух сторон — тариф решает, ЧТО человеку доступно, расписание решает, СКОЛЬКО
++ * он платит. Отдельного раздела для этого не заводим.
++ *
++ * Ученик ищется поиском, а не выбирается из списка: список расчётной цены
++ * показывает только тех, кто стоит денег, а тариф нужно присваивать и новичку
++ * на Demo, и выпускнику — их там нет.
++ */
++export function StudentSubscriptionPanel() {
++  const [student, setStudent] = useState<StudentBrief | null>(null);
++
++  return (
++    <section
++      data-testid="marketer-subscription-panel"
++      className="space-y-3 rounded-md border border-border bg-card p-3"
++    >
++      <header className="space-y-1">
++        <h2 className="text-base font-medium">Тариф ученика</h2>
++        <p className="text-xs text-muted-foreground">
++          Тариф задаёт права: ИИ-наставника, оценку кода, разбор с преподавателем.
++          Сумму месяца он не назначает — её по-прежнему считает расписание.
++        </p>
++      </header>
++
++      <PersonPicker<StudentBrief>
++        role={null}
++        excludeIds={[]}
++        useSearch={useMarketerStudentSearch}
++        onPick={setStudent}
++        label="Поиск ученика по имени"
++        placeholder="Имя ученика, от двух букв…"
++        testId="marketer-subscription-student-picker"
++      />
++
++      {student !== null && (
++        <StudentSubscriptionCard student={student} onClear={() => setStudent(null)} />
++      )}
++    </section>
++  );
++}
++
++function StudentSubscriptionCard({
++  student,
++  onClear,
++}: {
++  student: StudentBrief;
++  onClear: () => void;
++}) {
++  const state = useStudentSubscription(student.id);
++  const plans = useSubscriptionPlans();
++  const change = useChangeStudentPlan(student.id);
++
++  const [planCode, setPlanCode] = useState("");
++  const [reason, setReason] = useState("");
++
++  const current = state.data?.current ?? null;
++  const available = (plans.data ?? []).filter((p) => p.code !== current?.plan_code);
++  const target = available.find((p) => p.code === planCode) ?? null;
++  const canSubmit = target !== null && reason.trim().length >= 3 && !change.isPending;
++
++  return (
++    <div className="space-y-3 border-t border-border pt-3">
++      <div className="flex flex-wrap items-center gap-2">
++        <p className="min-w-0 flex-1 text-sm">
++          {student.full_name}
++          <span className="ml-2 font-mono text-xs text-muted-foreground">
++            #{student.id}
++          </span>
++        </p>
++        <Button variant="ghost" size="sm" onClick={onClear}>
++          Выбрать другого ученика
++        </Button>
++      </div>
++
++      {state.isPending && <p className="text-sm text-muted-foreground">Загружаем тариф…</p>}
++      {state.isError && (
++        <p className="text-sm text-destructive">{getApiErrorMessage(state.error).title}</p>
++      )}
++
++      {state.data !== undefined && (
++        <>
++          <CurrentPlan current={current} />
++
++          <label className="block space-y-1">
++            <span className="text-xs text-muted-foreground">Новый тариф</span>
++            <select
++              data-testid="marketer-subscription-plan"
++              aria-label="Новый тариф ученика"
++              value={planCode}
++              onChange={(e) => setPlanCode(e.target.value)}
++              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++            >
++              <option value="">Не выбран</option>
++              {available.map((plan) => (
++                <option key={plan.code} value={plan.code} className="bg-background text-foreground">
++                  {plan.name} — {describeRights(plan)}
++                </option>
++              ))}
++            </select>
++          </label>
++
++          {target !== null && <PlanConsequence plan={target} />}
++
++          <label className="block space-y-1">
++            <span className="text-xs text-muted-foreground">
++              Зачем меняем — через месяц причина ниоткуда не восстановится
++            </span>
++            <input
++              data-testid="marketer-subscription-reason"
++              value={reason}
++              onChange={(e) => setReason(e.target.value)}
++              maxLength={500}
++              placeholder="Например: оплатил наставника переводом"
++              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
++            />
++          </label>
++
++          <Button
++            data-testid="marketer-subscription-submit"
++            disabled={!canSubmit}
++            onClick={() =>
++              change.mutate(
++                { plan_code: target?.code ?? "", reason: reason.trim() },
++                { onSuccess: () => setReason("") },
++              )
++            }
++          >
++            {target === null ? "Выберите тариф" : `Перевести на «${target.name}»`}
++          </Button>
++
++          {change.isError && (
++            <p className="text-sm text-destructive" data-testid="marketer-subscription-error">
++              {getApiErrorMessage(change.error).title}
++            </p>
++          )}
++          {change.isSuccess && !change.isPending && (
++            <p className="text-sm text-muted-foreground">
++              Готово. Права действуют сразу, сумма текущего месяца не изменилась.
++            </p>
++          )}
++
++          <History items={state.data.history ?? []} />
++        </>
++      )}
++    </div>
++  );
++}
++
++function CurrentPlan({ current }: { current: SubscriptionHistoryItem | null }) {
++  if (current === null) {
++    return (
++      <div className="space-y-1">
++        <StatusBadge tone="waiting">Тарифа нет</StatusBadge>
++        <p className="text-xs text-muted-foreground">
++          Пока тарифа нет, ИИ-наставник и разбор с преподавателем ученику закрыты.
++        </p>
++      </div>
++    );
++  }
++  return (
++    <div className="space-y-1">
++      <div className="flex flex-wrap items-center gap-2">
++        <StatusBadge tone="success">{current.plan_name}</StatusBadge>
++        <span className="text-xs text-muted-foreground">
++          с {formatShortDate(current.starts_on, SCHOOL_TIME_ZONE)}
++        </span>
++      </div>
++      <p className="text-xs text-muted-foreground">
++        {current.pricing_group_name
++          ? `Месяц считается по группе «${current.pricing_group_name}»`
++          : "Начисления по этому тарифу не создаются"}
++        {current.reason ? ` · ${current.reason}` : ""}
++      </p>
++    </div>
++  );
++}
++
++/**
++ * Что именно изменится — до нажатия, а не после.
++ *
++ * Смена тарифа затрагивает и права, и группу расчёта: маркетолог должен видеть
++ * оба следствия рядом с кнопкой, иначе «перевёл на Self» окажется незамеченным
++ * отключением наставника.
++ */
++function PlanConsequence({ plan }: { plan: SubscriptionPlan }) {
++  return (
++    <p className="text-xs text-muted-foreground" data-testid="marketer-subscription-consequence">
++      {describeRights(plan)}.{" "}
++      {plan.pricing_group_name
++        ? `Со следующего месяца счёт по группе «${plan.pricing_group_name}»`
++        : "Начисления перестанут создаваться"}
++      . Сумма текущего месяца не изменится.
++    </p>
++  );
++}
++
++function describeRights(plan: SubscriptionPlan): string {
++  const tutor =
++    plan.ai_tutor_limit === null
++      ? "наставник без лимита"
++      : plan.ai_tutor_limit === 0
++        ? "без наставника"
++        : `наставник ${plan.ai_tutor_limit}/мес`;
++  const extras = [
++    plan.code_review ? "оценка кода" : null,
++    plan.teacher_escalation ? "разбор с преподавателем" : null,
++    plan.lessons ? "занятия" : null,
++  ].filter((x): x is string => x !== null);
++  return [tutor, ...extras].join(", ");
++}
++
++function History({ items }: { items: SubscriptionHistoryItem[] }) {
++  const past = items.filter((item) => item.ends_on !== null);
++  if (past.length === 0) return null;
++  return (
++    <details className="text-xs text-muted-foreground">
++      <summary className="cursor-pointer">История тарифов ({past.length})</summary>
++      <ul className="mt-2 space-y-1" data-testid="marketer-subscription-history">
++        {past.map((item) => (
++          <li key={item.id}>
++            {item.plan_name}: {formatShortDate(item.starts_on, SCHOOL_TIME_ZONE)} —{" "}
++            {item.ends_on ? formatShortDate(item.ends_on, SCHOOL_TIME_ZONE) : "…"}
++            {item.changed_by_name ? ` · ${item.changed_by_name}` : ""}
++            {item.reason ? ` · ${item.reason}` : ""}
++          </li>
++        ))}
++      </ul>
++    </details>
++  );
++}
+diff --git a/lib/api-types.ts b/lib/api-types.ts
+index 14287b8..68b3452 100644
+--- a/lib/api-types.ts
++++ b/lib/api-types.ts
+@@ -5975,6 +5975,50 @@ export interface paths {
+         patch?: never;
+         trace?: never;
+     };
++    "/api/v1/subscriptions/plans": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Все тарифы с правами — витрина персонала
++         * @description Весь набор, включая непродаваемые (`test`, `base_legacy`, «Выпускник»). Витрина покупки — другой адрес: `GET /payments/plans`, там только то, что человек может купить сам.
++         */
++        get: operations["list_plans_api_v1_subscriptions_plans_get"];
++        put?: never;
++        post?: never;
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
++    "/api/v1/subscriptions/students/{student_id}": {
++        parameters: {
++            query?: never;
++            header?: never;
++            path?: never;
++            cookie?: never;
++        };
++        /**
++         * Тариф ученика: действующий и история
++         * @description Что действует сейчас и как к этому пришли.
++         */
++        get: operations["read_student_subscription_api_v1_subscriptions_students__student_id__get"];
++        put?: never;
++        /**
++         * Присвоить ученику тариф
++         * @description Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.
++         */
++        post: operations["change_student_subscription_api_v1_subscriptions_students__student_id__post"];
++        delete?: never;
++        options?: never;
++        head?: never;
++        patch?: never;
++        trace?: never;
++    };
+     "/api/v1/marketer/charges": {
+         parameters: {
+             query?: never;
+@@ -14221,6 +14265,136 @@ export interface components {
+                 [key: string]: unknown;
+             } | null;
+         };
++        /**
++         * StudentSubscriptionState
++         * @description Тариф ученика: действующий и вся история.
++         *
++         *     История отдаётся целиком: вопрос персонала звучит как «почему у него такой
++         *     тариф», и ответ на него — предыдущая строка с причиной и автором.
++         */
++        StudentSubscriptionState: {
++            /** Student Id */
++            student_id: number;
++            /** @description NULL — тарифа нет вовсе (права закрыты) */
++            current?: components["schemas"]["SubscriptionHistoryItem"] | null;
++            /** History */
++            history?: components["schemas"]["SubscriptionHistoryItem"][];
++        };
++        /**
++         * SubscriptionChangeRequest
++         * @description Присвоение тарифа персоналом.
++         */
++        SubscriptionChangeRequest: {
++            /**
++             * Plan Code
++             * @description Код тарифа из витрины планов
++             */
++            plan_code: string;
++            /**
++             * Reason
++             * @description Зачем меняем. Обязательна: через месяц причина «почему у него Self» не восстанавливается ниоткуда, а тариф меняет и права, и сумму месяца
++             */
++            reason: string;
++        };
++        /**
++         * SubscriptionHistoryItem
++         * @description Одна строка истории тарифов: что действовало, когда, по чьему решению.
++         */
++        SubscriptionHistoryItem: {
++            /** Id */
++            id: number;
++            /** Plan Code */
++            plan_code: string;
++            /** Plan Name */
++            plan_name: string;
++            /**
++             * Starts On
++             * Format: date
++             */
++            starts_on: string;
++            /**
++             * Ends On
++             * @description NULL — строка действующая
++             */
++            ends_on?: string | null;
++            /**
++             * Reason
++             * @description Зачем сменили
++             */
++            reason?: string | null;
++            /**
++             * Changed By
++             * @description Кто сменил; NULL — автоматика
++             */
++            changed_by?: number | null;
++            /** Changed By Name */
++            changed_by_name?: string | null;
++            /** Pricing Group Id */
++            pricing_group_id?: number | null;
++            /** Pricing Group Name */
++            pricing_group_name?: string | null;
++        };
++        /**
++         * SubscriptionPlanRead
++         * @description Тариф как набор прав — строка витрины персонала.
++         */
++        SubscriptionPlanRead: {
++            /**
++             * Code
++             * @description Машинный код: test | demo | self | ai | …
++             */
++            code: string;
++            /**
++             * Name
++             * @description Имя для человека
++             */
++            name: string;
++            /**
++             * Ai Tutor Limit
++             * @description NULL — безлимит, 0 — наставника нет, N — N обращений в месяц
++             */
++            ai_tutor_limit?: number | null;
++            /**
++             * Code Review
++             * @description ИИ-оценка кода
++             */
++            code_review: boolean;
++            /**
++             * Teacher Escalation
++             * @description Ручной запрос помощи преподавателю
++             */
++            teacher_escalation: boolean;
++            /**
++             * Lessons
++             * @description Есть ли занятия с преподавателем
++             */
++            lessons: boolean;
++            /**
++             * Content
++             * @description full | demo — уровень доступа к материалам
++             */
++            content: string;
++            /**
++             * Pricing Group Id
++             * @description Группа расчёта месяца. NULL — начисления не создаются
++             */
++            pricing_group_id?: number | null;
++            /**
++             * Pricing Group Name
++             * @description Имя группы: «группа 6» маркетологу ни о чём не говорит
++             */
++            pricing_group_name?: string | null;
++            /**
++             * Upgrade Hint
++             * @description Что даёт апгрейд
++             */
++            upgrade_hint?: string | null;
++            /**
++             * Sort Order
++             * @description Порядок показа
++             */
++            sort_order: number;
++        };
+         /**
+          * SyllabusMaterialItem
+          * @description Состояние материала в syllabus-дереве курса.
+@@ -26084,6 +26258,13 @@ export interface operations {
+                     "application/json": components["schemas"]["NextItemResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26126,6 +26307,13 @@ export interface operations {
+                     "application/json": components["schemas"]["MaterialCompleteResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26168,6 +26356,13 @@ export interface operations {
+                     "application/json": components["schemas"]["LearningSkipResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26210,6 +26405,13 @@ export interface operations {
+                     "application/json": components["schemas"]["LearningSkipResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26252,6 +26454,13 @@ export interface operations {
+                     "application/json": components["schemas"]["StartOrGetAttemptResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26294,6 +26503,13 @@ export interface operations {
+                     "application/json": components["schemas"]["TaskStateResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Validation Error */
+             422: {
+                 headers: {
+@@ -26336,7 +26552,7 @@ export interface operations {
+                     "application/json": components["schemas"]["RequestHelpResponse"];
+                 };
+             };
+-            /** @description tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. */
++            /** @description tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
+             403: {
+                 headers: {
+                     [name: string]: unknown;
+@@ -26428,7 +26644,7 @@ export interface operations {
+                     "application/json": components["schemas"]["HelpRequestReopenResponse"];
+                 };
+             };
+-            /** @description Чужая заявка */
++            /** @description Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
+             403: {
+                 headers: {
+                     [name: string]: unknown;
+@@ -26487,7 +26703,7 @@ export interface operations {
+                     "application/json": components["schemas"]["IndividualReviewResponse"];
+                 };
+             };
+-            /** @description Чужая заявка */
++            /** @description Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
+             403: {
+                 headers: {
+                     [name: string]: unknown;
+@@ -26613,6 +26829,13 @@ export interface operations {
+                     "application/json": components["schemas"]["HintEventResponse"];
+                 };
+             };
++            /** @description tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`. */
++            403: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
+             /** @description Задание / студент / попытка не найдены */
+             404: {
+                 headers: {
+@@ -31970,6 +32193,135 @@ export interface operations {
+             };
+         };
+     };
++    list_plans_api_v1_subscriptions_plans_get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path?: never;
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["SubscriptionPlanRead"][];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    read_student_subscription_api_v1_subscriptions_students__student_id__get: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                /** @description ID ученика */
++                student_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody?: never;
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StudentSubscriptionState"];
++                };
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
++    change_student_subscription_api_v1_subscriptions_students__student_id__post: {
++        parameters: {
++            query?: {
++                token?: string | null;
++            };
++            header?: {
++                authorization?: string | null;
++            };
++            path: {
++                /** @description ID ученика */
++                student_id: number;
++            };
++            cookie?: {
++                session?: string | null;
++            };
++        };
++        requestBody: {
++            content: {
++                "application/json": components["schemas"]["SubscriptionChangeRequest"];
++            };
++        };
++        responses: {
++            /** @description Successful Response */
++            200: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["StudentSubscriptionState"];
++                };
++            };
++            /** @description Нет такого ученика или тарифа */
++            404: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
++            /** @description Ученик уже на этом тарифе либо тариф сменили параллельно */
++            409: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content?: never;
++            };
++            /** @description Validation Error */
++            422: {
++                headers: {
++                    [name: string]: unknown;
++                };
++                content: {
++                    "application/json": components["schemas"]["HTTPValidationError"];
++                };
++            };
++        };
++    };
+     list_charges_api_v1_marketer_charges_get: {
+         parameters: {
+             query?: {
+diff --git a/lib/marketer/use-marketer-subscriptions.ts b/lib/marketer/use-marketer-subscriptions.ts
+new file mode 100644
+index 0000000..157ccf3
+--- /dev/null
++++ b/lib/marketer/use-marketer-subscriptions.ts
+@@ -0,0 +1,65 @@
++"use client";
++
++import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
++
++import { useApiClient } from "@/hooks/use-api-client";
++import type { components } from "@/lib/api-types";
++
++/**
++ * tsk-301 Фаза 9 — тарифы учеников в кабинете маркетолога.
++ *
++ * Тариф даёт ПРАВА, расписание порождает ДЕНЬГИ: здесь нет ни одной суммы.
++ * Присвоение только указывает, по какой группе считать месяц; сколько именно
++ * насчитать, решают занятия. Поэтому соседний экран расчётной цены эти хуки не
++ * трогают и его кэш не сбрасывают — кроме одного случая, описанного ниже.
++ */
++
++export type SubscriptionPlan = components["schemas"]["SubscriptionPlanRead"];
++export type SubscriptionHistoryItem = components["schemas"]["SubscriptionHistoryItem"];
++export type StudentSubscriptionState = components["schemas"]["StudentSubscriptionState"];
++export type SubscriptionChange = components["schemas"]["SubscriptionChangeRequest"];
++
++const PLANS_KEY = ["marketer", "subscription-plans"] as const;
++
++export function useSubscriptionPlans() {
++  const client = useApiClient();
++  return useQuery<SubscriptionPlan[]>({
++    queryKey: PLANS_KEY,
++    queryFn: () => client.get<SubscriptionPlan[]>("/api/v1/subscriptions/plans"),
++    staleTime: 10 * 60 * 1_000,
++    retry: false,
++  });
++}
++
++export function useStudentSubscription(studentId: number | null) {
++  const client = useApiClient();
++  return useQuery<StudentSubscriptionState>({
++    queryKey: ["marketer", "subscription", studentId],
++    queryFn: () =>
++      client.get<StudentSubscriptionState>(
++        `/api/v1/subscriptions/students/${studentId}`,
++      ),
++    enabled: studentId !== null,
++    retry: false,
++  });
++}
++
++export function useChangeStudentPlan(studentId: number | null) {
++  const client = useApiClient();
++  const qc = useQueryClient();
++  return useMutation<StudentSubscriptionState, Error, SubscriptionChange>({
++    mutationFn: (body) =>
++      client.post<StudentSubscriptionState>(
++        `/api/v1/subscriptions/students/${studentId}`,
++        body,
++      ),
++    onSuccess: (state) => {
++      qc.setQueryData(["marketer", "subscription", studentId], state);
++      // Расчётная цена зависит от тарифной группы, а группа могла смениться.
++      // Сумму текущего месяца это не переписывает (решение 14), но список
++      // учеников на соседнем экране собирается по действующей подписке — он
++      // показал бы прежнюю группу до перезагрузки страницы.
++      void qc.invalidateQueries({ queryKey: ["marketer", "pricing", "students"] });
++    },
++  });
++}
+diff --git a/tests/unit/marketer-subscription-panel.test.tsx b/tests/unit/marketer-subscription-panel.test.tsx
+new file mode 100644
+index 0000000..71971b1
+--- /dev/null
++++ b/tests/unit/marketer-subscription-panel.test.tsx
+@@ -0,0 +1,208 @@
++/**
++ * tsk-301 Фаза 9: тариф ученика в кабинете маркетолога.
++ *
++ * Проверяются требования, а не вёрстка:
++ *  - следствия смены видны ДО нажатия: тариф меняет права и группу расчёта, и
++ *    «перевёл на Self» не должно оказаться незамеченным отключением наставника;
++ *  - имя кнопки содержит НАЗВАНИЕ тарифа (уроки tsk-491/505/509): одинаковые
++ *    «Перевести» неразличимы ни глазами, ни живым прогоном;
++ *  - причина обязательна — через месяц она ниоткуда не восстановится;
++ *  - действующий тариф не предлагается сам себе: сервер ответил бы 409, а
++ *    человек увидел бы отказ на действие, которое ему предложил интерфейс;
++ *  - отказ сервера показывается словами, а не молчанием.
++ */
++import { describe, expect, it, vi, beforeEach } from "vitest";
++import { render, screen, waitFor, fireEvent } from "@testing-library/react";
++import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
++
++const apiGet = vi.fn();
++const apiPost = vi.fn();
++vi.mock("@/hooks/use-api-client", () => ({
++  useApiClient: () => ({ get: apiGet, post: apiPost }),
++}));
++
++import { StudentSubscriptionPanel } from "@/components/marketer/StudentSubscriptionPanel";
++
++const PLANS = [
++  {
++    code: "demo", name: "Demo", ai_tutor_limit: 0, code_review: false,
++    teacher_escalation: false, lessons: false, content: "demo",
++    pricing_group_id: null, pricing_group_name: null,
++    upgrade_hint: "Полный доступ — от 1000 ₽", sort_order: 2,
++  },
++  {
++    code: "ai", name: "AI", ai_tutor_limit: 40, code_review: true,
++    teacher_escalation: false, lessons: false, content: "full",
++    pricing_group_id: 9, pricing_group_name: "AI",
++    upgrade_hint: null, sort_order: 4,
++  },
++  {
++    code: "base", name: "Base", ai_tutor_limit: 100, code_review: true,
++    teacher_escalation: true, lessons: true, content: "full",
++    pricing_group_id: 6, pricing_group_name: "Базовый 2026",
++    upgrade_hint: null, sort_order: 5,
++  },
++];
++
++const STUDENT = { id: 4541, full_name: "Тестовский Тестер" };
++
++function state(currentCode: string | null) {
++  const current =
++    currentCode === null
++      ? null
++      : {
++          id: 10, plan_code: currentCode, plan_name: currentCode.toUpperCase(),
++          starts_on: "2026-08-01", ends_on: null, reason: "начал заниматься",
++          changed_by: 2, changed_by_name: "Виктор",
++          pricing_group_id: 6, pricing_group_name: "Базовый 2026",
++        };
++  return {
++    student_id: STUDENT.id,
++    current,
++    history: current === null ? [] : [current],
++  };
++}
++
++function mockApi(currentCode: string | null) {
++  apiGet.mockImplementation((url: string) => {
++    const path = String(url);
++    if (path.includes("/marketer/students/search")) return Promise.resolve([STUDENT]);
++    if (path.includes("/subscriptions/plans")) return Promise.resolve(PLANS);
++    if (path.includes("/subscriptions/students/")) return Promise.resolve(state(currentCode));
++    return Promise.resolve(null);
++  });
++}
++
++function renderPanel() {
++  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  return render(
++    <QueryClientProvider client={qc}>
++      <StudentSubscriptionPanel />
++    </QueryClientProvider>,
++  );
++}
++
++/** Найти ученика поиском — панель начинается именно с этого. */
++async function pickStudent() {
++  const search = await waitFor(() =>
++    screen.getByTestId("marketer-subscription-student-picker"),
++  );
++  fireEvent.change(search, { target: { value: "Тест" } });
++  fireEvent.click(await waitFor(() => screen.getByText(/Тестовский Тестер/)));
++}
++
++describe("Тариф ученика в кабинете маркетолога", () => {
++  beforeEach(() => {
++    apiGet.mockReset();
++    apiPost.mockReset();
++  });
++
++  it("показывает действующий тариф и не предлагает его же", async () => {
++    mockApi("base");
++    renderPanel();
++    await pickStudent();
++
++    await waitFor(() => expect(screen.getByTestId("marketer-subscription-plan")).toBeTruthy());
++    const options = Array.from(
++      (screen.getByTestId("marketer-subscription-plan") as HTMLSelectElement).options,
++    ).map((o) => o.value);
++    expect(options).not.toContain("base");
++    expect(options).toEqual(expect.arrayContaining(["ai", "demo"]));
++  });
++
++  it("называет следствия смены до нажатия", async () => {
++    mockApi("base");
++    renderPanel();
++    await pickStudent();
++
++    fireEvent.change(await waitFor(() => screen.getByTestId("marketer-subscription-plan")), {
++      target: { value: "demo" },
++    });
++
++    const consequence = await waitFor(() =>
++      screen.getByTestId("marketer-subscription-consequence"),
++    );
++    expect(consequence.textContent).toContain("без наставника");
++    expect(consequence.textContent).toContain("не изменится");
++  });
++
++  it("на кнопке — название тарифа, а не общее «Перевести»", async () => {
++    mockApi("base");
++    renderPanel();
++    await pickStudent();
++
++    fireEvent.change(await waitFor(() => screen.getByTestId("marketer-subscription-plan")), {
++      target: { value: "ai" },
++    });
++    const button = screen.getByTestId("marketer-subscription-submit");
++    expect(button.textContent).toContain("AI");
++  });
++
++  it("без причины не отправляет", async () => {
++    mockApi("base");
++    renderPanel();
++    await pickStudent();
++
++    fireEvent.change(await waitFor(() => screen.getByTestId("marketer-subscription-plan")), {
++      target: { value: "ai" },
++    });
++    const button = screen.getByTestId("marketer-subscription-submit") as HTMLButtonElement;
++    expect(button.disabled).toBe(true);
++
++    fireEvent.change(screen.getByTestId("marketer-subscription-reason"), {
++      target: { value: "оплатил переводом" },
++    });
++    expect(
++      (screen.getByTestId("marketer-subscription-submit") as HTMLButtonElement).disabled,
++    ).toBe(false);
++  });
++
++  it("отправляет код тарифа и причину", async () => {
++    mockApi("base");
++    apiPost.mockResolvedValue(state("ai"));
++    renderPanel();
++    await pickStudent();
++
++    fireEvent.change(await waitFor(() => screen.getByTestId("marketer-subscription-plan")), {
++      target: { value: "ai" },
++    });
++    fireEvent.change(screen.getByTestId("marketer-subscription-reason"), {
++      target: { value: "оплатил переводом" },
++    });
++    fireEvent.click(screen.getByTestId("marketer-subscription-submit"));
++
++    await waitFor(() => expect(apiPost).toHaveBeenCalled());
++    expect(String(apiPost.mock.calls[0]?.[0])).toContain("/subscriptions/students/4541");
++    expect(apiPost.mock.calls[0]?.[1]).toEqual({
++      plan_code: "ai",
++      reason: "оплатил переводом",
++    });
++  });
++
++  it("отказ сервера объясняется словами", async () => {
++    mockApi("base");
++    apiPost.mockRejectedValue(new Error("Ученик уже на тарифе «ai»"));
++    renderPanel();
++    await pickStudent();
++
++    fireEvent.change(await waitFor(() => screen.getByTestId("marketer-subscription-plan")), {
++      target: { value: "ai" },
++    });
++    fireEvent.change(screen.getByTestId("marketer-subscription-reason"), {
++      target: { value: "ещё раз" },
++    });
++    fireEvent.click(screen.getByTestId("marketer-subscription-submit"));
++
++    const error = await waitFor(() => screen.getByTestId("marketer-subscription-error"));
++    expect(error.textContent?.length).toBeGreaterThan(0);
++  });
++
++  it("ученику без тарифа говорит, что именно ему закрыто", async () => {
++    mockApi(null);
++    renderPanel();
++    await pickStudent();
++
++    await waitFor(() => expect(screen.getByText(/Тарифа нет/)).toBeTruthy());
++    expect(screen.getByText(/наставник.*закрыт/i)).toBeTruthy();
++  });
++});
+diff --git a/tests/unit/subscription-panel.test.tsx b/tests/unit/subscription-panel.test.tsx
+index b94d2c2..3589a68 100644
+--- a/tests/unit/subscription-panel.test.tsx
++++ b/tests/unit/subscription-panel.test.tsx
+@@ -111,7 +111,7 @@ describe("экран тарифа", () => {
+ 
+     fireEvent.click(await waitFor(() => screen.getByTestId("subscription-buy-ai")));
+     await waitFor(() => expect(apiPost).toHaveBeenCalled());
+-    expect(String(apiPost.mock.calls[0][0])).toContain("plan_code=ai");
++    expect(String(apiPost.mock.calls[0]?.[0])).toContain("plan_code=ai");
+     // Полей карты на экране нет и быть не должно.
+     expect(screen.queryByLabelText(/карт/i)).toBeNull();
+   });

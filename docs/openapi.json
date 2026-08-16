@@ -31285,6 +31285,316 @@
         }
       }
     },
+    "/api/v1/subscriptions/plans": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Все тарифы с правами — витрина персонала",
+        "description": "Весь набор, включая непродаваемые (`test`, `base_legacy`, «Выпускник»). Витрина покупки — другой адрес: `GET /payments/plans`, там только то, что человек может купить сам.",
+        "operationId": "list_plans_api_v1_subscriptions_plans_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SubscriptionPlanRead"
+                  },
+                  "title": "Response List Plans Api V1 Subscriptions Plans Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/students/{student_id}": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Тариф ученика: действующий и история",
+        "description": "Что действует сейчас и как к этому пришли.",
+        "operationId": "read_student_subscription_api_v1_subscriptions_students__student_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSubscriptionState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Присвоить ученику тариф",
+        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.",
+        "operationId": "change_student_subscription_api_v1_subscriptions_students__student_id__post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionChangeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSubscriptionState"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Нет такого ученика или тарифа"
+          },
+          "409": {
+            "description": "Ученик уже на этом тарифе либо тариф сменили параллельно"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/marketer/charges": {
       "get": {
         "tags": [
@@ -50955,6 +51265,260 @@
         "type": "object",
         "title": "StudentResponse",
         "description": "Ответ ученика в терминах конкретной задачи.\n\nДля разных типов задач используются разные поля:\n- SC/MC: selected_option_ids;\n- SA: value;\n- SA_COM: value + comment (comment обязателен, если не приложен файл — tsk-419);\n- TBL_COM: value — таблица одной строкой: ячейки ряда через пробел, ряды через\n  перевод строки (любые пробельные символы допустимы, сравнение поячеечное);\n  comment — то же правило, что у SA_COM;\n- TA: text."
+      },
+      "StudentSubscriptionState": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionHistoryItem"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "NULL — тарифа нет вовсе (права закрыты)"
+          },
+          "history": {
+            "items": {
+              "$ref": "#/components/schemas/SubscriptionHistoryItem"
+            },
+            "type": "array",
+            "title": "History"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id"
+        ],
+        "title": "StudentSubscriptionState",
+        "description": "Тариф ученика: действующий и вся история.\n\nИстория отдаётся целиком: вопрос персонала звучит как «почему у него такой\nтариф», и ответ на него — предыдущая строка с причиной и автором."
+      },
+      "SubscriptionChangeRequest": {
+        "properties": {
+          "plan_code": {
+            "type": "string",
+            "title": "Plan Code",
+            "description": "Код тарифа из витрины планов"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "description": "Зачем меняем. Обязательна: через месяц причина «почему у него Self» не восстанавливается ниоткуда, а тариф меняет и права, и сумму месяца"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_code",
+          "reason"
+        ],
+        "title": "SubscriptionChangeRequest",
+        "description": "Присвоение тарифа персоналом."
+      },
+      "SubscriptionHistoryItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "plan_code": {
+            "type": "string",
+            "title": "Plan Code"
+          },
+          "plan_name": {
+            "type": "string",
+            "title": "Plan Name"
+          },
+          "starts_on": {
+            "type": "string",
+            "format": "date",
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On",
+            "description": "NULL — строка действующая"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason",
+            "description": "Зачем сменили"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By",
+            "description": "Кто сменил; NULL — автоматика"
+          },
+          "changed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By Name"
+          },
+          "pricing_group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Id"
+          },
+          "pricing_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "plan_code",
+          "plan_name",
+          "starts_on"
+        ],
+        "title": "SubscriptionHistoryItem",
+        "description": "Одна строка истории тарифов: что действовало, когда, по чьему решению."
+      },
+      "SubscriptionPlanRead": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code",
+            "description": "Машинный код: test | demo | self | ai | …"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Имя для человека"
+          },
+          "ai_tutor_limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Tutor Limit",
+            "description": "NULL — безлимит, 0 — наставника нет, N — N обращений в месяц"
+          },
+          "code_review": {
+            "type": "boolean",
+            "title": "Code Review",
+            "description": "ИИ-оценка кода"
+          },
+          "teacher_escalation": {
+            "type": "boolean",
+            "title": "Teacher Escalation",
+            "description": "Ручной запрос помощи преподавателю"
+          },
+          "lessons": {
+            "type": "boolean",
+            "title": "Lessons",
+            "description": "Есть ли занятия с преподавателем"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content",
+            "description": "full | demo — уровень доступа к материалам"
+          },
+          "pricing_group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Id",
+            "description": "Группа расчёта месяца. NULL — начисления не создаются"
+          },
+          "pricing_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Name",
+            "description": "Имя группы: «группа 6» маркетологу ни о чём не говорит"
+          },
+          "upgrade_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upgrade Hint",
+            "description": "Что даёт апгрейд"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "description": "Порядок показа"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "code_review",
+          "teacher_escalation",
+          "lessons",
+          "content",
+          "sort_order"
+        ],
+        "title": "SubscriptionPlanRead",
+        "description": "Тариф как набор прав — строка витрины персонала."
       },
       "SyllabusMaterialItem": {
         "properties": {

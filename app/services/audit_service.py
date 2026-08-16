@@ -37,6 +37,11 @@ STUDENT_LESSON_ATTENDANCE_RECORDED = "student.lesson_attendance.recorded"
 # tsk-563 event types (методист/админ правит доп. поля профиля чужого ученика)
 ADMIN_PROFILE_EXTRA_UPDATED = "admin.profile_extra.updated"
 
+# tsk-301 Фаза 9: персонал сменил тариф ученику. Событие обязательно — смена
+# тарифа меняет и права, и сумму следующего месяца, а строка истории хранит
+# только «кто и зачем», без ip и без прежнего значения.
+STAFF_SUBSCRIPTION_CHANGED = "staff.subscription.changed"
+
 
 async def log_event(
     db: AsyncSession,

@@ -441,6 +441,10 @@ app.include_router(marketer_pricing_router, prefix=API_PREFIX)
 from app.api.v1.marketer_leads import router as marketer_leads_router
 app.include_router(marketer_leads_router, prefix=API_PREFIX)
 
+# tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
+from app.api.v1.subscriptions import router as subscriptions_router
+app.include_router(subscriptions_router, prefix=API_PREFIX)
+
 # tsk-511/512 (кабинет маркетолога): помесячные начисления и ручная цена ученика
 from app.api.v1.marketer_charges import router as marketer_charges_router
 app.include_router(marketer_charges_router, prefix=API_PREFIX)

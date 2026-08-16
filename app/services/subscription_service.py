@@ -467,3 +467,64 @@ async def purchase_plan(
         student_id, plan_code, amount_minor // 100, period,
     )
     return True
+
+
+# ─────────────── Управление тарифами персоналом (Фаза 9) ────────────────────
+
+
+async def list_plans(db: AsyncSession) -> list[dict]:
+    """Все действующие тарифы с правами и тарифной группой — витрина персонала.
+
+    Отличается от `purchasable_plans` не оформлением, а смыслом: там витрина
+    покупки (только то, что человек может купить сам), здесь — весь набор, из
+    которого персонал присваивает, включая `test`, `base_legacy` и «Выпускник».
+    Свести их в один список нельзя: продавать `test` некому, а присвоить —
+    единственный способ его выдать.
+
+    Группа отдаётся именем, а не только номером: маркетолог принимает решение о
+    деньгах, и «группа 6» ему ни о чём не говорит.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT p.code, p.name, p.ai_tutor_limit, p.code_review, "
+                "       p.teacher_escalation, p.lessons, p.content, "
+                "       p.pricing_group_id, g.name AS pricing_group_name, "
+                "       p.upgrade_hint, p.sort_order "
+                "  FROM subscription_plan p "
+                "  LEFT JOIN pricing_group g ON g.id = p.pricing_group_id "
+                " WHERE p.is_active "
+                " ORDER BY p.sort_order, p.code"
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def student_state(db: AsyncSession, student_id: int) -> dict:
+    """Действующий тариф ученика и вся история присвоений.
+
+    История возвращается целиком и в обратном порядке: вопрос персонала звучит
+    как «почему у него такой тариф», и ответ на него — предыдущая строка с
+    причиной и автором, а не текущая.
+    """
+    rows = (
+        await db.execute(
+            text(
+                "SELECT s.id, p.code AS plan_code, p.name AS plan_name, "
+                "       s.starts_on, s.ends_on, s.reason, s.changed_by, "
+                "       u.full_name AS changed_by_name, "
+                "       s.pricing_group_id, g.name AS pricing_group_name "
+                "  FROM student_subscription s "
+                "  JOIN subscription_plan p ON p.id = s.plan_id "
+                "  LEFT JOIN users u ON u.id = s.changed_by "
+                "  LEFT JOIN pricing_group g ON g.id = s.pricing_group_id "
+                " WHERE s.student_id = :sid "
+                " ORDER BY s.starts_on DESC, s.id DESC"
+            ),
+            {"sid": student_id},
+        )
+    ).mappings().all()
+    history = [dict(r) for r in rows]
+    current = next((h for h in history if h["ends_on"] is None), None)
+    return {"student_id": student_id, "current": current, "history": history}
