@@ -208,10 +208,11 @@ async def create_attempt(
 
     # tsk-010: просроченная оплата закрывает решение заданий. Этот адрес — путь
     # в обход learning/start-or-get-attempt, поэтому гейт нужен и здесь.
-    if not current_user.is_service:
-        from app.services import payment_access_service
+    # tsk-617: по ученику из тела, а не по вызывающему — сервисный ключ бота
+    # иначе оставлял бы должнику решение заданий в Telegram.
+    from app.services import payment_access_service
 
-        await payment_access_service.assert_content_allowed(db, payload.user_id)
+    await payment_access_service.assert_content_allowed(db, payload.user_id)
     """
     Создать новую попытку.
 

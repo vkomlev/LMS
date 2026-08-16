@@ -65,6 +65,18 @@ from app.utils.exceptions import DomainError
 router = APIRouter(prefix="/learning", tags=["learning"])
 logger = logging.getLogger("api.learning")
 
+#: tsk-010/tsk-617: учебные пути ниже закрыты, если оплата просрочена. Ответ
+#: описан явно, потому что клиент обязан отличать его от «нет прав»: тело несёт
+#: `payload.code = payment_overdue`, сумму, месяцы и ссылку на кабинет оплаты.
+#: Гейт проверяет УЧЕНИКА из запроса, а не вызывающего, — сервисный ключ бота от
+#: него не освобождает.
+_PAYMENT_403_DESCRIPTION = (
+    "tsk-010: занятия закрыты за просроченную оплату — "
+    "`payload.code = payment_overdue` (сумма, месяцы, `payments_url`); "
+    "либо чужой `student_id`."
+)
+_PAYMENT_403 = {403: {"description": _PAYMENT_403_DESCRIPTION}}
+
 learning_service = LearningEngineService()
 attempts_service = AttemptsService()
 tasks_service = TasksService()
@@ -80,6 +92,7 @@ users_service = UsersService()
 @router.get(
     "/next-item",
     response_model=NextItemResponse,
+    responses=_PAYMENT_403,
     summary="Следующий шаг для студента (material | task | none | blocked_*)",
 )
 async def get_next_item(
@@ -106,10 +119,11 @@ async def get_next_item(
     if not current_user.is_service and current_user.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, student_id)
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
@@ -163,6 +177,7 @@ async def get_next_item(
 @router.post(
     "/materials/{material_id}/complete",
     response_model=MaterialCompleteResponse,
+    responses=_PAYMENT_403,
     summary="Отметить материал как пройденный (идемпотентно)",
 )
 async def material_complete(
@@ -174,10 +189,11 @@ async def material_complete(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
     if material is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
@@ -215,6 +231,7 @@ async def material_complete(
 @router.post(
     "/materials/{material_id}/skip",
     response_model=LearningSkipResponse,
+    responses=_PAYMENT_403,
     summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
 )
 async def material_skip(
@@ -226,10 +243,11 @@ async def material_skip(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
     if material is None or not material.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ")
@@ -278,6 +296,7 @@ async def material_skip(
 @router.post(
     "/tasks/{task_id}/skip",
     response_model=LearningSkipResponse,
+    responses=_PAYMENT_403,
     summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
 )
 async def task_skip(
@@ -289,10 +308,11 @@ async def task_skip(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ")
@@ -325,6 +345,7 @@ async def task_skip(
 @router.post(
     "/tasks/{task_id}/start-or-get-attempt",
     response_model=StartOrGetAttemptResponse,
+    responses=_PAYMENT_403,
     summary="Начать попытку или вернуть текущую незавершённую (идемпотентно)",
 )
 async def start_or_get_attempt(
@@ -336,10 +357,11 @@ async def start_or_get_attempt(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -448,6 +470,7 @@ async def start_or_get_attempt(
 @router.get(
     "/tasks/{task_id}/state",
     response_model=TaskStateResponse,
+    responses=_PAYMENT_403,
     summary="Состояние задания по последней завершённой попытке",
 )
 async def get_task_state(
@@ -465,10 +488,11 @@ async def get_task_state(
     if not current_user.is_service and current_user.id != student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
@@ -553,7 +577,8 @@ async def get_task_state(
             "description": (
                 "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит "
                 "`payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при "
-                "исчерпании попыток этим гейтом не закрывается."
+                "исчерпании попыток этим гейтом не закрывается. "
+                + _PAYMENT_403_DESCRIPTION
             )
         }
     },
@@ -568,10 +593,11 @@ async def request_help(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
 
     # tsk-301: эскалация преподавателю входит не во все тарифы. Гейт стоит на
     # РУЧНОМ запросе; авто-заявку `blocked_limit` он не трогает — ученик,
@@ -722,7 +748,7 @@ async def student_help_request_state(
     summary="Вернуть заявку: ответ преподавателя не помог (tsk-303)",
     responses={
         404: {"description": "Заявка не найдена"},
-        403: {"description": "Чужая заявка"},
+        403: {"description": "Чужая заявка. " + _PAYMENT_403_DESCRIPTION},
         409: {"description": "Заявка не закрыта или не того типа"},
     },
 )
@@ -738,8 +764,8 @@ async def reopen_student_help_request(
     тела запроса: подставить чужой `student_id` тут физически нечем.
     """
     student_id = await _resolve_ladder_student(db, request_id, current_user)
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, student_id)
+    # tsk-617: гейт по владельцу заявки, а не по вызывающему — см. next-item.
+    await payment_access_service.assert_content_allowed(db, student_id)
     data, err = await reopen_help_request(db, request_id, student_id)
     if err is not None:
         _raise_ladder_error(err)
@@ -754,7 +780,7 @@ async def reopen_student_help_request(
     summary="Запросить индивидуальный разбор (tsk-303, уровень 2)",
     responses={
         404: {"description": "Заявка не найдена"},
-        403: {"description": "Чужая заявка"},
+        403: {"description": "Чужая заявка. " + _PAYMENT_403_DESCRIPTION},
         409: {"description": "Заявка закрыта, не того типа или не возвращалась"},
     },
 )
@@ -765,8 +791,8 @@ async def request_individual_review_endpoint(
 ) -> IndividualReviewResponse:
     """Доступно только по заявке, которую ученик уже возвращал."""
     student_id = await _resolve_ladder_student(db, request_id, current_user)
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, student_id)
+    # tsk-617: гейт по владельцу заявки, а не по вызывающему — см. next-item.
+    await payment_access_service.assert_content_allowed(db, student_id)
     data, err = await request_individual_review(db, request_id, student_id)
     if err is not None:
         _raise_ladder_error(err)
@@ -784,6 +810,7 @@ async def request_individual_review_endpoint(
     summary="Оценить индивидуальный разбор (tsk-303, уровень 3)",
     responses={
         404: {"description": "Заявка не найдена"},
+        # Гейта оплаты здесь нет намеренно — см. docstring обработчика.
         403: {"description": "Чужая заявка"},
         409: {"description": "Нет ссылки на разбор, заявка закрыта или уже оценена"},
     },
@@ -821,6 +848,7 @@ async def rate_individual_review_endpoint(
     summary="Зафиксировать открытие подсказки (телеметрия, идемпотентно)",
     responses={
         200: {"description": "Событие записано или дедуплицировано"},
+        403: {"description": _PAYMENT_403_DESCRIPTION},
         404: {"description": "Задание / студент / попытка не найдены"},
         409: {"description": "attempt не принадлежит student_id; попытка завершена/отменена; или задание не в контексте попытки"},
     },
@@ -834,10 +862,11 @@ async def hint_events(
     if not current_user.is_service and current_user.id != body.student_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
 
-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
-    if not current_user.is_service:
-        await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
+    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
+    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
+    # закрыто, в Telegram открыто (класс tsk-433).
+    await payment_access_service.assert_content_allowed(db, body.student_id)
     """
     Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
     """

@@ -1,0 +1,665 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index d472afd..ecb93ba 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -208,10 +208,11 @@ async def create_attempt(
+ 
+     # tsk-010: просроченная оплата закрывает решение заданий. Этот адрес — путь
+     # в обход learning/start-or-get-attempt, поэтому гейт нужен и здесь.
+-    if not current_user.is_service:
+-        from app.services import payment_access_service
++    # tsk-617: по ученику из тела, а не по вызывающему — сервисный ключ бота
++    # иначе оставлял бы должнику решение заданий в Telegram.
++    from app.services import payment_access_service
+ 
+-        await payment_access_service.assert_content_allowed(db, payload.user_id)
++    await payment_access_service.assert_content_allowed(db, payload.user_id)
+     """
+     Создать новую попытку.
+ 
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index a5608c1..5d9a498 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -65,6 +65,18 @@ from app.utils.exceptions import DomainError
+ router = APIRouter(prefix="/learning", tags=["learning"])
+ logger = logging.getLogger("api.learning")
+ 
++#: tsk-010/tsk-617: учебные пути ниже закрыты, если оплата просрочена. Ответ
++#: описан явно, потому что клиент обязан отличать его от «нет прав»: тело несёт
++#: `payload.code = payment_overdue`, сумму, месяцы и ссылку на кабинет оплаты.
++#: Гейт проверяет УЧЕНИКА из запроса, а не вызывающего, — сервисный ключ бота от
++#: него не освобождает.
++_PAYMENT_403_DESCRIPTION = (
++    "tsk-010: занятия закрыты за просроченную оплату — "
++    "`payload.code = payment_overdue` (сумма, месяцы, `payments_url`); "
++    "либо чужой `student_id`."
++)
++_PAYMENT_403 = {403: {"description": _PAYMENT_403_DESCRIPTION}}
++
+ learning_service = LearningEngineService()
+ attempts_service = AttemptsService()
+ tasks_service = TasksService()
+@@ -80,6 +92,7 @@ users_service = UsersService()
+ @router.get(
+     "/next-item",
+     response_model=NextItemResponse,
++    responses=_PAYMENT_403,
+     summary="Следующий шаг для студента (material | task | none | blocked_*)",
+ )
+ async def get_next_item(
+@@ -106,10 +119,11 @@ async def get_next_item(
+     if not current_user.is_service and current_user.id != student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, student_id)
+     user = await users_service.get_by_id(db, student_id)
+     if user is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
+@@ -163,6 +177,7 @@ async def get_next_item(
+ @router.post(
+     "/materials/{material_id}/complete",
+     response_model=MaterialCompleteResponse,
++    responses=_PAYMENT_403,
+     summary="Отметить материал как пройденный (идемпотентно)",
+ )
+ async def material_complete(
+@@ -174,10 +189,11 @@ async def material_complete(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+     material = await materials_service.get_by_id(db, material_id)
+     if material is None:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
+@@ -215,6 +231,7 @@ async def material_complete(
+ @router.post(
+     "/materials/{material_id}/skip",
+     response_model=LearningSkipResponse,
++    responses=_PAYMENT_403,
+     summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-РјР°С‚РµСЂРёР°Р» (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+ )
+ async def material_skip(
+@@ -226,10 +243,11 @@ async def material_skip(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+     material = await materials_service.get_by_id(db, material_id)
+     if material is None or not material.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="РњР°С‚РµСЂРёР°Р» РЅРµ РЅР°Р№РґРµРЅ")
+@@ -278,6 +296,7 @@ async def material_skip(
+ @router.post(
+     "/tasks/{task_id}/skip",
+     response_model=LearningSkipResponse,
++    responses=_PAYMENT_403,
+     summary="РџСЂРѕРїСѓСЃС‚РёС‚СЊ skippable-Р·Р°РґР°РЅРёРµ (РёРґРµРјРїРѕС‚РµРЅС‚РЅРѕ)",
+ )
+ async def task_skip(
+@@ -289,10 +308,11 @@ async def task_skip(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+     task = await tasks_service.get_by_id(db, task_id)
+     if task is None or not task.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Р—Р°РґР°РЅРёРµ РЅРµ РЅР°Р№РґРµРЅРѕ")
+@@ -325,6 +345,7 @@ async def task_skip(
+ @router.post(
+     "/tasks/{task_id}/start-or-get-attempt",
+     response_model=StartOrGetAttemptResponse,
++    responses=_PAYMENT_403,
+     summary="Начать попытку или вернуть текущую незавершённую (идемпотентно)",
+ )
+ async def start_or_get_attempt(
+@@ -336,10 +357,11 @@ async def start_or_get_attempt(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+     task = await tasks_service.get_by_id(db, task_id)
+     if task is None or not task.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+@@ -448,6 +470,7 @@ async def start_or_get_attempt(
+ @router.get(
+     "/tasks/{task_id}/state",
+     response_model=TaskStateResponse,
++    responses=_PAYMENT_403,
+     summary="Состояние задания по последней завершённой попытке",
+ )
+ async def get_task_state(
+@@ -465,10 +488,11 @@ async def get_task_state(
+     if not current_user.is_service and current_user.id != student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, student_id)
+     task = await tasks_service.get_by_id(db, task_id)
+     if task is None or not task.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")
+@@ -553,7 +577,8 @@ async def get_task_state(
+             "description": (
+                 "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит "
+                 "`payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при "
+-                "исчерпании попыток этим гейтом не закрывается."
++                "исчерпании попыток этим гейтом не закрывается. "
++                + _PAYMENT_403_DESCRIPTION
+             )
+         }
+     },
+@@ -568,10 +593,11 @@ async def request_help(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+ 
+     # tsk-301: эскалация преподавателю входит не во все тарифы. Гейт стоит на
+     # РУЧНОМ запросе; авто-заявку `blocked_limit` он не трогает — ученик,
+@@ -722,7 +748,7 @@ async def student_help_request_state(
+     summary="Вернуть заявку: ответ преподавателя не помог (tsk-303)",
+     responses={
+         404: {"description": "Заявка не найдена"},
+-        403: {"description": "Чужая заявка"},
++        403: {"description": "Чужая заявка. " + _PAYMENT_403_DESCRIPTION},
+         409: {"description": "Заявка не закрыта или не того типа"},
+     },
+ )
+@@ -738,8 +764,8 @@ async def reopen_student_help_request(
+     тела запроса: подставить чужой `student_id` тут физически нечем.
+     """
+     student_id = await _resolve_ladder_student(db, request_id, current_user)
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, student_id)
++    # tsk-617: гейт по владельцу заявки, а не по вызывающему — см. next-item.
++    await payment_access_service.assert_content_allowed(db, student_id)
+     data, err = await reopen_help_request(db, request_id, student_id)
+     if err is not None:
+         _raise_ladder_error(err)
+@@ -754,7 +780,7 @@ async def reopen_student_help_request(
+     summary="Запросить индивидуальный разбор (tsk-303, уровень 2)",
+     responses={
+         404: {"description": "Заявка не найдена"},
+-        403: {"description": "Чужая заявка"},
++        403: {"description": "Чужая заявка. " + _PAYMENT_403_DESCRIPTION},
+         409: {"description": "Заявка закрыта, не того типа или не возвращалась"},
+     },
+ )
+@@ -765,8 +791,8 @@ async def request_individual_review_endpoint(
+ ) -> IndividualReviewResponse:
+     """Доступно только по заявке, которую ученик уже возвращал."""
+     student_id = await _resolve_ladder_student(db, request_id, current_user)
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, student_id)
++    # tsk-617: гейт по владельцу заявки, а не по вызывающему — см. next-item.
++    await payment_access_service.assert_content_allowed(db, student_id)
+     data, err = await request_individual_review(db, request_id, student_id)
+     if err is not None:
+         _raise_ladder_error(err)
+@@ -784,6 +810,7 @@ async def request_individual_review_endpoint(
+     summary="Оценить индивидуальный разбор (tsk-303, уровень 3)",
+     responses={
+         404: {"description": "Заявка не найдена"},
++        # Гейта оплаты здесь нет намеренно — см. docstring обработчика.
+         403: {"description": "Чужая заявка"},
+         409: {"description": "Нет ссылки на разбор, заявка закрыта или уже оценена"},
+     },
+@@ -821,6 +848,7 @@ async def rate_individual_review_endpoint(
+     summary="Зафиксировать открытие подсказки (телеметрия, идемпотентно)",
+     responses={
+         200: {"description": "Событие записано или дедуплицировано"},
++        403: {"description": _PAYMENT_403_DESCRIPTION},
+         404: {"description": "Задание / студент / попытка не найдены"},
+         409: {"description": "attempt не принадлежит student_id; попытка завершена/отменена; или задание не в контексте попытки"},
+     },
+@@ -834,10 +862,11 @@ async def hint_events(
+     if not current_user.is_service and current_user.id != body.student_id:
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+ 
+-    # tsk-010: просроченная оплата закрывает учебный контент. Сервисный ключ
+-    # выше уже отсечён, значит здесь ученик — и гейт про его собственный долг.
+-    if not current_user.is_service:
+-        await payment_access_service.assert_content_allowed(db, body.student_id)
++    # tsk-010/tsk-617: просроченная оплата закрывает учебный контент. Гейт по
++    # УЧЕНИКУ, а не по вызывающему: боты ходят по сервисному ключу, и пока он
++    # освобождал от проверки, блокировка снималась сменой клиента — в браузере
++    # закрыто, в Telegram открыто (класс tsk-433).
++    await payment_access_service.assert_content_allowed(db, body.student_id)
+     """
+     Фиксация открытия подсказки (text/video) для аналитики. Идемпотентно в окне дедупа.
+     """
+diff --git a/app/services/payment_access_service.py b/app/services/payment_access_service.py
+index f64defa..896c8c8 100644
+--- a/app/services/payment_access_service.py
++++ b/app/services/payment_access_service.py
+@@ -22,29 +22,93 @@
+ from __future__ import annotations
+ 
+ import logging
++from dataclasses import dataclass
+ from datetime import date
+ from typing import Optional
+ 
+-from fastapi import HTTPException, status
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.core.config import Settings
+ from app.services import charge_service, payment_service
++from app.utils.exceptions import DomainError
+ 
+ logger = logging.getLogger(__name__)
+-
+-__all__ = ["has_blocking_debt", "assert_content_allowed", "BLOCKED_MESSAGE"]
++settings = Settings()
++
++__all__ = [
++    "BlockingDebt",
++    "blocking_debt",
++    "has_blocking_debt",
++    "assert_content_allowed",
++    "blocked_message",
++    "payments_url",
++    "BLOCKED_MESSAGE",
++    "PAYMENT_OVERDUE_CODE",
++]
+ 
+ BLOCKED_MESSAGE = (
+     "Занятия приостановлены из-за неоплаты. Оплатите в разделе «Оплата» — "
+     "доступ откроется сразу после подтверждения."
+ )
+ 
++#: Машинный признак отказа в теле ответа (tsk-617). Клиент отличает «не
++#: заплатил» от «сломалось» по нему, а не по словам: формулировка продуктовая и
++#: меняется вместе с ценами, а разбор по тексту сломался бы молча — ученик снова
++#: увидел бы «сбой на нашей стороне». Тот же приём, что у `subscription_denied`.
++PAYMENT_OVERDUE_CODE = "payment_overdue"
+ 
+-async def has_blocking_debt(
++
++@dataclass(frozen=True)
++class BlockingDebt:
++    """Долг, который уже закрывает занятия: сколько и за какие месяцы.
++
++    Сумма и месяцы едут в теле отказа: «оплатите» без числа и без месяца
++    заставляет человека идти искать, что именно он должен, — а идти ему некуда,
++    учебный контент как раз закрыт.
++    """
++
++    due_minor: int
++    periods: tuple[date, ...]
++
++
++def payments_url() -> str:
++    """Адрес кабинета оплаты — тот же, что в письме о просрочке.
++
++    Клиенту без него некуда вести: в Telegram-боте раздела «Оплата» нет, и
++    ссылка — единственная дорога к деньгам из отказа.
++    """
++    return f"{settings.public_base_url.rstrip('/')}/me/payments"
++
++
++def _format_amount(due_minor: int) -> str:
++    """Сумма человеку: копейки показываем, только если они есть."""
++    if due_minor % 100 == 0:
++        return f"{due_minor // 100} ₽"
++    return f"{due_minor / 100:.2f} ₽"
++
++
++def blocked_message(debt: BlockingDebt) -> str:
++    """Текст отказа с суммой и месяцами.
++
++    Формат месяца `%m.%Y` — тот же, что в письме о просрочке
++    (`notification_email_service`): человек получает письмо и видит отказ, и
++    разные формы одной и той же даты выглядели бы как разные долги.
++    """
++    if not debt.periods:
++        return BLOCKED_MESSAGE
++    months = ", ".join(f"{p:%m.%Y}" for p in debt.periods)
++    return (
++        f"Занятия приостановлены из-за неоплаты: {months} — "
++        f"{_format_amount(debt.due_minor)}. Оплатите в разделе «Оплата» — "
++        "доступ откроется сразу после подтверждения."
++    )
++
++
++async def blocking_debt(
+     db: AsyncSession, student_id: int, *, today: Optional[date] = None
+-) -> bool:
+-    """Есть ли у ученика долг, который уже закрывает занятия.
++) -> Optional[BlockingDebt]:
++    """Долг ученика, который уже закрывает занятия, — или None.
+ 
+     Приложенный чек, ждущий подтверждения, долгом не считается: человек своё
+     сделал, дальше очередь наша — закрывать ему занятия за это нельзя.
+@@ -84,6 +148,8 @@ async def has_blocking_debt(
+         )
+     ).all()
+ 
++    due_minor = 0
++    periods: list[date] = []
+     for row in rows:
+         total_minor = charge_service.charge_total_minor(
+             calculated_minor=row.calculated_minor,
+@@ -98,20 +164,55 @@ async def has_blocking_debt(
+             today=today,
+         )
+         if state.is_blocked:
+-            return True
+-    return False
++            due_minor += state.due_minor
++            periods.append(row.period)
++
++    if not periods:
++        return None
++    return BlockingDebt(due_minor=due_minor, periods=tuple(sorted(periods)))
++
++
++async def has_blocking_debt(
++    db: AsyncSession, student_id: int, *, today: Optional[date] = None
++) -> bool:
++    """Есть ли у ученика долг, который уже закрывает занятия."""
++    return await blocking_debt(db, student_id, today=today) is not None
+ 
+ 
+ async def assert_content_allowed(db: AsyncSession, student_id: int) -> None:
+     """Закрыть учебный контент, если оплата просрочена.
+ 
+-    Вызывается ПОСЛЕ проверок роли и владения: у преподавателя, методиста и
+-    сервисного ключа своя причина открывать материалы, и долг ученика её не
+-    отменяет.
++    Вызывается ПОСЛЕ проверок роли и владения: у преподавателя и методиста своя
++    причина открывать материалы, и долг ученика её не отменяет.
++
++    Проверяется УЧЕНИК, а не вызывающий (tsk-617): бот ходит по сервисному
++    ключу, и освобождение сервисного вызова означало бы «через бота можно,
++    через браузер нельзя» — блокировка обходилась бы сменой клиента. Там, где
++    ученика назвать нечем (чтение материала по своей сессии), проверка остаётся
++    по `current_user`.
++
++    Отказ — `DomainError`, а не голый `HTTPException`: в теле едут машинный
++    признак, сумма, месяцы и ссылка на кабинет оплаты. Без них клиенту нечего
++    показать, кроме «недостаточно прав», — а это отправляет человека ждать
++    вместо того, чтобы заплатить.
+     """
+-    if await has_blocking_debt(db, student_id):
+-        logger.info(
+-            "tsk-010: доступ к учебному контенту закрыт ученику %s — просрочена оплата",
+-            student_id,
+-        )
+-        raise HTTPException(status.HTTP_403_FORBIDDEN, BLOCKED_MESSAGE)
++    debt = await blocking_debt(db, student_id)
++    if debt is None:
++        return
++    logger.info(
++        "tsk-010: доступ к учебному контенту закрыт ученику %s — просрочена оплата "
++        "(долг %s коп., месяцы %s)",
++        student_id,
++        debt.due_minor,
++        ", ".join(f"{p:%m.%Y}" for p in debt.periods),
++    )
++    raise DomainError(
++        detail=blocked_message(debt),
++        status_code=403,
++        payload={
++            "code": PAYMENT_OVERDUE_CODE,
++            "due_minor": debt.due_minor,
++            "periods": [p.isoformat() for p in debt.periods],
++            "payments_url": payments_url(),
++        },
++    )
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index fa59943..2fb0a74 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -300,6 +300,23 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ "upgrade_hint": …}}`. `POST /attempts/{id}/answers` **403 не отдаёт**: отказ в
+ оценке кода ученику не виден, работа просто не ставится в очередь.
+ 
++**Рядом живёт второй доменный отказ — `payment_overdue`** (tsk-617; сама причина
++не про подписку, а про просроченный месяц из tsk-010). Форма та же и разбирается
++тем же механизмом: `{"error": "domain_error", "detail": …, "payload": {"code":
++"payment_overdue", "due_minor": …, "periods": ["YYYY-MM-DD"], "payments_url": …}}`.
++Отдаёт `payment_access_service.assert_content_allowed`; `detail` уже содержит
++сумму и месяцы, `payments_url` — дорога к деньгам для клиента без своего раздела
++«Оплата» (Telegram-бот). Держать оба отказа в одной форме важно: клиент разбирает
++их одним куском кода и по `payload.code`, а не по словам.
++
++**Гейт оплаты проверяет УЧЕНИКА, а не вызывающего** (tsk-617). Прежнее
++`if not current_user.is_service` освобождало боты TG_LMS: должник, закрытый в
++браузере, продолжал учиться в Telegram — тот же класс, что tsk-433. Условие снято
++на всех 11 точках `learning.py` и на `POST /attempts`. Там, где ученика назвать
++нечем (`assert_material_access` / `assert_task_access` по своей сессии), проверка
++осталась по `current_user`, а сервисный bypass — на месте: иначе методист и CB CLI
++потеряли бы чтение материалов.
++
+ **Изменение публичной схемы и её описание идут одним коммитом** (уроки 2026-04-28 #1/#2):
+ `/review-gate` блокирует любое расхождение путей и методов между кодом и этим контрактом —
+ для публичных файлов классификация «не блокирующее» запрещена.
+diff --git a/tests/test_tsk010_access_block.py b/tests/test_tsk010_access_block.py
+index 324c811..2b3311c 100644
+--- a/tests/test_tsk010_access_block.py
++++ b/tests/test_tsk010_access_block.py
+@@ -6,6 +6,10 @@
+ 
+ Ещё: блокировка снимается сама при оплате, приложенный чек её придерживает, а
+ преподавателя долг ученика не касается.
++
++tsk-617: отказ несёт машинный признак и дорогу к деньгам (`payload.code`, сумма,
++месяцы, ссылка на кабинет), а сервисный ключ от проверки больше не освобождает —
++иначе блокировка снималась бы сменой клиента на Telegram-бота.
+ """
+ 
+ from __future__ import annotations
+@@ -15,6 +19,7 @@ from datetime import date, timedelta
+ import pytest
+ from sqlalchemy import text
+ 
++from app.core.config import Settings
+ from app.services import payment_access_service, payment_service
+ from tests.test_tsk505_marketer_pricing import _auth, _new_user
+ from tests.test_tsk511_charges_breaks import _setup, PERIOD
+@@ -22,6 +27,13 @@ from tests.test_tsk010_payments import _charge_id, _login_as, _recalc, _submit
+ 
+ pytestmark = pytest.mark.asyncio
+ 
++_settings = Settings()
++
++
++def _service_headers() -> dict[str, str]:
++    """Заголовок бота: тот же сервисный ключ, которым ходит TG_LMS."""
++    return {"X-API-Key": next(iter(_settings.valid_api_keys))}
++
+ #: День, когда занятия уже закрыты: месяц оплачивается до своего конца, потом
+ #: несколько дней на оплату «вдогонку». Для сентябрьского PERIOD это 5 октября.
+ BLOCK_DAY = payment_service.block_date_for(PERIOD)
+@@ -127,9 +139,7 @@ async def test_blocked_student_still_sees_charges_and_can_pay(db, client, monkey
+     _, token = await _login_as(db, env["student_id"])
+ 
+     # Двигаем «сегодня» в блокирующий день для самого гейта.
+-    monkeypatch.setattr(
+-        payment_access_service, "has_blocking_debt", _always_blocked
+-    )
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
+ 
+     charges = await client.get("/api/v1/me/charges", headers=_auth(token))
+     assert charges.status_code == 200, "кабинет оплаты закрылся вместе с учёбой"
+@@ -139,15 +149,16 @@ async def test_blocked_student_still_sees_charges_and_can_pay(db, client, monkey
+     assert paid.status_code == 201, "заблокированный не смог приложить чек"
+ 
+ 
+-async def _always_blocked(db, student_id, *, today=None) -> bool:
+-    return True
++async def _always_blocked(db, student_id, *, today=None):
++    """Долг, закрывающий занятия: 5 500 ₽ за сентябрь (PERIOD тестов)."""
++    return payment_access_service.BlockingDebt(due_minor=550000, periods=(PERIOD,))
+ 
+ 
+ async def test_blocked_student_cannot_open_task(db, client, monkeypatch):
+     """Задание заблокированному не открывается, и текст объясняет почему."""
+     env = await _make_debtor(db, "blk-task")
+     _, token = await _login_as(db, env["student_id"])
+-    monkeypatch.setattr(payment_access_service, "has_blocking_debt", _always_blocked)
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
+ 
+     task_id = (
+         await db.execute(
+@@ -169,7 +180,7 @@ async def test_teacher_is_not_affected_by_student_debt(db, client, monkeypatch):
+     """Долг ученика не закрывает материалы преподавателю."""
+     env = await _make_debtor(db, "blk-teacher")
+     _, teacher_token = await _new_user(db, role="teacher", name="blk-teacher-010")
+-    monkeypatch.setattr(payment_access_service, "has_blocking_debt", _always_blocked)
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
+ 
+     task_id = (
+         await db.execute(
+@@ -186,6 +197,95 @@ async def test_teacher_is_not_affected_by_student_debt(db, client, monkeypatch):
+     assert resp.status_code == 200, "преподаватель пострадал от чужого долга"
+ 
+ 
++async def test_denial_carries_machine_code_and_the_way_to_pay(db, client, monkeypatch):
++    """Тело отказа объясняет отказ машинно и ведёт к деньгам (tsk-617).
++
++    Без `payload.code` клиенту остаётся разбирать текст, а он меняется вместе с
++    ценами: разбор сломался бы молча, и ученик снова увидел бы «недостаточно
++    прав». Без ссылки на кабинет отказ — тупик: в Telegram-боте раздела
++    «Оплата» нет.
++    """
++    env = await _make_debtor(db, "blk-body")
++    _, token = await _login_as(db, env["student_id"])
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
++
++    resp = await client.get(
++        f"/api/v1/learning/next-item?student_id={env['student_id']}",
++        headers=_auth(token),
++    )
++    assert resp.status_code == 403
++    body = resp.json()
++    payload = body["payload"]
++    assert payload["code"] == payment_access_service.PAYMENT_OVERDUE_CODE
++    assert payload["due_minor"] == 550000
++    assert payload["periods"] == [PERIOD.isoformat()]
++    assert payload["payments_url"].endswith("/me/payments")
++    # Сумма и месяц — в самом тексте: «оплатите» без числа заставляет искать
++    # долг там, где как раз всё закрыто.
++    assert "5500 ₽" in body["detail"]
++    assert f"{PERIOD:%m.%Y}" in body["detail"]
++
++
++async def test_service_key_does_not_lift_the_block(db, client, monkeypatch):
++    """Бот не снимает блокировку: гейт про ученика, а не про клиента (tsk-617).
++
++    До этой правки сервисный ключ освобождал от проверки целиком — должник,
++    закрытый в браузере, спокойно учился через Telegram-бота.
++    """
++    env = await _make_debtor(db, "blk-service")
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
++
++    resp = await client.get(
++        f"/api/v1/learning/next-item?student_id={env['student_id']}",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 403, "бот прошёл мимо блокировки за неоплату"
++    assert resp.json()["payload"]["code"] == payment_access_service.PAYMENT_OVERDUE_CODE
++
++
++async def test_debtor_still_reads_his_help_request_state(db, client, monkeypatch):
++    """Состояние собственной заявки должнику видно и через бота.
++
++    Закрыт учебный контент, а не поддержка: иначе человек, уже написавший
++    преподавателю, потерял бы и ответ на своё обращение.
++    """
++    env = await _make_debtor(db, "blk-ladder")
++    monkeypatch.setattr(payment_access_service, "blocking_debt", _always_blocked)
++
++    task_id = (
++        await db.execute(
++            text(
++                "INSERT INTO tasks (course_id, task_content, difficulty_id, external_uid) "
++                "VALUES (:c, '{\"stem\": \"blk-hr\"}'::jsonb, 1, 'blk-uid-010-hr') RETURNING id"
++            ),
++            {"c": env["course_id"]},
++        )
++    ).scalar()
++    await db.commit()
++
++    resp = await client.get(
++        f"/api/v1/learning/tasks/{task_id}/help-request?student_id={env['student_id']}",
++        headers=_service_headers(),
++    )
++    assert resp.status_code == 200
++
++
++async def test_message_falls_back_when_months_are_unknown():
++    """Пустой долг без месяцев — текст остаётся человеческим, а не пустым."""
++    empty = payment_access_service.BlockingDebt(due_minor=0, periods=())
++    assert payment_access_service.blocked_message(empty) == (
++        payment_access_service.BLOCKED_MESSAGE
++    )
++
++
++async def test_message_shows_kopecks_only_when_they_exist():
++    """Круглая сумма — без копеек; иначе «5500.00 ₽» читается как ошибка."""
++    round_debt = payment_access_service.BlockingDebt(due_minor=550000, periods=(PERIOD,))
++    odd_debt = payment_access_service.BlockingDebt(due_minor=550050, periods=(PERIOD,))
++    assert "5500 ₽" in payment_access_service.blocked_message(round_debt)
++    assert "5500.50 ₽" in payment_access_service.blocked_message(odd_debt)
++
++
+ async def test_block_does_not_erase_the_debt(db):
+     """Блокировка не трогает зачисление — иначе исчез бы сам долг.
+ 
