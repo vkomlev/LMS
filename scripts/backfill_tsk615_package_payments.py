@@ -175,6 +175,56 @@ async def _verify(db) -> None:
         )
 
 
+async def _report(date_from: date, date_to: date) -> int:
+    """Сошлась ли сумма: сколько денег у шлюза против того, что видно в LMS.
+
+    Только чтение. Это и есть проверка, ради которой затевалась задача: пока
+    разовые покупки не попадали в учёт, шлюз был богаче системы, и объяснить
+    разницу было нечем.
+
+    Сравниваются ОПЛАТЫ КАРТОЙ: наличные переводы по чекам у шлюза не значатся,
+    и складывать их в одну сумму значило бы получить расхождение на ровном месте.
+    Возвращает разницу в копейках — ноль означает, что сверка сошлась.
+    """
+    settings = Settings()
+    engine = create_async_engine(settings.database_url, echo=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    gateway_payments = await yookassa_service.list_succeeded(
+        created_from=date_from, created_to=date_to
+    )
+    gateway_minor = sum(p.amount_minor for p in gateway_payments if p.paid)
+
+    async with session_factory() as db:
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT purpose, count(*) AS n, sum(amount_minor) AS total "
+                    "  FROM student_payment "
+                    " WHERE status = 'confirmed' AND method = 'gateway' "
+                    "   AND COALESCE(paid_on, created_at::date) BETWEEN :d1 AND :d2 "
+                    " GROUP BY purpose ORDER BY purpose"
+                ),
+                {"d1": date_from, "d2": date_to},
+            )
+        ).all()
+    await engine.dispose()
+
+    lms_minor = sum(int(r.total or 0) for r in rows)
+    logger.info("Период %s — %s", date_from, date_to)
+    logger.info("  ЮKassa: платежей %s, сумма %s ₽", len(gateway_payments), gateway_minor / 100)
+    for r in rows:
+        logger.info("  LMS %s: %s шт., %s ₽", r.purpose, r.n, int(r.total or 0) / 100)
+    logger.info("  LMS всего картой: %s ₽", lms_minor / 100)
+
+    diff = gateway_minor - lms_minor
+    if diff == 0:
+        logger.info("СВЕРКА СОШЛАСЬ: расхождения нет.")
+    else:
+        logger.error("РАСХОЖДЕНИЕ: %s ₽ (плюс — деньги есть у шлюза, но не в LMS)", diff / 100)
+    return diff
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -182,7 +232,21 @@ def main() -> None:
         action="store_true",
         help="записать платежи (без флага — только показать, что будет сделано)",
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="только сверка сумм за период: ЮKassa против LMS (ничего не пишет)",
+    )
+    parser.add_argument("--from", dest="date_from", help="начало периода, ГГГГ-ММ-ДД")
+    parser.add_argument("--to", dest="date_to", help="конец периода, ГГГГ-ММ-ДД")
     args = parser.parse_args()
+
+    if args.report:
+        today = date.today()
+        start = date.fromisoformat(args.date_from) if args.date_from else today.replace(day=1)
+        end = date.fromisoformat(args.date_to) if args.date_to else today
+        asyncio.run(_report(start, end))
+        return
 
     written = asyncio.run(_run(args.apply))
     if args.apply:
