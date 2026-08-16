@@ -701,7 +701,21 @@ async def list_payments(
                  -- CAST на параметрах: см. _totals_by_charge, необязательный
                  -- фильтр без явного типа asyncpg не разбирает.
                  WHERE (CAST(:st AS text) IS NULL OR p.status = CAST(:st AS text))
-                   AND (CAST(:p AS date) IS NULL OR p.period = CAST(:p AS date))
+                   -- Фильтр месяца работает по-разному для двух видов денег, и
+                   -- иначе нельзя: у разовой покупки месяца нет вовсе, а сравнение
+                   -- `period = :p` для неё никогда не истинно — покупки молча
+                   -- выпадали бы из сводки за месяц, то есть остались бы ровно так
+                   -- же невидимы, как до tsk-615. Для них месяц — это месяц, когда
+                   -- деньги пришли.
+                   AND (
+                        CAST(:p AS date) IS NULL
+                        OR (p.purpose =  'monthly' AND p.period = CAST(:p AS date))
+                        OR (p.purpose <> 'monthly'
+                            AND date_trunc(
+                                    'month',
+                                    COALESCE(p.paid_on, p.created_at::date)
+                                )::date = CAST(:p AS date))
+                   )
                    AND (CAST(:s AS integer) IS NULL OR p.student_id = CAST(:s AS integer))
                    AND (CAST(:id AS integer) IS NULL OR p.id = CAST(:id AS integer))
                    AND (CAST(:pu AS text) IS NULL OR p.purpose = CAST(:pu AS text))

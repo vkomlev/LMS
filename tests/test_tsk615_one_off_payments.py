@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from sqlalchemy import text
@@ -300,6 +300,40 @@ async def test_marketer_sees_purchase_in_the_same_list(db, client, monkeypatch, 
         headers=_auth(env["token"]),
     )
     assert only_monthly.json() == [], "фильтр по назначению не работает"
+
+
+async def test_purchase_falls_into_the_month_it_was_paid(db, client, monkeypatch, gateway_on):
+    """Покупка попадает в сводку ТОГО месяца, когда за неё заплатили.
+
+    Экран маркетолога всегда смотрит на конкретный месяц. Сравнение по `period`
+    для разовой покупки не истинно никогда — без отдельного правила она выпадала
+    бы из сводки, то есть осталась бы невидимой ровно так же, как до задачи.
+    """
+    env = await _setup(db, "p615-month", price=550000)
+    student_id = env["student_id"]
+
+    async def fake_fetch(payment_id: str) -> GatewayPayment:
+        return _package_payment(payment_id=payment_id, student_id=student_id)
+
+    monkeypatch.setattr(yookassa_service, "fetch_payment", fake_fetch)
+    await _webhook(client, f"pkg-{uuid.uuid4().hex[:12]}")
+
+    today = date.today()
+    this_month = today.replace(day=1)
+    other_month = (this_month - timedelta(days=1)).replace(day=1)
+
+    in_month = await client.get(
+        f"/api/v1/marketer/payments?student_id={student_id}&period={this_month}",
+        headers=_auth(env["token"]),
+    )
+    assert [r["purpose"] for r in in_month.json()] == ["ai_package"], in_month.text
+
+    # И не попадает в чужой месяц — иначе одна покупка считалась бы дважды.
+    in_other = await client.get(
+        f"/api/v1/marketer/payments?student_id={student_id}&period={other_month}",
+        headers=_auth(env["token"]),
+    )
+    assert in_other.json() == []
 
 
 async def test_export_covers_one_off_purchases(db, client, monkeypatch, gateway_on):
