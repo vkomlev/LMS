@@ -19,16 +19,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
 from app.services.tasks_service import TasksService, keep_curated_title
 
-
-_settings = Settings()
 
 _SOLUTION_RULES: dict[str, Any] = {
     "type": "SA",
@@ -93,26 +88,14 @@ def test_helper_does_not_mutate_incoming() -> None:
 # ---------- integration: bulk_upsert e2e ----------
 
 
-@pytest_asyncio.fixture(scope="function", autouse=True)
-async def _cleanup_tsk612_course():
-    """`TasksService.bulk_upsert` коммитит — нужен пост-test cleanup."""
-    yield
-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
-    try:
-        async with AsyncSession(engine, expire_on_commit=False) as session:
-            async with session.begin():
-                await session.execute(
-                    text(
-                        "DELETE FROM tasks WHERE course_id IN ("
-                        "  SELECT id FROM courses WHERE title = 'test_tsk612'"
-                        ")"
-                    )
-                )
-                await session.execute(
-                    text("DELETE FROM courses WHERE title = 'test_tsk612'")
-                )
-    finally:
-        await engine.dispose()
+# Уборки за собой здесь нет намеренно. `TasksService.bulk_upsert` коммитит, но
+# фикстура `db` (tsk-333) открывает сессию с `join_transaction_mode=
+# "create_savepoint"`: её `commit()` закрывает SAVEPOINT, а внешняя транзакция
+# теста откатывается целиком — курс `test_tsk612` и задания `TSK612-*` в БД не
+# остаются. Свой движок к БД для чистки был бы не только лишним, но и
+# опасным: уборка отдельным соединением встаёт в блокировку на
+# незакоммиченных строках теста, и прогон виснет без ошибки. Об этом же —
+# сторож `test_tx_isolation_optout.py`.
 
 
 async def _new_course(db: AsyncSession) -> int:
