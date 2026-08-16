@@ -33389,7 +33389,7 @@
           "marketer_payments"
         ],
         "summary": "Сверить оплаты картой со шлюзом",
-        "description": "Берёт успешные платежи платёжного сервиса за период и дозакрывает те, что у нас не учтены. Нужна, когда уведомление не дошло: деньги списаны, а в кабинете висит долг.",
+        "description": "Берёт успешные платежи платёжного сервиса за период и дозакрывает те, что у нас не учтены. Нужна, когда уведомление не дошло: деньги списаны, а в кабинете висит долг. Платежи, которые учесть нечем, возвращаются с суммой, датой, учеником и причиной — их разбирает человек.",
         "operationId": "reconcile_api_v1_marketer_payments_reconcile_post",
         "security": [
           {
@@ -33475,9 +33475,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Reconcile Api V1 Marketer Payments Reconcile Post"
+                  "$ref": "#/components/schemas/ReconcileResult"
                 }
               }
             }
@@ -47997,6 +47995,106 @@
           "touched"
         ],
         "title": "RecalculateResult"
+      },
+      "ReconcileResult": {
+        "properties": {
+          "checked": {
+            "type": "integer",
+            "title": "Checked"
+          },
+          "added": {
+            "type": "integer",
+            "title": "Added"
+          },
+          "already_recorded": {
+            "type": "integer",
+            "title": "Already Recorded"
+          },
+          "without_charge": {
+            "items": {
+              "$ref": "#/components/schemas/ReconcileUnmatchedPayment"
+            },
+            "type": "array",
+            "title": "Without Charge"
+          }
+        },
+        "type": "object",
+        "required": [
+          "checked",
+          "added",
+          "already_recorded",
+          "without_charge"
+        ],
+        "title": "ReconcileResult",
+        "description": "Итог сверки оплат картой со шлюзом."
+      },
+      "ReconcileUnmatchedPayment": {
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "title": "Payment Id"
+          },
+          "amount_minor": {
+            "type": "integer",
+            "title": "Amount Minor"
+          },
+          "captured_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captured At"
+          },
+          "student_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Id"
+          },
+          "student_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Student Name"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "charge_missing",
+              "charge_unknown",
+              "package_meta_missing"
+            ],
+            "title": "Reason"
+          },
+          "reason_text": {
+            "type": "string",
+            "title": "Reason Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "payment_id",
+          "amount_minor",
+          "reason",
+          "reason_text"
+        ],
+        "title": "ReconcileUnmatchedPayment",
+        "description": "Успешный платёж шлюза, который сверка не смогла положить в учёт (tsk-616).\n\nРаньше о таком платеже отдавался один номер шлюза, и разбирать его\nприходилось руками через кабинет ЮKassa: по номеру не видно ни суммы, ни\nдаты, ни ученика. Прод-случай — 10 ₽ от 03.08.2026 за начисление, которое\nпосле оплаты удалил пересчёт: деньги у шлюза есть, положить их некуда."
       },
       "RefreshRequest": {
         "properties": {

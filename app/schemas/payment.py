@@ -16,6 +16,8 @@ PaymentStatus = Literal["pending", "confirmed", "rejected"]
 #: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
 #: разовая покупка, у которой месяца нет.
 PaymentPurpose = Literal["monthly", "ai_package"]
+#: Почему сверка не смогла учесть успешный платёж шлюза (tsk-616).
+ReconcileReason = Literal["charge_missing", "charge_unknown", "package_meta_missing"]
 
 
 class PaymentRead(BaseModel):
@@ -163,3 +165,33 @@ class PaymentExportRow(BaseModel):
     gateway: Optional[str] = None
     gateway_payment_id: Optional[str] = None
     reviewed_at: Optional[datetime] = None
+
+
+class ReconcileUnmatchedPayment(BaseModel):
+    """Успешный платёж шлюза, который сверка не смогла положить в учёт (tsk-616).
+
+    Раньше о таком платеже отдавался один номер шлюза, и разбирать его
+    приходилось руками через кабинет ЮKassa: по номеру не видно ни суммы, ни
+    даты, ни ученика. Прод-случай — 10 ₽ от 03.08.2026 за начисление, которое
+    после оплаты удалил пересчёт: деньги у шлюза есть, положить их некуда.
+    """
+
+    payment_id: str
+    amount_minor: int
+    #: Когда деньги захвачены, по данным шлюза (UTC). Пусто, если шлюз не отдал.
+    captured_at: Optional[datetime] = None
+    #: Ученик из метаданных платежа. Его может не быть — тогда пусто и имя.
+    student_id: Optional[int] = None
+    student_name: Optional[str] = None
+    reason: ReconcileReason
+    #: Причина словами — чтобы разбор не требовал таблицы кодов под рукой.
+    reason_text: str
+
+
+class ReconcileResult(BaseModel):
+    """Итог сверки оплат картой со шлюзом."""
+
+    checked: int
+    added: int
+    already_recorded: int
+    without_charge: list[ReconcileUnmatchedPayment]

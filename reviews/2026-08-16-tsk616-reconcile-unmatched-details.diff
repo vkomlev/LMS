@@ -1,0 +1,323 @@
+diff --git a/app/api/v1/marketer_payments.py b/app/api/v1/marketer_payments.py
+index f370071..2e25a22 100644
+--- a/app/api/v1/marketer_payments.py
++++ b/app/api/v1/marketer_payments.py
+@@ -20,6 +20,9 @@ from app.schemas.payment import (
+     PaymentPurpose,
+     PaymentRead,
+     PaymentStatus,
++    ReconcileReason,
++    ReconcileResult,
++    ReconcileUnmatchedPayment,
+ )
+ from app.services import (
+     payment_reminder_service,
+@@ -231,11 +234,13 @@ def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
+ 
+ @router.post(
+     "/payments/reconcile",
++    response_model=ReconcileResult,
+     summary="Сверить оплаты картой со шлюзом",
+     description=(
+         "Берёт успешные платежи платёжного сервиса за период и дозакрывает те, "
+         "что у нас не учтены. Нужна, когда уведомление не дошло: деньги списаны, "
+-        "а в кабинете висит долг."
++        "а в кабинете висит долг. Платежи, которые учесть нечем, возвращаются "
++        "с суммой, датой, учеником и причиной — их разбирает человек."
+     ),
+ )
+ async def reconcile(
+@@ -243,7 +248,7 @@ async def reconcile(
+     date_to: date = Query(...),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(_payments_gate),
+-) -> dict:
++) -> ReconcileResult:
+     if date_to < date_from:
+         raise HTTPException(
+             status.HTTP_422_UNPROCESSABLE_ENTITY, "Конец периода раньше начала"
+@@ -260,7 +265,7 @@ async def reconcile(
+         ) from exc
+ 
+     added = 0
+-    skipped_no_charge: list[str] = []
++    unmatched: list[dict] = []
+     for payment in payments:
+         if not payment.paid:
+             continue
+@@ -273,20 +278,21 @@ async def reconcile(
+                 # Учесть нечем — нужен человек. Отличается от «уже учтено»:
+                 # иначе каждая повторная сверка объявляла бы давно закрытую
+                 # покупку проблемной, и список проблем перестали бы читать.
+-                skipped_no_charge.append(payment.id)
++                unmatched.append(_unmatched(payment, "package_meta_missing"))
+             elif outcome:
+                 added += 1
+             continue
+         charge_id = payment.metadata.get("charge_id")
+-        charge = (
+-            await payment_service.charge_by_id(db, charge_id=int(charge_id))
+-            if str(charge_id or "").isdigit()
+-            else None
+-        )
++        if not str(charge_id or "").isdigit():
++            # Номера начисления нет вовсе — искать по нему нечего, и причина
++            # у такого платежа другая, чем у удалённого начисления.
++            unmatched.append(_unmatched(payment, "charge_unknown"))
++            continue
++        charge = await payment_service.charge_by_id(db, charge_id=int(charge_id))
+         if charge is None:
+             # Платёж есть, а начисления нет — молча пропускать нельзя: это
+             # деньги, которые некуда положить, и человек должен о них узнать.
+-            skipped_no_charge.append(payment.id)
++            unmatched.append(_unmatched(payment, "charge_missing", charge_id=int(charge_id)))
+             continue
+         if await payment_service.record_gateway_payment(
+             db,
+@@ -300,22 +306,80 @@ async def reconcile(
+         ):
+             added += 1
+ 
++    await _fill_student_names(db, unmatched)
++
+     logger.info(
+         "tsk-010: сверка за %s—%s: у шлюза %s, дозакрыто %s, без начисления %s",
+         date_from,
+         date_to,
+         len(payments),
+         added,
+-        len(skipped_no_charge),
++        len(unmatched),
+     )
++    if unmatched:
++        # В логе тоже подробности, а не голые номера: разбор такого платежа
++        # часто идёт по логам сервера, без кабинета под рукой (tsk-616).
++        logger.warning(
++            "tsk-616: сверка не смогла учесть %s платежей: %s",
++            len(unmatched),
++            [
++                f"{row['payment_id']} {row['amount_minor'] / 100:.2f} ₽ "
++                f"ученик={row['student_id']} причина={row['reason']}"
++                for row in unmatched
++            ],
++        )
++    return ReconcileResult(
++        checked=len(payments),
++        added=added,
++        already_recorded=len(payments) - added - len(unmatched),
++        without_charge=[ReconcileUnmatchedPayment(**row) for row in unmatched],
++    )
++
++
++#: Причина словами. Хранится рядом с кодом, а не в кабинете: тот же ответ
++#: читают из curl при разборе на сервере, где карты кодов под рукой нет.
++_REASON_TEXT: dict[ReconcileReason, str] = {
++    "charge_missing": (
++        "Начисление №{charge_id} не найдено: его удалили после оплаты"
++    ),
++    "charge_unknown": "В платеже не указано начисление",
++    "package_meta_missing": "В платеже нет ученика или объёма пакета",
++}
++
++
++def _unmatched(
++    payment,
++    reason: ReconcileReason,
++    *,
++    charge_id: Optional[int] = None,
++) -> dict:
++    """Собрать платёж, который сверка учесть не смогла, для разбора человеком.
++
++    Одного номера платежа мало: по нему не видно ни суммы, ни даты, ни ученика,
++    и разбор уходил в кабинет ЮKassa вручную. Ученика берём из метаданных
++    платежа — строки в учёте у такого платежа нет по определению (tsk-616).
++    """
+     return {
+-        "checked": len(payments),
+-        "added": added,
+-        "already_recorded": len(payments) - added - len(skipped_no_charge),
+-        "without_charge": skipped_no_charge,
++        "payment_id": payment.id,
++        "amount_minor": payment.amount_minor,
++        "captured_at": payment.captured_at,
++        "student_id": _as_int(payment.metadata.get("student_id")),
++        "student_name": None,
++        "reason": reason,
++        "reason_text": _REASON_TEXT[reason].format(charge_id=charge_id),
+     }
+ 
+ 
++async def _fill_student_names(db: AsyncSession, unmatched: list[dict]) -> None:
++    """Проставить ФИО учеников одним запросом на весь список."""
++    ids = sorted({row["student_id"] for row in unmatched if row["student_id"]})
++    if not ids:
++        return
++    names = await payment_service.student_names(db, student_ids=ids)
++    for row in unmatched:
++        row["student_name"] = names.get(row["student_id"])
++
++
+ async def _reconcile_ai_package(db: AsyncSession, payment) -> Optional[bool]:
+     """Дозакрыть разовую покупку пакета, если уведомление не дошло (tsk-615).
+ 
+diff --git a/app/schemas/payment.py b/app/schemas/payment.py
+index a7af9b9..d6d3392 100644
+--- a/app/schemas/payment.py
++++ b/app/schemas/payment.py
+@@ -16,6 +16,8 @@ PaymentStatus = Literal["pending", "confirmed", "rejected"]
+ #: За что платили (tsk-615). `monthly` — месяц обучения, всё остальное —
+ #: разовая покупка, у которой месяца нет.
+ PaymentPurpose = Literal["monthly", "ai_package"]
++#: Почему сверка не смогла учесть успешный платёж шлюза (tsk-616).
++ReconcileReason = Literal["charge_missing", "charge_unknown", "package_meta_missing"]
+ 
+ 
+ class PaymentRead(BaseModel):
+@@ -163,3 +165,33 @@ class PaymentExportRow(BaseModel):
+     gateway: Optional[str] = None
+     gateway_payment_id: Optional[str] = None
+     reviewed_at: Optional[datetime] = None
++
++
++class ReconcileUnmatchedPayment(BaseModel):
++    """Успешный платёж шлюза, который сверка не смогла положить в учёт (tsk-616).
++
++    Раньше о таком платеже отдавался один номер шлюза, и разбирать его
++    приходилось руками через кабинет ЮKassa: по номеру не видно ни суммы, ни
++    даты, ни ученика. Прод-случай — 10 ₽ от 03.08.2026 за начисление, которое
++    после оплаты удалил пересчёт: деньги у шлюза есть, положить их некуда.
++    """
++
++    payment_id: str
++    amount_minor: int
++    #: Когда деньги захвачены, по данным шлюза (UTC). Пусто, если шлюз не отдал.
++    captured_at: Optional[datetime] = None
++    #: Ученик из метаданных платежа. Его может не быть — тогда пусто и имя.
++    student_id: Optional[int] = None
++    student_name: Optional[str] = None
++    reason: ReconcileReason
++    #: Причина словами — чтобы разбор не требовал таблицы кодов под рукой.
++    reason_text: str
++
++
++class ReconcileResult(BaseModel):
++    """Итог сверки оплат картой со шлюзом."""
++
++    checked: int
++    added: int
++    already_recorded: int
++    without_charge: list[ReconcileUnmatchedPayment]
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index 6e4f961..b25cdd0 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -601,6 +601,24 @@ async def charge_by_id(db: AsyncSession, *, charge_id: int) -> Optional[dict]:
+     return dict(row._mapping) if row is not None else None
+ 
+ 
++async def student_names(db: AsyncSession, *, student_ids: list[int]) -> dict[int, str]:
++    """ФИО учеников по номерам — для разбора платежей, которых нет в учёте.
++
++    Номер ученика в таких платежах приходит из метаданных шлюза, строки платежа
++    у нас нет, и обычные соединения по учёту здесь не помогают. Запрос один на
++    весь список, а не по платежу: сверка идёт за месяц целиком (tsk-616).
++    """
++    if not student_ids:
++        return {}
++    rows = (
++        await db.execute(
++            text("SELECT id, full_name FROM users WHERE id = ANY(:ids)"),
++            {"ids": student_ids},
++        )
++    ).all()
++    return {int(row.id): row.full_name for row in rows}
++
++
+ async def list_payments(
+     db: AsyncSession,
+     *,
+diff --git a/tests/test_tsk010_gateway.py b/tests/test_tsk010_gateway.py
+index f04bb75..cac4e20 100644
+--- a/tests/test_tsk010_gateway.py
++++ b/tests/test_tsk010_gateway.py
+@@ -8,7 +8,7 @@
+ 
+ from __future__ import annotations
+ 
+-from datetime import date
++from datetime import date, datetime, timezone
+ 
+ import pytest
+ from sqlalchemy import text
+@@ -277,7 +277,7 @@ async def test_reconcile_picks_up_lost_payment(db, client, monkeypatch, gateway_
+     assert body["added"] == 1
+     # Платёж, которому не нашлось начисления, назван поимённо — молчать о
+     # деньгах, которые некуда положить, нельзя.
+-    assert body["without_charge"] == ["orphan-1"]
++    assert [row["payment_id"] for row in body["without_charge"]] == ["orphan-1"]
+ 
+     # Повторная сверка ничего не задваивает.
+     second = await client.post(
+@@ -297,6 +297,62 @@ async def test_reconcile_picks_up_lost_payment(db, client, monkeypatch, gateway_
+     assert rows.total == 550000
+ 
+ 
++async def test_reconcile_names_the_money_it_cannot_place(db, client, monkeypatch, gateway_on):
++    """Платёж, который учесть нечем, показан суммой, датой, учеником и причиной.
++
++    Прод-случай tsk-616: 10 ₽ от 03.08.2026 за начисление, которое после оплаты
++    удалил пересчёт. В ответе был один номер шлюза — по нему не видно ни суммы,
++    ни даты, ни ученика, и разбор уходил руками в кабинет ЮKassa.
++    """
++    env = await _setup(db, "gw-616", price=550000)
++    student_id = env["student_id"]
++    full_name = (
++        await db.execute(
++            text("SELECT full_name FROM users WHERE id = :i"), {"i": student_id}
++        )
++    ).scalar_one()
++
++    deleted_charge = _gateway_payment(
++        payment_id="tsk616-deleted", charge_id=10**7,
++        student_id=student_id, amount_minor=1000,
++    )
++    deleted_charge.captured_at = datetime(2026, 8, 3, 12, 30, tzinfo=timezone.utc)
++    # Второй класс: в платеже нет даже номера начисления — причина другая.
++    no_charge_id = GatewayPayment(
++        id="tsk616-no-charge", status="succeeded", amount_minor=50000, paid=True,
++        confirmation_url=None, test=True, metadata={},
++    )
++
++    async def fake_list(**kwargs) -> list[GatewayPayment]:
++        return [deleted_charge, no_charge_id]
++
++    monkeypatch.setattr(yookassa_service, "list_succeeded", fake_list)
++
++    today = date.today().isoformat()
++    resp = await client.post(
++        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
++        headers=_auth(env["token"]),
++    )
++    assert resp.status_code == 200, resp.text
++    rows = {row["payment_id"]: row for row in resp.json()["without_charge"]}
++    assert set(rows) == {"tsk616-deleted", "tsk616-no-charge"}
++
++    deleted = rows["tsk616-deleted"]
++    assert deleted["amount_minor"] == 1000
++    assert deleted["captured_at"].startswith("2026-08-03T12:30")
++    assert deleted["student_id"] == student_id
++    assert deleted["student_name"] == full_name
++    assert deleted["reason"] == "charge_missing"
++    # Номер удалённого начисления назван: без него причина не проверяема.
++    assert str(10**7) in deleted["reason_text"]
++
++    orphan = rows["tsk616-no-charge"]
++    assert orphan["reason"] == "charge_unknown"
++    # Ученика в метаданных нет — имя не выдумываем.
++    assert orphan["student_id"] is None
++    assert orphan["student_name"] is None
++
++
+ async def test_reconcile_is_closed_for_students(db, client, gateway_on):
+     """Сверка — инструмент маркетолога, ученику она недоступна."""
+     env = await _setup(db, "gw-recon-gate", price=550000)

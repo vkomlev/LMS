@@ -20,6 +20,9 @@ from app.schemas.payment import (
     PaymentPurpose,
     PaymentRead,
     PaymentStatus,
+    ReconcileReason,
+    ReconcileResult,
+    ReconcileUnmatchedPayment,
 )
 from app.services import (
     payment_reminder_service,
@@ -231,11 +234,13 @@ def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
 
 @router.post(
     "/payments/reconcile",
+    response_model=ReconcileResult,
     summary="Сверить оплаты картой со шлюзом",
     description=(
         "Берёт успешные платежи платёжного сервиса за период и дозакрывает те, "
         "что у нас не учтены. Нужна, когда уведомление не дошло: деньги списаны, "
-        "а в кабинете висит долг."
+        "а в кабинете висит долг. Платежи, которые учесть нечем, возвращаются "
+        "с суммой, датой, учеником и причиной — их разбирает человек."
     ),
 )
 async def reconcile(
@@ -243,7 +248,7 @@ async def reconcile(
     date_to: date = Query(...),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_payments_gate),
-) -> dict:
+) -> ReconcileResult:
     if date_to < date_from:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY, "Конец периода раньше начала"
@@ -260,7 +265,7 @@ async def reconcile(
         ) from exc
 
     added = 0
-    skipped_no_charge: list[str] = []
+    unmatched: list[dict] = []
     for payment in payments:
         if not payment.paid:
             continue
@@ -273,20 +278,21 @@ async def reconcile(
                 # Учесть нечем — нужен человек. Отличается от «уже учтено»:
                 # иначе каждая повторная сверка объявляла бы давно закрытую
                 # покупку проблемной, и список проблем перестали бы читать.
-                skipped_no_charge.append(payment.id)
+                unmatched.append(_unmatched(payment, "package_meta_missing"))
             elif outcome:
                 added += 1
             continue
         charge_id = payment.metadata.get("charge_id")
-        charge = (
-            await payment_service.charge_by_id(db, charge_id=int(charge_id))
-            if str(charge_id or "").isdigit()
-            else None
-        )
+        if not str(charge_id or "").isdigit():
+            # Номера начисления нет вовсе — искать по нему нечего, и причина
+            # у такого платежа другая, чем у удалённого начисления.
+            unmatched.append(_unmatched(payment, "charge_unknown"))
+            continue
+        charge = await payment_service.charge_by_id(db, charge_id=int(charge_id))
         if charge is None:
             # Платёж есть, а начисления нет — молча пропускать нельзя: это
             # деньги, которые некуда положить, и человек должен о них узнать.
-            skipped_no_charge.append(payment.id)
+            unmatched.append(_unmatched(payment, "charge_missing", charge_id=int(charge_id)))
             continue
         if await payment_service.record_gateway_payment(
             db,
@@ -300,20 +306,82 @@ async def reconcile(
         ):
             added += 1
 
+    await _fill_student_names(db, unmatched)
+
     logger.info(
         "tsk-010: сверка за %s—%s: у шлюза %s, дозакрыто %s, без начисления %s",
         date_from,
         date_to,
         len(payments),
         added,
-        len(skipped_no_charge),
+        len(unmatched),
     )
+    if unmatched:
+        # В логе тоже подробности, а не голые номера: разбор такого платежа
+        # часто идёт по логам сервера, без кабинета под рукой (tsk-616).
+        logger.warning(
+            "tsk-616: сверка не смогла учесть %s платежей: %s",
+            len(unmatched),
+            [
+                # Рубли из копеек целыми: деньги не считаются плавающей точкой
+                # даже в логе. Знак валюты не пишем — консоль под Windows его не
+                # кодирует и глотает всю строку.
+                f"{row['payment_id']} "
+                f"{row['amount_minor'] // 100},{row['amount_minor'] % 100:02d} руб. "
+                f"ученик={row['student_id']} причина={row['reason']}"
+                for row in unmatched
+            ],
+        )
+    return ReconcileResult(
+        checked=len(payments),
+        added=added,
+        already_recorded=len(payments) - added - len(unmatched),
+        without_charge=[ReconcileUnmatchedPayment(**row) for row in unmatched],
+    )
+
+
+#: Причина словами. Хранится рядом с кодом, а не в кабинете: тот же ответ
+#: читают из curl при разборе на сервере, где карты кодов под рукой нет.
+_REASON_TEXT: dict[ReconcileReason, str] = {
+    "charge_missing": (
+        "Начисление №{charge_id} не найдено: его удалили после оплаты"
+    ),
+    "charge_unknown": "В платеже не указано начисление",
+    "package_meta_missing": "В платеже нет ученика или объёма пакета",
+}
+
+
+def _unmatched(
+    payment,
+    reason: ReconcileReason,
+    *,
+    charge_id: Optional[int] = None,
+) -> dict:
+    """Собрать платёж, который сверка учесть не смогла, для разбора человеком.
+
+    Одного номера платежа мало: по нему не видно ни суммы, ни даты, ни ученика,
+    и разбор уходил в кабинет ЮKassa вручную. Ученика берём из метаданных
+    платежа — строки в учёте у такого платежа нет по определению (tsk-616).
+    """
     return {
-        "checked": len(payments),
-        "added": added,
-        "already_recorded": len(payments) - added - len(skipped_no_charge),
-        "without_charge": skipped_no_charge,
+        "payment_id": payment.id,
+        "amount_minor": payment.amount_minor,
+        "captured_at": payment.captured_at,
+        "student_id": _as_int(payment.metadata.get("student_id")),
+        "student_name": None,
+        "reason": reason,
+        "reason_text": _REASON_TEXT[reason].format(charge_id=charge_id),
     }
+
+
+async def _fill_student_names(db: AsyncSession, unmatched: list[dict]) -> None:
+    """Проставить ФИО учеников одним запросом на весь список."""
+    ids = sorted({row["student_id"] for row in unmatched if row["student_id"]})
+    if not ids:
+        return
+    names = await payment_service.student_names(db, student_ids=ids)
+    for row in unmatched:
+        row["student_name"] = names.get(row["student_id"])
 
 
 async def _reconcile_ai_package(db: AsyncSession, payment) -> Optional[bool]:

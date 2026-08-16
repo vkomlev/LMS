@@ -601,6 +601,24 @@ async def charge_by_id(db: AsyncSession, *, charge_id: int) -> Optional[dict]:
     return dict(row._mapping) if row is not None else None
 
 
+async def student_names(db: AsyncSession, *, student_ids: list[int]) -> dict[int, str]:
+    """ФИО учеников по номерам — для разбора платежей, которых нет в учёте.
+
+    Номер ученика в таких платежах приходит из метаданных шлюза, строки платежа
+    у нас нет, и обычные соединения по учёту здесь не помогают. Запрос один на
+    весь список, а не по платежу: сверка идёт за месяц целиком (tsk-616).
+    """
+    if not student_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text("SELECT id, full_name FROM users WHERE id = ANY(:ids)"),
+            {"ids": student_ids},
+        )
+    ).all()
+    return {int(row.id): row.full_name for row in rows}
+
+
 async def list_payments(
     db: AsyncSession,
     *,

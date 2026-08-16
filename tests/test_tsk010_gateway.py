@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -277,7 +277,7 @@ async def test_reconcile_picks_up_lost_payment(db, client, monkeypatch, gateway_
     assert body["added"] == 1
     # Платёж, которому не нашлось начисления, назван поимённо — молчать о
     # деньгах, которые некуда положить, нельзя.
-    assert body["without_charge"] == ["orphan-1"]
+    assert [row["payment_id"] for row in body["without_charge"]] == ["orphan-1"]
 
     # Повторная сверка ничего не задваивает.
     second = await client.post(
@@ -295,6 +295,62 @@ async def test_reconcile_picks_up_lost_payment(db, client, monkeypatch, gateway_
     ).one()
     assert rows.n == 1
     assert rows.total == 550000
+
+
+async def test_reconcile_names_the_money_it_cannot_place(db, client, monkeypatch, gateway_on):
+    """Платёж, который учесть нечем, показан суммой, датой, учеником и причиной.
+
+    Прод-случай tsk-616: 10 ₽ от 03.08.2026 за начисление, которое после оплаты
+    удалил пересчёт. В ответе был один номер шлюза — по нему не видно ни суммы,
+    ни даты, ни ученика, и разбор уходил руками в кабинет ЮKassa.
+    """
+    env = await _setup(db, "gw-616", price=550000)
+    student_id = env["student_id"]
+    full_name = (
+        await db.execute(
+            text("SELECT full_name FROM users WHERE id = :i"), {"i": student_id}
+        )
+    ).scalar_one()
+
+    deleted_charge = _gateway_payment(
+        payment_id="tsk616-deleted", charge_id=10**7,
+        student_id=student_id, amount_minor=1000,
+    )
+    deleted_charge.captured_at = datetime(2026, 8, 3, 12, 30, tzinfo=timezone.utc)
+    # Второй класс: в платеже нет даже номера начисления — причина другая.
+    no_charge_id = GatewayPayment(
+        id="tsk616-no-charge", status="succeeded", amount_minor=50000, paid=True,
+        confirmation_url=None, test=True, metadata={},
+    )
+
+    async def fake_list(**kwargs) -> list[GatewayPayment]:
+        return [deleted_charge, no_charge_id]
+
+    monkeypatch.setattr(yookassa_service, "list_succeeded", fake_list)
+
+    today = date.today().isoformat()
+    resp = await client.post(
+        f"/api/v1/marketer/payments/reconcile?date_from={today}&date_to={today}",
+        headers=_auth(env["token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    rows = {row["payment_id"]: row for row in resp.json()["without_charge"]}
+    assert set(rows) == {"tsk616-deleted", "tsk616-no-charge"}
+
+    deleted = rows["tsk616-deleted"]
+    assert deleted["amount_minor"] == 1000
+    assert deleted["captured_at"].startswith("2026-08-03T12:30")
+    assert deleted["student_id"] == student_id
+    assert deleted["student_name"] == full_name
+    assert deleted["reason"] == "charge_missing"
+    # Номер удалённого начисления назван: без него причина не проверяема.
+    assert str(10**7) in deleted["reason_text"]
+
+    orphan = rows["tsk616-no-charge"]
+    assert orphan["reason"] == "charge_unknown"
+    # Ученика в метаданных нет — имя не выдумываем.
+    assert orphan["student_id"] is None
+    assert orphan["student_name"] is None
 
 
 async def test_reconcile_is_closed_for_students(db, client, gateway_on):
