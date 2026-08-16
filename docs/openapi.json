@@ -16696,6 +16696,9 @@
               }
             }
           },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -16805,6 +16808,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -16916,6 +16922,9 @@
               }
             }
           },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -17026,6 +17035,9 @@
               }
             }
           },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -17135,6 +17147,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17265,6 +17280,9 @@
               }
             }
           },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -17376,7 +17394,7 @@
             }
           },
           "403": {
-            "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается."
+            "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17606,7 +17624,7 @@
             "description": "Заявка не найдена"
           },
           "403": {
-            "description": "Чужая заявка"
+            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "409": {
             "description": "Заявка не закрыта или не того типа"
@@ -17716,7 +17734,7 @@
             "description": "Заявка не найдена"
           },
           "403": {
-            "description": "Чужая заявка"
+            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "409": {
             "description": "Заявка закрыта, не того типа или не возвращалась"
@@ -17950,6 +17968,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
           },
           "404": {
             "description": "Задание / студент / попытка не найдены"
