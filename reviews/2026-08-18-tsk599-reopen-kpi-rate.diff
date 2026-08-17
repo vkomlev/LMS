@@ -1,0 +1,908 @@
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index ce29f55..0ae0158 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -49,6 +49,7 @@ from app.services.help_requests_service import (
+     set_webinar_link,
+     get_help_requests_pending_count,
+     get_reopen_kpi,
++    MIN_REQUESTS_FOR_RATE,
+ )
+ from app.services import roles_service
+ from app.services.teacher_queue_service import (
+@@ -129,7 +130,11 @@ async def help_request_reopen_kpi(
+         description="ID преподавателя. Не задан — сводка по всем (только методист/админ).",
+     ),
+     since: Optional[datetime] = Query(
+-        None, description="Считать возвраты с этого момента (ISO8601)"
++        None,
++        description=(
++            "Начало окна (ISO8601): считаются заявки, созданные с этого момента, "
++            "и возвраты по ним. Не задан — вся история"
++        ),
+     ),
+     current_user: CurrentUser = Depends(get_current_user),
+     db: AsyncSession = Depends(get_bare_db),
+@@ -141,6 +146,11 @@ async def help_request_reopen_kpi(
+     без такой роли не отдаётся. Считает один и тот же
+     `help_requests_service.get_reopen_kpi`, чтобы две панели не разъехались в
+     цифрах.
++
++    tsk-599: строка несёт долю возвратов (`reopen_rate`) с объёмом рядом, а не
++    голый счётчик, и приходит на КАЖДОГО действующего преподавателя — включая
++    тех, у кого возвратов нет. Порог показа доли отдаётся в ответе
++    (`min_requests_for_rate`), чтобы панель не хранила своё значение.
+     """
+     is_privileged = current_user.is_service or bool(
+         {"methodist", "admin"}
+@@ -160,6 +170,7 @@ async def help_request_reopen_kpi(
+         items=[ReopenKpiItem(**it) for it in items],
+         total_reopens=sum(int(it["reopens"]) for it in items),
+         since=since,
++        min_requests_for_rate=MIN_REQUESTS_FOR_RATE,
+     )
+ 
+ 
+diff --git a/app/schemas/teacher_help_requests.py b/app/schemas/teacher_help_requests.py
+index c54cc9d..e6b0dc5 100644
+--- a/app/schemas/teacher_help_requests.py
++++ b/app/schemas/teacher_help_requests.py
+@@ -90,11 +90,29 @@ class HelpRequestDetailResponse(HelpRequestListItem):
+ # ----- POST close -----
+ 
+ class ReopenKpiItem(BaseModel):
+-    """Возвраты заявок на одного преподавателя (tsk-303, KPI)."""
++    """Возвраты заявок на одного преподавателя (tsk-303, доля — tsk-599)."""
+     teacher_id: int
+     teacher_name: Optional[str] = None
+-    reopens: int = Field(..., description="Сколько раз ученики возвращали заявки этого преподавателя")
+-    requests: int = Field(..., description="По скольким разным заявкам это было")
++    requests: int = Field(
++        ...,
++        description=(
++            "Знаменатель: сколько заявок лестницы за период числится за этим "
++            "преподавателем. 0 — за период к нему не обращались"
++        ),
++    )
++    reopened_requests: int = Field(
++        ..., description="Числитель: сколько из этих заявок ученики вернули хотя бы раз"
++    )
++    reopens: int = Field(
++        ..., description="Сколько всего было возвратов (одну заявку могли вернуть не раз)"
++    )
++    reopen_rate: Optional[float] = Field(
++        None,
++        description=(
++            "Доля возвращённых заявок, 0..1. null — заявок меньше порога "
++            "min_requests_for_rate, сравнивать нельзя («мало данных»)"
++        ),
++    )
+     last_reopened_at: Optional[datetime] = None
+ 
+ 
+@@ -103,6 +121,13 @@ class ReopenKpiResponse(BaseModel):
+     items: list[ReopenKpiItem] = Field(default_factory=list)
+     total_reopens: int = Field(0, description="Сумма возвратов по всем строкам выборки")
+     since: Optional[datetime] = Field(None, description="Начало окна, если задано")
++    min_requests_for_rate: int = Field(
++        0,
++        description=(
++            "Порог показа доли: ниже этого числа заявок процент не считается. "
++            "Отдаётся сервером, чтобы панель не держала своё значение порога"
++        ),
++    )
+ 
+ 
+ class WebinarLinkRequest(BaseModel):
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index a8147e0..9634671 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -821,6 +821,14 @@ async def _lock_request(db: AsyncSession, request_id: int) -> None:
+     )
+ 
+ 
++# tsk-599: сколько заявок за период должно быть у преподавателя, чтобы доля
++# вообще считалась. Ниже порога процент — шум: 0 из 2 поставило бы человека в
++# лучшие ни за что, а 1 из 3 — в худшие. Порог решён оператором (2026-08-17)
++# по фактическому распределению на проде: у трёх преподавателей из четырёх
++# меньше десяти заявок в месяц.
++MIN_REQUESTS_FOR_RATE = 10
++
++
+ async def get_reopen_kpi(
+     db: AsyncSession,
+     *,
+@@ -833,51 +841,148 @@ async def get_reopen_kpi(
+     преподаватель смотрит свой показатель (`teacher_id=<свой>`), методист и
+     админ — по всем сразу (`teacher_id=None`).
+ 
+-    `since` режет по `reopened_at` — панель почти всегда смотрит окно («за
+-    месяц»), а не всю историю; ради этого история и хранится строками, а не
+-    счётчиком на заявке.
+-
+-    Возвраты с неизвестным автором (`teacher_id IS NULL` — учётку удалили)
+-    в разрез по людям не попадают: приписать их некому, а «ничей» столбец в
+-    оценке преподавателей только путал бы.
++    **Что именно считается (tsk-599).** Это единственная в продукте поверхность
++    сравнения людей, поэтому определение метрики зафиксировано здесь, а не
++    вычитывается из формы запроса:
++
++    * *Когорта периода* — заявки лестницы (`manual_help`, `individual_review`),
++      созданные не раньше `since`. Окно режется по `created_at` ЗАЯВКИ, а не по
++      `reopened_at` возврата: числитель и знаменатель обязаны считать одно и то
++      же множество, иначе доля способна превысить 100% (возврат внутри окна по
++      заявке, созданной до его начала).
++    * *Хозяин заявки* — `COALESCE(кому приписан последний возврат, closed_by,
++      assigned_teacher_id)`. Решение оператора: «его заявка» — та, которую он
++      закрыл. Но возврат обнуляет `closed_by` (заявка снова открыта), и без
++      первого слагаемого возвращённая-и-ещё-не-закрытая заявка осталась бы без
++      хозяина, а её возврат — без знаменателя. Порядок слагаемых гарантирует,
++      что заявка с возвратом всегда принадлежит тому, кого возврат обвиняет, —
++      то есть числитель по построению не бывает больше знаменателя.
++    * *Знаменатель* `requests` — сколько заявок когорты у этого хозяина.
++    * *Числитель* `reopened_requests` — сколько из них вернули хотя бы раз.
++      Именно заявок, а не возвратов: три возврата по одной заявке — это один
++      неудачный разбор, а не три.
++    * `reopens` — сколько всего возвратов; справочное число рядом с долей.
++    * `reopen_rate` — доля 0..1 либо `None`, если заявок меньше
++      `MIN_REQUESTS_FOR_RATE`. `None` читается как «мало данных, сравнивать
++      нельзя» и отличается от честного нуля.
++
++    В выборку попадают ВСЕ действующие преподаватели, а не только те, у кого
++    есть возвраты: прежний запрос «от таблицы возвратов» делал «нет строки»
++    одновременно и «сработал отлично», и «к нему не обращались» — по такому
++    списку нельзя ни сравнить, ни оправдаться. Преподаватель без заявок за
++    период приходит с `requests=0` и `reopen_rate=None`, панель показывает «нет
++    данных». Тот, кто уже не работает (`is_active=false` или объединённая
++    учётка), в списке не висит — но остаётся, если заявки за период у него
++    были, иначе они молча исчезли бы из сводки.
++
++    Известное ограничение: если заявку вернули из-за ответа одного человека, а
++    закрыл её потом другой, она остаётся у первого. Так возврат не теряется;
++    второй лишается одной заявки в знаменателе, но его доля от этого не растёт.
+     """
+-    conds = ["rr.teacher_id IS NOT NULL"]
+     params: dict[str, Any] = {}
+-    if teacher_id is not None:
+-        conds.append("rr.teacher_id = :teacher_id")
+-        params["teacher_id"] = teacher_id
++    since_sql = ""
+     if since is not None:
+-        conds.append("rr.reopened_at >= :since")
++        since_sql = "AND h.created_at >= :since"
+         params["since"] = since
+-    where_sql = " AND ".join(conds)
++    teacher_sql = ""
++    if teacher_id is not None:
++        teacher_sql = "WHERE roster.teacher_id = :teacher_id"
++        params["teacher_id"] = teacher_id
+ 
+     rows = (
+         await db.execute(
+             text(f"""
+-                SELECT rr.teacher_id,
++                WITH ladder AS (
++                    SELECT h.id,
++                           COALESCE(
++                               (SELECT rr.teacher_id
++                                  FROM help_request_reopens rr
++                                 WHERE rr.request_id = h.id
++                                   AND rr.teacher_id IS NOT NULL
++                                 ORDER BY rr.reopened_at DESC, rr.id DESC
++                                 LIMIT 1),
++                               h.closed_by,
++                               h.assigned_teacher_id
++                           ) AS owner_id
++                      FROM help_requests h
++                     WHERE h.request_type IN ('manual_help', 'individual_review')
++                           {since_sql}
++                ),
++                per_request AS (
++                    SELECT l.owner_id,
++                           rr.cnt,
++                           rr.last_at
++                      FROM ladder l
++                      LEFT JOIN LATERAL (
++                          SELECT COUNT(*) AS cnt, MAX(x.reopened_at) AS last_at
++                            FROM help_request_reopens x
++                           WHERE x.request_id = l.id
++                      ) rr ON TRUE
++                     WHERE l.owner_id IS NOT NULL
++                ),
++                agg AS (
++                    SELECT owner_id AS teacher_id,
++                           COUNT(*) AS requests,
++                           COUNT(*) FILTER (WHERE cnt > 0) AS reopened_requests,
++                           COALESCE(SUM(cnt), 0) AS reopens,
++                           MAX(last_at) AS last_reopened_at
++                      FROM per_request
++                     GROUP BY owner_id
++                ),
++                roster AS (
++                    SELECT ur.user_id AS teacher_id
++                      FROM user_roles ur
++                      JOIN roles r ON r.id = ur.role_id
++                      JOIN users u ON u.id = ur.user_id
++                     WHERE r.name = 'teacher'
++                       AND u.is_active
++                       AND u.merged_into_user_id IS NULL
++                    UNION
++                    SELECT teacher_id FROM agg
++                )
++                SELECT roster.teacher_id,
+                        u.full_name,
+-                       COUNT(*) AS reopens,
+-                       COUNT(DISTINCT rr.request_id) AS requests,
+-                       MAX(rr.reopened_at) AS last_reopened_at
+-                FROM help_request_reopens rr
+-                LEFT JOIN users u ON u.id = rr.teacher_id
+-                WHERE {where_sql}
+-                GROUP BY rr.teacher_id, u.full_name
+-                ORDER BY COUNT(*) DESC, rr.teacher_id
+-            """),  # nosec B608 — where_sql собран из литералов модуля, значения идут через bind
++                       COALESCE(a.requests, 0),
++                       COALESCE(a.reopened_requests, 0),
++                       COALESCE(a.reopens, 0),
++                       a.last_reopened_at
++                  FROM roster
++                  LEFT JOIN agg a ON a.teacher_id = roster.teacher_id
++                  LEFT JOIN users u ON u.id = roster.teacher_id
++                  {teacher_sql}
++            """),  # nosec B608 — фрагменты собраны из литералов модуля, значения идут через bind
+             params,
+         )
+     ).fetchall()
+-    return [
++
++    items = [
+         {
+             "teacher_id": int(r[0]),
+             "teacher_name": r[1],
+-            "reopens": int(r[2] or 0),
+-            "requests": int(r[3] or 0),
+-            "last_reopened_at": r[4],
++            "requests": int(r[2] or 0),
++            "reopened_requests": int(r[3] or 0),
++            "reopens": int(r[4] or 0),
++            "reopen_rate": (
++                round(int(r[3] or 0) / int(r[2]), 4)
++                if int(r[2] or 0) >= MIN_REQUESTS_FOR_RATE
++                else None
++            ),
++            "last_reopened_at": r[5],
+         }
+         for r in rows
+     ]
++    # Сортировка на стороне Python: строк единицы, зато правило видно целиком.
++    # Сначала те, кого вообще можно сравнивать (доля посчитана), худшие сверху —
++    # как и было. Затем «мало данных» по убыванию объёма, затем «нет данных».
++    items.sort(
++        key=lambda it: (
++            0 if it["reopen_rate"] is not None else (1 if it["requests"] > 0 else 2),
++            -(it["reopen_rate"] or 0.0),
++            -it["requests"],
++            it["teacher_id"],
++        )
++    )
++    return items
+ 
+ 
+ async def _repeat_ask_count(
+diff --git a/tests/test_feedback_and_kpi_tsk303.py b/tests/test_feedback_and_kpi_tsk303.py
+index 29dcfd0..f98bfbc 100644
+--- a/tests/test_feedback_and_kpi_tsk303.py
++++ b/tests/test_feedback_and_kpi_tsk303.py
+@@ -23,6 +23,7 @@ from sqlalchemy import text
+ 
+ from app.core.config import Settings
+ from app.models.users import Users
++from app.services.help_requests_service import MIN_REQUESTS_FOR_RATE
+ from app.services.auth import identity_link_service
+ from app.services.auth.session_service import create_session
+ 
+@@ -78,16 +79,26 @@ async def _task(db) -> int:
+     ).scalar_one()
+ 
+ 
+-async def _request_with_reopens(db, *, student_id, task_id, teacher_id, count: int, when=None):
++async def _request_with_reopens(
++    db, *, student_id, task_id, teacher_id, count: int, when=None, created_at=None
++):
++    """Заявка лестницы с `count` возвратов.
++
++    `created_at` задаётся отдельно от `when`: с tsk-599 окно режет когорту по
++    времени создания ЗАЯВКИ, поэтому «старый» случай обязан быть старым целиком
++    — заявка, созданная сегодня, но с возвратом трёхмесячной давности, в жизни
++    невозможна (возврат бывает только после ответа на заявку).
++    """
+     rid = (
+         await db.execute(
+             text(
+                 "INSERT INTO help_requests (status, student_id, task_id, request_type, "
+                 "assigned_teacher_id, auto_created, context_json, priority, created_at, updated_at) "
+-                "VALUES ('open', :s, :t, 'manual_help', :at, false, '{}'::jsonb, 100, now(), now()) "
++                "VALUES ('open', :s, :t, 'manual_help', :at, false, '{}'::jsonb, 100, "
++                "COALESCE(:created, now()), now()) "
+                 "RETURNING id"
+             ),
+-            {"s": student_id, "t": task_id, "at": teacher_id},
++            {"s": student_id, "t": task_id, "at": teacher_id, "created": created_at},
+         )
+     ).scalar_one()
+     for _ in range(count):
+@@ -146,8 +157,13 @@ async def test_teacher_sees_own_reopen_kpi(db, client):
+         body = resp.json()
+         assert body["total_reopens"] == 3
+         assert len(body["items"]) == 1
+-        assert body["items"][0]["teacher_id"] == tid_user
+-        assert body["items"][0]["requests"] == 1, "три возврата по одной заявке"
++        item = body["items"][0]
++        assert item["teacher_id"] == tid_user
++        assert item["requests"] == 1, "знаменатель — одна заявка"
++        assert item["reopened_requests"] == 1, (
++            "три возврата по одной заявке — это один неудачный разбор, а не три"
++        )
++        assert item["reopen_rate"] is None, "одна заявка ниже порога — доли нет"
+     finally:
+         await _cleanup(db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=[rid])
+ 
+@@ -221,13 +237,18 @@ async def test_methodist_sees_all_teachers_and_same_numbers(db, client):
+ 
+ 
+ async def test_kpi_window_excludes_older_reopens(db, client):
+-    """Окно «за период» — то, ради чего история хранится строками, а не счётчиком."""
++    """Окно «за период» — то, ради чего история хранится строками, а не счётчиком.
++
++    С tsk-599 окно режет когорту по времени создания заявки, поэтому старая
++    заявка старая целиком: и она сама, и её возвраты.
++    """
+     sid, _ = await _user(db, "t303f ученик")
+     tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
+     task_id = await _task(db)
+     old = datetime.now(timezone.utc) - timedelta(days=90)
+     r_old = await _request_with_reopens(
+-        db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=5, when=old
++        db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=5,
++        when=old, created_at=old,
+     )
+     r_new = await _request_with_reopens(
+         db, student_id=sid, task_id=task_id, teacher_id=tid_user, count=2
+@@ -258,6 +279,166 @@ async def test_kpi_window_excludes_older_reopens(db, client):
+         )
+ 
+ 
++# ── tsk-599: доля вместо счётчика, порог, все преподаватели в выборке ────────
++#
++# Смысл блока: по этой панели сравнивают людей. Каждый тест ниже закрывает
++# вывод, противоположный правде, — тот, который старая панель давала.
++
++
++async def test_kpi_shows_rate_and_hides_it_below_threshold(db, client):
++    """Доля вместо штук — и молчание там, где доля была бы шумом.
++
++    Старая панель ставила выше того, у кого больше возвратов: 2 из 12 выглядели
++    хуже, чем 1 из 3. Здесь проверяется и сама доля, и то, что человек с тремя
++    заявками не получает процента вовсе, — иначе дефект возвращается с другой
++    стороны (0 из 1 = «лучший в школе»).
++    """
++    sid, _ = await _user(db, "t303f ученик")
++    t_big, _ = await _user(db, "t303f учитель с объёмом", role="teacher")
++    t_small, _ = await _user(db, "t303f учитель без объёма", role="teacher")
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    task_id = await _task(db)
++    rids = []
++    for i in range(12):
++        rids.append(
++            await _request_with_reopens(
++                db, student_id=sid, task_id=task_id, teacher_id=t_big,
++                count=1 if i < 2 else 0,
++            )
++        )
++    for i in range(3):
++        rids.append(
++            await _request_with_reopens(
++                db, student_id=sid, task_id=task_id, teacher_id=t_small,
++                count=1 if i < 1 else 0,
++            )
++        )
++    await db.commit()
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens", headers=_bearer(m_token)
++        )
++        assert resp.status_code == 200, resp.text
++        body = resp.json()
++        assert body["min_requests_for_rate"] == MIN_REQUESTS_FOR_RATE, (
++            "порог отдаёт сервер, чтобы панель не держала своё значение"
++        )
++        rows = {i["teacher_id"]: i for i in body["items"]}
++
++        big = rows[t_big]
++        assert big["requests"] == 12 and big["reopened_requests"] == 2
++        assert big["reopen_rate"] == pytest.approx(2 / 12, abs=1e-4)
++
++        small = rows[t_small]
++        assert small["requests"] == 3 and small["reopened_requests"] == 1
++        assert small["reopen_rate"] is None, "три заявки — мало данных, процента нет"
++
++        order = [i["teacher_id"] for i in body["items"]]
++        assert order.index(t_big) < order.index(t_small), (
++            "сравнимые строки выше «мало данных»: доля сортирует, объём — нет"
++        )
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, t_big, t_small, m_id], task_ids=[task_id], request_ids=rids
++        )
++
++
++async def test_kpi_lists_teacher_without_any_requests(db, client):
++    """Кто не получил ни одного возврата — виден, а не пропадает из списка.
++
++    Прежний запрос шёл от таблицы возвратов, поэтому «нет строки» означало и
++    «сработал отлично», и «к нему не обращались». Отсутствие человека в списке
++    оценки — это и есть худший из возможных выводов о нём.
++    """
++    quiet_id, _ = await _user(db, "t303f тихий учитель", role="teacher")
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    await db.commit()
++    try:
++        resp = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens", headers=_bearer(m_token)
++        )
++        assert resp.status_code == 200, resp.text
++        rows = {i["teacher_id"]: i for i in resp.json()["items"]}
++        assert quiet_id in rows, "действующий преподаватель обязан быть в выборке"
++        assert rows[quiet_id]["requests"] == 0
++        assert rows[quiet_id]["reopens"] == 0
++        assert rows[quiet_id]["reopen_rate"] is None, (
++            "ноль заявок — это «нет данных», а не «ноль возвратов»: "
++            "иначе человек попадает в лучшие ни за что"
++        )
++    finally:
++        await _cleanup(db, user_ids=[quiet_id, m_id])
++
++
++async def test_kpi_rate_counts_requests_not_reopens(db, client):
++    """Доля не может превысить 100%, сколько бы раз заявку ни возвращали."""
++    sid, _ = await _user(db, "t303f ученик")
++    tid_user, token = await _user(db, "t303f учитель", role="teacher", with_session=True)
++    task_id = await _task(db)
++    rids = [
++        await _request_with_reopens(
++            db, student_id=sid, task_id=task_id, teacher_id=tid_user,
++            count=4 if i == 0 else 0,
++        )
++        for i in range(10)
++    ]
++    await db.commit()
++    try:
++        resp = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={tid_user}",
++            headers=_bearer(token),
++        )
++        assert resp.status_code == 200, resp.text
++        item = resp.json()["items"][0]
++        assert item["requests"] == 10
++        assert item["reopens"] == 4, "всего возвратов — справочное число"
++        assert item["reopened_requests"] == 1, "неудачный разбор один, а не четыре"
++        assert item["reopen_rate"] == pytest.approx(0.1, abs=1e-4)
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, tid_user], task_ids=[task_id], request_ids=rids
++        )
++
++
++async def test_kpi_same_rate_on_both_surfaces(db, client):
++    """Инвариант tsk-303 после переписывания запроса: цифра одна на двух панелях.
++
++    Личная панель преподавателя и сводка методиста считаются одним агрегатом.
++    Расхождение превратило бы разговор о работе в спор о фактах.
++    """
++    sid, _ = await _user(db, "t303f ученик")
++    t_a, token_a = await _user(db, "t303f учитель А", role="teacher", with_session=True)
++    m_id, m_token = await _user(db, "t303f методист", role="methodist", with_session=True)
++    task_id = await _task(db)
++    rids = [
++        await _request_with_reopens(
++            db, student_id=sid, task_id=task_id, teacher_id=t_a,
++            count=1 if i < 3 else 0,
++        )
++        for i in range(11)
++    ]
++    await db.commit()
++    try:
++        overview = await client.get(
++            "/api/v1/teacher/help-requests/kpi/reopens", headers=_bearer(m_token)
++        )
++        own = await client.get(
++            f"/api/v1/teacher/help-requests/kpi/reopens?teacher_id={t_a}",
++            headers=_bearer(token_a),
++        )
++        from_overview = {i["teacher_id"]: i for i in overview.json()["items"]}[t_a]
++        from_own = own.json()["items"][0]
++        for field in ("requests", "reopened_requests", "reopens", "reopen_rate"):
++            assert from_overview[field] == from_own[field], (
++                f"поле {field} разошлось между личной панелью и сводкой методиста"
++            )
++        assert from_own["reopen_rate"] == pytest.approx(3 / 11, abs=1e-4)
++    finally:
++        await _cleanup(
++            db, user_ids=[sid, t_a, m_id], task_ids=[task_id], request_ids=rids
++        )
++
++
+ # ── Поток B: обращения ───────────────────────────────────────────────────────
+ 
+ async def test_teacher_creates_report_and_methodist_sees_it(db, client):
+diff --git a/components/teacher/ReopenKpiCard.tsx b/components/teacher/ReopenKpiCard.tsx
+index 001d4ba..41fd5b9 100644
+--- a/components/teacher/ReopenKpiCard.tsx
++++ b/components/teacher/ReopenKpiCard.tsx
+@@ -1,18 +1,63 @@
+ "use client";
+ 
++import { useMemo, useState } from "react";
+ import { RotateCcw } from "lucide-react";
+ import { formatShortDateTime } from "@/lib/format-date";
+ import { SCHOOL_TIME_ZONE } from "@/lib/time-zone";
++import { SegmentedTabs } from "@/components/ui/segmented-tabs";
+ import { useReopenKpi } from "@/lib/teacher/use-help-requests";
+ 
+ /**
+  * tsk-303: возвраты заявок — «текстовый ответ не помог».
++ * tsk-599: доля вместо счётчика, окно периода, все преподаватели в списке.
+  *
+  * Одна и та же цифра на двух поверхностях (решение оператора): преподаватель
+  * смотрит свою (`scope="own"`, для самоконтроля), методист — сводку по всем
+  * (`scope="all"`, это оценка преподавателей). Считает их ОДИН серверный
+  * агрегат, поэтому расхождения между панелями быть не может.
++ *
++ * Это единственная в продукте поверхность сравнения людей, поэтому панель
++ * обязана мешать неверному выводу так же старательно, как показывать цифру:
++ * доля идёт с объёмом рядом («17% · 2 из 12»), потому что 1 из 2 — тоже 50%;
++ * ниже порога процента нет вовсе, а не «0%»; тот, к кому за период не
++ * обращались, виден строкой «нет данных», а не выпадает из списка.
+  */
++
++type KpiPeriod = "month" | "quarter" | "all";
++
++const PERIOD_OPTIONS: { value: KpiPeriod; label: string }[] = [
++  { value: "month", label: "Месяц" },
++  { value: "quarter", label: "Квартал" },
++  { value: "all", label: "Всё время" },
++];
++
++const PERIOD_DAYS: Record<Exclude<KpiPeriod, "all">, number> = {
++  month: 30,
++  quarter: 90,
++};
++
++/**
++ * Начало окна для запроса.
++ *
++ * Отсчёт идёт от начала суток, а не от текущей миллисекунды: иначе значение
++ * менялось бы при каждом рендере, ключ запроса — вместе с ним, и кеш не работал
++ * бы вовсе. Возвращается ISO-строка; в адрес её кодирует `URLSearchParams` в
++ * хуке — смещение `+00:00`, вклеенное в адрес сырым, декодируется как пробел, и
++ * сервер отвечает 422 (наступали в tsk-303).
++ */
++function sinceForPeriod(period: KpiPeriod): string | undefined {
++  if (period === "all") return undefined;
++  const start = new Date();
++  start.setHours(0, 0, 0, 0);
++  start.setDate(start.getDate() - PERIOD_DAYS[period]);
++  return start.toISOString();
++}
++
++/** Доля в процентах без дробной части: 0.1667 → «17%». */
++function formatRate(rate: number): string {
++  return `${Math.round(rate * 100)}%`;
++}
++
+ export function ReopenKpiCard({
+   teacherId,
+   scope,
+@@ -21,7 +66,15 @@ export function ReopenKpiCard({
+   teacherId: number | null;
+   scope: "own" | "all";
+ }) {
+-  const { data, isLoading, isError } = useReopenKpi(scope === "all" ? null : teacherId);
++  // Квартал по умолчанию (решение оператора 2026-08-17 по фактическим объёмам):
++  // за месяц у большинства преподавателей меньше порога заявок, и на месячном
++  // окне панель почти всегда показывала бы «мало данных» у всех сразу.
++  const [period, setPeriod] = useState<KpiPeriod>("quarter");
++  const since = useMemo(() => sinceForPeriod(period), [period]);
++  const { data, isLoading, isError } = useReopenKpi(
++    scope === "all" ? null : teacherId,
++    since,
++  );
+ 
+   if (isLoading) return null;
+   // Нет прав на сводку или сбой — молча не показываем блок, а не рисуем ноль:
+@@ -29,49 +82,98 @@ export function ReopenKpiCard({
+   if (isError || !data) return null;
+ 
+   const items = data.items ?? [];
++  const threshold = data.min_requests_for_rate ?? 0;
+ 
+   return (
+     <section
+       aria-label="Возвраты заявок"
+       data-testid="reopen-kpi"
+       data-scope={scope}
+-      className="space-y-2 rounded-xl border border-border bg-card p-4"
++      className="space-y-3 rounded-xl border border-border bg-card p-4"
+     >
+-      <header className="flex items-center justify-between gap-2">
++      <header className="space-y-2">
+         <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold">
+           <RotateCcw className="h-4 w-4" aria-hidden />
+           {scope === "all" ? "Возвраты заявок по преподавателям" : "Ваши возвраты заявок"}
+         </h2>
+-        <span data-testid="reopen-kpi-total" className="text-sm font-semibold">
+-          {data.total_reopens}
+-        </span>
++        <SegmentedTabs
++          options={PERIOD_OPTIONS}
++          value={period}
++          onChange={setPeriod}
++          ariaLabel="Период"
++          testIdPrefix="reopen-kpi-period"
++        />
+       </header>
+-      <p className="text-xs text-muted-foreground">
+-        Сколько раз ученики отметили, что текстовый ответ не помог, и вернули
+-        заявку.
+-      </p>
++
++      <div className="space-y-1 text-xs text-muted-foreground">
++        <p>
++          Доля заявок, после которых ученик отметил, что ответ не помог, и вернул
++          заявку. Меньше — лучше.
++        </p>
++        {threshold > 0 && (
++          <p data-testid="reopen-kpi-threshold-note">
++            Доля считается от {threshold} заявок за период. Если заявок меньше,
++            вместо процента стоит «мало данных»: на трёх заявках процент
++            случаен, сравнивать по нему людей нельзя.
++          </p>
++        )}
++        <p data-testid="reopen-kpi-total">Возвратов за период: {data.total_reopens}</p>
++      </div>
+ 
+       {items.length === 0 ? (
+         <p data-testid="reopen-kpi-empty" className="text-sm text-muted-foreground">
+-          Возвратов нет.
++          За период данных нет.
+         </p>
+-      ) : scope === "all" ? (
++      ) : (
+         <ul className="divide-y divide-border" data-testid="reopen-kpi-list">
+-          {items.map((it) => (
+-            <li key={it.teacher_id} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+-              <span>{it.teacher_name ?? `#${it.teacher_id}`}</span>
+-              <span className="text-muted-foreground">
+-                {it.reopens} · по {it.requests} заявкам
+-                {it.last_reopened_at && ` · ${formatShortDateTime(it.last_reopened_at, SCHOOL_TIME_ZONE)}`}
+-              </span>
+-            </li>
+-          ))}
++          {items.map((it) => {
++            const rate = it.reopen_rate ?? null;
++            const enough = rate !== null;
++            const noData = it.requests === 0;
++            return (
++              <li
++                key={it.teacher_id}
++                data-testid={`reopen-kpi-row-${it.teacher_id}`}
++                data-enough={enough ? "yes" : "no"}
++                className="flex items-baseline justify-between gap-3 py-2 text-sm"
++              >
++                <span className={noData ? "text-muted-foreground" : undefined}>
++                  {scope === "all"
++                    ? (it.teacher_name ?? `#${it.teacher_id}`)
++                    : "Ваш показатель"}
++                </span>
++                <span className="flex flex-wrap items-baseline justify-end gap-x-2 text-right">
++                  {enough ? (
++                    <span
++                      className="font-semibold"
++                      data-testid={`reopen-kpi-rate-${it.teacher_id}`}
++                    >
++                      {formatRate(rate)}
++                    </span>
++                  ) : (
++                    <span
++                      className="text-muted-foreground"
++                      data-testid={`reopen-kpi-nodata-${it.teacher_id}`}
++                    >
++                      {noData ? "нет данных" : "мало данных"}
++                    </span>
++                  )}
++                  {/* Объём рядом с долей обязателен: 1 из 2 — тоже 50%. */}
++                  <span className="text-xs text-muted-foreground">
++                    {noData
++                      ? "за период не обращались"
++                      : `${it.reopened_requests} из ${it.requests} заявок`}
++                  </span>
++                  {it.last_reopened_at && (
++                    <span className="text-xs text-muted-foreground">
++                      последний {formatShortDateTime(it.last_reopened_at, SCHOOL_TIME_ZONE)}
++                    </span>
++                  )}
++                </span>
++              </li>
++            );
++          })}
+         </ul>
+-      ) : (
+-        <p className="text-sm text-muted-foreground">
+-          По {items[0]?.requests ?? 0} заявкам
+-          {items[0]?.last_reopened_at && `, последний — ${formatShortDateTime(items[0].last_reopened_at, SCHOOL_TIME_ZONE)}`}
+-        </p>
+       )}
+     </section>
+   );
+diff --git a/tests/unit/feedback-and-kpi.test.tsx b/tests/unit/feedback-and-kpi.test.tsx
+index 0bdab3b..bf4a11b 100644
+--- a/tests/unit/feedback-and-kpi.test.tsx
++++ b/tests/unit/feedback-and-kpi.test.tsx
+@@ -30,7 +30,9 @@ const setWebinarMutate = vi.fn();
+ const replyMutate = vi.fn();
+ const closeHelpMutate = vi.fn();
+ vi.mock("@/lib/teacher/use-help-requests", () => ({
+-  useReopenKpi: () => useReopenKpi(),
++  // Аргументы прокидываются намеренно: окно периода панель передаёт именно
++  // через них, и без этого тест на выбор периода проверял бы пустоту.
++  useReopenKpi: (...args: unknown[]) => useReopenKpi(...args),
+   useSetWebinarLink: () => ({ mutate: setWebinarMutate, isPending: false }),
+   useReplyHelpRequest: () => ({ mutate: replyMutate, isPending: false }),
+   useCloseHelpRequest: () => ({ mutate: closeHelpMutate, isPending: false }),
+@@ -143,9 +145,16 @@ describe("ReopenKpiCard", () => {
+       data: {
+         total_reopens: 3,
+         since: null,
++        min_requests_for_rate: 10,
+         items: [
+-          { teacher_id: 1, teacher_name: "Анна", reopens: 2, requests: 2, last_reopened_at: null },
+-          { teacher_id: 2, teacher_name: "Борис", reopens: 1, requests: 1, last_reopened_at: null },
++          {
++            teacher_id: 1, teacher_name: "Анна", reopens: 2, requests: 12,
++            reopened_requests: 2, reopen_rate: 2 / 12, last_reopened_at: null,
++          },
++          {
++            teacher_id: 2, teacher_name: "Борис", reopens: 1, requests: 3,
++            reopened_requests: 1, reopen_rate: null, last_reopened_at: null,
++          },
+         ],
+       },
+     });
+@@ -155,19 +164,123 @@ describe("ReopenKpiCard", () => {
+     expect(screen.getByTestId("reopen-kpi-list")).toHaveTextContent("Борис");
+   });
+ 
+-  it("личная панель не показывает список людей", () => {
++  it("показывает долю и обязательно объём рядом — 1 из 2 тоже 50%", () => {
+     useReopenKpi.mockReturnValue({
+       isLoading: false,
+       isError: false,
+       data: {
+         total_reopens: 2,
+         since: null,
+-        items: [{ teacher_id: 1, teacher_name: "Анна", reopens: 2, requests: 1, last_reopened_at: null }],
++        min_requests_for_rate: 10,
++        items: [
++          {
++            teacher_id: 1, teacher_name: "Анна", reopens: 2, requests: 12,
++            reopened_requests: 2, reopen_rate: 2 / 12, last_reopened_at: null,
++          },
++        ],
++      },
++    });
++    render(<ReopenKpiCard teacherId={null} scope="all" />);
++    expect(screen.getByTestId("reopen-kpi-rate-1")).toHaveTextContent("17%");
++    expect(screen.getByTestId("reopen-kpi-row-1")).toHaveTextContent("2 из 12 заявок");
++  });
++
++  it("ниже порога процента нет вовсе — иначе 0 из 3 читается как лучший", () => {
++    useReopenKpi.mockReturnValue({
++      isLoading: false,
++      isError: false,
++      data: {
++        total_reopens: 0,
++        since: null,
++        min_requests_for_rate: 10,
++        items: [
++          {
++            teacher_id: 7, teacher_name: "Борис", reopens: 0, requests: 3,
++            reopened_requests: 0, reopen_rate: null, last_reopened_at: null,
++          },
++        ],
++      },
++    });
++    render(<ReopenKpiCard teacherId={null} scope="all" />);
++    expect(screen.queryByTestId("reopen-kpi-rate-7")).not.toBeInTheDocument();
++    expect(screen.getByTestId("reopen-kpi-nodata-7")).toHaveTextContent("мало данных");
++    expect(screen.getByTestId("reopen-kpi-row-7")).toHaveTextContent("0 из 3 заявок");
++    expect(screen.getByTestId("reopen-kpi-threshold-note")).toHaveTextContent("от 10 заявок");
++  });
++
++  it("к кому не обращались — виден строкой «нет данных», а не выпадает из списка", () => {
++    useReopenKpi.mockReturnValue({
++      isLoading: false,
++      isError: false,
++      data: {
++        total_reopens: 0,
++        since: null,
++        min_requests_for_rate: 10,
++        items: [
++          {
++            teacher_id: 9, teacher_name: "Вера", reopens: 0, requests: 0,
++            reopened_requests: 0, reopen_rate: null, last_reopened_at: null,
++          },
++        ],
++      },
++    });
++    render(<ReopenKpiCard teacherId={null} scope="all" />);
++    expect(screen.getByTestId("reopen-kpi-row-9")).toHaveTextContent("Вера");
++    expect(screen.getByTestId("reopen-kpi-nodata-9")).toHaveTextContent("нет данных");
++    expect(screen.getByTestId("reopen-kpi-row-9")).toHaveTextContent("за период не обращались");
++  });
++
++  it("личная панель не показывает имён других людей", () => {
++    useReopenKpi.mockReturnValue({
++      isLoading: false,
++      isError: false,
++      data: {
++        total_reopens: 2,
++        since: null,
++        min_requests_for_rate: 10,
++        items: [
++          {
++            teacher_id: 1, teacher_name: "Анна", reopens: 2, requests: 11,
++            reopened_requests: 2, reopen_rate: 2 / 11, last_reopened_at: null,
++          },
++        ],
+       },
+     });
+     render(<ReopenKpiCard teacherId={1} scope="own" />);
+-    expect(screen.queryByTestId("reopen-kpi-list")).not.toBeInTheDocument();
+-    expect(screen.getByTestId("reopen-kpi-total")).toHaveTextContent("2");
++    expect(screen.getByTestId("reopen-kpi-row-1")).toHaveTextContent("Ваш показатель");
++    expect(screen.getByTestId("reopen-kpi-row-1")).not.toHaveTextContent("Анна");
++    expect(screen.getByTestId("reopen-kpi-rate-1")).toHaveTextContent("18%");
++  });
++
++  it("по умолчанию квартал, переключатель меняет окно запроса", () => {
++    useReopenKpi.mockReturnValue({
++      isLoading: false,
++      isError: false,
++      data: { total_reopens: 0, since: null, min_requests_for_rate: 10, items: [] },
++    });
++    render(<ReopenKpiCard teacherId={null} scope="all" />);
++
++    const firstSince = useReopenKpi.mock.calls.at(-1)?.[1] as string | undefined;
++    expect(firstSince, "квартал по умолчанию — окно передаётся").toBeTypeOf("string");
++    const quarterAgo = Date.now() - 90 * 24 * 3600 * 1000;
++    // Сутки допуска: панель отсчитывает от начала дня, чтобы ключ запроса не
++    // менялся при каждом рендере.
++    expect(Math.abs(new Date(firstSince!).getTime() - quarterAgo)).toBeLessThan(
++      25 * 3600 * 1000,
++    );
++
++    fireEvent.click(screen.getByTestId("reopen-kpi-period-all"));
++    expect(
++      useReopenKpi.mock.calls.at(-1)?.[1],
++      "«всё время» — окно не передаётся вовсе",
++    ).toBeUndefined();
++
++    fireEvent.click(screen.getByTestId("reopen-kpi-period-month"));
++    const monthSince = useReopenKpi.mock.calls.at(-1)?.[1] as string;
++    const monthAgo = Date.now() - 30 * 24 * 3600 * 1000;
++    expect(Math.abs(new Date(monthSince).getTime() - monthAgo)).toBeLessThan(
++      25 * 3600 * 1000,
++    );
+   });
+ });
+ 

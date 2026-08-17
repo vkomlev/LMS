@@ -49,6 +49,7 @@ from app.services.help_requests_service import (
     set_webinar_link,
     get_help_requests_pending_count,
     get_reopen_kpi,
+    MIN_REQUESTS_FOR_RATE,
 )
 from app.services import roles_service
 from app.services.teacher_queue_service import (
@@ -129,7 +130,11 @@ async def help_request_reopen_kpi(
         description="ID преподавателя. Не задан — сводка по всем (только методист/админ).",
     ),
     since: Optional[datetime] = Query(
-        None, description="Считать возвраты с этого момента (ISO8601)"
+        None,
+        description=(
+            "Начало окна (ISO8601): считаются заявки, созданные с этого момента, "
+            "и возвраты по ним. Не задан — вся история"
+        ),
     ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_bare_db),
@@ -141,6 +146,11 @@ async def help_request_reopen_kpi(
     без такой роли не отдаётся. Считает один и тот же
     `help_requests_service.get_reopen_kpi`, чтобы две панели не разъехались в
     цифрах.
+
+    tsk-599: строка несёт долю возвратов (`reopen_rate`) с объёмом рядом, а не
+    голый счётчик, и приходит на КАЖДОГО действующего преподавателя — включая
+    тех, у кого возвратов нет. Порог показа доли отдаётся в ответе
+    (`min_requests_for_rate`), чтобы панель не хранила своё значение.
     """
     is_privileged = current_user.is_service or bool(
         {"methodist", "admin"}
@@ -160,6 +170,7 @@ async def help_request_reopen_kpi(
         items=[ReopenKpiItem(**it) for it in items],
         total_reopens=sum(int(it["reopens"]) for it in items),
         since=since,
+        min_requests_for_rate=MIN_REQUESTS_FOR_RATE,
     )
 
 

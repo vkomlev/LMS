@@ -90,11 +90,29 @@ class HelpRequestDetailResponse(HelpRequestListItem):
 # ----- POST close -----
 
 class ReopenKpiItem(BaseModel):
-    """Возвраты заявок на одного преподавателя (tsk-303, KPI)."""
+    """Возвраты заявок на одного преподавателя (tsk-303, доля — tsk-599)."""
     teacher_id: int
     teacher_name: Optional[str] = None
-    reopens: int = Field(..., description="Сколько раз ученики возвращали заявки этого преподавателя")
-    requests: int = Field(..., description="По скольким разным заявкам это было")
+    requests: int = Field(
+        ...,
+        description=(
+            "Знаменатель: сколько заявок лестницы за период числится за этим "
+            "преподавателем. 0 — за период к нему не обращались"
+        ),
+    )
+    reopened_requests: int = Field(
+        ..., description="Числитель: сколько из этих заявок ученики вернули хотя бы раз"
+    )
+    reopens: int = Field(
+        ..., description="Сколько всего было возвратов (одну заявку могли вернуть не раз)"
+    )
+    reopen_rate: Optional[float] = Field(
+        None,
+        description=(
+            "Доля возвращённых заявок, 0..1. null — заявок меньше порога "
+            "min_requests_for_rate, сравнивать нельзя («мало данных»)"
+        ),
+    )
     last_reopened_at: Optional[datetime] = None
 
 
@@ -103,6 +121,13 @@ class ReopenKpiResponse(BaseModel):
     items: list[ReopenKpiItem] = Field(default_factory=list)
     total_reopens: int = Field(0, description="Сумма возвратов по всем строкам выборки")
     since: Optional[datetime] = Field(None, description="Начало окна, если задано")
+    min_requests_for_rate: int = Field(
+        0,
+        description=(
+            "Порог показа доли: ниже этого числа заявок процент не считается. "
+            "Отдаётся сервером, чтобы панель не держала своё значение порога"
+        ),
+    )
 
 
 class WebinarLinkRequest(BaseModel):

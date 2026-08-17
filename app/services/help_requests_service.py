@@ -821,6 +821,14 @@ async def _lock_request(db: AsyncSession, request_id: int) -> None:
     )
 
 
+# tsk-599: сколько заявок за период должно быть у преподавателя, чтобы доля
+# вообще считалась. Ниже порога процент — шум: 0 из 2 поставило бы человека в
+# лучшие ни за что, а 1 из 3 — в худшие. Порог решён оператором (2026-08-17)
+# по фактическому распределению на проде: у трёх преподавателей из четырёх
+# меньше десяти заявок в месяц.
+MIN_REQUESTS_FOR_RATE = 10
+
+
 async def get_reopen_kpi(
     db: AsyncSession,
     *,
@@ -833,51 +841,148 @@ async def get_reopen_kpi(
     преподаватель смотрит свой показатель (`teacher_id=<свой>`), методист и
     админ — по всем сразу (`teacher_id=None`).
 
-    `since` режет по `reopened_at` — панель почти всегда смотрит окно («за
-    месяц»), а не всю историю; ради этого история и хранится строками, а не
-    счётчиком на заявке.
+    **Что именно считается (tsk-599).** Это единственная в продукте поверхность
+    сравнения людей, поэтому определение метрики зафиксировано здесь, а не
+    вычитывается из формы запроса:
 
-    Возвраты с неизвестным автором (`teacher_id IS NULL` — учётку удалили)
-    в разрез по людям не попадают: приписать их некому, а «ничей» столбец в
-    оценке преподавателей только путал бы.
+    * *Когорта периода* — заявки лестницы (`manual_help`, `individual_review`),
+      созданные не раньше `since`. Окно режется по `created_at` ЗАЯВКИ, а не по
+      `reopened_at` возврата: числитель и знаменатель обязаны считать одно и то
+      же множество, иначе доля способна превысить 100% (возврат внутри окна по
+      заявке, созданной до его начала).
+    * *Хозяин заявки* — `COALESCE(кому приписан последний возврат, closed_by,
+      assigned_teacher_id)`. Решение оператора: «его заявка» — та, которую он
+      закрыл. Но возврат обнуляет `closed_by` (заявка снова открыта), и без
+      первого слагаемого возвращённая-и-ещё-не-закрытая заявка осталась бы без
+      хозяина, а её возврат — без знаменателя. Порядок слагаемых гарантирует,
+      что заявка с возвратом всегда принадлежит тому, кого возврат обвиняет, —
+      то есть числитель по построению не бывает больше знаменателя.
+    * *Знаменатель* `requests` — сколько заявок когорты у этого хозяина.
+    * *Числитель* `reopened_requests` — сколько из них вернули хотя бы раз.
+      Именно заявок, а не возвратов: три возврата по одной заявке — это один
+      неудачный разбор, а не три.
+    * `reopens` — сколько всего возвратов; справочное число рядом с долей.
+    * `reopen_rate` — доля 0..1 либо `None`, если заявок меньше
+      `MIN_REQUESTS_FOR_RATE`. `None` читается как «мало данных, сравнивать
+      нельзя» и отличается от честного нуля.
+
+    В выборку попадают ВСЕ действующие преподаватели, а не только те, у кого
+    есть возвраты: прежний запрос «от таблицы возвратов» делал «нет строки»
+    одновременно и «сработал отлично», и «к нему не обращались» — по такому
+    списку нельзя ни сравнить, ни оправдаться. Преподаватель без заявок за
+    период приходит с `requests=0` и `reopen_rate=None`, панель показывает «нет
+    данных». Тот, кто уже не работает (`is_active=false` или объединённая
+    учётка), в списке не висит — но остаётся, если заявки за период у него
+    были, иначе они молча исчезли бы из сводки.
+
+    Известное ограничение: если заявку вернули из-за ответа одного человека, а
+    закрыл её потом другой, она остаётся у первого. Так возврат не теряется;
+    второй лишается одной заявки в знаменателе, но его доля от этого не растёт.
     """
-    conds = ["rr.teacher_id IS NOT NULL"]
     params: dict[str, Any] = {}
-    if teacher_id is not None:
-        conds.append("rr.teacher_id = :teacher_id")
-        params["teacher_id"] = teacher_id
+    since_sql = ""
     if since is not None:
-        conds.append("rr.reopened_at >= :since")
+        since_sql = "AND h.created_at >= :since"
         params["since"] = since
-    where_sql = " AND ".join(conds)
+    teacher_sql = ""
+    if teacher_id is not None:
+        teacher_sql = "WHERE roster.teacher_id = :teacher_id"
+        params["teacher_id"] = teacher_id
 
     rows = (
         await db.execute(
             text(f"""
-                SELECT rr.teacher_id,
+                WITH ladder AS (
+                    SELECT h.id,
+                           COALESCE(
+                               (SELECT rr.teacher_id
+                                  FROM help_request_reopens rr
+                                 WHERE rr.request_id = h.id
+                                   AND rr.teacher_id IS NOT NULL
+                                 ORDER BY rr.reopened_at DESC, rr.id DESC
+                                 LIMIT 1),
+                               h.closed_by,
+                               h.assigned_teacher_id
+                           ) AS owner_id
+                      FROM help_requests h
+                     WHERE h.request_type IN ('manual_help', 'individual_review')
+                           {since_sql}
+                ),
+                per_request AS (
+                    SELECT l.owner_id,
+                           rr.cnt,
+                           rr.last_at
+                      FROM ladder l
+                      LEFT JOIN LATERAL (
+                          SELECT COUNT(*) AS cnt, MAX(x.reopened_at) AS last_at
+                            FROM help_request_reopens x
+                           WHERE x.request_id = l.id
+                      ) rr ON TRUE
+                     WHERE l.owner_id IS NOT NULL
+                ),
+                agg AS (
+                    SELECT owner_id AS teacher_id,
+                           COUNT(*) AS requests,
+                           COUNT(*) FILTER (WHERE cnt > 0) AS reopened_requests,
+                           COALESCE(SUM(cnt), 0) AS reopens,
+                           MAX(last_at) AS last_reopened_at
+                      FROM per_request
+                     GROUP BY owner_id
+                ),
+                roster AS (
+                    SELECT ur.user_id AS teacher_id
+                      FROM user_roles ur
+                      JOIN roles r ON r.id = ur.role_id
+                      JOIN users u ON u.id = ur.user_id
+                     WHERE r.name = 'teacher'
+                       AND u.is_active
+                       AND u.merged_into_user_id IS NULL
+                    UNION
+                    SELECT teacher_id FROM agg
+                )
+                SELECT roster.teacher_id,
                        u.full_name,
-                       COUNT(*) AS reopens,
-                       COUNT(DISTINCT rr.request_id) AS requests,
-                       MAX(rr.reopened_at) AS last_reopened_at
-                FROM help_request_reopens rr
-                LEFT JOIN users u ON u.id = rr.teacher_id
-                WHERE {where_sql}
-                GROUP BY rr.teacher_id, u.full_name
-                ORDER BY COUNT(*) DESC, rr.teacher_id
-            """),  # nosec B608 — where_sql собран из литералов модуля, значения идут через bind
+                       COALESCE(a.requests, 0),
+                       COALESCE(a.reopened_requests, 0),
+                       COALESCE(a.reopens, 0),
+                       a.last_reopened_at
+                  FROM roster
+                  LEFT JOIN agg a ON a.teacher_id = roster.teacher_id
+                  LEFT JOIN users u ON u.id = roster.teacher_id
+                  {teacher_sql}
+            """),  # nosec B608 — фрагменты собраны из литералов модуля, значения идут через bind
             params,
         )
     ).fetchall()
-    return [
+
+    items = [
         {
             "teacher_id": int(r[0]),
             "teacher_name": r[1],
-            "reopens": int(r[2] or 0),
-            "requests": int(r[3] or 0),
-            "last_reopened_at": r[4],
+            "requests": int(r[2] or 0),
+            "reopened_requests": int(r[3] or 0),
+            "reopens": int(r[4] or 0),
+            "reopen_rate": (
+                round(int(r[3] or 0) / int(r[2]), 4)
+                if int(r[2] or 0) >= MIN_REQUESTS_FOR_RATE
+                else None
+            ),
+            "last_reopened_at": r[5],
         }
         for r in rows
     ]
+    # Сортировка на стороне Python: строк единицы, зато правило видно целиком.
+    # Сначала те, кого вообще можно сравнивать (доля посчитана), худшие сверху —
+    # как и было. Затем «мало данных» по убыванию объёма, затем «нет данных».
+    items.sort(
+        key=lambda it: (
+            0 if it["reopen_rate"] is not None else (1 if it["requests"] > 0 else 2),
+            -(it["reopen_rate"] or 0.0),
+            -it["requests"],
+            it["teacher_id"],
+        )
+    )
+    return items
 
 
 async def _repeat_ask_count(
