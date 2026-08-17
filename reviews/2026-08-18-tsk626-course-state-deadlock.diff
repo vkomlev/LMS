@@ -133,10 +133,10 @@ index c7f9668..3edbf3e 100644
          student_id,
          root_course_id=root_course_id,
 diff --git a/app/services/course_dependency_state_cron_service.py b/app/services/course_dependency_state_cron_service.py
-index 476ff91..f0a6acb 100644
+index 476ff91..1971e8c 100644
 --- a/app/services/course_dependency_state_cron_service.py
 +++ b/app/services/course_dependency_state_cron_service.py
-@@ -27,11 +27,20 @@ backfill_dependency_state`) — но `course_dependencies` для курса 88
+@@ -27,11 +27,37 @@ backfill_dependency_state`) — но `course_dependencies` для курса 88
  Паттерн периодического тика и advisory-lock — тот же, что у соседних сервисов
  (`escalation_service`, `lesson_attendance_cron_service`, `link_audit_service`):
  один worker за тик делает работу, остальные отступают мгновенно.
@@ -146,9 +146,26 @@ index 476ff91..f0a6acb 100644
 +имели одинаковый `updated_at`, то есть один тик держал 460 блокировок строк до
 +самого конца прохода. Параллельный `GET /learning/next-item` того же ученика
 +захватывал свои строки в другом порядке — 17.08 в 12:56 UTC это дало
-+`DeadlockDetectedError` и 500 ученику. Блокировка одного worker'а поэтому
-+переведена с транзакционной на сессионную: коммит внутри прохода снял бы
-+транзакционную, и два worker'а пошли бы одновременно.
++`DeadlockDetectedError` и 500 ученику.
++
++**Блокировка одного worker'а живёт в ОТДЕЛЬНОЙ сессии, транзакция которой не
++закрывается до конца прохода.** Коммит по ученику снял бы транзакционную
++блокировку, если держать её в рабочей сессии, — поэтому первый вариант правки
++брал СЕССИОННУЮ (`pg_try_advisory_lock`). Это оказалось хуже: сессионная
++блокировка привязана к КОНКРЕТНОМУ соединению, а `Session` после коммита
++возвращает соединение в пул и на следующем запросе берёт то, которое свободно.
++На незанятом пуле это то же самое соединение (и на dev всё выглядело
++исправным), на боевом — почти всегда другое. Проверено на проде 17.08 в 19:51:
++блокировка осталась висеть на соединении, взявшем её, `pg_advisory_unlock` в
++`finally` отработал вхолостую на чужом соединении, и следующий тик, не сумев
++её взять, счёл бы, что работу делает другой worker, — фоновый пересчёт замолчал
++бы до перезапуска сервиса.
++
++Отдельная сессия-сторож решает обе задачи разом: её транзакция не
++закрывается, поэтому соединение не возвращается в пул и блокировка держится
++весь проход; а транзакционная блокировка снимается сама при закрытии сессии —
++утечка невозможна по построению, в том числе при падении процесса. Цена —
++второе соединение из пула на ~5 секунд раз в 15 минут.
  """
  from __future__ import annotations
  
@@ -158,7 +175,7 @@ index 476ff91..f0a6acb 100644
  
  from apscheduler.schedulers.asyncio import AsyncIOScheduler
  from apscheduler.triggers.interval import IntervalTrigger
-@@ -66,13 +75,21 @@ async def course_dependency_state_cron_tick(
+@@ -66,12 +92,22 @@ async def course_dependency_state_cron_tick(
      Пары с общим `required_course_id` дедуплицируются по множеству студентов
      до пересчёта — один и тот же кеш не считается дважды за тик, даже если
      несколько курсов ссылаются на один и тот же пререквизит.
@@ -171,28 +188,54 @@ index 476ff91..f0a6acb 100644
      factory = session_factory or async_session_factory
      summary = {"locked": False, "pairs_checked": 0, "students_recomputed": 0}
  
-     async with factory() as db:
-+        # tsk-626: блокировка СЕССИОННАЯ, не транзакционная — ниже тик коммитит
-+        # после каждого ученика, и транзакционная слетела бы на первом же
-+        # коммите, пустив второго worker'а в тот же проход.
-         got_row = await db.execute(
--            text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
-+            text("SELECT pg_try_advisory_lock(:k) AS locked"),
+-    async with factory() as db:
+-        got_row = await db.execute(
++    # tsk-626: сторож одного worker'а — ОТДЕЛЬНАЯ сессия, чью транзакцию мы не
++    # закрываем до конца прохода. Держать транзакционную блокировку в рабочей
++    # сессии нельзя (коммит по ученику её снимет), а сессионную нельзя вовсе:
++    # она привязана к соединению, а рабочая сессия после коммита берёт из пула
++    # другое. Подробности — в докстринге модуля.
++    async with factory() as guard:
++        got_row = await guard.execute(
+             text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
              {"k": _COURSE_DEPENDENCY_STATE_LOCK_KEY},
          )
-         if not bool(got_row.scalar()):
-@@ -80,34 +97,63 @@ async def course_dependency_state_cron_tick(
+@@ -80,34 +116,61 @@ async def course_dependency_state_cron_tick(
              return summary
          summary["locked"] = True
  
 -        pairs = (
 -            await db.execute(
 -                text("SELECT DISTINCT course_id, required_course_id FROM course_dependencies")
-+        try:
+-            )
+-        ).fetchall()
+-        summary["pairs_checked"] = len(pairs)
+-        if not pairs:
+-            return summary
+-
+-        needed: Dict[int, Set[int]] = {}
+-        for course_id, required_course_id in pairs:
+-            student_ids = await _engine.list_active_students_with_node_in_tree(
+-                db, int(course_id)
+-            )
+-            needed.setdefault(int(required_course_id), set()).update(student_ids)
+-
+-        for required_course_id, student_ids in needed.items():
+-            for student_id in student_ids:
+-                await _engine.compute_course_state(
+-                    db, student_id, required_course_id, update_state_table=True
++        async with factory() as db:
 +            pairs = (
 +                await db.execute(
 +                    text("SELECT DISTINCT course_id, required_course_id FROM course_dependencies")
-+                )
+                 )
+-                summary["students_recomputed"] += 1
+-
+-        await db.commit()
+-        logger.info(
+-            "tsk-541 course_dependency_state_cron_tick done pairs=%s recomputed=%s",
+-            summary["pairs_checked"], summary["students_recomputed"],
+-        )
 +            ).fetchall()
 +            summary["pairs_checked"] = len(pairs)
 +            if not pairs:
@@ -235,39 +278,14 @@ index 476ff91..f0a6acb 100644
 +            logger.info(
 +                "tsk-541 course_dependency_state_cron_tick done pairs=%s recomputed=%s students=%s",
 +                summary["pairs_checked"], summary["students_recomputed"], len(plan),
-             )
--        ).fetchall()
--        summary["pairs_checked"] = len(pairs)
--        if not pairs:
--            return summary
--
--        needed: Dict[int, Set[int]] = {}
--        for course_id, required_course_id in pairs:
--            student_ids = await _engine.list_active_students_with_node_in_tree(
--                db, int(course_id)
-+        finally:
-+            # Сессионную блокировку обязан снять тот, кто взял: сама она
-+            # доживёт до закрытия соединения, а соединение возвращается в пул.
-+            await db.rollback()
-+            await db.execute(
-+                text("SELECT pg_advisory_unlock(:k)"),
-+                {"k": _COURSE_DEPENDENCY_STATE_LOCK_KEY},
-             )
--            needed.setdefault(int(required_course_id), set()).update(student_ids)
--
--        for required_course_id, student_ids in needed.items():
--            for student_id in student_ids:
--                await _engine.compute_course_state(
--                    db, student_id, required_course_id, update_state_table=True
--                )
--                summary["students_recomputed"] += 1
--
--        await db.commit()
--        logger.info(
--            "tsk-541 course_dependency_state_cron_tick done pairs=%s recomputed=%s",
--            summary["pairs_checked"], summary["students_recomputed"],
--        )
-+            await db.commit()
++            )
++        # Сторож закрывается КОММИТОМ, а не откатом. Сам он ничего не писал —
++        # закрыть его можно было бы и откатом, и блокировка снялась бы так же.
++        # Но сессии сторожа и работы не обязаны сидеть на разных соединениях:
++        # под тестовой изоляцией обе живут на одном, и там откат сторожа —
++        # это откат к точке ДО работы, то есть он стирает уже записанное
++        # (поймано тестом tsk-541). Коммит корректен в обоих случаях.
++        await guard.commit()
  
      return summary
  
@@ -438,10 +456,10 @@ index bdbf36f..0a52a82 100644
          # задачи живут под обычной изоляцией.
 diff --git a/tests/test_tsk626_course_state_deadlock.py b/tests/test_tsk626_course_state_deadlock.py
 new file mode 100644
-index 0000000..ac109e4
+index 0000000..5da6c58
 --- /dev/null
 +++ b/tests/test_tsk626_course_state_deadlock.py
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,479 @@
 +"""tsk-626: взаимоблокировка на кеше `student_course_state`.
 +
 +Авария 17.08.2026, 12:56 UTC на проде: `GET /api/v1/learning/next-item` упал с
@@ -494,7 +512,7 @@ index 0000000..ac109e4
 +)
 +from app.services.learning_engine_service import upsert_course_state
 +
-+pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
++pytestmark = [pytest.mark.no_tx_isolation]
 +
 +_settings = Settings()
 +
@@ -811,34 +829,80 @@ index 0000000..ac109e4
 +        return taken
 +
 +
-+async def test_cron_tick_releases_worker_lock(dep_scene):
-+    """Тик обязан СНЯТЬ блокировку одного worker'а за собой.
++def test_cron_worker_guard_is_transaction_scoped():
++    """Сторож одного worker'а обязан быть ТРАНЗАКЦИОННЫМ, а не сессионным.
 +
-+    Блокировка стала сессионной (тик коммитит по ученику, транзакционная
-+    слетела бы на первом коммите) — а сессионная сама не снимается: она живёт
-+    до закрытия соединения, а соединение возвращается в пул. Забытый
-+    `pg_advisory_unlock` тихо выключил бы фоновый пересчёт навсегда, до
-+    перезапуска сервиса, и это не проявилось бы ни одной ошибкой.
++    Это регрессия на дефект первой версии правки tsk-626, найденный только на
++    проде. Сессионная блокировка (`pg_try_advisory_lock`) привязана к
++    КОНКРЕТНОМУ соединению, а `Session` после коммита возвращает соединение в
++    пул и на следующем запросе берёт свободное. Пока пул свободен (dev,
++    одиночный тест) это то же самое соединение, и всё выглядит исправным; на
++    боевом пуле — почти всегда другое. Итог замера на проде 17.08 19:51:
++    блокировка осталась висеть на первом соединении, `pg_advisory_unlock`
++    отработал вхолостую на чужом, следующий тик счёл бы, что работает другой
++    worker, — фоновый пересчёт замолчал бы до перезапуска сервиса, не выдав ни
++    одной ошибки.
 +
-+    Проверка идёт по ДОЛГОЖИВУЩЕМУ соединению: на `NullPool` соединение
-+    закрывается вместе с сессией и снимает блокировку само, то есть утечка
-+    осталась бы незамеченной.
++    Поведенческий тест эту разницу ловит только при удачном совпадении: чтобы
++    соединение сменилось, кто-то должен успеть забрать его между коммитом и
++    следующим запросом. Поэтому правило закреплено ТЕКСТОМ — как и сторож
++    списка исключений из изоляции (`test_tx_isolation_optout.py`).
 +    """
-+    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
-+    probe = create_async_engine(_settings.database_url, poolclass=NullPool)
-+    conn = await engine.connect()
-+    try:
-+        factory = async_sessionmaker(bind=conn, expire_on_commit=False)
-+        summary = await course_dependency_state_cron_tick(session_factory=factory)
-+        assert summary["locked"] is True, summary
-+        assert await _lock_key_is_free(probe), (
-+            "тик не снял сессионную блокировку worker'а — фоновый пересчёт "
-+            "останется выключенным до перезапуска сервиса"
++    source = (
++        project_root / "app" / "services" / "course_dependency_state_cron_service.py"
++    ).read_text(encoding="utf-8")
++
++    assert "pg_try_advisory_xact_lock" in source, (
++        "сторож одного worker'а должен брать ТРАНЗАКЦИОННУЮ блокировку"
++    )
++    for forbidden in ("pg_try_advisory_lock(", "pg_advisory_unlock("):
++        assert forbidden not in source.replace("pg_try_advisory_xact_lock(", ""), (
++            f"{forbidden} — сессионная блокировка. Она привязана к соединению, "
++            "а соединение из пула за сессией не закреплено: блокировка утечёт, "
++            "и фоновый пересчёт молча выключится"
 +        )
++
++
++async def test_cron_tick_leaves_no_worker_lock(dep_scene):
++    """После тика ключ worker'а свободен — на пуле, как на бою.
++
++    Движок с `QueuePool` (а не `NullPool`) здесь принципиален: `NullPool`
++    закрывает соединение вместе с сессией и снимает любую утечку сам, то есть
++    прячет ровно тот дефект, который проверяется. Пул при этом намеренно
++    «размешивается» посторонними потребителями — так рабочая сессия после
++    коммита получает не то соединение, что раньше.
++
++    Проверка обязана идти ДО `engine.dispose()`: dispose закрывает соединения
++    и снимает утечку.
++    """
++    engine = create_async_engine(_settings.database_url, pool_size=5, max_overflow=5)
++    probe = create_async_engine(_settings.database_url, poolclass=NullPool)
++    factory = async_sessionmaker(bind=engine, expire_on_commit=False)
++
++    stop = asyncio.Event()
++
++    async def churn() -> None:
++        """Посторонний потребитель пула — забирает освободившиеся соединения."""
++        while not stop.is_set():
++            conn = await engine.connect()
++            await conn.execute(text("SELECT 1"))
++            await conn.close()
++            await asyncio.sleep(0)
++
++    churner = asyncio.create_task(churn())
++    try:
++        summary = await course_dependency_state_cron_tick(session_factory=factory)
 +    finally:
-+        await conn.close()
-+        await engine.dispose()
-+        await probe.dispose()
++        stop.set()
++        await churner
++
++    assert summary["locked"] is True, summary
++    assert await _lock_key_is_free(probe), (
++        "после тика ключ одного worker'а остался занят — следующий тик решит, "
++        "что работу делает другой worker, и фоновый пересчёт выключится"
++    )
++    await engine.dispose()
++    await probe.dispose()
 +
 +
 +async def test_cron_tick_commits_per_student(dep_scene):
