@@ -25,11 +25,36 @@ import random
 
 from fastapi import Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
 
 from app.db.session import DB_POOL_TIMEOUT_SECONDS
 
 logger = logging.getLogger("api.error_handlers")
+
+#: Код PostgreSQL для взаимоблокировки (deadlock_detected). Стандартный SQLSTATE,
+#: одинаковый у всех драйверов, — в отличие от имени класса исключения.
+_DEADLOCK_SQLSTATE = "40P01"
+
+
+def is_deadlock_error(exc: BaseException) -> bool:
+    """Это взаимоблокировка, которую PostgreSQL разрешил, сняв нашу транзакцию?
+
+    Различаем по SQLSTATE, а не по тексту сообщения и не по имени класса:
+    текст локализуется и меняется между версиями сервера, имя класса — деталь
+    драйвера (`asyncpg.exceptions.DeadlockDetectedError`), а код `40P01`
+    зафиксирован стандартом.
+
+    Отличие от перегрузки пула (tsk-624) принципиальное: там сервис не смог
+    начать работу и повтор осмыслен только позже, здесь транзакция уже
+    полностью откачена сервером — повторить её можно сразу.
+
+    :param exc: пойманное исключение.
+    :return: True, если это `deadlock_detected`.
+    """
+    if not isinstance(exc, DBAPIError):
+        return False
+    return getattr(exc.orig, "sqlstate", None) == _DEADLOCK_SQLSTATE
 
 #: Текст для клиента. Внутреннюю причину (какой именно ресурс кончился)
 #: наружу не выносим — она есть в логе.

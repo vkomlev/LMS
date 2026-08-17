@@ -31,6 +31,8 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.learning_engine_service import lock_course_state
+
 logger = logging.getLogger("app.user_merge")
 
 # Прямой перенос — свой `id` PK у таблицы, FK на users без доп. уникальности.
@@ -228,6 +230,15 @@ async def _move_subscription(db: AsyncSession, source_id: int, target_id: int) -
 
 
 async def apply_merge(db: AsyncSession, source_id: int, target_id: int) -> None:
+    # tsk-626: слияние — тоже писатель кеша `student_course_state` (строки
+    # source удаляются списком DELETE_ON_MERGE). Правило кеша одно для всех
+    # писателей: сначала блокировка ученика, иначе одиночный DELETE и
+    # параллельный next-item того же ученика могут захватить строки в разном
+    # порядке. Берём по возрастанию id — так же, как обходят учеников
+    # многоучениковые писатели.
+    for uid in sorted((int(source_id), int(target_id))):
+        await lock_course_state(db, uid)
+
     for table, column in SIMPLE_MOVES:
         await db.execute(
             text(f"UPDATE {table} SET {column} = :target WHERE {column} = :source"),

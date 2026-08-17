@@ -8,9 +8,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Path, Body, status
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_bare_db, get_current_user
+from app.api.error_handlers import is_deadlock_error
 from app.auth.current_user import CurrentUser
 from app.models.attempts import Attempts
 from app.models.tasks import Tasks
@@ -35,6 +37,7 @@ from app.schemas.learning_api import (
     HintEventRequest,
     HintEventResponse,
 )
+from app.schemas.learning_engine import NextItemResult
 from app.services.learning_engine_service import LearningEngineService
 from app.services.learning_events_service import (
     record_help_requested,
@@ -89,6 +92,58 @@ users_service = UsersService()
 # Это создаёт write-амплификацию при частых вызовах; для read-only сценариев можно вынести
 # обновление состояния в отдельный вызов или кэш.
 
+
+async def _resolve_next_item_with_retry(
+    db: AsyncSession,
+    student_id: int,
+    *,
+    root_course_id: int | None,
+    after_material_id: int | None,
+    after_task_id: int | None,
+) -> NextItemResult:
+    """Разрешить следующий шаг, пережив одну взаимоблокировку (tsk-626).
+
+    **Почему повтор здесь уместен, хотя обычно повторы — дело клиента.**
+    Взаимоблокировку PostgreSQL разрешает сам: одну из транзакций он снимает
+    ЦЕЛИКОМ, и снятая сторона не оставляет за собой ничего — ни записей кеша,
+    ни писем методисту (`escalate_course_completion` пишет только в базу, в той
+    же транзакции). Значит повтор здесь — не «попробовать ещё раз и надеяться»,
+    а буквально то же самое с чистого листа, и вторая попытка почти всегда
+    проходит: соперник к этому моменту уже завершился.
+
+    **Почему только одна попытка и только здесь.** Основное лечение —
+    блокировка ученика перед записью кеша (`learning_engine_service.
+    upsert_course_state`), после неё этот класс взаимоблокировок не собирается
+    вовсе. Повтор оставлен сеткой на случай ДРУГОГО порядка захвата, который мы
+    ещё не знаем; вторая и третья попытки такой случай уже не спасли бы, а
+    только удлинили бы ожидание ученика. Общий повтор для всех эндпоинтов не
+    делаем: там, где транзакция уже успела отправить что-то наружу, повтор
+    задваивает отправку — здесь наружу не уходит ничего.
+
+    Факт повтора пишется в лог с именем класса исключения: разбор аварий идёт
+    грепом `DeadlockDetected` по `logs/app.log`, и пережитая взаимоблокировка
+    обязана быть в нём видна так же, как упавшая.
+    """
+    for attempt in (1, 2):
+        try:
+            return await learning_service.resolve_next_item(
+                db,
+                student_id,
+                root_course_id=root_course_id,
+                after_material_id=after_material_id,
+                after_task_id=after_task_id,
+            )
+        except DBAPIError as exc:
+            if attempt == 2 or not is_deadlock_error(exc):
+                raise
+            logger.warning(
+                "next-item: %s (student_id=%s root_course_id=%s) — транзакция снята "
+                "базой, повторяем с чистого листа",
+                type(exc.orig).__name__, student_id, root_course_id,
+            )
+            await db.rollback()
+    raise AssertionError("недостижимо: цикл повторов всегда возвращает или бросает")
+
 @router.get(
     "/next-item",
     response_model=NextItemResponse,
@@ -127,7 +182,7 @@ async def get_next_item(
     user = await users_service.get_by_id(db, student_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Студент не найден")
-    result = await learning_service.resolve_next_item(
+    result = await _resolve_next_item_with_retry(
         db,
         student_id,
         root_course_id=root_course_id,

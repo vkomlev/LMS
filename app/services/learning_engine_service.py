@@ -54,6 +54,69 @@ DEFAULT_MAX_ATTEMPTS = 3
 QUIZ_MAX_ATTEMPTS = 1
 PASS_THRESHOLD_RATIO = 0.5
 
+# tsk-626: пространство ключей advisory-lock для кеша `student_course_state`.
+# ascii "SCST" (Student Course STate) — не пересекается с соседними ключами:
+# Y-6 (0x59365453), генератор occurrence (0x4C534E43), attendance (0x4C534E41),
+# link_audit (0x4C494E4B), тик состояний зависимостей (0x43445354).
+COURSE_STATE_LOCK_NS = 0x53435354
+
+
+async def lock_course_state(db: AsyncSession, student_id: int) -> None:
+    """Взять транзакционную блокировку на кеш состояний курсов ученика (tsk-626).
+
+    **Зачем.** Строки `student_course_state` пишутся не пачкой, а по одной,
+    вперемешку с расчётами, и набор курсов у каждого писателя свой:
+    `resolve_next_item` обновляет узел позиции плюс зависимости корня, фоновый
+    тик — все цели `course_dependencies` активных учеников. Порядок захвата
+    строк поэтому разный у разных запросов, и два параллельных писателя одного
+    ученика встают в цикл ожидания. На проде 17.08.2026 это дало
+    `DeadlockDetectedError` на `GET /learning/next-item` (ученик 3, курс 1455):
+    PostgreSQL снял одну из транзакций, ученик получил 500.
+
+    Сортировать сами строки недостаточно: набор курсов у писателей разный и
+    заранее неизвестен (узел позиции резолвится по ходу). Поэтому порядок
+    задаётся не строками, а одним ключом — ученик. Все писатели кеша берут
+    ЭТУ блокировку до первой записи, значит по одному ученику они выстраиваются
+    в очередь, а цикл ожидания построить не из чего.
+
+    Блокировка транзакционная: снимается сама на commit/rollback, отдельного
+    освобождения не требует. Повторный вызов в той же транзакции безвреден.
+
+    :param student_id: ученик, чей кеш будет записан следом.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:ns, :student_id)"),
+        {"ns": COURSE_STATE_LOCK_NS, "student_id": int(student_id)},
+    )
+
+
+async def upsert_course_state(
+    db: AsyncSession, student_id: int, course_id: int, state: str
+) -> None:
+    """Единственная точка записи в `student_course_state` (tsk-626).
+
+    Блокировка ученика берётся здесь же, а не в вызывающем коде: писателей
+    несколько (движок, ручной прогресс, бэкфилл зависимостей, фоновый тик), и
+    правило «сначала заблокируй ученика» соблюдается только тогда, когда его
+    невозможно забыть. Многоучениковые писатели дополнительно обязаны обходить
+    учеников по возрастанию `student_id` — иначе цикл ожидания собирается уже
+    из самих блокировок.
+
+    :param student_id: ученик.
+    :param course_id: курс, чьё состояние кешируется.
+    :param state: NOT_STARTED | IN_PROGRESS | COMPLETED | BLOCKED_DEPENDENCY.
+    """
+    await lock_course_state(db, student_id)
+    await db.execute(
+        text("""
+            INSERT INTO student_course_state (student_id, course_id, state, updated_at)
+            VALUES (:student_id, :course_id, :state, now())
+            ON CONFLICT (student_id, course_id)
+            DO UPDATE SET state = EXCLUDED.state, updated_at = now()
+        """),
+        {"student_id": student_id, "course_id": course_id, "state": state},
+    )
+
 # tsk-264: дерево курса вниз по course_parents — содержит ли корень данный узел.
 _ROOT_CONTAINS_NODE_SQL = """
 WITH RECURSIVE subtree AS (
@@ -313,7 +376,12 @@ class LearningEngineService:
             Число студентов, для которых пересчитан кеш.
         """
         student_ids = await self.list_active_students_with_node_in_tree(db, course_id)
-        for student_id in student_ids:
+        # tsk-626: по возрастанию. Каждая запись берёт блокировку ученика и
+        # держит её до конца транзакции — значит эта транзакция копит
+        # блокировки нескольких учеников сразу. Пока порядок обхода
+        # согласован у всех многоучениковых писателей (здесь и в фоновом
+        # тике), цикл ожидания из самих блокировок не собирается.
+        for student_id in sorted(student_ids):
             await self.compute_course_state(
                 db, student_id, required_course_id, update_state_table=True
             )
@@ -750,15 +818,10 @@ class LearningEngineService:
             state = "IN_PROGRESS"
 
         if update_state_table:
-            await db.execute(
-                text("""
-                    INSERT INTO student_course_state (student_id, course_id, state, updated_at)
-                    VALUES (:student_id, :course_id, :state, now())
-                    ON CONFLICT (student_id, course_id)
-                    DO UPDATE SET state = EXCLUDED.state, updated_at = now()
-                """),
-                {"student_id": student_id, "course_id": course_id, "state": state},
-            )
+            # tsk-626: запись только через общий helper — он берёт блокировку
+            # ученика, без которой два параллельных писателя одного ученика
+            # захватывают строки в разном порядке и встают в цикл ожидания.
+            await upsert_course_state(db, student_id, course_id, state)
 
         # Y-6 Stage 4.3: course-completion event-driven escalation.
         # Если курс достиг COMPLETED, но есть pending TA/SA_COM (`checked_at IS NULL`)
