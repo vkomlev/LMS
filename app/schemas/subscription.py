@@ -63,6 +63,81 @@ class StudentSubscriptionState(BaseModel):
     history: list[SubscriptionHistoryItem] = Field(default_factory=list)
 
 
+class SubscriptionSummaryRow(BaseModel):
+    """Одна строка сводки: тариф и что за ним видно (tsk-619)."""
+
+    plan_code: Optional[str] = Field(
+        ..., description="Код тарифа. NULL — строка «без тарифа»"
+    )
+    plan_name: str = Field(..., description="Имя тарифа или «Без тарифа»")
+    pricing_group_id: Optional[int] = Field(
+        ..., description="Группа расчёта месяца; NULL — начисления не создаются"
+    )
+    pricing_group_name: Optional[str] = Field(
+        ..., description="NULL — по этому тарифу начисления не создаются"
+    )
+    students: int = Field(..., description="Сколько активных учеников на нём сейчас")
+    with_schedule: int = Field(..., description="Из них с занятиями в расписании")
+    without_schedule: int = Field(..., description="Из них без занятий")
+    long_standing: int = Field(
+        ...,
+        description=(
+            "Из них на этом тарифе дольше порога `long_standing_days`. «Второй "
+            "месяц на Demo» и «зарегистрировался вчера» — разные люди"
+        ),
+    )
+    oldest_started_on: Optional[date] = Field(
+        ..., description="Самое раннее присвоение в строке; NULL — строка пуста"
+    )
+    with_overdue_payment: int = Field(
+        ...,
+        description=(
+            "Из них с просроченной оплатой. Считает тот же источник, что "
+            "рассылает письма о долге"
+        ),
+    )
+
+
+class SubscriptionSummary(BaseModel):
+    """Раскладка учеников по тарифам целиком.
+
+    Пустые тарифы остаются строками с нулём, и строка «без тарифа» есть всегда:
+    «на Self никого» — это ответ, а исчезнувшая строка неотличима от «мы это не
+    считаем».
+    """
+
+    as_of: date = Field(..., description="День, на который посчитано")
+    total_students: int = Field(
+        ..., description="Всего активных учеников — сумма по строкам"
+    )
+    long_standing_days: int = Field(
+        ..., description="Порог «засиделся», в днях (сейчас 30)"
+    )
+    rows: list[SubscriptionSummaryRow] = Field(
+        ..., description="Строка на каждый действующий тариф плюс «без тарифа»"
+    )
+
+
+class SubscriptionSummaryStudent(BaseModel):
+    """Ученик внутри строки сводки — чтобы из неё можно было дойти до человека."""
+
+    student_id: int
+    full_name: Optional[str] = Field(..., description="Имя ученика; NULL — не заполнено")
+    plan_since: Optional[date] = Field(..., description="С какого дня на тарифе")
+    days_on_plan: Optional[int] = Field(
+        ..., description="Сколько дней на нём; NULL — тарифа нет"
+    )
+    registered_on: date = Field(
+        ...,
+        description=(
+            "День регистрации. Рядом с `plan_since` он и отвечает на «давно ли "
+            "человек в школе»: строки подписок моложе самой школы"
+        ),
+    )
+    has_schedule: bool = Field(..., description="Есть ли занятия в расписании")
+    has_overdue_payment: bool = Field(..., description="Есть ли просроченная оплата")
+
+
 class SubscriptionChangeRequest(BaseModel):
     """Присвоение тарифа персоналом."""
 
