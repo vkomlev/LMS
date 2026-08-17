@@ -1,0 +1,1278 @@
+diff --git a/app/api/v1/subscriptions.py b/app/api/v1/subscriptions.py
+index a358696..b3b2e1a 100644
+--- a/app/api/v1/subscriptions.py
++++ b/app/api/v1/subscriptions.py
+@@ -14,7 +14,16 @@ from __future__ import annotations
+ 
+ import logging
+ 
+-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
++from fastapi import (
++    APIRouter,
++    Body,
++    Depends,
++    HTTPException,
++    Path,
++    Query,
++    Request,
++    status,
++)
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+@@ -24,6 +33,8 @@ from app.schemas.subscription import (
+     StudentSubscriptionState,
+     SubscriptionChangeRequest,
+     SubscriptionPlanRead,
++    SubscriptionSummary,
++    SubscriptionSummaryStudent,
+ )
+ from app.services import audit_service, subscription_service
+ 
+@@ -83,6 +94,68 @@ async def list_plans(
+     return [SubscriptionPlanRead(**row) for row in await subscription_service.list_plans(db)]
+ 
+ 
++@router.get(
++    "/summary",
++    response_model=SubscriptionSummary,
++    summary="Раскладка учеников по тарифам",
++    description=(
++        "Сколько человек на каждом тарифе, сколько без тарифа вовсе, у скольких "
++        "есть расписание, кто засиделся на одном тарифе и у кого просрочена "
++        "оплата. Сумм денег здесь нет: их считает расписание, а не тариф — "
++        "начисления живут на своём экране (`GET /marketer/charges`)."
++    ),
++)
++async def read_summary(
++    db: AsyncSession = Depends(get_async_db),
++    _staff: CurrentUser = Depends(_staff_gate),
++) -> SubscriptionSummary:
++    """Обзорная картина по тарифам (tsk-619)."""
++    return SubscriptionSummary(**await subscription_service.plan_distribution(db))
++
++
++@router.get(
++    "/summary/students",
++    response_model=list[SubscriptionSummaryStudent],
++    summary="Ученики одной строки сводки",
++    description=(
++        "Разворот строки: `plan_code` передаётся ровно тем значением, что стоит "
++        "в строке сводки, — код тарифа либо ПУСТО для строки «без тарифа». "
++        "Дольше всех на тарифе идут первыми: с этого конца списка и начинается "
++        "работа."
++    ),
++    responses={404: {"description": "Нет такого тарифа"}},
++)
++async def read_summary_students(
++    plan_code: str | None = Query(
++        default=None,
++        description="Код тарифа; не задан — ученики без тарифа",
++        max_length=64,
++    ),
++    db: AsyncSession = Depends(get_async_db),
++    _staff: CurrentUser = Depends(_staff_gate),
++) -> list[SubscriptionSummaryStudent]:
++    """Кто именно стоит за строкой сводки.
++
++    Опечатка в коде тарифа отвечает 404, а не пустым списком: пустой список
++    здесь — законный ответ («на Self никого»), и свести с ним ошибку значило бы
++    показывать маркетологу «никого нет» вместо «такого тарифа нет».
++    """
++    if plan_code is not None:
++        # Проверяем СУЩЕСТВОВАНИЕ тарифа, а не его активность: выключенный
++        # тариф, на котором кто-то ещё сидит, остаётся строкой сводки — и
++        # разворачиваться она обязана, иначе именно этих людей, ради которых
++        # тариф и выключали, открыть было бы нельзя.
++        known = await db.scalar(
++            text("SELECT 1 FROM subscription_plan WHERE code = :c"),
++            {"c": plan_code},
++        )
++        if not known:
++            raise HTTPException(status.HTTP_404_NOT_FOUND, "Тариф не найден")
++
++    rows = await subscription_service.students_on_plan(db, plan_code)
++    return [SubscriptionSummaryStudent(**row) for row in rows]
++
++
+ @router.get(
+     "/students/{student_id}",
+     response_model=StudentSubscriptionState,
+diff --git a/app/schemas/subscription.py b/app/schemas/subscription.py
+index af5d921..cba3d25 100644
+--- a/app/schemas/subscription.py
++++ b/app/schemas/subscription.py
+@@ -63,6 +63,81 @@ class StudentSubscriptionState(BaseModel):
+     history: list[SubscriptionHistoryItem] = Field(default_factory=list)
+ 
+ 
++class SubscriptionSummaryRow(BaseModel):
++    """Одна строка сводки: тариф и что за ним видно (tsk-619)."""
++
++    plan_code: Optional[str] = Field(
++        ..., description="Код тарифа. NULL — строка «без тарифа»"
++    )
++    plan_name: str = Field(..., description="Имя тарифа или «Без тарифа»")
++    pricing_group_id: Optional[int] = Field(
++        ..., description="Группа расчёта месяца; NULL — начисления не создаются"
++    )
++    pricing_group_name: Optional[str] = Field(
++        ..., description="NULL — по этому тарифу начисления не создаются"
++    )
++    students: int = Field(..., description="Сколько активных учеников на нём сейчас")
++    with_schedule: int = Field(..., description="Из них с занятиями в расписании")
++    without_schedule: int = Field(..., description="Из них без занятий")
++    long_standing: int = Field(
++        ...,
++        description=(
++            "Из них на этом тарифе дольше порога `long_standing_days`. «Второй "
++            "месяц на Demo» и «зарегистрировался вчера» — разные люди"
++        ),
++    )
++    oldest_started_on: Optional[date] = Field(
++        ..., description="Самое раннее присвоение в строке; NULL — строка пуста"
++    )
++    with_overdue_payment: int = Field(
++        ...,
++        description=(
++            "Из них с просроченной оплатой. Считает тот же источник, что "
++            "рассылает письма о долге"
++        ),
++    )
++
++
++class SubscriptionSummary(BaseModel):
++    """Раскладка учеников по тарифам целиком.
++
++    Пустые тарифы остаются строками с нулём, и строка «без тарифа» есть всегда:
++    «на Self никого» — это ответ, а исчезнувшая строка неотличима от «мы это не
++    считаем».
++    """
++
++    as_of: date = Field(..., description="День, на который посчитано")
++    total_students: int = Field(
++        ..., description="Всего активных учеников — сумма по строкам"
++    )
++    long_standing_days: int = Field(
++        ..., description="Порог «засиделся», в днях (сейчас 30)"
++    )
++    rows: list[SubscriptionSummaryRow] = Field(
++        ..., description="Строка на каждый действующий тариф плюс «без тарифа»"
++    )
++
++
++class SubscriptionSummaryStudent(BaseModel):
++    """Ученик внутри строки сводки — чтобы из неё можно было дойти до человека."""
++
++    student_id: int
++    full_name: Optional[str] = Field(..., description="Имя ученика; NULL — не заполнено")
++    plan_since: Optional[date] = Field(..., description="С какого дня на тарифе")
++    days_on_plan: Optional[int] = Field(
++        ..., description="Сколько дней на нём; NULL — тарифа нет"
++    )
++    registered_on: date = Field(
++        ...,
++        description=(
++            "День регистрации. Рядом с `plan_since` он и отвечает на «давно ли "
++            "человек в школе»: строки подписок моложе самой школы"
++        ),
++    )
++    has_schedule: bool = Field(..., description="Есть ли занятия в расписании")
++    has_overdue_payment: bool = Field(..., description="Есть ли просроченная оплата")
++
++
+ class SubscriptionChangeRequest(BaseModel):
+     """Присвоение тарифа персоналом."""
+ 
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index da9c3da..53f46ec 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -471,6 +471,17 @@ async def purchase_plan(
+ 
+ # ─────────────── Управление тарифами персоналом (Фаза 9) ────────────────────
+ 
++#: С какого дня на одном тарифе человек считается «засидевшимся» (tsk-619).
++#: Месяц — не круглое число ради красоты: `demo` даётся при регистрации, а
++#: `base` при появлении расписания, и месяц между ними означает, что расписание
++#: так и не завели.
++LONG_STANDING_DAYS = 30
++
++#: Имя строки «без тарифа» в сводке. Живёт здесь, а не на экране: строка
++#: приходит из того же списка, что и тарифы, и клиент не должен догадываться,
++#: как назвать пустое значение.
++NO_PLAN_ROW_NAME = "Без тарифа"
++
+ 
+ async def list_plans(db: AsyncSession) -> list[dict]:
+     """Все действующие тарифы с правами и тарифной группой — витрина персонала.
+@@ -501,6 +512,215 @@ async def list_plans(db: AsyncSession) -> list[dict]:
+     return [dict(r) for r in rows]
+ 
+ 
++async def _staff_student_rows(db: AsyncSession) -> list[dict]:
++    """Каждый ученик школы с его действующим тарифом — общее основание сводки.
++
++    Один запрос на обе выдачи (счётчики и разворот строки) намеренно: разойдись
++    они, в сводке стояло бы «на Demo трое», а по нажатию открывалось бы двое, и
++    доверия к экрану не осталось бы (урок tsk-597/598 — общее условие отбора
++    зовут функцией, а не копируют).
++
++    «Ученик» здесь тот же, что и в поиске маркетолога (`lead_service`): активная
++    учётка с ролью `student`. Это не педантизм: из строки сводки человек идёт в
++    ту же панель, где ученика находят поиском, — списки обязаны совпадать.
++    Подписка неактивной учётки в счёт не идёт (на проде такая есть — 4558).
++
++    `LEFT JOIN` по действующей строке подписки: ученик без тарифа обязан попасть
++    в выдачу, он и есть главный адресат этой сводки.
++    """
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT u.id                  AS student_id,
++                       u.full_name,
++                       u.created_at::date    AS registered_on,
++                       p.code                AS plan_code,
++                       p.name                AS plan_name,
++                       s.pricing_group_id,
++                       g.name                AS pricing_group_name,
++                       s.starts_on           AS plan_since,
++                       EXISTS (
++                           SELECT 1
++                             FROM lesson_slot_student lss
++                             JOIN lesson_slot ls ON ls.id = lss.slot_id
++                            WHERE lss.student_id = u.id
++                              AND lss.is_active AND ls.is_active
++                       )                     AS has_schedule
++                  FROM users u
++                  LEFT JOIN student_subscription s
++                         ON s.student_id = u.id AND s.ends_on IS NULL
++                  LEFT JOIN subscription_plan p ON p.id = s.plan_id
++                  LEFT JOIN pricing_group g ON g.id = s.pricing_group_id
++                 WHERE u.is_active
++                   AND EXISTS (
++                       SELECT 1 FROM user_roles ur
++                         JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
++                        WHERE ur.user_id = u.id
++                   )
++                 ORDER BY u.full_name, u.id
++                """
++            )
++        )
++    ).mappings().all()
++    return [dict(r) for r in rows]
++
++
++async def _overdue_student_ids(db: AsyncSession) -> set[int]:
++    """Кто просрочил оплату — множеством номеров.
++
++    Считает не этот модуль: зовём `payment_reminder_service.list_overdue`, тот же
++    источник, что рассылает письма о долге и красит бейдж в кабинете. Своя
++    SQL-версия «есть долг» стала бы четвёртой копией формулы «ручная сумма
++    важнее расчётной, поверх поправки» (см. `charge_service.charge_total_minor`)
++    и разъехалась бы с ней на первой же правке.
++    """
++    from app.services import payment_reminder_service  # noqa: PLC0415
++
++    return {debtor.student_id for debtor in await payment_reminder_service.list_overdue(db)}
++
++
++def _days_on_plan(plan_since: Optional[date], today: date) -> Optional[int]:
++    """Сколько дней человек на текущем тарифе. None — тарифа нет."""
++    if plan_since is None:
++        return None
++    return (today - plan_since).days
++
++
++async def plan_distribution(db: AsyncSession, *, today: Optional[date] = None) -> dict:
++    """Сколько учеников на каждом тарифе — и сколько без тарифа вовсе (tsk-619).
++
++    Отвечает на вопрос, которого не было у панели Фазы 9: та знает всё про
++    одного человека, но не про то, кого вообще стоит открыть. Между
++    авто-`demo` при регистрации и авто-`base` при появлении расписания человек
++    живёт неделями, и увидеть его было неоткуда.
++
++    Пустые тарифы остаются в выдаче строками с нулём: «на Self никого» — это
++    ответ, а не отсутствие ответа, и пропасть он не должен.
++
++    Разрезы выбраны по действию, которое за ними следует:
++
++    * **расписание** — им автоматика и меряет «стал учеником». `demo` с
++      расписанием значит, что перевод на `base` не сработал; `base` без
++      расписания — что человек перестал ходить, а деньги считаются;
++    * **давность на тарифе** — «сидит на Demo второй месяц» и «зарегистрировался
++      вчера» требуют разного, а выглядят в счётчике одинаково;
++    * **просроченная оплата** — берётся у того же источника, что и письма о
++      долге, поэтому спорить с рассылкой этот счётчик не может.
++
++    Сумма денег сюда НЕ идёт: её считает расписание, а не тариф (ADR-0006), и
++    второй ответ на вопрос «сколько должен» разъехался бы с экраном начислений.
++    """
++    today = today or date.today()
++    students = await _staff_student_rows(db)
++    overdue = await _overdue_student_ids(db)
++    plans = await list_plans(db)
++
++    #: Строка «без тарифа» стоит последней и существует всегда, даже пустая:
++    #: она и есть главный вопрос сводки, а исчезнув при нуле, была бы
++    #: неотличима от «мы это не считаем».
++    buckets: list[tuple[Optional[str], str, Optional[int], Optional[str]]] = [
++        (p["code"], p["name"], p["pricing_group_id"], p["pricing_group_name"])
++        for p in plans
++    ]
++
++    # Выключенный тариф, который у кого-то ещё ДЕЙСТВУЕТ, обязан остаться
++    # строкой. Витрина `list_plans` отдаёт только активные, и без этой добавки
++    # такой ученик не попал бы ни в одну строку: итог перестал бы сходиться с
++    # суммой, причём молча — а деактивируют тариф ровно тогда, когда хотят
++    # посмотреть, кто на нём ещё сидит. Имя и группа берутся из строки ученика:
++    # у него это группа ЕГО подписки, то есть ровно то, по чему ему считают
++    # месяц, — для выключенного тарифа это точнее справочника.
++    known = {code for code, *_ in buckets}
++    for student in students:
++        code = student["plan_code"]
++        if code is None or code in known:
++            continue
++        known.add(code)
++        buckets.append(
++            (
++                code,
++                f"{student['plan_name']} (тариф выключен)",
++                student["pricing_group_id"],
++                student["pricing_group_name"],
++            )
++        )
++
++    buckets.append((None, NO_PLAN_ROW_NAME, None, None))
++
++    rows: list[dict] = []
++    for code, name, group_id, group_name in buckets:
++        members = [s for s in students if s["plan_code"] == code]
++        days = [
++            d
++            for d in (_days_on_plan(s["plan_since"], today) for s in members)
++            if d is not None
++        ]
++        starts = [s["plan_since"] for s in members if s["plan_since"] is not None]
++        rows.append(
++            {
++                "plan_code": code,
++                "plan_name": name,
++                "pricing_group_id": group_id,
++                "pricing_group_name": group_name,
++                "students": len(members),
++                "with_schedule": sum(1 for s in members if s["has_schedule"]),
++                "without_schedule": sum(1 for s in members if not s["has_schedule"]),
++                "long_standing": sum(1 for d in days if d >= LONG_STANDING_DAYS),
++                "oldest_started_on": min(starts) if starts else None,
++                "with_overdue_payment": sum(
++                    1 for s in members if s["student_id"] in overdue
++                ),
++            }
++        )
++
++    return {
++        "as_of": today,
++        "total_students": len(students),
++        "long_standing_days": LONG_STANDING_DAYS,
++        "rows": rows,
++    }
++
++
++async def students_on_plan(
++    db: AsyncSession, plan_code: Optional[str], *, today: Optional[date] = None
++) -> list[dict]:
++    """Ученики одной строки сводки. `plan_code=None` — строка «без тарифа».
++
++    Существует ради того, чтобы сводка не осталась картинкой: из строки
++    открывается список людей, из списка — та же панель тарифа, что и раньше.
++
++    Дольше всех на тарифе — сверху: именно этот конец списка и есть повод для
++    работы («второй месяц на Demo»), а алфавит прячет его в середину.
++    """
++    today = today or date.today()
++    overdue = await _overdue_student_ids(db)
++    members = [s for s in await _staff_student_rows(db) if s["plan_code"] == plan_code]
++
++    result = [
++        {
++            "student_id": s["student_id"],
++            "full_name": s["full_name"],
++            "plan_since": s["plan_since"],
++            "days_on_plan": _days_on_plan(s["plan_since"], today),
++            "registered_on": s["registered_on"],
++            "has_schedule": s["has_schedule"],
++            "has_overdue_payment": s["student_id"] in overdue,
++        }
++        for s in members
++    ]
++    # Ключ сортировки развёрнут в функцию, а не `or -1`: у человека, которому
++    # тариф присвоили сегодня, `days_on_plan == 0` — а ноль ложен, и короткая
++    # запись отправила бы его в один разряд с «тарифа нет». None в сравнении с
++    # int роняет сортировку целиком, поэтому подменять его всё равно надо.
++    def _order(row: dict) -> tuple[int, str]:
++        days = row["days_on_plan"]
++        return (-1 if days is None else -days, row["full_name"] or "")
++
++    result.sort(key=_order)
++    return result
++
++
+ async def student_state(db: AsyncSession, student_id: int) -> dict:
+     """Действующий тариф ученика и вся история присвоений.
+ 
+diff --git a/docs/specs/2026-08-08-contract-entitlements.md b/docs/specs/2026-08-08-contract-entitlements.md
+index 903a433..60ab78a 100644
+--- a/docs/specs/2026-08-08-contract-entitlements.md
++++ b/docs/specs/2026-08-08-contract-entitlements.md
+@@ -276,6 +276,8 @@ student_ai_grant      student_id, granted, used, purchased_at, gateway_payment_i
+ | `GET /api/v1/subscriptions/plans` | **персонал** (marketer/admin) | Витрина 9 планов |
+ | `POST /api/v1/subscriptions/students/{id}` | **admin, marketer** | Назначить/сменить тариф. Преподавателю запрещено (решение 10) |
+ | `GET /api/v1/subscriptions/students/{id}` | персонал | Текущий тариф и история |
++| `GET /api/v1/subscriptions/summary` | **персонал** (marketer/admin) | Раскладка учеников по тарифам + строка «без тарифа» (tsk-619) |
++| `GET /api/v1/subscriptions/summary/students` | **персонал** (marketer/admin) | Люди одной строки сводки; без `plan_code` — те, у кого тарифа нет (tsk-619) |
+ | `POST /api/v1/payments/yookassa/ai-package` | ученик | Покупка пакета 500 ₽ |
+ | `POST /api/v1/payments/yookassa/subscription` | ученик, гость по токену | Покупка или апгрейд подписки |
+ | `GET /api/v1/learning/guest/courses/{uid}` (существующий) | гость | **Аддитивно** `demo_used`, `demo_limit` |
+@@ -447,6 +449,20 @@ RBAC admin/marketer, запись в `audit_event`.
+ тарифе либо тариф сменили параллельно. Событие журнала —
+ `staff.subscription.changed` (кто, кому, откуда, куда, зачем).
+ 
++**Дополнено 2026-08-17 (tsk-619).** Два адреса под тем же гейтом — обзорная
++картина, которой у панели не было:
++
++| Метод и путь | Что |
++|---|---|
++| `GET /subscriptions/summary` | Строка на каждый действующий тариф **плюс строка «без тарифа»**; обе остаются и при нуле. В строке: сколько учеников, из них с расписанием и без, сколько сидит на тарифе дольше 30 дней, у скольких просрочена оплата |
++| `GET /subscriptions/summary/students` | Люди за строкой: `?plan_code=demo`; **параметр не задан — те, у кого тарифа нет**. Дольше всех на тарифе — первыми; неизвестный код даёт 404, а не пустой список |
++
++Сумм денег в сводке нет намеренно: их порождает расписание, а не тариф
++(ADR-0006), и живут они на экране начислений. Признак просрочки берётся у
++того же источника, что рассылает письма о долге, — второй копии правила нет.
++«Ученик» здесь тот же, что в поиске маркетолога: активная учётка с ролью
++`student` (подписка неактивной учётки в счёт не идёт).
++
+ **Витрина планов сужена до персонала** против исходной строки §11 «ученик, персонал»:
+ Фаза 8 дала ученику `GET /payments/plans` (покупаемые) и `GET /me/entitlements`
+ (его права), а список внутренних тарифов (`test`, `base_legacy`) ему не нужен.
+diff --git a/tests/test_tsk619_subscription_summary.py b/tests/test_tsk619_subscription_summary.py
+new file mode 100644
+index 0000000..07aaec4
+--- /dev/null
++++ b/tests/test_tsk619_subscription_summary.py
+@@ -0,0 +1,435 @@
++"""tsk-619: сводка тарифов — кто на каком тарифе и кто без тарифа.
++
++Что здесь проверяется и почему именно это:
++
++1. **Тот же гейт, что у Фазы 9.** Новый адрес — новая дверь: роль проверяется по
++   каждой роли отдельно, сервисный ключ не пускается. Обзор тарифов — это ФИО
++   всех учеников школы разом, а не карточка одного человека.
++2. **Строка «без тарифа» существует всегда.** Ради неё задача и заведена: между
++   авто-`demo` при регистрации и авто-`base` при появлении расписания человека
++   было неоткуда увидеть. Исчезнув при нуле, строка стала бы неотличима от «мы
++   это не считаем».
++3. **Сводка и её разворот считают ОДИН И ТОТ ЖЕ список.** Разойдись они, в
++   строке стояло бы «трое», а по нажатию открывалось бы двое.
++4. **«Ученик» определён так же, как в поиске маркетолога.** Подписка неактивной
++   учётки в счёт не идёт — на проде такая строка есть (пользователь 4558).
++
++Тесты идут по НАСТОЯЩЕЙ БД и проверяют ТЕЛО ответа (урок tsk-302). Числа
++сверяются относительно своих учеников, а не абсолютными значениями: соседняя
++сессия на той же dev-базе меняет общие счётчики.
++"""
++from __future__ import annotations
++
++import random
++from datetime import date, timedelta
++
++import pytest
++from sqlalchemy import text
++
++from app.core.config import Settings
++from app.models.users import Users
++from app.services import subscription_service
++from app.services.auth import identity_link_service
++from app.services.auth.session_service import create_session
++
++pytestmark = pytest.mark.asyncio
++
++_TAG = "tsk619"
++
++
++async def _new_user(db, *, role: str | None, name: str, is_active: bool = True) -> tuple[int, str]:
++    user = Users(
++        email=f"{_TAG}-{name}-{random.randint(10**8, 10**10)}@example.com",
++        password_hash=None,
++        full_name=f"{_TAG}-{name}-{random.randint(10**6, 10**7)}",
++        tg_id=None,
++    )
++    db.add(user)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, user.id, "email", user.email)
++    token, _, _ = await create_session(db, user_id=user.id)
++    if role is not None:
++        await db.execute(
++            text(
++                "INSERT INTO user_roles (user_id, role_id) "
++                "SELECT :u, r.id FROM roles r WHERE r.name = :role ON CONFLICT DO NOTHING"
++            ),
++            {"u": user.id, "role": role},
++        )
++    if not is_active:
++        await db.execute(
++            text("UPDATE users SET is_active = false WHERE id = :u"), {"u": user.id}
++        )
++    await db.commit()
++    return user.id, token
++
++
++def _auth(token: str) -> dict[str, str]:
++    return {"Authorization": f"Bearer {token}"}
++
++
++async def _assign_plan(db, student_id: int, plan_code: str, *, since: date | None = None) -> None:
++    """Дать ученику действующий тариф с нужной датой начала."""
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on, reason) "
++            "SELECT :s, id, pricing_group_id, :d, 'tsk-619 тест' "
++            "  FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "c": plan_code, "d": since or date.today()},
++    )
++    await db.commit()
++
++
++async def _put_in_schedule(db, student_id: int) -> None:
++    """Активная привязка к активному слоту — то, что автоматика считает «учится»."""
++    teacher_id, _ = await _new_user(db, role="teacher", name="slot-teacher")
++    slot_id = (
++        await db.execute(
++            text(
++                "INSERT INTO lesson_slot "
++                "  (teacher_id, weekday, start_time, duration_minutes, is_active) "
++                "VALUES (:t, 1, '10:00', 60, true) RETURNING id"
++            ),
++            {"t": teacher_id},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO lesson_slot_student (slot_id, student_id, is_active) "
++            "VALUES (:s, :u, true)"
++        ),
++        {"s": int(slot_id), "u": student_id},
++    )
++    await db.commit()
++
++
++async def _staff_token(db) -> str:
++    _uid, token = await _new_user(db, role="marketer", name="staff")
++    return token
++
++
++def _row(payload: dict, plan_code: str | None) -> dict:
++    row = next((r for r in payload["rows"] if r["plan_code"] == plan_code), None)
++    assert row is not None, f"строка {plan_code!r} обязана быть в сводке"
++    return row
++
++
++# ───────────────────────────── Кто имеет право ──────────────────────────────
++
++
++@pytest.mark.parametrize("role", ["teacher", "methodist", "student", None])
++async def test_summary_is_closed_for_non_money_roles(db, client, role):
++    """Сводка — это ФИО всех учеников школы разом, гейт тот же, что у Фазы 9."""
++    _uid, token = await _new_user(db, role=role, name=f"deny-{role}")
++
++    assert (
++        await client.get("/api/v1/subscriptions/summary", headers=_auth(token))
++    ).status_code == 403
++    assert (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=demo", headers=_auth(token)
++        )
++    ).status_code == 403
++
++
++async def test_service_key_cannot_read_summary(db, client):
++    """Держатель ключа TG_LMS читал бы весь список учеников школы."""
++    key = next(iter(Settings().valid_api_keys))
++
++    assert (
++        await client.get("/api/v1/subscriptions/summary", headers={"X-API-Key": key})
++    ).status_code == 403
++    assert (
++        await client.get(
++            "/api/v1/subscriptions/summary/students", headers={"X-API-Key": key}
++        )
++    ).status_code == 403
++
++
++async def test_anonymous_gets_401(client):
++    assert (await client.get("/api/v1/subscriptions/summary")).status_code == 401
++
++
++# ──────────────────────────────── Сводка ────────────────────────────────────
++
++
++async def test_summary_counts_student_on_his_plan(db, client):
++    """Ученик виден в строке своего тарифа, а не где-нибудь ещё."""
++    student_id, _ = await _new_user(db, role="student", name="on-alumni")
++    await _assign_plan(db, student_id, "alumni")
++    token = await _staff_token(db)
++
++    before = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    student2, _ = await _new_user(db, role="student", name="on-alumni-2")
++    await _assign_plan(db, student2, "alumni")
++
++    after = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    assert _row(after, "alumni")["students"] == _row(before, "alumni")["students"] + 1
++
++
++async def test_no_plan_row_is_always_there(db, client):
++    """Строка «без тарифа» — то, ради чего сводка и заведена.
++
++    Она обязана быть даже при нуле: исчезнув, она стала бы неотличима от «мы
++    это не считаем», а на проде без тарифа сейчас действительно никого.
++    """
++    token = await _staff_token(db)
++    payload = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    no_plan = _row(payload, None)
++    assert no_plan["plan_name"] == subscription_service.NO_PLAN_ROW_NAME
++    assert no_plan["pricing_group_name"] is None
++
++
++async def test_student_without_plan_lands_in_no_plan_row(db, client):
++    """Ученик без подписки попадает именно в «без тарифа», а не пропадает."""
++    token = await _staff_token(db)
++    before = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    student_id, _ = await _new_user(db, role="student", name="no-plan")
++
++    after = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    assert _row(after, None)["students"] == _row(before, None)["students"] + 1
++
++    listing = (
++        await client.get("/api/v1/subscriptions/summary/students", headers=_auth(token))
++    ).json()
++    mine = next((s for s in listing if s["student_id"] == student_id), None)
++    assert mine is not None, "ученик без тарифа обязан открываться из своей строки"
++    assert mine["plan_since"] is None
++    assert mine["days_on_plan"] is None
++    assert mine["registered_on"] == date.today().isoformat()
++
++
++async def test_empty_plans_stay_as_zero_rows(db, client):
++    """«На Self никого» — это ответ; пустая строка из сводки не выпадает."""
++    token = await _staff_token(db)
++    payload = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    codes = {r["plan_code"] for r in payload["rows"]}
++    plans = await subscription_service.list_plans(db)
++    assert {p["code"] for p in plans} <= codes, "каждый действующий тариф — строка сводки"
++    assert all(r["students"] >= 0 for r in payload["rows"])
++
++
++async def test_total_equals_sum_of_rows(db, client):
++    """Итог обязан сходиться со строками: иначе сводке нельзя верить."""
++    token = await _staff_token(db)
++    payload = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    assert payload["total_students"] == sum(r["students"] for r in payload["rows"])
++    assert payload["as_of"] == date.today().isoformat()
++    assert payload["long_standing_days"] == subscription_service.LONG_STANDING_DAYS
++
++
++async def test_inactive_account_is_not_counted(db, client):
++    """Подписка неактивной учётки в счёт не идёт (на проде такая есть — 4558).
++
++    Определение «ученик» здесь то же, что в поиске маркетолога: иначе строка
++    сводки обещала бы человека, которого поиск панели не находит.
++    """
++    token = await _staff_token(db)
++    before = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    ghost_id, _ = await _new_user(db, role="student", name="ghost", is_active=False)
++    await _assign_plan(db, ghost_id, "demo")
++
++    after = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    assert _row(after, "demo")["students"] == _row(before, "demo")["students"]
++
++    listing = (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=demo", headers=_auth(token)
++        )
++    ).json()
++    assert all(s["student_id"] != ghost_id for s in listing)
++
++
++# ─────────────────────────────── Разрезы ────────────────────────────────────
++
++
++async def test_schedule_split(db, client):
++    """Расписание — тот самый признак, которым автоматика меряет «стал учеником».
++
++    `demo` с расписанием значит, что перевод на `base` не сработал; `base` без
++    расписания — что человек перестал ходить, а деньги считаются.
++    """
++    token = await _staff_token(db)
++    before = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    student_id, _ = await _new_user(db, role="student", name="scheduled")
++    await _assign_plan(db, student_id, "flagship")
++    await _put_in_schedule(db, student_id)
++
++    after = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    row_before, row_after = _row(before, "flagship"), _row(after, "flagship")
++    assert row_after["with_schedule"] == row_before["with_schedule"] + 1
++    assert row_after["without_schedule"] == row_before["without_schedule"]
++    assert row_after["students"] == row_after["with_schedule"] + row_after["without_schedule"]
++
++    listing = (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=flagship", headers=_auth(token)
++        )
++    ).json()
++    mine = next(s for s in listing if s["student_id"] == student_id)
++    assert mine["has_schedule"] is True
++
++
++async def test_long_standing_counts_only_those_past_threshold(db, client):
++    """«Второй месяц на Demo» и «зарегистрировался вчера» — разные люди."""
++    token = await _staff_token(db)
++    before = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++
++    old_id, _ = await _new_user(db, role="student", name="old-adults")
++    await _assign_plan(
++        db,
++        old_id,
++        "adults",
++        since=date.today() - timedelta(days=subscription_service.LONG_STANDING_DAYS + 10),
++    )
++    fresh_id, _ = await _new_user(db, role="student", name="fresh-adults")
++    await _assign_plan(db, fresh_id, "adults", since=date.today() - timedelta(days=1))
++
++    after = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    assert _row(after, "adults")["long_standing"] == _row(before, "adults")["long_standing"] + 1
++    assert _row(after, "adults")["students"] == _row(before, "adults")["students"] + 2
++
++    listing = (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=adults", headers=_auth(token)
++        )
++    ).json()
++    days = {s["student_id"]: s["days_on_plan"] for s in listing}
++    assert days[old_id] == subscription_service.LONG_STANDING_DAYS + 10
++    assert days[fresh_id] == 1
++
++    # Дольше всех — первым: с этого конца списка и начинается работа.
++    positions = [s["student_id"] for s in listing]
++    assert positions.index(old_id) < positions.index(fresh_id)
++
++
++async def test_overdue_payment_uses_the_reminder_source(db, client):
++    """Признак долга берётся у того же источника, что рассылает письма.
++
++    Своя SQL-версия «есть долг» стала бы четвёртой копией формулы «ручная сумма
++    важнее расчётной, поверх поправки» и разъехалась бы с рассылкой.
++    """
++    from app.services import charge_service
++
++    token = await _staff_token(db)
++    student_id, _ = await _new_user(db, role="student", name="debtor")
++    await _assign_plan(db, student_id, "base")
++
++    last_month = charge_service.month_start(date.today()) - timedelta(days=1)
++    period = charge_service.month_start(last_month)
++    await db.execute(
++        text(
++            "INSERT INTO student_monthly_charge "
++            "  (student_id, group_id, period, calculated_minor, expected_lessons, "
++            "   break_lessons, status) "
++            "SELECT :s, pricing_group_id, :p, 300000, 4, 0, 'open' "
++            "  FROM subscription_plan WHERE code = 'base'"
++        ),
++        {"s": student_id, "p": period},
++    )
++    await db.commit()
++
++    payload = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    assert _row(payload, "base")["with_overdue_payment"] >= 1
++
++    listing = (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=base", headers=_auth(token)
++        )
++    ).json()
++    mine = next(s for s in listing if s["student_id"] == student_id)
++    assert mine["has_overdue_payment"] is True
++
++
++# ────────────────────── Разворот строки в список людей ──────────────────────
++
++
++async def test_listing_matches_the_row_count(db, client):
++    """Сводка и её разворот считают один и тот же список.
++
++    Разойдись они — в строке стояло бы «трое», а по нажатию открывалось бы
++    двое, и доверия к экрану не осталось бы.
++    """
++    token = await _staff_token(db)
++    student_id, _ = await _new_user(db, role="student", name="match")
++    await _assign_plan(db, student_id, "self")
++
++    payload = (await client.get("/api/v1/subscriptions/summary", headers=_auth(token))).json()
++    listing = (
++        await client.get(
++            "/api/v1/subscriptions/summary/students?plan_code=self", headers=_auth(token)
++        )
++    ).json()
++
++    assert _row(payload, "self")["students"] == len(listing)
++    assert any(s["student_id"] == student_id for s in listing)
++
++
++async def test_disabled_plan_still_has_a_row(db, client):
++    """Выключенный тариф, на котором кто-то сидит, остаётся строкой.
++
++    Витрина отдаёт только активные тарифы, и без отдельной ветки такой ученик
++    не попал бы ни в одну строку: итог перестал бы сходиться с суммой — молча.
++    А выключают тариф ровно тогда, когда хотят посмотреть, кто на нём ещё есть.
++    """
++    token = await _staff_token(db)
++    code = f"{_TAG}_retired_{random.randint(10**6, 10**7)}"
++    await db.execute(
++        text(
++            "INSERT INTO subscription_plan "
++            "  (code, name, ai_tutor_limit, code_review, teacher_escalation, "
++            "   lessons, content, is_active, sort_order) "
++            "VALUES (:c, 'Снятый с продажи', 0, false, false, false, 'demo', false, 99)"
++        ),
++        {"c": code},
++    )
++    student_id, _ = await _new_user(db, role="student", name="retired")
++    await _assign_plan(db, student_id, code)
++
++    try:
++        payload = (
++            await client.get("/api/v1/subscriptions/summary", headers=_auth(token))
++        ).json()
++        row = _row(payload, code)
++        assert row["students"] >= 1
++        assert "выключен" in row["plan_name"]
++        assert payload["total_students"] == sum(r["students"] for r in payload["rows"])
++
++        listing = (
++            await client.get(
++                f"/api/v1/subscriptions/summary/students?plan_code={code}",
++                headers=_auth(token),
++            )
++        ).json()
++        assert any(s["student_id"] == student_id for s in listing)
++    finally:
++        # Справочник тарифов общий для всей dev-базы — свой мусор убираем, иначе
++        # соседняя сессия увидит лишнюю строку в сводке.
++        await db.execute(
++            text("DELETE FROM student_subscription WHERE student_id = :s"),
++            {"s": student_id},
++        )
++        await db.execute(text("DELETE FROM subscription_plan WHERE code = :c"), {"c": code})
++        await db.commit()
++
++
++async def test_unknown_plan_is_404_not_empty_list(db, client):
++    """Опечатка в коде тарифа — не «никого нет».
++
++    Пустой список здесь законный ответ («на Self никого»), и свести с ним
++    ошибку значило бы показывать маркетологу неправду.
++    """
++    token = await _staff_token(db)
++    response = await client.get(
++        "/api/v1/subscriptions/summary/students?plan_code=nosuchplan", headers=_auth(token)
++    )
++    assert response.status_code == 404, response.text
+diff --git a/app/(marketer)/marketer/students/page.tsx b/app/(marketer)/marketer/students/page.tsx
+index ea13e1c..7cc9097 100644
+--- a/app/(marketer)/marketer/students/page.tsx
++++ b/app/(marketer)/marketer/students/page.tsx
+@@ -1,8 +1,7 @@
+ import type { Metadata } from "next";
+ 
+ import { PageHeader } from "@/components/ui/page-header";
+-import { StudentPricingList } from "@/components/marketer/StudentPricingList";
+-import { StudentSubscriptionPanel } from "@/components/marketer/StudentSubscriptionPanel";
++import { MarketerStudentsWorkspace } from "@/components/marketer/MarketerStudentsWorkspace";
+ 
+ export const metadata: Metadata = {
+   title: "Ученики — кабинет маркетолога",
+@@ -13,10 +12,9 @@ export default function MarketerStudentsPage() {
+     <main className="mx-auto w-full max-w-6xl space-y-6 px-3 py-6 md:px-6">
+       <PageHeader
+         title="Ученики"
+-        description="Расчётная цена по каждому ученику и его тариф. Цена берётся из расписания — её здесь не меняют; тариф присваивают."
++        description="Кто на каком тарифе, тариф конкретного ученика и расчётная цена. Цена берётся из расписания — её здесь не меняют; тариф присваивают."
+       />
+-      <StudentSubscriptionPanel />
+-      <StudentPricingList />
++      <MarketerStudentsWorkspace />
+     </main>
+   );
+ }
+diff --git a/components/marketer/StudentSubscriptionPanel.tsx b/components/marketer/StudentSubscriptionPanel.tsx
+index c3718b8..b5bf3e4 100644
+--- a/components/marketer/StudentSubscriptionPanel.tsx
++++ b/components/marketer/StudentSubscriptionPanel.tsx
+@@ -31,8 +31,23 @@ import {
+  * показывает только тех, кто стоит денег, а тариф нужно присваивать и новичку
+  * на Demo, и выпускнику — их там нет.
+  */
+-export function StudentSubscriptionPanel() {
+-  const [student, setStudent] = useState<StudentBrief | null>(null);
++export function StudentSubscriptionPanel({
++  student: controlledStudent,
++  onStudentChange,
++}: {
++  /** Ученик, выбранный снаружи, — так в панель приходит человек из сводки (tsk-619). */
++  student?: StudentBrief | null;
++  onStudentChange?: (student: StudentBrief | null) => void;
++} = {}) {
++  const [ownStudent, setOwnStudent] = useState<StudentBrief | null>(null);
++  // Панель осталась самостоятельной: без внешнего выбора она работает ровно как
++  // в Фазе 9 — поиском. Экран, где рядом стоит сводка, поднимает выбор к себе,
++  // чтобы обе половины показывали одного и того же человека.
++  const student = controlledStudent !== undefined ? controlledStudent : ownStudent;
++  const setStudent = (next: StudentBrief | null) => {
++    setOwnStudent(next);
++    onStudentChange?.(next);
++  };
+ 
+   return (
+     <section
+diff --git a/lib/marketer/use-marketer-subscriptions.ts b/lib/marketer/use-marketer-subscriptions.ts
+index 157ccf3..b2b9a3b 100644
+--- a/lib/marketer/use-marketer-subscriptions.ts
++++ b/lib/marketer/use-marketer-subscriptions.ts
+@@ -18,8 +18,14 @@ export type SubscriptionPlan = components["schemas"]["SubscriptionPlanRead"];
+ export type SubscriptionHistoryItem = components["schemas"]["SubscriptionHistoryItem"];
+ export type StudentSubscriptionState = components["schemas"]["StudentSubscriptionState"];
+ export type SubscriptionChange = components["schemas"]["SubscriptionChangeRequest"];
++export type SubscriptionSummary = components["schemas"]["SubscriptionSummary"];
++export type SubscriptionSummaryRow = components["schemas"]["SubscriptionSummaryRow"];
++export type SubscriptionSummaryStudent =
++  components["schemas"]["SubscriptionSummaryStudent"];
+ 
+ const PLANS_KEY = ["marketer", "subscription-plans"] as const;
++const SUMMARY_KEY = ["marketer", "subscription-summary"] as const;
++const SUMMARY_STUDENTS_KEY = ["marketer", "subscription-summary-students"] as const;
+ 
+ export function useSubscriptionPlans() {
+   const client = useApiClient();
+@@ -31,6 +37,48 @@ export function useSubscriptionPlans() {
+   });
+ }
+ 
++/**
++ * tsk-619 — раскладка учеников по тарифам.
++ *
++ * Отвечает на вопрос, которого не было у панели: та знает всё про одного
++ * человека, но не про то, кого стоит открыть. Между авто-`demo` при регистрации
++ * и авто-`base` при появлении расписания человек живёт неделями невидимым.
++ */
++export function useSubscriptionSummary() {
++  const client = useApiClient();
++  return useQuery<SubscriptionSummary>({
++    queryKey: SUMMARY_KEY,
++    queryFn: () => client.get<SubscriptionSummary>("/api/v1/subscriptions/summary"),
++    retry: false,
++  });
++}
++
++/**
++ * Ученики одной строки сводки. `planCode === null` — строка «без тарифа».
++ *
++ * Отдельным запросом, а не списком внутри сводки: имена всех учеников школы не
++ * уезжают на экран, пока строку не открыли.
++ */
++export function useSubscriptionSummaryStudents(
++  planCode: string | null,
++  options?: { enabled?: boolean },
++) {
++  const client = useApiClient();
++  return useQuery<SubscriptionSummaryStudent[]>({
++    queryKey: [...SUMMARY_STUDENTS_KEY, planCode],
++    queryFn: () =>
++      client.get<SubscriptionSummaryStudent[]>(
++        // Пустой параметр = строка «без тарифа»: запрос повторяет поле строки
++        // сводки тем же значением, ничего не расшифровывая по дороге.
++        planCode === null
++          ? "/api/v1/subscriptions/summary/students"
++          : `/api/v1/subscriptions/summary/students?plan_code=${encodeURIComponent(planCode)}`,
++      ),
++    enabled: options?.enabled ?? true,
++    retry: false,
++  });
++}
++
+ export function useStudentSubscription(studentId: number | null) {
+   const client = useApiClient();
+   return useQuery<StudentSubscriptionState>({
+@@ -60,6 +108,11 @@ export function useChangeStudentPlan(studentId: number | null) {
+       // учеников на соседнем экране собирается по действующей подписке — он
+       // показал бы прежнюю группу до перезагрузки страницы.
+       void qc.invalidateQueries({ queryKey: ["marketer", "pricing", "students"] });
++      // Сводка тарифов после смены заведомо неверна: человек ушёл из одной
++      // строки в другую. Оставить её как есть значило бы, что маркетолог,
++      // перевёдший ученика с Demo, ещё раз найдёт его в строке Demo.
++      void qc.invalidateQueries({ queryKey: SUMMARY_KEY });
++      void qc.invalidateQueries({ queryKey: SUMMARY_STUDENTS_KEY });
+     },
+   });
+ }
+diff --git a/components/marketer/SubscriptionSummary.tsx b/components/marketer/SubscriptionSummary.tsx
+new file mode 100644
+index 0000000..8e604c8
+--- /dev/null
++++ b/components/marketer/SubscriptionSummary.tsx
+@@ -0,0 +1,236 @@
++"use client";
++
++import { useState } from "react";
++
++import { Button } from "@/components/ui/button";
++import { StatusBadge } from "@/components/ui/status-badge";
++import { getApiErrorMessage } from "@/lib/api-error-messages";
++import { formatShortDate } from "@/lib/format-date";
++import { SCHOOL_TIME_ZONE } from "@/lib/time-zone";
++import type { StudentBrief } from "@/lib/marketer/use-marketer-leads";
++import {
++  useSubscriptionSummary,
++  useSubscriptionSummaryStudents,
++  type SubscriptionSummaryRow,
++  type SubscriptionSummaryStudent,
++} from "@/lib/marketer/use-marketer-subscriptions";
++
++/**
++ * tsk-619 — кто на каком тарифе и кто без тарифа.
++ *
++ * Панель Фазы 9 отвечает на вопрос про конкретного человека: найти поиском,
++ * посмотреть, сменить. Сводка отвечает на предыдущий вопрос — кого вообще
++ * стоит открыть. `demo` даётся при регистрации, `base` при появлении
++ * расписания, и между этими событиями человек живёт неделями, невидимый ни на
++ * одном экране: список расчётной цены показывает только тех, кто стоит денег,
++ * а у Demo, Test и «Выпускника» тарифной группы нет.
++ *
++ * Строка разворачивается в список людей, из списка человек открывается в той
++ * же панели рядом — иначе сводка осталась бы картинкой, из которой ничего
++ * нельзя сделать.
++ */
++export function SubscriptionSummary({
++  onPickStudent,
++}: {
++  onPickStudent: (student: StudentBrief) => void;
++}) {
++  const summary = useSubscriptionSummary();
++  const [openRow, setOpenRow] = useState<string | null>(null);
++
++  return (
++    <section
++      data-testid="marketer-subscription-summary"
++      className="space-y-3 rounded-md border border-border bg-card p-3"
++    >
++      <header className="space-y-1">
++        <h2 className="text-base font-medium">Раскладка по тарифам</h2>
++        <p className="text-xs text-muted-foreground">
++          {summary.data === undefined
++            ? "Сколько учеников на каждом тарифе и кто остался без тарифа."
++            : `Всего учеников: ${summary.data.total_students}. Считается на ${formatShortDate(
++                summary.data.as_of,
++                SCHOOL_TIME_ZONE,
++              )}. «Засиделся» — дольше ${summary.data.long_standing_days} дней на одном тарифе.`}
++        </p>
++      </header>
++
++      {summary.isPending && (
++        <p className="text-sm text-muted-foreground">Загружаем раскладку…</p>
++      )}
++      {summary.isError && (
++        <p className="text-sm text-destructive" data-testid="marketer-subscription-summary-error">
++          {getApiErrorMessage(summary.error).title}
++        </p>
++      )}
++
++      {summary.data !== undefined && (
++        <ul className="space-y-2">
++          {summary.data.rows.map((row) => (
++            <SummaryRow
++              key={row.plan_code ?? "__no_plan__"}
++              row={row}
++              isOpen={openRow === rowKey(row)}
++              onToggle={() => setOpenRow(openRow === rowKey(row) ? null : rowKey(row))}
++              onPickStudent={onPickStudent}
++            />
++          ))}
++        </ul>
++      )}
++    </section>
++  );
++}
++
++function rowKey(row: SubscriptionSummaryRow): string {
++  return row.plan_code ?? "__no_plan__";
++}
++
++function SummaryRow({
++  row,
++  isOpen,
++  onToggle,
++  onPickStudent,
++}: {
++  row: SubscriptionSummaryRow;
++  isOpen: boolean;
++  onToggle: () => void;
++  onPickStudent: (student: StudentBrief) => void;
++}) {
++  const empty = row.students === 0;
++
++  return (
++    <li className="rounded-md border border-border/60 bg-background/40 p-2">
++      <button
++        type="button"
++        // Имя кнопки называет ТАРИФ, а не «Показать»: одинаковые подписи у
++        // девяти строк неразличимы ни глазами, ни живым прогоном (tsk-491/505).
++        aria-label={`Ученики на тарифе ${row.plan_name}`}
++        data-testid={`marketer-subscription-summary-row-${rowKey(row)}`}
++        onClick={onToggle}
++        disabled={empty}
++        className="flex w-full flex-wrap items-center gap-2 text-left disabled:cursor-default"
++      >
++        <span className="min-w-0 flex-1 space-y-1">
++          <span className="flex flex-wrap items-center gap-2">
++            <span className="text-sm font-medium">{row.plan_name}</span>
++            <StatusBadge tone={badgeTone(row)}>{row.students}</StatusBadge>
++          </span>
++          <span className="block text-xs text-muted-foreground">{describeRow(row)}</span>
++        </span>
++        {!empty && (
++          <span aria-hidden className="shrink-0 text-xs text-muted-foreground">
++            {isOpen ? "свернуть" : "показать"}
++          </span>
++        )}
++      </button>
++
++      {isOpen && !empty && (
++        <RowStudents planCode={row.plan_code} onPickStudent={onPickStudent} />
++      )}
++    </li>
++  );
++}
++
++function badgeTone(row: SubscriptionSummaryRow) {
++  if (row.students === 0) return "info" as const;
++  // «Без тарифа» — не нейтральная строка: пока тарифа нет, ИИ-наставник и
++  // разбор с преподавателем ученику закрыты.
++  if (row.plan_code === null) return "danger" as const;
++  if (row.long_standing > 0 || row.with_overdue_payment > 0) return "waiting" as const;
++  return "success" as const;
++}
++
++/** Что видно за числом: где деньги, где расписание, где повод открыть человека. */
++function describeRow(row: SubscriptionSummaryRow): string {
++  if (row.students === 0) {
++    return row.plan_code === null ? "Все ученики с тарифом" : "Никого";
++  }
++  const parts = [
++    row.pricing_group_name
++      ? `счёт по группе «${row.pricing_group_name}»`
++      : "начисления не создаются",
++    `с расписанием ${row.with_schedule} из ${row.students}`,
++  ];
++  if (row.long_standing > 0) parts.push(`засиделись: ${row.long_standing}`);
++  if (row.with_overdue_payment > 0) {
++    parts.push(`просрочена оплата: ${row.with_overdue_payment}`);
++  }
++  return parts.join(" · ");
++}
++
++function RowStudents({
++  planCode,
++  onPickStudent,
++}: {
++  planCode: string | null;
++  onPickStudent: (student: StudentBrief) => void;
++}) {
++  const students = useSubscriptionSummaryStudents(planCode);
++
++  return (
++    <div className="mt-2 space-y-2 border-t border-border/60 pt-2">
++      {students.isPending && (
++        <p className="text-xs text-muted-foreground">Загружаем учеников…</p>
++      )}
++      {students.isError && (
++        <p className="text-xs text-destructive">{getApiErrorMessage(students.error).title}</p>
++      )}
++      <ul className="space-y-2" data-testid="marketer-subscription-summary-students">
++        {(students.data ?? []).map((student) => (
++          <StudentLine key={student.student_id} student={student} onPick={onPickStudent} />
++        ))}
++      </ul>
++    </div>
++  );
++}
++
++function StudentLine({
++  student,
++  onPick,
++}: {
++  student: SubscriptionSummaryStudent;
++  onPick: (student: StudentBrief) => void;
++}) {
++  const name = (student.full_name ?? "").trim() || `Без имени · #${student.student_id}`;
++
++  return (
++    <li className="flex flex-wrap items-center gap-2">
++      <span className="min-w-0 flex-1 space-y-0.5">
++        <span className="block text-sm">{name}</span>
++        <span className="block text-xs text-muted-foreground">
++          {describeStudent(student)}
++        </span>
++      </span>
++      <Button
++        variant="ghost"
++        size="sm"
++        // В имени кнопки стоит ИМЯ ученика: строк в списке много, и «Открыть»
++        // у каждой указывало бы в никуда при проверке живьём.
++        aria-label={`Открыть тариф: ${name}`}
++        onClick={() => onPick({ id: student.student_id, full_name: student.full_name })}
++      >
++        Открыть тариф
++      </Button>
++    </li>
++  );
++}
++
++/**
++ * Две даты рядом намеренно: строки подписок моложе самой школы (модель тарифов
++ * заведена 07–09.08.2026), поэтому «на тарифе 3 дня» у человека, который учится
++ * с мая, — правда о тарифе, а не о нём. Без даты регистрации такую строку
++ * прочитали бы как «новичок».
++ */
++function describeStudent(student: SubscriptionSummaryStudent): string {
++  const parts: string[] = [`#${student.student_id}`];
++  if (student.plan_since !== null && student.days_on_plan !== null) {
++    parts.push(
++      `на тарифе с ${formatShortDate(student.plan_since, SCHOOL_TIME_ZONE)} (${student.days_on_plan} дн.)`,
++    );
++  } else {
++    parts.push("тарифа нет");
++  }
++  parts.push(`в школе с ${formatShortDate(student.registered_on, SCHOOL_TIME_ZONE)}`);
++  parts.push(student.has_schedule ? "есть расписание" : "нет расписания");
++  if (student.has_overdue_payment) parts.push("просрочена оплата");
++  return parts.join(" · ");
++}

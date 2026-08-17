@@ -14,7 +14,16 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    status,
+)
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +33,8 @@ from app.schemas.subscription import (
     StudentSubscriptionState,
     SubscriptionChangeRequest,
     SubscriptionPlanRead,
+    SubscriptionSummary,
+    SubscriptionSummaryStudent,
 )
 from app.services import audit_service, subscription_service
 
@@ -81,6 +92,68 @@ async def list_plans(
 ) -> list[SubscriptionPlanRead]:
     """Тарифы с правами и тарифной группой."""
     return [SubscriptionPlanRead(**row) for row in await subscription_service.list_plans(db)]
+
+
+@router.get(
+    "/summary",
+    response_model=SubscriptionSummary,
+    summary="Раскладка учеников по тарифам",
+    description=(
+        "Сколько человек на каждом тарифе, сколько без тарифа вовсе, у скольких "
+        "есть расписание, кто засиделся на одном тарифе и у кого просрочена "
+        "оплата. Сумм денег здесь нет: их считает расписание, а не тариф — "
+        "начисления живут на своём экране (`GET /marketer/charges`)."
+    ),
+)
+async def read_summary(
+    db: AsyncSession = Depends(get_async_db),
+    _staff: CurrentUser = Depends(_staff_gate),
+) -> SubscriptionSummary:
+    """Обзорная картина по тарифам (tsk-619)."""
+    return SubscriptionSummary(**await subscription_service.plan_distribution(db))
+
+
+@router.get(
+    "/summary/students",
+    response_model=list[SubscriptionSummaryStudent],
+    summary="Ученики одной строки сводки",
+    description=(
+        "Разворот строки: `plan_code` передаётся ровно тем значением, что стоит "
+        "в строке сводки, — код тарифа либо ПУСТО для строки «без тарифа». "
+        "Дольше всех на тарифе идут первыми: с этого конца списка и начинается "
+        "работа."
+    ),
+    responses={404: {"description": "Нет такого тарифа"}},
+)
+async def read_summary_students(
+    plan_code: str | None = Query(
+        default=None,
+        description="Код тарифа; не задан — ученики без тарифа",
+        max_length=64,
+    ),
+    db: AsyncSession = Depends(get_async_db),
+    _staff: CurrentUser = Depends(_staff_gate),
+) -> list[SubscriptionSummaryStudent]:
+    """Кто именно стоит за строкой сводки.
+
+    Опечатка в коде тарифа отвечает 404, а не пустым списком: пустой список
+    здесь — законный ответ («на Self никого»), и свести с ним ошибку значило бы
+    показывать маркетологу «никого нет» вместо «такого тарифа нет».
+    """
+    if plan_code is not None:
+        # Проверяем СУЩЕСТВОВАНИЕ тарифа, а не его активность: выключенный
+        # тариф, на котором кто-то ещё сидит, остаётся строкой сводки — и
+        # разворачиваться она обязана, иначе именно этих людей, ради которых
+        # тариф и выключали, открыть было бы нельзя.
+        known = await db.scalar(
+            text("SELECT 1 FROM subscription_plan WHERE code = :c"),
+            {"c": plan_code},
+        )
+        if not known:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Тариф не найден")
+
+    rows = await subscription_service.students_on_plan(db, plan_code)
+    return [SubscriptionSummaryStudent(**row) for row in rows]
 
 
 @router.get(

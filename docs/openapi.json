@@ -31379,6 +31379,212 @@
         }
       }
     },
+    "/api/v1/subscriptions/summary": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Раскладка учеников по тарифам",
+        "description": "Сколько человек на каждом тарифе, сколько без тарифа вовсе, у скольких есть расписание, кто засиделся на одном тарифе и у кого просрочена оплата. Сумм денег здесь нет: их считает расписание, а не тариф — начисления живут на своём экране (`GET /marketer/charges`).",
+        "operationId": "read_summary_api_v1_subscriptions_summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/summary/students": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Ученики одной строки сводки",
+        "description": "Разворот строки: `plan_code` передаётся ровно тем значением, что стоит в строке сводки, — код тарифа либо ПУСТО для строки «без тарифа». Дольше всех на тарифе идут первыми: с этого конца списка и начинается работа.",
+        "operationId": "read_summary_students_api_v1_subscriptions_summary_students_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "plan_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Код тарифа; не задан — ученики без тарифа",
+              "title": "Plan Code"
+            },
+            "description": "Код тарифа; не задан — ученики без тарифа"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SubscriptionSummaryStudent"
+                  },
+                  "title": "Response Read Summary Students Api V1 Subscriptions Summary Students Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Нет такого тарифа"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subscriptions/students/{student_id}": {
       "get": {
         "tags": [
@@ -51519,6 +51725,214 @@
         ],
         "title": "SubscriptionPlanRead",
         "description": "Тариф как набор прав — строка витрины персонала."
+      },
+      "SubscriptionSummary": {
+        "properties": {
+          "as_of": {
+            "type": "string",
+            "format": "date",
+            "title": "As Of",
+            "description": "День, на который посчитано"
+          },
+          "total_students": {
+            "type": "integer",
+            "title": "Total Students",
+            "description": "Всего активных учеников — сумма по строкам"
+          },
+          "long_standing_days": {
+            "type": "integer",
+            "title": "Long Standing Days",
+            "description": "Порог «засиделся», в днях (сейчас 30)"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SubscriptionSummaryRow"
+            },
+            "type": "array",
+            "title": "Rows",
+            "description": "Строка на каждый действующий тариф плюс «без тарифа»"
+          }
+        },
+        "type": "object",
+        "required": [
+          "as_of",
+          "total_students",
+          "long_standing_days",
+          "rows"
+        ],
+        "title": "SubscriptionSummary",
+        "description": "Раскладка учеников по тарифам целиком.\n\nПустые тарифы остаются строками с нулём, и строка «без тарифа» есть всегда:\n«на Self никого» — это ответ, а исчезнувшая строка неотличима от «мы это не\nсчитаем»."
+      },
+      "SubscriptionSummaryRow": {
+        "properties": {
+          "plan_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Code",
+            "description": "Код тарифа. NULL — строка «без тарифа»"
+          },
+          "plan_name": {
+            "type": "string",
+            "title": "Plan Name",
+            "description": "Имя тарифа или «Без тарифа»"
+          },
+          "pricing_group_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Id",
+            "description": "Группа расчёта месяца; NULL — начисления не создаются"
+          },
+          "pricing_group_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pricing Group Name",
+            "description": "NULL — по этому тарифу начисления не создаются"
+          },
+          "students": {
+            "type": "integer",
+            "title": "Students",
+            "description": "Сколько активных учеников на нём сейчас"
+          },
+          "with_schedule": {
+            "type": "integer",
+            "title": "With Schedule",
+            "description": "Из них с занятиями в расписании"
+          },
+          "without_schedule": {
+            "type": "integer",
+            "title": "Without Schedule",
+            "description": "Из них без занятий"
+          },
+          "long_standing": {
+            "type": "integer",
+            "title": "Long Standing",
+            "description": "Из них на этом тарифе дольше порога `long_standing_days`. «Второй месяц на Demo» и «зарегистрировался вчера» — разные люди"
+          },
+          "oldest_started_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Started On",
+            "description": "Самое раннее присвоение в строке; NULL — строка пуста"
+          },
+          "with_overdue_payment": {
+            "type": "integer",
+            "title": "With Overdue Payment",
+            "description": "Из них с просроченной оплатой. Считает тот же источник, что рассылает письма о долге"
+          }
+        },
+        "type": "object",
+        "required": [
+          "plan_code",
+          "plan_name",
+          "pricing_group_id",
+          "pricing_group_name",
+          "students",
+          "with_schedule",
+          "without_schedule",
+          "long_standing",
+          "oldest_started_on",
+          "with_overdue_payment"
+        ],
+        "title": "SubscriptionSummaryRow",
+        "description": "Одна строка сводки: тариф и что за ним видно (tsk-619)."
+      },
+      "SubscriptionSummaryStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name",
+            "description": "Имя ученика; NULL — не заполнено"
+          },
+          "plan_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Since",
+            "description": "С какого дня на тарифе"
+          },
+          "days_on_plan": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days On Plan",
+            "description": "Сколько дней на нём; NULL — тарифа нет"
+          },
+          "registered_on": {
+            "type": "string",
+            "format": "date",
+            "title": "Registered On",
+            "description": "День регистрации. Рядом с `plan_since` он и отвечает на «давно ли человек в школе»: строки подписок моложе самой школы"
+          },
+          "has_schedule": {
+            "type": "boolean",
+            "title": "Has Schedule",
+            "description": "Есть ли занятия в расписании"
+          },
+          "has_overdue_payment": {
+            "type": "boolean",
+            "title": "Has Overdue Payment",
+            "description": "Есть ли просроченная оплата"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "plan_since",
+          "days_on_plan",
+          "registered_on",
+          "has_schedule",
+          "has_overdue_payment"
+        ],
+        "title": "SubscriptionSummaryStudent",
+        "description": "Ученик внутри строки сводки — чтобы из неё можно было дойти до человека."
       },
       "SyllabusMaterialItem": {
         "properties": {

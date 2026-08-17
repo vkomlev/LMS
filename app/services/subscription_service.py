@@ -471,6 +471,17 @@ async def purchase_plan(
 
 # ─────────────── Управление тарифами персоналом (Фаза 9) ────────────────────
 
+#: С какого дня на одном тарифе человек считается «засидевшимся» (tsk-619).
+#: Месяц — не круглое число ради красоты: `demo` даётся при регистрации, а
+#: `base` при появлении расписания, и месяц между ними означает, что расписание
+#: так и не завели.
+LONG_STANDING_DAYS = 30
+
+#: Имя строки «без тарифа» в сводке. Живёт здесь, а не на экране: строка
+#: приходит из того же списка, что и тарифы, и клиент не должен догадываться,
+#: как назвать пустое значение.
+NO_PLAN_ROW_NAME = "Без тарифа"
+
 
 async def list_plans(db: AsyncSession) -> list[dict]:
     """Все действующие тарифы с правами и тарифной группой — витрина персонала.
@@ -499,6 +510,215 @@ async def list_plans(db: AsyncSession) -> list[dict]:
         )
     ).mappings().all()
     return [dict(r) for r in rows]
+
+
+async def _staff_student_rows(db: AsyncSession) -> list[dict]:
+    """Каждый ученик школы с его действующим тарифом — общее основание сводки.
+
+    Один запрос на обе выдачи (счётчики и разворот строки) намеренно: разойдись
+    они, в сводке стояло бы «на Demo трое», а по нажатию открывалось бы двое, и
+    доверия к экрану не осталось бы (урок tsk-597/598 — общее условие отбора
+    зовут функцией, а не копируют).
+
+    «Ученик» здесь тот же, что и в поиске маркетолога (`lead_service`): активная
+    учётка с ролью `student`. Это не педантизм: из строки сводки человек идёт в
+    ту же панель, где ученика находят поиском, — списки обязаны совпадать.
+    Подписка неактивной учётки в счёт не идёт (на проде такая есть — 4558).
+
+    `LEFT JOIN` по действующей строке подписки: ученик без тарифа обязан попасть
+    в выдачу, он и есть главный адресат этой сводки.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT u.id                  AS student_id,
+                       u.full_name,
+                       u.created_at::date    AS registered_on,
+                       p.code                AS plan_code,
+                       p.name                AS plan_name,
+                       s.pricing_group_id,
+                       g.name                AS pricing_group_name,
+                       s.starts_on           AS plan_since,
+                       EXISTS (
+                           SELECT 1
+                             FROM lesson_slot_student lss
+                             JOIN lesson_slot ls ON ls.id = lss.slot_id
+                            WHERE lss.student_id = u.id
+                              AND lss.is_active AND ls.is_active
+                       )                     AS has_schedule
+                  FROM users u
+                  LEFT JOIN student_subscription s
+                         ON s.student_id = u.id AND s.ends_on IS NULL
+                  LEFT JOIN subscription_plan p ON p.id = s.plan_id
+                  LEFT JOIN pricing_group g ON g.id = s.pricing_group_id
+                 WHERE u.is_active
+                   AND EXISTS (
+                       SELECT 1 FROM user_roles ur
+                         JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
+                        WHERE ur.user_id = u.id
+                   )
+                 ORDER BY u.full_name, u.id
+                """
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def _overdue_student_ids(db: AsyncSession) -> set[int]:
+    """Кто просрочил оплату — множеством номеров.
+
+    Считает не этот модуль: зовём `payment_reminder_service.list_overdue`, тот же
+    источник, что рассылает письма о долге и красит бейдж в кабинете. Своя
+    SQL-версия «есть долг» стала бы четвёртой копией формулы «ручная сумма
+    важнее расчётной, поверх поправки» (см. `charge_service.charge_total_minor`)
+    и разъехалась бы с ней на первой же правке.
+    """
+    from app.services import payment_reminder_service  # noqa: PLC0415
+
+    return {debtor.student_id for debtor in await payment_reminder_service.list_overdue(db)}
+
+
+def _days_on_plan(plan_since: Optional[date], today: date) -> Optional[int]:
+    """Сколько дней человек на текущем тарифе. None — тарифа нет."""
+    if plan_since is None:
+        return None
+    return (today - plan_since).days
+
+
+async def plan_distribution(db: AsyncSession, *, today: Optional[date] = None) -> dict:
+    """Сколько учеников на каждом тарифе — и сколько без тарифа вовсе (tsk-619).
+
+    Отвечает на вопрос, которого не было у панели Фазы 9: та знает всё про
+    одного человека, но не про то, кого вообще стоит открыть. Между
+    авто-`demo` при регистрации и авто-`base` при появлении расписания человек
+    живёт неделями, и увидеть его было неоткуда.
+
+    Пустые тарифы остаются в выдаче строками с нулём: «на Self никого» — это
+    ответ, а не отсутствие ответа, и пропасть он не должен.
+
+    Разрезы выбраны по действию, которое за ними следует:
+
+    * **расписание** — им автоматика и меряет «стал учеником». `demo` с
+      расписанием значит, что перевод на `base` не сработал; `base` без
+      расписания — что человек перестал ходить, а деньги считаются;
+    * **давность на тарифе** — «сидит на Demo второй месяц» и «зарегистрировался
+      вчера» требуют разного, а выглядят в счётчике одинаково;
+    * **просроченная оплата** — берётся у того же источника, что и письма о
+      долге, поэтому спорить с рассылкой этот счётчик не может.
+
+    Сумма денег сюда НЕ идёт: её считает расписание, а не тариф (ADR-0006), и
+    второй ответ на вопрос «сколько должен» разъехался бы с экраном начислений.
+    """
+    today = today or date.today()
+    students = await _staff_student_rows(db)
+    overdue = await _overdue_student_ids(db)
+    plans = await list_plans(db)
+
+    #: Строка «без тарифа» стоит последней и существует всегда, даже пустая:
+    #: она и есть главный вопрос сводки, а исчезнув при нуле, была бы
+    #: неотличима от «мы это не считаем».
+    buckets: list[tuple[Optional[str], str, Optional[int], Optional[str]]] = [
+        (p["code"], p["name"], p["pricing_group_id"], p["pricing_group_name"])
+        for p in plans
+    ]
+
+    # Выключенный тариф, который у кого-то ещё ДЕЙСТВУЕТ, обязан остаться
+    # строкой. Витрина `list_plans` отдаёт только активные, и без этой добавки
+    # такой ученик не попал бы ни в одну строку: итог перестал бы сходиться с
+    # суммой, причём молча — а деактивируют тариф ровно тогда, когда хотят
+    # посмотреть, кто на нём ещё сидит. Имя и группа берутся из строки ученика:
+    # у него это группа ЕГО подписки, то есть ровно то, по чему ему считают
+    # месяц, — для выключенного тарифа это точнее справочника.
+    known = {code for code, *_ in buckets}
+    for student in students:
+        code = student["plan_code"]
+        if code is None or code in known:
+            continue
+        known.add(code)
+        buckets.append(
+            (
+                code,
+                f"{student['plan_name']} (тариф выключен)",
+                student["pricing_group_id"],
+                student["pricing_group_name"],
+            )
+        )
+
+    buckets.append((None, NO_PLAN_ROW_NAME, None, None))
+
+    rows: list[dict] = []
+    for code, name, group_id, group_name in buckets:
+        members = [s for s in students if s["plan_code"] == code]
+        days = [
+            d
+            for d in (_days_on_plan(s["plan_since"], today) for s in members)
+            if d is not None
+        ]
+        starts = [s["plan_since"] for s in members if s["plan_since"] is not None]
+        rows.append(
+            {
+                "plan_code": code,
+                "plan_name": name,
+                "pricing_group_id": group_id,
+                "pricing_group_name": group_name,
+                "students": len(members),
+                "with_schedule": sum(1 for s in members if s["has_schedule"]),
+                "without_schedule": sum(1 for s in members if not s["has_schedule"]),
+                "long_standing": sum(1 for d in days if d >= LONG_STANDING_DAYS),
+                "oldest_started_on": min(starts) if starts else None,
+                "with_overdue_payment": sum(
+                    1 for s in members if s["student_id"] in overdue
+                ),
+            }
+        )
+
+    return {
+        "as_of": today,
+        "total_students": len(students),
+        "long_standing_days": LONG_STANDING_DAYS,
+        "rows": rows,
+    }
+
+
+async def students_on_plan(
+    db: AsyncSession, plan_code: Optional[str], *, today: Optional[date] = None
+) -> list[dict]:
+    """Ученики одной строки сводки. `plan_code=None` — строка «без тарифа».
+
+    Существует ради того, чтобы сводка не осталась картинкой: из строки
+    открывается список людей, из списка — та же панель тарифа, что и раньше.
+
+    Дольше всех на тарифе — сверху: именно этот конец списка и есть повод для
+    работы («второй месяц на Demo»), а алфавит прячет его в середину.
+    """
+    today = today or date.today()
+    overdue = await _overdue_student_ids(db)
+    members = [s for s in await _staff_student_rows(db) if s["plan_code"] == plan_code]
+
+    result = [
+        {
+            "student_id": s["student_id"],
+            "full_name": s["full_name"],
+            "plan_since": s["plan_since"],
+            "days_on_plan": _days_on_plan(s["plan_since"], today),
+            "registered_on": s["registered_on"],
+            "has_schedule": s["has_schedule"],
+            "has_overdue_payment": s["student_id"] in overdue,
+        }
+        for s in members
+    ]
+    # Ключ сортировки развёрнут в функцию, а не `or -1`: у человека, которому
+    # тариф присвоили сегодня, `days_on_plan == 0` — а ноль ложен, и короткая
+    # запись отправила бы его в один разряд с «тарифа нет». None в сравнении с
+    # int роняет сортировку целиком, поэтому подменять его всё равно надо.
+    def _order(row: dict) -> tuple[int, str]:
+        days = row["days_on_plan"]
+        return (-1 if days is None else -days, row["full_name"] or "")
+
+    result.sort(key=_order)
+    return result
 
 
 async def student_state(db: AsyncSession, student_id: int) -> dict:
