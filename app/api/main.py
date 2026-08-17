@@ -107,6 +107,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # tsk-624: без этого списка браузер прячет заголовок от кода страницы —
+    # кабинет физически не может прочитать `Retry-After` из ответа 503 и
+    # отступить на указанную паузу. Заголовок сам по себе бесполезен, пока
+    # он не объявлен здесь.
+    expose_headers=["Retry-After"],
 )
 
 # Request-ID для сквозной трассировки (Этап 4 tsk-004). Регистрируется
@@ -176,6 +181,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": serializable_errors},
     )
+
+# tsk-624: перегрузка (кончились подключения к базе) — это 503 с паузой на
+# повтор, а не 500. Регистрируется по типу исключения, поэтому проверяется
+# РАНЬШЕ общего обработчика ниже: Starlette ищет обработчик по цепочке
+# наследования, а `Exception` живёт отдельным, самым внешним слоем.
+from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
+from app.api.error_handlers import db_pool_timeout_handler
+
+app.add_exception_handler(SQLAlchemyPoolTimeout, db_pool_timeout_handler)
+
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):

@@ -36,6 +36,13 @@ def _pool_setting(name: str, default: int) -> int:
         return default
     return value
 
+# tsk-624: сколько секунд запрос ждёт свободное подключение, прежде чем
+# сдаться. Значение совпадает с умолчанием SQLAlchemy, но вынесено наружу
+# намеренно: от него считается пауза `Retry-After` в ответе 503 при
+# исчерпании пула (`app/api/error_handlers.py`). Держать эту связь в коде
+# честнее, чем подбирать паузу «на глаз».
+DB_POOL_TIMEOUT_SECONDS: int = _pool_setting("DB_POOL_TIMEOUT", 30)
+
 # Асинхронный движок
 engine = create_async_engine(
     settings.database_url,
@@ -54,6 +61,7 @@ engine = create_async_engine(
     # конкретной установке можно через окружение, не трогая код.
     pool_size=_pool_setting("DB_POOL_SIZE", 10),
     max_overflow=_pool_setting("DB_MAX_OVERFLOW", 20),
+    pool_timeout=DB_POOL_TIMEOUT_SECONDS,
     # Подключение могло умереть, пока лежало в пуле (перезапуск БД, разрыв
     # сети). Без проверки это всплывает ошибкой у случайного пользователя.
     pool_pre_ping=True,

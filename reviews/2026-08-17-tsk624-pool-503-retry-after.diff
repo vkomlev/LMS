@@ -1,0 +1,376 @@
+diff --git a/app/api/error_handlers.py b/app/api/error_handlers.py
+new file mode 100644
+index 0000000..20fd967
+--- /dev/null
++++ b/app/api/error_handlers.py
+@@ -0,0 +1,85 @@
++"""Ответ сервиса на перегрузку: 503 вместо 500 (tsk-624).
++
++Разбор аварии 17.08.2026 (`reviews/2026-08-17-prod-pool-exhaustion-diagnosis.md`):
++когда все подключения к базе заняты, запрос ждёт свободное подключение
++`pool_timeout` секунд и падает. До этой правки такой отказ доходил до клиента
++как 500 — «ошибка на нашей стороне без объяснений». Кабинеты и боты на 500
++отвечают немедленными повторами, повторы ложатся в тот же затор, и волна
++затягивается: из 320 отказов заметная часть была именно повторами.
++
++503 с заголовком `Retry-After` говорит другое: «живы, но заняты, приди через
++N секунд». Это стандартный ответ на перегрузку, и клиент, который его
++понимает, отступает вместо долбления.
++
++Отличаем перегрузку от прочих отказов базы **по типу исключения**, а не по
++тексту сообщения: `sqlalchemy.exc.TimeoutError` возбуждается ровно в одном
++месте — когда пул не дождался свободного подключения. Это отдельный класс,
++он НЕ наследует встроенный `TimeoutError`, поэтому обычные таймауты (сетевые,
++`asyncio`) сюда не попадают. Остальные ошибки базы по-прежнему уходят в общий
++обработчик и отдают 500.
++"""
++from __future__ import annotations
++
++import logging
++import random
++
++from fastapi import Request, status
++from fastapi.responses import JSONResponse
++from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
++
++from app.db.session import DB_POOL_TIMEOUT_SECONDS
++
++logger = logging.getLogger("api.error_handlers")
++
++#: Текст для клиента. Внутреннюю причину (какой именно ресурс кончился)
++#: наружу не выносим — она есть в логе.
++_OVERLOAD_DETAIL = "Сервис временно перегружен. Повторите запрос позже."
++
++
++def retry_after_seconds(pool_timeout: float = DB_POOL_TIMEOUT_SECONDS) -> int:
++    """Сколько секунд просить клиента подождать перед повтором.
++
++    Отсчёт идёт от времени ожидания свободного подключения, а не от круглого
++    числа «на глаз»: запрос, получивший этот ответ, уже прождал `pool_timeout`
++    секунд, значит затор в разгаре и возвращаться через секунду бессмысленно.
++
++    Нижняя граница — половина ожидания, верхняя — полное ожидание. Разброс
++    внутри этого окна обязателен: без него все клиенты, получившие отказ в
++    одну секунду, вернутся тоже в одну секунду и устроят вторую волну
++    (клиентов у нас четыре бота плюс кабинеты, повторы у них синхронные).
++
++    :param pool_timeout: время ожидания свободного подключения, секунды.
++    :return: пауза в секундах, не меньше 1.
++    """
++    base = max(1, round(pool_timeout / 2))
++    return random.randint(base, base * 2)
++
++
++async def db_pool_timeout_handler(
++    request: Request,
++    exc: SQLAlchemyPoolTimeout,
++) -> JSONResponse:
++    """Отдать 503 с `Retry-After`, когда не осталось свободных подключений.
++
++    В лог пишем текст исключения целиком — в нём есть подстрока `QueuePool`,
++    по которой в разборе аварии считали масштаб и время волны
++    (`grep -c QueuePool /opt/lms/logs/app.log`). Этот след трогать нельзя:
++    следующая диагностика пойдёт по нему же.
++    """
++    retry_after = retry_after_seconds()
++    logger.error(
++        "db pool exhausted: %s | path=%s method=%s retry_after=%ds",
++        exc,
++        request.url.path,
++        request.method,
++        retry_after,
++    )
++    return JSONResponse(
++        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++        content={
++            "error": "service_unavailable",
++            "detail": _OVERLOAD_DETAIL,
++            "retry_after": retry_after,
++        },
++        headers={"Retry-After": str(retry_after)},
++    )
+diff --git a/app/api/main.py b/app/api/main.py
+index 9163650..096620f 100644
+--- a/app/api/main.py
++++ b/app/api/main.py
+@@ -107,6 +107,11 @@ app.add_middleware(
+     allow_credentials=True,
+     allow_methods=["*"],
+     allow_headers=["*"],
++    # tsk-624: без этого списка браузер прячет заголовок от кода страницы —
++    # кабинет физически не может прочитать `Retry-After` из ответа 503 и
++    # отступить на указанную паузу. Заголовок сам по себе бесполезен, пока
++    # он не объявлен здесь.
++    expose_headers=["Retry-After"],
+ )
+ 
+ # Request-ID для сквозной трассировки (Этап 4 tsk-004). Регистрируется
+@@ -177,6 +182,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
+         content={"detail": serializable_errors},
+     )
+ 
++# tsk-624: перегрузка (кончились подключения к базе) — это 503 с паузой на
++# повтор, а не 500. Регистрируется по типу исключения, поэтому проверяется
++# РАНЬШЕ общего обработчика ниже: Starlette ищет обработчик по цепочке
++# наследования, а `Exception` живёт отдельным, самым внешним слоем.
++from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
++from app.api.error_handlers import db_pool_timeout_handler
++
++app.add_exception_handler(SQLAlchemyPoolTimeout, db_pool_timeout_handler)
++
++
+ @app.exception_handler(Exception)
+ async def unhandled_exception_handler(request: Request, exc: Exception):
+     logger.error("Unhandled exception at %s: %s", request.url.path, exc, exc_info=True)
+diff --git a/app/db/audit_context.py b/app/db/audit_context.py
+index 9c44b2c..7b1b068 100644
+--- a/app/db/audit_context.py
++++ b/app/db/audit_context.py
+@@ -3,6 +3,7 @@ from __future__ import annotations
+ import logging
+ 
+ from sqlalchemy import text
++from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ logger = logging.getLogger(__name__)
+@@ -25,12 +26,22 @@ async def set_audit_actor(db: AsyncSession, actor: str) -> None:
+     Soft-fail: сбой простановки метки не должен ронять саму мутацию —
+     в худшем случае ``changed_by`` останется NULL, а ``db_role`` в
+     ``task_audit`` всё равно даст независимый от кооперации след.
++
++    Исключение из soft-fail — исчерпание пула подключений (tsk-624).
++    Это не «не удалось поставить метку», а «сервис перегружен»: работать
++    дальше всё равно нечем. Проглотив такой отказ, мы отправляли запрос
++    ждать свободное подключение ВТОРОЙ раз — уже в самом обработчике, — и
++    клиент получал ответ через два таймаута вместо одного (на стенде
++    4.1 секунды при ожидании 2 секунды). Под перегрузкой это ровно то, чего
++    делать нельзя: чем дольше клиент висит, тем больше запросов копится.
+     """
+     try:
+         await db.execute(
+             text("SELECT set_config('app.audit_actor', :actor, true)"),
+             {"actor": actor},
+         )
++    except SQLAlchemyPoolTimeout:
++        raise
+     except Exception:
+         logger.warning(
+             "tsk-114: не удалось установить app.audit_actor=%s", actor, exc_info=True
+diff --git a/app/db/session.py b/app/db/session.py
+index 96a3d2f..57f5ff7 100644
+--- a/app/db/session.py
++++ b/app/db/session.py
+@@ -36,6 +36,13 @@ def _pool_setting(name: str, default: int) -> int:
+         return default
+     return value
+ 
++# tsk-624: сколько секунд запрос ждёт свободное подключение, прежде чем
++# сдаться. Значение совпадает с умолчанием SQLAlchemy, но вынесено наружу
++# намеренно: от него считается пауза `Retry-After` в ответе 503 при
++# исчерпании пула (`app/api/error_handlers.py`). Держать эту связь в коде
++# честнее, чем подбирать паузу «на глаз».
++DB_POOL_TIMEOUT_SECONDS: int = _pool_setting("DB_POOL_TIMEOUT", 30)
++
+ # Асинхронный движок
+ engine = create_async_engine(
+     settings.database_url,
+@@ -54,6 +61,7 @@ engine = create_async_engine(
+     # конкретной установке можно через окружение, не трогая код.
+     pool_size=_pool_setting("DB_POOL_SIZE", 10),
+     max_overflow=_pool_setting("DB_MAX_OVERFLOW", 20),
++    pool_timeout=DB_POOL_TIMEOUT_SECONDS,
+     # Подключение могло умереть, пока лежало в пуле (перезапуск БД, разрыв
+     # сети). Без проверки это всплывает ошибкой у случайного пользователя.
+     pool_pre_ping=True,
+diff --git a/tests/test_db_pool_503_tsk624.py b/tests/test_db_pool_503_tsk624.py
+new file mode 100644
+index 0000000..383518d
+--- /dev/null
++++ b/tests/test_db_pool_503_tsk624.py
+@@ -0,0 +1,185 @@
++"""tsk-624: исчерпание пула подключений отдаёт 503 с `Retry-After`, а не 500.
++
++Покрытие:
++  1. retry_after_within_window        — пауза лежит между половиной ожидания и полным
++  2. retry_after_has_jitter           — есть разброс: подряд идущие значения не одинаковы
++  3. retry_after_never_below_one      — крошечное ожидание не даёт паузу 0 секунд
++  4. pool_timeout_returns_503         — отказ пула → 503 + заголовок Retry-After
++  5. retry_after_header_matches_body  — заголовок и поле тела согласованы
++  6. other_db_error_still_500         — прочие ошибки базы ведут себя как раньше (500)
++  7. log_keeps_queuepool_marker       — в логе остаётся подстрока QueuePool (по ней в
++     разборе аварии считали масштаб и время волны)
++  8. real_app_registers_handler       — обработчик подключён к боевому приложению
++  9. real_app_exposes_retry_after     — CORS отдаёт заголовок наружу, иначе браузер
++     его не увидит и отступить не сможет
++ 10. audit_actor_reraises_pool_timeout — метка аудита больше не глотает отказ пула
++     (иначе запрос ждёт подключение дважды и ответ приходит через два таймаута)
++ 11. audit_actor_still_soft_fails      — прочие сбои простановки метки по-прежнему
++     не роняют мутацию
++"""
++from __future__ import annotations
++
++import logging
++import sys
++from pathlib import Path
++
++import pytest
++from fastapi import FastAPI
++from httpx import AsyncClient, ASGITransport
++from sqlalchemy.exc import OperationalError
++from sqlalchemy.exc import TimeoutError as SQLAlchemyPoolTimeout
++
++project_root = Path(__file__).resolve().parent.parent
++if str(project_root) not in sys.path:
++    sys.path.insert(0, str(project_root))
++
++from app.api.error_handlers import db_pool_timeout_handler, retry_after_seconds
++
++#: Текст, который SQLAlchemy кладёт в исключение при исчерпании пула —
++#: снят с боевого лога 17.08.2026 и подтверждён прогоном на dev-БД.
++POOL_TIMEOUT_MESSAGE = (
++    "QueuePool limit of size 10 overflow 20 reached, "
++    "connection timed out, timeout 30.00"
++)
++
++
++# ─── расчёт паузы ─────────────────────────────────────────────────────────────
++
++def test_retry_after_within_window():
++    """Пауза не короче половины ожидания и не длиннее полного ожидания."""
++    for _ in range(200):
++        value = retry_after_seconds(pool_timeout=30)
++        assert 15 <= value <= 30, value
++
++
++def test_retry_after_has_jitter():
++    """Без разброса все клиенты вернулись бы одновременно и устроили вторую волну."""
++    values = {retry_after_seconds(pool_timeout=30) for _ in range(200)}
++    assert len(values) > 1, values
++
++
++def test_retry_after_never_below_one():
++    """Крошечное ожидание (тестовый стенд) не должно давать паузу 0 секунд."""
++    for pool_timeout in (0.5, 1, 2):
++        assert retry_after_seconds(pool_timeout=pool_timeout) >= 1
++
++
++# ─── поведение обработчика на изолированном приложении ────────────────────────
++
++def _build_test_app() -> FastAPI:
++    """Мини-приложение с тем же обработчиком, без роутов LMS."""
++    app = FastAPI()
++
++    @app.get("/pool-timeout")
++    async def _pool_timeout():
++        raise SQLAlchemyPoolTimeout(POOL_TIMEOUT_MESSAGE)
++
++    @app.get("/other-db-error")
++    async def _other_db_error():
++        raise OperationalError("SELECT 1", {}, Exception("соединение разорвано"))
++
++    app.add_exception_handler(SQLAlchemyPoolTimeout, db_pool_timeout_handler)
++    return app
++
++
++@pytest.fixture()
++def test_app() -> FastAPI:
++    return _build_test_app()
++
++
++@pytest.mark.asyncio
++async def test_pool_timeout_returns_503(test_app):
++    async with AsyncClient(
++        transport=ASGITransport(app=test_app), base_url="http://test"
++    ) as c:
++        r = await c.get("/pool-timeout")
++    assert r.status_code == 503, r.text
++    assert "Retry-After" in r.headers
++    assert int(r.headers["Retry-After"]) >= 1
++    assert r.json()["error"] == "service_unavailable"
++
++
++@pytest.mark.asyncio
++async def test_retry_after_header_matches_body(test_app):
++    """Клиент может взять паузу и из заголовка, и из тела — значения обязаны совпадать."""
++    async with AsyncClient(
++        transport=ASGITransport(app=test_app), base_url="http://test"
++    ) as c:
++        r = await c.get("/pool-timeout")
++    assert int(r.headers["Retry-After"]) == r.json()["retry_after"]
++
++
++@pytest.mark.asyncio
++async def test_other_db_error_still_500(test_app):
++    """Прочие ошибки базы обработчик не перехватывает — поведение прежнее."""
++    async with AsyncClient(
++        transport=ASGITransport(app=test_app, raise_app_exceptions=False),
++        base_url="http://test",
++    ) as c:
++        r = await c.get("/other-db-error")
++    assert r.status_code == 500, r.text
++    assert "Retry-After" not in r.headers
++
++
++@pytest.mark.asyncio
++async def test_log_keeps_queuepool_marker(test_app, caplog):
++    """След в логе терять нельзя: по подстроке QueuePool искали волну отказов."""
++    with caplog.at_level(logging.ERROR, logger="api.error_handlers"):
++        async with AsyncClient(
++            transport=ASGITransport(app=test_app), base_url="http://test"
++        ) as c:
++            await c.get("/pool-timeout")
++
++    records = [r for r in caplog.records if "QueuePool" in r.getMessage()]
++    assert records, [r.getMessage() for r in caplog.records]
++    message = records[0].getMessage()
++    assert "/pool-timeout" in message
++    assert "retry_after=" in message
++
++
++# ─── боевое приложение ────────────────────────────────────────────────────────
++
++def test_real_app_registers_handler():
++    from app.api.main import app
++
++    assert SQLAlchemyPoolTimeout in app.exception_handlers
++    assert app.exception_handlers[SQLAlchemyPoolTimeout] is db_pool_timeout_handler
++
++
++@pytest.mark.asyncio
++async def test_audit_actor_reraises_pool_timeout():
++    """Отказ пула должен пролетать наружу, а не гаситься как сбой метки аудита."""
++    from app.db.audit_context import set_audit_actor
++
++    class _DeadSession:
++        async def execute(self, *args, **kwargs):
++            raise SQLAlchemyPoolTimeout(POOL_TIMEOUT_MESSAGE)
++
++    with pytest.raises(SQLAlchemyPoolTimeout):
++        await set_audit_actor(_DeadSession(), "service:api_key")
++
++
++@pytest.mark.asyncio
++async def test_audit_actor_still_soft_fails(caplog):
++    """Прочие сбои метки по-прежнему только пишутся в лог и не роняют запрос."""
++    from app.db.audit_context import set_audit_actor
++
++    class _BrokenSession:
++        async def execute(self, *args, **kwargs):
++            raise RuntimeError("триггер аудита недоступен")
++
++    with caplog.at_level(logging.WARNING, logger="app.db.audit_context"):
++        await set_audit_actor(_BrokenSession(), "service:api_key")
++
++    assert any("app.audit_actor" in r.getMessage() for r in caplog.records)
++
++
++def test_real_app_exposes_retry_after():
++    """Браузер не отдаёт странице заголовок, не объявленный в expose_headers."""
++    from starlette.middleware.cors import CORSMiddleware
++
++    from app.api.main import app
++
++    cors = [m for m in app.user_middleware if m.cls is CORSMiddleware]
++    assert cors, "CORSMiddleware не подключён"
++    assert "Retry-After" in cors[0].kwargs["expose_headers"]
