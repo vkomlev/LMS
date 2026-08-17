@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user_session import UserSession
@@ -35,6 +35,56 @@ _REFRESH_GRACE_WINDOW_SECONDS = 20
 # DB-проверка window перестанет считать повтор легитимным — иначе валидная
 # гонка на границе окна ложно деградирует в "cache miss" вместо возврата пары.
 _REFRESH_GRACE_CACHE_TTL_SECONDS = _REFRESH_GRACE_WINDOW_SECONDS + 5
+
+# tsk-604: предохранитель обхода цепочки сессий. Цепочка — связный список
+# (каждая ротация ставит старой сессии `replaced_by_session_id`), циклов в ней
+# по построению не бывает: преемник всегда новее. Ограничение нужно, чтобы
+# рекурсивный обход не зациклился, если запись когда-нибудь окажется битой.
+_CHAIN_MAX_DEPTH = 1000
+
+# tsk-604: причины отказа продления, которые требуют внимания в проде.
+# Остальные (нет токена, протух, отозван логаутом) — штатный ход событий.
+_REFRESH_DENY_ALERTING_REASONS = frozenset({"replay", "grace_cache_miss"})
+
+
+def log_refresh_denied(
+    reason: str,
+    *,
+    user_id: int | None = None,
+    session_id: "UUID | None" = None,
+    detail: str | None = None,
+) -> None:
+    """Записать в лог приложения одну строку с причиной отказа продления (tsk-604).
+
+    Формат стабилен и рассчитан на поиск по логам прода::
+
+        auth.refresh denied reason=<код> user_id=<id|-> session_id=<uuid|-> [detail]
+
+    Коды причин:
+      * ``no_token`` — refresh-токен не передан (обычный незалогиненный визит);
+      * ``malformed`` — токен не является шестнадцатеричной строкой;
+      * ``unknown`` — такого токена нет в базе;
+      * ``expired`` — срок продления истёк;
+      * ``revoked`` — сессия отозвана логаутом или блокировкой, не ротацией;
+      * ``grace_cache_miss`` — распознанная гонка вкладок, но кэш окна пуст;
+      * ``replay`` — повтор вне окна благодати, подозрение на кражу токена.
+
+    Уровень: WARNING для ``replay`` и ``grace_cache_miss`` (нужен разбор),
+    INFO для остальных. Сам токен в лог не попадает никогда — только
+    идентификаторы пользователя и сессии.
+
+    До tsk-604 причину отказа не писал никто, и в разборе tsk-594 её
+    восстанавливали по размеру тела ответа в логе nginx (49 байт против 73).
+    """
+    level = logging.WARNING if reason in _REFRESH_DENY_ALERTING_REASONS else logging.INFO
+    logger.log(
+        level,
+        "auth.refresh denied reason=%s user_id=%s session_id=%s%s",
+        reason,
+        user_id if user_id is not None else "-",
+        session_id if session_id is not None else "-",
+        f" {detail}" if detail else "",
+    )
 
 
 def _hash_token(raw: bytes) -> bytes:
@@ -168,7 +218,16 @@ async def refresh_session(
     отозванным) токеном в течение `_REFRESH_GRACE_WINDOW_SECONDS` после ротации
     получает ТУ ЖЕ пару токенов преемника (идемпотентно, без создания ещё одной
     сессии), а не 401. Повтор ПОСЛЕ окна — подозрение на кражу/replay токена:
-    отзывается вся цепочка сессий пользователя.
+    отзывается цепочка сессий, к которой принадлежит этот токен.
+
+    tsk-604: радиус отзыва сужен с «все сессии пользователя» до «эта цепочка».
+    Угон по-прежнему обрубается — вор и владелец сидят в одной цепочке, кто бы
+    из них ни прислал повтор. А ученик, у которого повтор случился мирно
+    (браузер не сохранил новую пару cookie), теряет доступ только на этом
+    устройстве, а не на телефоне и ноутбуке разом. По фактам прода за две
+    недели оба срабатывания защиты были именно такими мирными повторами.
+
+    Любой отказ пишется в лог одной строкой через `log_refresh_denied`.
 
     `.with_for_update()` — без него два ПОДЛИННО одновременных запроса (не
     просто «второй чуть позже первого») читают `revoked_at IS NULL` ДО того,
@@ -181,6 +240,7 @@ async def refresh_session(
     try:
         raw = bytes.fromhex(refresh_token)
     except ValueError:
+        log_refresh_denied("malformed")
         return None
     rh = _hash_token(raw)
     result = await db.execute(
@@ -188,6 +248,7 @@ async def refresh_session(
     )
     old = result.scalar_one_or_none()
     if old is None:
+        log_refresh_denied("unknown")
         return None
 
     if old.revoked_at is None:
@@ -197,6 +258,7 @@ async def refresh_session(
         # исключалась; `create_session` всегда проставляет это поле —
         # NULL в проде не встречается, но ветка обязана вести себя так же).
         if old.refresh_expires_at is None or old.refresh_expires_at <= _now():
+            log_refresh_denied("expired", user_id=old.user_id, session_id=old.id)
             return None
         new_access, new_refresh, new_session = await create_session(
             db, old.user_id, old.ua_fingerprint
@@ -210,6 +272,7 @@ async def refresh_session(
     if old.replaced_by_session_id is None:
         # Токен отозван не через ротацию (logout/revoke_all) — обычный протухший
         # токен, поведение не меняется, признака кражи здесь нет.
+        log_refresh_denied("revoked", user_id=old.user_id, session_id=old.id)
         return None
 
     if _now() - old.revoked_at <= timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS):
@@ -225,20 +288,20 @@ async def refresh_session(
                 return cached["access_token"], cached["refresh_token"], new_session
         # Кэш недоступен/протух (Redis-сбой, граница TTL) — деградация без
         # сигнала о краже: это распознанная гонка, а не подозрительный replay.
-        logger.warning(
-            "refresh_session: grace-window cache miss user_id=%s session_id=%s",
-            old.user_id, old.id,
-        )
+        log_refresh_denied("grace_cache_miss", user_id=old.user_id, session_id=old.id)
         return None
 
     # Повторное использование токена ПОСЛЕ окна благодати — настоящий replay
-    # (кража токена): отзываем всю цепочку сессий пользователя.
-    logger.warning(
-        "refresh_session: replay refresh-токена вне окна благодати user_id=%s "
-        "session_id=%s revoked_at=%s — отзыв всей цепочки сессий",
-        old.user_id, old.id, old.revoked_at,
+    # (кража токена): отзываем цепочку сессий, которой принадлежит токен.
+    # Остальные устройства пользователя живут своими цепочками и не страдают
+    # (tsk-604).
+    revoked_count = await revoke_session_chain(db, old.id)
+    log_refresh_denied(
+        "replay",
+        user_id=old.user_id,
+        session_id=old.id,
+        detail=f"revoked_at={old.revoked_at} revoked_sessions={revoked_count}",
     )
-    await revoke_all_sessions(db, old.user_id)
     # Роутер коммитит транзакцию только на успешном пути (result is not None);
     # при result=None он сразу raise HTTPException(401) без commit — без явного
     # commit здесь отзыв цепочки откатится вместе с транзакцией при закрытии
@@ -255,6 +318,49 @@ async def revoke_session(db: AsyncSession, session_id: UUID) -> None:
         .values(revoked_at=_now())
     )
     await db.flush()
+
+
+async def revoke_session_chain(db: AsyncSession, session_id: UUID) -> int:
+    """Отозвать цепочку сессий, начиная с указанной и вперёд по ротациям (tsk-604).
+
+    Цепочка — связный список: при каждом продлении старой сессии проставляется
+    `replaced_by_session_id` на её преемника. Обход идёт только вперёд —
+    предшественники уже отозваны самой ротацией, а сессии других устройств
+    растут из своего входа и в эту цепочку не входят.
+
+    Один рекурсивный запрос вместо цикла обращений: отзыв должен быть
+    неделимым, иначе между шагами успевает проскочить очередное продление.
+    Отзываются только ещё живые строки — у отозванных сохраняется исходная
+    отметка времени. Глубина ограничена `_CHAIN_MAX_DEPTH` на случай битой
+    записи (циклов в цепочке по построению не бывает).
+
+    Возвращает число реально отозванных сессий.
+    """
+    result = await db.execute(
+        text(
+            """
+            WITH RECURSIVE chain(id, depth) AS (
+                SELECT CAST(:start_id AS uuid), 0
+                UNION ALL
+                SELECT s.replaced_by_session_id, c.depth + 1
+                  FROM user_session AS s
+                  JOIN chain AS c ON s.id = c.id
+                 WHERE s.replaced_by_session_id IS NOT NULL
+                   AND c.depth < :max_depth
+            )
+            UPDATE user_session AS t
+               SET revoked_at = :now
+              FROM chain
+             WHERE t.id = chain.id
+               AND t.revoked_at IS NULL
+            RETURNING t.id
+            """
+        ),
+        {"start_id": str(session_id), "max_depth": _CHAIN_MAX_DEPTH, "now": _now()},
+    )
+    revoked = len(result.fetchall())
+    await db.flush()
+    return revoked
 
 
 async def revoke_all_sessions(db: AsyncSession, user_id: int) -> None:

@@ -1,0 +1,452 @@
+diff --git a/app/api/v1/auth/session.py b/app/api/v1/auth/session.py
+index 5c72a2b..7b80499 100644
+--- a/app/api/v1/auth/session.py
++++ b/app/api/v1/auth/session.py
+@@ -41,6 +41,9 @@ async def refresh(
+     """
+     incoming_refresh = refresh_cookie or (body.refresh_token if body else None)
+     if not incoming_refresh:
++        # tsk-604: причину отказа пишем в лог приложения. Раньше её приходилось
++        # угадывать по размеру тела ответа в логе nginx.
++        session_service.log_refresh_denied("no_token")
+         raise HTTPException(
+             status.HTTP_401_UNAUTHORIZED, "refresh_token отсутствует"
+         )
+diff --git a/app/services/auth/session_service.py b/app/services/auth/session_service.py
+index 85629bf..92cd9ee 100644
+--- a/app/services/auth/session_service.py
++++ b/app/services/auth/session_service.py
+@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
+ from typing import TYPE_CHECKING, Any
+ from uuid import UUID
+ 
+-from sqlalchemy import select, update
++from sqlalchemy import select, text, update
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+ from app.models.user_session import UserSession
+@@ -36,6 +36,56 @@ _REFRESH_GRACE_WINDOW_SECONDS = 20
+ # гонка на границе окна ложно деградирует в "cache miss" вместо возврата пары.
+ _REFRESH_GRACE_CACHE_TTL_SECONDS = _REFRESH_GRACE_WINDOW_SECONDS + 5
+ 
++# tsk-604: предохранитель обхода цепочки сессий. Цепочка — связный список
++# (каждая ротация ставит старой сессии `replaced_by_session_id`), циклов в ней
++# по построению не бывает: преемник всегда новее. Ограничение нужно, чтобы
++# рекурсивный обход не зациклился, если запись когда-нибудь окажется битой.
++_CHAIN_MAX_DEPTH = 1000
++
++# tsk-604: причины отказа продления, которые требуют внимания в проде.
++# Остальные (нет токена, протух, отозван логаутом) — штатный ход событий.
++_REFRESH_DENY_ALERTING_REASONS = frozenset({"replay", "grace_cache_miss"})
++
++
++def log_refresh_denied(
++    reason: str,
++    *,
++    user_id: int | None = None,
++    session_id: "UUID | None" = None,
++    detail: str | None = None,
++) -> None:
++    """Записать в лог приложения одну строку с причиной отказа продления (tsk-604).
++
++    Формат стабилен и рассчитан на поиск по логам прода::
++
++        auth.refresh denied reason=<код> user_id=<id|-> session_id=<uuid|-> [detail]
++
++    Коды причин:
++      * ``no_token`` — refresh-токен не передан (обычный незалогиненный визит);
++      * ``malformed`` — токен не является шестнадцатеричной строкой;
++      * ``unknown`` — такого токена нет в базе;
++      * ``expired`` — срок продления истёк;
++      * ``revoked`` — сессия отозвана логаутом или блокировкой, не ротацией;
++      * ``grace_cache_miss`` — распознанная гонка вкладок, но кэш окна пуст;
++      * ``replay`` — повтор вне окна благодати, подозрение на кражу токена.
++
++    Уровень: WARNING для ``replay`` и ``grace_cache_miss`` (нужен разбор),
++    INFO для остальных. Сам токен в лог не попадает никогда — только
++    идентификаторы пользователя и сессии.
++
++    До tsk-604 причину отказа не писал никто, и в разборе tsk-594 её
++    восстанавливали по размеру тела ответа в логе nginx (49 байт против 73).
++    """
++    level = logging.WARNING if reason in _REFRESH_DENY_ALERTING_REASONS else logging.INFO
++    logger.log(
++        level,
++        "auth.refresh denied reason=%s user_id=%s session_id=%s%s",
++        reason,
++        user_id if user_id is not None else "-",
++        session_id if session_id is not None else "-",
++        f" {detail}" if detail else "",
++    )
++
+ 
+ def _hash_token(raw: bytes) -> bytes:
+     return hashlib.sha256(raw).digest()
+@@ -168,7 +218,16 @@ async def refresh_session(
+     отозванным) токеном в течение `_REFRESH_GRACE_WINDOW_SECONDS` после ротации
+     получает ТУ ЖЕ пару токенов преемника (идемпотентно, без создания ещё одной
+     сессии), а не 401. Повтор ПОСЛЕ окна — подозрение на кражу/replay токена:
+-    отзывается вся цепочка сессий пользователя.
++    отзывается цепочка сессий, к которой принадлежит этот токен.
++
++    tsk-604: радиус отзыва сужен с «все сессии пользователя» до «эта цепочка».
++    Угон по-прежнему обрубается — вор и владелец сидят в одной цепочке, кто бы
++    из них ни прислал повтор. А ученик, у которого повтор случился мирно
++    (браузер не сохранил новую пару cookie), теряет доступ только на этом
++    устройстве, а не на телефоне и ноутбуке разом. По фактам прода за две
++    недели оба срабатывания защиты были именно такими мирными повторами.
++
++    Любой отказ пишется в лог одной строкой через `log_refresh_denied`.
+ 
+     `.with_for_update()` — без него два ПОДЛИННО одновременных запроса (не
+     просто «второй чуть позже первого») читают `revoked_at IS NULL` ДО того,
+@@ -181,6 +240,7 @@ async def refresh_session(
+     try:
+         raw = bytes.fromhex(refresh_token)
+     except ValueError:
++        log_refresh_denied("malformed")
+         return None
+     rh = _hash_token(raw)
+     result = await db.execute(
+@@ -188,6 +248,7 @@ async def refresh_session(
+     )
+     old = result.scalar_one_or_none()
+     if old is None:
++        log_refresh_denied("unknown")
+         return None
+ 
+     if old.revoked_at is None:
+@@ -197,6 +258,7 @@ async def refresh_session(
+         # исключалась; `create_session` всегда проставляет это поле —
+         # NULL в проде не встречается, но ветка обязана вести себя так же).
+         if old.refresh_expires_at is None or old.refresh_expires_at <= _now():
++            log_refresh_denied("expired", user_id=old.user_id, session_id=old.id)
+             return None
+         new_access, new_refresh, new_session = await create_session(
+             db, old.user_id, old.ua_fingerprint
+@@ -210,6 +272,7 @@ async def refresh_session(
+     if old.replaced_by_session_id is None:
+         # Токен отозван не через ротацию (logout/revoke_all) — обычный протухший
+         # токен, поведение не меняется, признака кражи здесь нет.
++        log_refresh_denied("revoked", user_id=old.user_id, session_id=old.id)
+         return None
+ 
+     if _now() - old.revoked_at <= timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS):
+@@ -225,20 +288,20 @@ async def refresh_session(
+                 return cached["access_token"], cached["refresh_token"], new_session
+         # Кэш недоступен/протух (Redis-сбой, граница TTL) — деградация без
+         # сигнала о краже: это распознанная гонка, а не подозрительный replay.
+-        logger.warning(
+-            "refresh_session: grace-window cache miss user_id=%s session_id=%s",
+-            old.user_id, old.id,
+-        )
++        log_refresh_denied("grace_cache_miss", user_id=old.user_id, session_id=old.id)
+         return None
+ 
+     # Повторное использование токена ПОСЛЕ окна благодати — настоящий replay
+-    # (кража токена): отзываем всю цепочку сессий пользователя.
+-    logger.warning(
+-        "refresh_session: replay refresh-токена вне окна благодати user_id=%s "
+-        "session_id=%s revoked_at=%s — отзыв всей цепочки сессий",
+-        old.user_id, old.id, old.revoked_at,
++    # (кража токена): отзываем цепочку сессий, которой принадлежит токен.
++    # Остальные устройства пользователя живут своими цепочками и не страдают
++    # (tsk-604).
++    revoked_count = await revoke_session_chain(db, old.id)
++    log_refresh_denied(
++        "replay",
++        user_id=old.user_id,
++        session_id=old.id,
++        detail=f"revoked_at={old.revoked_at} revoked_sessions={revoked_count}",
+     )
+-    await revoke_all_sessions(db, old.user_id)
+     # Роутер коммитит транзакцию только на успешном пути (result is not None);
+     # при result=None он сразу raise HTTPException(401) без commit — без явного
+     # commit здесь отзыв цепочки откатится вместе с транзакцией при закрытии
+@@ -257,6 +320,49 @@ async def revoke_session(db: AsyncSession, session_id: UUID) -> None:
+     await db.flush()
+ 
+ 
++async def revoke_session_chain(db: AsyncSession, session_id: UUID) -> int:
++    """Отозвать цепочку сессий, начиная с указанной и вперёд по ротациям (tsk-604).
++
++    Цепочка — связный список: при каждом продлении старой сессии проставляется
++    `replaced_by_session_id` на её преемника. Обход идёт только вперёд —
++    предшественники уже отозваны самой ротацией, а сессии других устройств
++    растут из своего входа и в эту цепочку не входят.
++
++    Один рекурсивный запрос вместо цикла обращений: отзыв должен быть
++    неделимым, иначе между шагами успевает проскочить очередное продление.
++    Отзываются только ещё живые строки — у отозванных сохраняется исходная
++    отметка времени. Глубина ограничена `_CHAIN_MAX_DEPTH` на случай битой
++    записи (циклов в цепочке по построению не бывает).
++
++    Возвращает число реально отозванных сессий.
++    """
++    result = await db.execute(
++        text(
++            """
++            WITH RECURSIVE chain(id, depth) AS (
++                SELECT CAST(:start_id AS uuid), 0
++                UNION ALL
++                SELECT s.replaced_by_session_id, c.depth + 1
++                  FROM user_session AS s
++                  JOIN chain AS c ON s.id = c.id
++                 WHERE s.replaced_by_session_id IS NOT NULL
++                   AND c.depth < :max_depth
++            )
++            UPDATE user_session AS t
++               SET revoked_at = :now
++              FROM chain
++             WHERE t.id = chain.id
++               AND t.revoked_at IS NULL
++            RETURNING t.id
++            """
++        ),
++        {"start_id": str(session_id), "max_depth": _CHAIN_MAX_DEPTH, "now": _now()},
++    )
++    revoked = len(result.fetchall())
++    await db.flush()
++    return revoked
++
++
+ async def revoke_all_sessions(db: AsyncSession, user_id: int) -> None:
+     """Отозвать все активные сессии пользователя."""
+     await db.execute(
+diff --git a/tests/test_session_refresh_grace_window_tsk235.py b/tests/test_session_refresh_grace_window_tsk235.py
+index 8493312..d2ea363 100644
+--- a/tests/test_session_refresh_grace_window_tsk235.py
++++ b/tests/test_session_refresh_grace_window_tsk235.py
+@@ -6,8 +6,9 @@ refresh тем же (уже отозванным ротацией) токено
+ 
+ - Повтор в течение окна благодати → та же пара токенов преемника, БЕЗ
+   создания ещё одной сессии (идемпотентность, цепочка не размножается).
+-- Повтор ПОСЛЕ окна благодати → 401 + отзыв всей цепочки сессий пользователя
+-  (детект кражи/replay токена сохраняется).
++- Повтор ПОСЛЕ окна благодати → 401 + отзыв цепочки сессий, которой принадлежит
++  токен (детект кражи/replay токена сохраняется; радиус сужен в tsk-604 —
++  см. test_session_refresh_replay_scope_tsk604.py).
+ - Токен отозван НЕ через ротацию (нет replaced_by_session_id) → обычный 401,
+   поведение не меняется, цепочка не трогается (ложного срабатывания нет).
+ - Без Redis (redis=None) — окно благодати недоступно, но обычная ротация
+@@ -82,7 +83,7 @@ async def test_concurrent_refresh_within_window_returns_same_pair(db, redis_clie
+ @pytest.mark.asyncio
+ async def test_replay_after_grace_window_revokes_chain(db, redis_client):
+     """Повтор отозванного токена ПОСЛЕ окна благодати — подозрение на кражу:
+-    401 + отзыв всей цепочки сессий пользователя (включая преемника)."""
++    401 + отзыв цепочки этого токена (включая преемника)."""
+     from app.services.auth.session_service import (
+         _REFRESH_GRACE_WINDOW_SECONDS,
+         _now,
+diff --git a/tests/test_session_refresh_replay_scope_tsk604.py b/tests/test_session_refresh_replay_scope_tsk604.py
+new file mode 100644
+index 0000000..a5f92d5
+--- /dev/null
++++ b/tests/test_session_refresh_replay_scope_tsk604.py
+@@ -0,0 +1,206 @@
++"""tsk-604: соразмерность отзыва при повторе refresh-токена + причина отказа в логе.
++
++До tsk-604 повтор refresh-токена позже окна благодати (tsk-235) вызывал
++`revoke_all_sessions` — ученика выкидывало со ВСЕХ устройств сразу. По фактам
++прода за две недели защита сработала дважды, и оба раза не на воре, а на живом
++ученике: браузер не сохранил новую пару cookie (кросс-домен, закрыто в tsk-603).
++
++Теперь гасится только та цепочка сессий, которой принадлежит токен. Угон это
++по-прежнему обрубает — вор и владелец сидят в одной цепочке. Покрывается:
++
++- Повтор гасит свою цепочку целиком (включая преемника преемника), но сессия
++  другого устройства того же ученика остаётся живой.
++- Причина отказа продления пишется в лог одной строкой для каждого класса:
++  no_token / malformed / unknown / expired / revoked / replay.
++"""
++from __future__ import annotations
++
++import logging
++from datetime import timedelta
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++
++pytestmark = pytest.mark.asyncio
++
++_SERVICE_LOGGER = "app.services.auth.session_service"
++
++
++async def _get_existing_user_id(db) -> int:
++    uid = (await db.execute(text("SELECT MIN(id) FROM users"))).scalar()
++    if uid is None:
++        pytest.skip("Нет пользователей в БД")
++    return uid
++
++
++@pytest_asyncio.fixture()
++async def user_id(db) -> int:
++    return await _get_existing_user_id(db)
++
++
++def _denied_reasons(caplog) -> list[str]:
++    """Коды причин отказа из строк лога сервиса сессий."""
++    return [
++        record.getMessage().split("reason=")[1].split(" ")[0]
++        for record in caplog.records
++        if record.name == _SERVICE_LOGGER and "auth.refresh denied" in record.getMessage()
++    ]
++
++
++async def test_replay_revokes_only_own_chain(db, user_id):
++    """Мирный повтор на одном устройстве не отбирает доступ на другом.
++
++    Ученик вошёл с телефона и с ноутбука — это две независимые цепочки. Повтор
++    токена ноутбука гасит цепочку ноутбука, телефон продолжает работать.
++    """
++    from app.services.auth.session_service import (
++        _REFRESH_GRACE_WINDOW_SECONDS,
++        _now,
++        create_session,
++        refresh_session,
++        validate_session,
++    )
++
++    phone_access, _phone_refresh, _phone_session = await create_session(db, user_id=user_id)
++    laptop_access, laptop_refresh, laptop_session = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    rotated = await refresh_session(db, laptop_refresh, None)
++    assert rotated is not None
++    successor_access, _successor_refresh, _successor_session = rotated
++
++    # Окно благодати истекло (без реального ожидания).
++    laptop_session.revoked_at = _now() - timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS + 1)
++    await db.flush()
++
++    assert await refresh_session(db, laptop_refresh, None) is None
++
++    # Цепочка ноутбука мертва...
++    assert await validate_session(db, laptop_access) is None
++    assert await validate_session(db, successor_access) is None
++    # ...а телефон не тронут: до tsk-604 здесь был None (revoke_all_sessions).
++    assert await validate_session(db, phone_access) is not None, (
++        "повтор токена на одном устройстве не должен отбирать доступ на других"
++    )
++
++
++async def test_replay_revokes_chain_deeper_than_one_hop(db, user_id):
++    """Гасится вся цепочка вперёд, а не только ближайший преемник."""
++    from app.services.auth.session_service import (
++        _REFRESH_GRACE_WINDOW_SECONDS,
++        _now,
++        create_session,
++        refresh_session,
++        validate_session,
++    )
++
++    _access, refresh_1, session_1 = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    first = await refresh_session(db, refresh_1, None)
++    assert first is not None
++    access_2, refresh_2, _session_2 = first
++
++    second = await refresh_session(db, refresh_2, None)
++    assert second is not None
++    access_3, _refresh_3, _session_3 = second
++
++    session_1.revoked_at = _now() - timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS + 1)
++    await db.flush()
++
++    # Повтор самого первого токена — цепочка уже длиной в три звена.
++    assert await refresh_session(db, refresh_1, None) is None
++
++    assert await validate_session(db, access_2) is None
++    assert await validate_session(db, access_3) is None, (
++        "дальний преемник в цепочке остался живым — обход цепочки не доходит до конца"
++    )
++
++
++async def test_replay_logs_reason_and_scope(db, user_id, caplog):
++    """Повтор пишет в лог одну строку с причиной и числом погашенных сессий."""
++    from app.services.auth.session_service import (
++        _REFRESH_GRACE_WINDOW_SECONDS,
++        _now,
++        create_session,
++        refresh_session,
++    )
++
++    _access, refresh_token, session_obj = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    assert await refresh_session(db, refresh_token, None) is not None
++    session_obj.revoked_at = _now() - timedelta(seconds=_REFRESH_GRACE_WINDOW_SECONDS + 1)
++    await db.flush()
++
++    with caplog.at_level(logging.INFO, logger=_SERVICE_LOGGER):
++        assert await refresh_session(db, refresh_token, None) is None
++
++    replay_lines = [
++        record.getMessage()
++        for record in caplog.records
++        if record.name == _SERVICE_LOGGER and "reason=replay" in record.getMessage()
++    ]
++    assert len(replay_lines) == 1, f"ожидалась ровно одна строка о повторе, получено {replay_lines}"
++    line = replay_lines[0]
++    assert f"user_id={user_id}" in line
++    assert "revoked_sessions=1" in line, f"не записано число погашенных сессий: {line}"
++    assert refresh_token not in line, "сам токен не должен попадать в лог"
++
++
++async def test_denied_reason_logged_for_malformed_and_unknown(db, caplog):
++    """Кривой и неизвестный токен различимы в логе, а не сливаются в один 401."""
++    from app.services.auth.session_service import refresh_session
++
++    with caplog.at_level(logging.INFO, logger=_SERVICE_LOGGER):
++        assert await refresh_session(db, "не-шестнадцатеричная-строка", None) is None
++        assert await refresh_session(db, "ab" * 32, None) is None
++
++    assert _denied_reasons(caplog) == ["malformed", "unknown"]
++
++
++async def test_denied_reason_logged_for_expired_and_revoked(db, user_id, caplog):
++    """Истёкший срок продления и отзыв логаутом — разные причины в логе."""
++    from app.services.auth.session_service import (
++        _now,
++        create_session,
++        refresh_session,
++        revoke_session,
++    )
++
++    _a1, refresh_expired, session_expired = await create_session(db, user_id=user_id)
++    _a2, refresh_revoked, session_revoked = await create_session(db, user_id=user_id)
++    await db.commit()
++
++    session_expired.refresh_expires_at = _now() - timedelta(seconds=1)
++    await db.flush()
++    await revoke_session(db, session_revoked.id)
++
++    with caplog.at_level(logging.INFO, logger=_SERVICE_LOGGER):
++        assert await refresh_session(db, refresh_expired, None) is None
++        assert await refresh_session(db, refresh_revoked, None) is None
++
++    assert _denied_reasons(caplog) == ["expired", "revoked"]
++
++
++async def test_missing_token_logged_by_router(client, caplog):
++    """Запрос без refresh-cookie отдаёт 401 и оставляет причину в логе.
++
++    В tsk-594 этот случай отличали от «токен недействителен» по размеру тела
++    ответа в логе nginx (49 байт против 73) — костыль, который тут и убирается.
++    """
++    router_logger = "app.api.v1.auth.session"
++    with caplog.at_level(logging.INFO):
++        response = await client.post("/api/v1/auth/session/refresh")
++
++    assert response.status_code == 401
++    reasons = [
++        record.getMessage()
++        for record in caplog.records
++        if record.name in (_SERVICE_LOGGER, router_logger)
++        and "auth.refresh denied" in record.getMessage()
++    ]
++    assert any("reason=no_token" in line for line in reasons), (
++        f"причина отказа не записана в лог: {reasons}"
++    )

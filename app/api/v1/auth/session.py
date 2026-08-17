@@ -41,6 +41,9 @@ async def refresh(
     """
     incoming_refresh = refresh_cookie or (body.refresh_token if body else None)
     if not incoming_refresh:
+        # tsk-604: причину отказа пишем в лог приложения. Раньше её приходилось
+        # угадывать по размеру тела ответа в логе nginx.
+        session_service.log_refresh_denied("no_token")
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "refresh_token отсутствует"
         )
