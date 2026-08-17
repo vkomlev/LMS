@@ -50,7 +50,7 @@ from app.services.course_dependency_state_cron_service import (
 )
 from app.services.learning_engine_service import upsert_course_state
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.no_tx_isolation]
+pytestmark = [pytest.mark.no_tx_isolation]
 
 _settings = Settings()
 
@@ -367,34 +367,80 @@ async def _lock_key_is_free(engine) -> bool:
         return taken
 
 
-async def test_cron_tick_releases_worker_lock(dep_scene):
-    """Тик обязан СНЯТЬ блокировку одного worker'а за собой.
+def test_cron_worker_guard_is_transaction_scoped():
+    """Сторож одного worker'а обязан быть ТРАНЗАКЦИОННЫМ, а не сессионным.
 
-    Блокировка стала сессионной (тик коммитит по ученику, транзакционная
-    слетела бы на первом коммите) — а сессионная сама не снимается: она живёт
-    до закрытия соединения, а соединение возвращается в пул. Забытый
-    `pg_advisory_unlock` тихо выключил бы фоновый пересчёт навсегда, до
-    перезапуска сервиса, и это не проявилось бы ни одной ошибкой.
+    Это регрессия на дефект первой версии правки tsk-626, найденный только на
+    проде. Сессионная блокировка (`pg_try_advisory_lock`) привязана к
+    КОНКРЕТНОМУ соединению, а `Session` после коммита возвращает соединение в
+    пул и на следующем запросе берёт свободное. Пока пул свободен (dev,
+    одиночный тест) это то же самое соединение, и всё выглядит исправным; на
+    боевом пуле — почти всегда другое. Итог замера на проде 17.08 19:51:
+    блокировка осталась висеть на первом соединении, `pg_advisory_unlock`
+    отработал вхолостую на чужом, следующий тик счёл бы, что работает другой
+    worker, — фоновый пересчёт замолчал бы до перезапуска сервиса, не выдав ни
+    одной ошибки.
 
-    Проверка идёт по ДОЛГОЖИВУЩЕМУ соединению: на `NullPool` соединение
-    закрывается вместе с сессией и снимает блокировку само, то есть утечка
-    осталась бы незамеченной.
+    Поведенческий тест эту разницу ловит только при удачном совпадении: чтобы
+    соединение сменилось, кто-то должен успеть забрать его между коммитом и
+    следующим запросом. Поэтому правило закреплено ТЕКСТОМ — как и сторож
+    списка исключений из изоляции (`test_tx_isolation_optout.py`).
     """
-    engine = create_async_engine(_settings.database_url, poolclass=NullPool)
-    probe = create_async_engine(_settings.database_url, poolclass=NullPool)
-    conn = await engine.connect()
-    try:
-        factory = async_sessionmaker(bind=conn, expire_on_commit=False)
-        summary = await course_dependency_state_cron_tick(session_factory=factory)
-        assert summary["locked"] is True, summary
-        assert await _lock_key_is_free(probe), (
-            "тик не снял сессионную блокировку worker'а — фоновый пересчёт "
-            "останется выключенным до перезапуска сервиса"
+    source = (
+        project_root / "app" / "services" / "course_dependency_state_cron_service.py"
+    ).read_text(encoding="utf-8")
+
+    assert "pg_try_advisory_xact_lock" in source, (
+        "сторож одного worker'а должен брать ТРАНЗАКЦИОННУЮ блокировку"
+    )
+    for forbidden in ("pg_try_advisory_lock(", "pg_advisory_unlock("):
+        assert forbidden not in source.replace("pg_try_advisory_xact_lock(", ""), (
+            f"{forbidden} — сессионная блокировка. Она привязана к соединению, "
+            "а соединение из пула за сессией не закреплено: блокировка утечёт, "
+            "и фоновый пересчёт молча выключится"
         )
+
+
+async def test_cron_tick_leaves_no_worker_lock(dep_scene):
+    """После тика ключ worker'а свободен — на пуле, как на бою.
+
+    Движок с `QueuePool` (а не `NullPool`) здесь принципиален: `NullPool`
+    закрывает соединение вместе с сессией и снимает любую утечку сам, то есть
+    прячет ровно тот дефект, который проверяется. Пул при этом намеренно
+    «размешивается» посторонними потребителями — так рабочая сессия после
+    коммита получает не то соединение, что раньше.
+
+    Проверка обязана идти ДО `engine.dispose()`: dispose закрывает соединения
+    и снимает утечку.
+    """
+    engine = create_async_engine(_settings.database_url, pool_size=5, max_overflow=5)
+    probe = create_async_engine(_settings.database_url, poolclass=NullPool)
+    factory = async_sessionmaker(bind=engine, expire_on_commit=False)
+
+    stop = asyncio.Event()
+
+    async def churn() -> None:
+        """Посторонний потребитель пула — забирает освободившиеся соединения."""
+        while not stop.is_set():
+            conn = await engine.connect()
+            await conn.execute(text("SELECT 1"))
+            await conn.close()
+            await asyncio.sleep(0)
+
+    churner = asyncio.create_task(churn())
+    try:
+        summary = await course_dependency_state_cron_tick(session_factory=factory)
     finally:
-        await conn.close()
-        await engine.dispose()
-        await probe.dispose()
+        stop.set()
+        await churner
+
+    assert summary["locked"] is True, summary
+    assert await _lock_key_is_free(probe), (
+        "после тика ключ одного worker'а остался занят — следующий тик решит, "
+        "что работу делает другой worker, и фоновый пересчёт выключится"
+    )
+    await engine.dispose()
+    await probe.dispose()
 
 
 async def test_cron_tick_commits_per_student(dep_scene):
