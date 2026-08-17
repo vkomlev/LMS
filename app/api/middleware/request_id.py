@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import os
+import time
 import uuid
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -25,9 +27,29 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 
+logger = logging.getLogger(__name__)
+
 _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
+
+# tsk-621: порог, после которого запрос попадает в лог как медленный.
+# Инцидент 17.08.2026 разбирали вслепую именно потому, что длительность
+# запроса нигде не фиксировалась: по логам было видно, что API стоит, но не
+# видно, какой обработчик его держит. Значение правится через окружение.
+_SLOW_REQUEST_SECONDS = float(os.getenv("SLOW_REQUEST_SECONDS", "3"))
+
+
+def _log_if_slow(request: Request, elapsed: float) -> None:
+    """Записать в лог запрос, который обрабатывался дольше порога."""
+    if elapsed < _SLOW_REQUEST_SECONDS:
+        return
+    logger.warning(
+        "slow request %.1fs %s %s",
+        elapsed,
+        request.method,
+        request.url.path,
+    )
 
 
 def get_request_id() -> str | None:
@@ -42,11 +64,13 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         incoming = request.headers.get("x-request-id")
         rid = incoming if incoming else str(uuid.uuid4())
         token = _request_id_ctx.set(rid)
+        started = time.perf_counter()
         try:
             response = await call_next(request)
             response.headers["X-Request-ID"] = rid
             return response
         finally:
+            _log_if_slow(request, time.perf_counter() - started)
             _request_id_ctx.reset(token)
 
 

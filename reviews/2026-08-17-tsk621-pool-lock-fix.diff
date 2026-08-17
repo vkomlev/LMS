@@ -1,0 +1,204 @@
+diff --git a/.env.example b/.env.example
+index 29e55c8..6b1f686 100644
+--- a/.env.example
++++ b/.env.example
+@@ -6,6 +6,18 @@
+ # URL подключения к БД (SQLAlchemy AsyncPG)
+ DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/Learn
+ 
++# tsk-621: размер пула подключений на один рабочий процесс. По умолчанию
++# 10 постоянных + 20 сверх лимита = 30. Лимит подключений на сервере БД общий
++# для всех баз (на проде 200, там же живут три полигонных сервиса), поэтому
++# поднимать стоит осознанно: суммарно все процессы должны укладываться в лимит
++# с запасом. Пустое значение или мусор — берутся значения по умолчанию.
++# DB_POOL_SIZE=10
++# DB_MAX_OVERFLOW=20
++
++# tsk-621: порог в секундах, после которого запрос попадает в лог как
++# медленный (строка «slow request»). По умолчанию 3.
++# SLOW_REQUEST_SECONDS=3
++
+ # Список service API-ключей через запятую (без пробелов).
+ # Используют: TG_LMS bots (poller, teacher dialog), ContentBackbone CLI,
+ # SPW E2E live spec (Y-4 S5 через /auth/test/issue-session).
+diff --git a/app/api/middleware/request_id.py b/app/api/middleware/request_id.py
+index 2ed199b..0feaa98 100644
+--- a/app/api/middleware/request_id.py
++++ b/app/api/middleware/request_id.py
+@@ -18,6 +18,8 @@ from __future__ import annotations
+ 
+ import contextvars
+ import logging
++import os
++import time
+ import uuid
+ 
+ from starlette.middleware.base import BaseHTTPMiddleware
+@@ -25,10 +27,30 @@ from starlette.requests import Request
+ from starlette.responses import Response
+ 
+ 
++logger = logging.getLogger(__name__)
++
+ _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+     "request_id", default=None
+ )
+ 
++# tsk-621: порог, после которого запрос попадает в лог как медленный.
++# Инцидент 17.08.2026 разбирали вслепую именно потому, что длительность
++# запроса нигде не фиксировалась: по логам было видно, что API стоит, но не
++# видно, какой обработчик его держит. Значение правится через окружение.
++_SLOW_REQUEST_SECONDS = float(os.getenv("SLOW_REQUEST_SECONDS", "3"))
++
++
++def _log_if_slow(request: Request, elapsed: float) -> None:
++    """Записать в лог запрос, который обрабатывался дольше порога."""
++    if elapsed < _SLOW_REQUEST_SECONDS:
++        return
++    logger.warning(
++        "slow request %.1fs %s %s",
++        elapsed,
++        request.method,
++        request.url.path,
++    )
++
+ 
+ def get_request_id() -> str | None:
+     """Текущий request_id (или None, если вызвано вне HTTP-контекста)."""
+@@ -42,11 +64,13 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
+         incoming = request.headers.get("x-request-id")
+         rid = incoming if incoming else str(uuid.uuid4())
+         token = _request_id_ctx.set(rid)
++        started = time.perf_counter()
+         try:
+             response = await call_next(request)
+             response.headers["X-Request-ID"] = rid
+             return response
+         finally:
++            _log_if_slow(request, time.perf_counter() - started)
+             _request_id_ctx.reset(token)
+ 
+ 
+diff --git a/app/db/session.py b/app/db/session.py
+index c200a8d..96a3d2f 100644
+--- a/app/db/session.py
++++ b/app/db/session.py
+@@ -1,3 +1,5 @@
++import logging
++import os
+ from typing import AsyncGenerator
+ 
+ from fastapi import Depends
+@@ -9,13 +11,55 @@ from sqlalchemy.ext.asyncio import (
+ 
+ from app.core.config import Settings
+ 
++logger = logging.getLogger(__name__)
++
+ settings = Settings()
+ 
++
++def _pool_setting(name: str, default: int) -> int:
++    """Прочитать размер пула из окружения, отбросив мусорное значение (tsk-621).
++
++    Опечатка в `.env` не должна ронять запуск сервиса и не должна молча
++    превращаться в ноль подключений — в обоих случаях берём значение по
++    умолчанию.
++    """
++    raw = os.getenv(name, "").strip()
++    if not raw:
++        return default
++    try:
++        value = int(raw)
++    except ValueError:
++        logger.warning("%s=%r — не число, беру значение по умолчанию %d", name, raw, default)
++        return default
++    if value < 1:
++        logger.warning("%s=%d — меньше единицы, беру значение по умолчанию %d", name, value, default)
++        return default
++    return value
++
+ # Асинхронный движок
+ engine = create_async_engine(
+     settings.database_url,
+     echo=False,  # SQL-вывод можно включить через LOG_LEVEL=DEBUG
+     future=True,
++    # tsk-621: пул раньше не настраивался, то есть работал на значениях по
++    # умолчанию — 5 постоянных подключений плюс 10 сверх лимита. Пятнадцати
++    # мало: кабинет открывает дерево курса десятками параллельных запросов, и
++    # любая задержка выстраивает очередь, в которой запросы ждут подключение
++    # по 30 секунд и падают с 500.
++    #
++    # Потолок здесь не «сколько влезет»: сервер БД разрешает 200 подключений
++    # ВСЕГО, и этот лимит общий — рядом живут три полигонных сервиса
++    # (poligon_dev/stage/test) с тем же кодом. 30 на процесс дают 120 на
++    # четверых и оставляют запас на обслуживание и диагностику. Поднять на
++    # конкретной установке можно через окружение, не трогая код.
++    pool_size=_pool_setting("DB_POOL_SIZE", 10),
++    max_overflow=_pool_setting("DB_MAX_OVERFLOW", 20),
++    # Подключение могло умереть, пока лежало в пуле (перезапуск БД, разрыв
++    # сети). Без проверки это всплывает ошибкой у случайного пользователя.
++    pool_pre_ping=True,
++    # Не держать подключение дольше получаса: страхует от «протухших» сокетов
++    # на промежуточном сетевом оборудовании.
++    pool_recycle=1800,
+ )
+ 
+ # Фабрика сессий
+diff --git a/app/services/auth/session_service.py b/app/services/auth/session_service.py
+index 92cd9ee..1d7ad5c 100644
+--- a/app/services/auth/session_service.py
++++ b/app/services/auth/session_service.py
+@@ -36,6 +36,10 @@ _REFRESH_GRACE_WINDOW_SECONDS = 20
+ # гонка на границе окна ложно деградирует в "cache miss" вместо возврата пары.
+ _REFRESH_GRACE_CACHE_TTL_SECONDS = _REFRESH_GRACE_WINDOW_SECONDS + 5
+ 
++# tsk-621: минимальный интервал между записями отметки последней активности
++# сессии. Подробности — в `_last_used_is_stale`.
++_LAST_USED_MIN_INTERVAL = timedelta(minutes=1)
++
+ # tsk-604: предохранитель обхода цепочки сессий. Цепочка — связный список
+ # (каждая ротация ставит старой сессии `replaced_by_session_id`), циклов в ней
+ # по построению не бывает: преемник всегда новее. Ограничение нужно, чтобы
+@@ -95,6 +99,28 @@ def _now() -> datetime:
+     return datetime.now(timezone.utc)
+ 
+ 
++def _last_used_is_stale(last_used_at: datetime | None, *, now: datetime) -> bool:
++    """Пора ли обновлять отметку последней активности сессии (tsk-621).
++
++    Поле — след активности для разбора инцидентов: наружу оно не отдаётся и
++    ни в одной проверке доступа не участвует (`last_used_at` в `/me/identities`
++    относится к `identity_link`, а не к сессии). Точность в одну минуту тут
++    избыточна с запасом. Редкая запись здесь —
++    не оптимизация, а защита от отказа: `UPDATE user_session` держит блокировку
++    строки до конца транзакции запроса, и при обновлении на КАЖДОМ запросе все
++    параллельные запросы одного пользователя выстраиваются в очередь друг за
++    другом. Кабинет открывает десятки запросов разом (дерево курса), очередь
++    перерастает таймаут пула — и 500 получают уже все пользователи, а не только
++    владелец сессии (прод, 17.08.2026: 14 из 15 подключений ждали эту строку).
++
++    Naive-значение (без часового пояса) сравнивать с aware-`now` нельзя —
++    считаем его устаревшим и обновляем, приводя к корректному типу.
++    """
++    if last_used_at is None or last_used_at.tzinfo is None:
++        return True
++    return now - last_used_at >= _LAST_USED_MIN_INTERVAL
++
++
+ async def create_session(
+     db: AsyncSession,
+     user_id: int,
+@@ -143,8 +169,10 @@ async def validate_session(
+     )
+     session = result.scalar_one_or_none()
+     if session:
+-        session.last_used_at = _now()
+-        await db.flush()
++        now = _now()
++        if _last_used_is_stale(session.last_used_at, now=now):
++            session.last_used_at = now
++            await db.flush()
+     return session
+ 
+ 

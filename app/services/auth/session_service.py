@@ -36,6 +36,10 @@ _REFRESH_GRACE_WINDOW_SECONDS = 20
 # гонка на границе окна ложно деградирует в "cache miss" вместо возврата пары.
 _REFRESH_GRACE_CACHE_TTL_SECONDS = _REFRESH_GRACE_WINDOW_SECONDS + 5
 
+# tsk-621: минимальный интервал между записями отметки последней активности
+# сессии. Подробности — в `_last_used_is_stale`.
+_LAST_USED_MIN_INTERVAL = timedelta(minutes=1)
+
 # tsk-604: предохранитель обхода цепочки сессий. Цепочка — связный список
 # (каждая ротация ставит старой сессии `replaced_by_session_id`), циклов в ней
 # по построению не бывает: преемник всегда новее. Ограничение нужно, чтобы
@@ -95,6 +99,28 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _last_used_is_stale(last_used_at: datetime | None, *, now: datetime) -> bool:
+    """Пора ли обновлять отметку последней активности сессии (tsk-621).
+
+    Поле — след активности для разбора инцидентов: наружу оно не отдаётся и
+    ни в одной проверке доступа не участвует (`last_used_at` в `/me/identities`
+    относится к `identity_link`, а не к сессии). Точность в одну минуту тут
+    избыточна с запасом. Редкая запись здесь —
+    не оптимизация, а защита от отказа: `UPDATE user_session` держит блокировку
+    строки до конца транзакции запроса, и при обновлении на КАЖДОМ запросе все
+    параллельные запросы одного пользователя выстраиваются в очередь друг за
+    другом. Кабинет открывает десятки запросов разом (дерево курса), очередь
+    перерастает таймаут пула — и 500 получают уже все пользователи, а не только
+    владелец сессии (прод, 17.08.2026: 14 из 15 подключений ждали эту строку).
+
+    Naive-значение (без часового пояса) сравнивать с aware-`now` нельзя —
+    считаем его устаревшим и обновляем, приводя к корректному типу.
+    """
+    if last_used_at is None or last_used_at.tzinfo is None:
+        return True
+    return now - last_used_at >= _LAST_USED_MIN_INTERVAL
+
+
 async def create_session(
     db: AsyncSession,
     user_id: int,
@@ -143,8 +169,10 @@ async def validate_session(
     )
     session = result.scalar_one_or_none()
     if session:
-        session.last_used_at = _now()
-        await db.flush()
+        now = _now()
+        if _last_used_is_stale(session.last_used_at, now=now):
+            session.last_used_at = now
+            await db.flush()
     return session
 
 
