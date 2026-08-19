@@ -23107,6 +23107,106 @@
         }
       }
     },
+    "/api/v1/me/presence": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Post Presence",
+        "description": "Пульс присутствия: «я в кабинете, вот что открыто, руками делал/не делал».\n\ntsk-591: без этого сигнала «ученика нет в системе» и «открыл задание и\nмолчит» неразличимы — а оператор просил различать. Кабинет шлёт пульс раз\nв ``PRESENCE_PING_SECONDS``, пока вкладка открыта и видима; фоновый тик\n``lesson_idle_cron_service`` читает последнюю отметку по идущим занятиям.\n\nДёшево по построению: один UPSERT в собственную строку ученика, без чтения\nперед записью и без обращения к учебным сервисам. Ответ говорит клиенту,\nкогда прислать следующий пульс, — частота меняется настройкой на сервере,\nбез выката кабинета.\n\n401 (без входа) и 403 (сервисный токен) даёт ``require_authenticated``:\nпульс всегда про того, кто пришёл, чужого ученика здесь не адресовать.",
+        "operationId": "post_presence_api_v1_me_presence_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PresenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PresenceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/streak": {
       "get": {
         "tags": [
@@ -36892,7 +36992,8 @@
             "enum": [
               "task_solved",
               "help_requested",
-              "material_studied"
+              "material_studied",
+              "student_idle"
             ],
             "title": "Type"
           },
@@ -36964,7 +37065,7 @@
               }
             ],
             "title": "Outcome",
-            "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null"
+            "description": "task_solved: correct|incorrect|pending_review; help_requested: open|closed; material_studied: всегда null; student_idle: ongoing (простой продолжается) | resolved (вернулся)"
           },
           "code_review": {
             "anyOf": [
@@ -48094,6 +48195,88 @@
         ],
         "title": "PendingReviewListResponse",
         "description": "Ответ списка очереди проверки преподавателя."
+      },
+      "PresenceRequest": {
+        "properties": {
+          "interacted": {
+            "type": "boolean",
+            "title": "Interacted",
+            "description": "Ученик что-то делал руками за прошедший интервал — печатал, касался экрана, листал страницу. False — вкладка открыта, но человек мог отойти от экрана.",
+            "default": false
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "task",
+                  "material",
+                  "course",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context",
+            "description": "Что открыто: task | material | course | other"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "material_id": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Id"
+          }
+        },
+        "type": "object",
+        "title": "PresenceRequest",
+        "description": "Тело пульса. Всё, кроме ``interacted``, необязательно."
+      },
+      "PresenceResponse": {
+        "properties": {
+          "next_ping_seconds": {
+            "type": "integer",
+            "title": "Next Ping Seconds",
+            "description": "Через сколько секунд слать следующий пульс. Значение задаёт сервер, чтобы менять частоту без выката кабинета."
+          }
+        },
+        "type": "object",
+        "required": [
+          "next_ping_seconds"
+        ],
+        "title": "PresenceResponse",
+        "description": "Ответ на пульс — когда прислать следующий."
       },
       "PriceOverrideRead": {
         "properties": {

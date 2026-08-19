@@ -1,7 +1,8 @@
 """Схема API «лента активности учеников» для преподавателя (tsk-408).
 
 Единый поток событий по всем ученикам преподавателя (решение задания,
-запрос помощи, изучение материала), отсортированный по времени.
+запрос помощи, изучение материала, простой на занятии), отсортированный
+по времени.
 """
 from __future__ import annotations
 
@@ -12,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from app.schemas.code_review import CodeReviewBadge
 
-ActivityEventType = Literal["task_solved", "help_requested", "material_studied"]
+ActivityEventType = Literal[
+    "task_solved", "help_requested", "material_studied", "student_idle"
+]
 
 
 class ActivityFeedEvent(BaseModel):
@@ -30,7 +33,8 @@ class ActivityFeedEvent(BaseModel):
         default=None,
         description=(
             "task_solved: correct|incorrect|pending_review; "
-            "help_requested: open|closed; material_studied: всегда null"
+            "help_requested: open|closed; material_studied: всегда null; "
+            "student_idle: ongoing (простой продолжается) | resolved (вернулся)"
         ),
     )
     code_review: Optional[CodeReviewBadge] = Field(

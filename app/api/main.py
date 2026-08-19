@@ -646,6 +646,27 @@ async def _stop_course_dependency_state_scheduler() -> None:
         logger.exception("tsk-541: failed to stop course_dependency_state scheduler")
 
 
+# tsk-591: простой ученика во время занятия — сигнал преподавателю (событие в
+# ленту + уведомление). Тот же multi-worker-safe паттерн, отдельный lock-ключ.
+from app.services import lesson_idle_cron_service as _lesson_idle_cron
+
+
+@app.on_event("startup")
+async def _start_lesson_idle_scheduler() -> None:
+    try:
+        _lesson_idle_cron.start_scheduler()
+    except Exception:
+        logger.exception("tsk-591: не удалось запустить тик простоя на занятии")
+
+
+@app.on_event("shutdown")
+async def _stop_lesson_idle_scheduler() -> None:
+    try:
+        _lesson_idle_cron.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-591: не удалось остановить тик простоя на занятии")
+
+
 # tsk-032: фиксация вех удержания (`user_achievements`). Сама недельная серия
 # считается на лету при чтении и от тика НЕ зависит — тик только проставляет
 # earned_at выполненным вехам. Тот же multi-worker-safe паттерн, отдельный ключ.

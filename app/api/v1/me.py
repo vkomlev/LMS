@@ -56,6 +56,7 @@ from app.schemas.me import (
     StreakRead,
     SyllabusStatesResponse,
 )
+from app.schemas.presence import PresenceRequest, PresenceResponse
 from app.schemas.retention import RetentionRead
 from app.schemas.task_history import TaskHistoryResponse
 from app.schemas.users import UserRead
@@ -66,6 +67,7 @@ from app.services import (
     me_service,
     retention_service,
     roles_service,
+    student_presence_service,
     task_history_service,
 )
 from app.services.tasks_acl_service import assert_task_access
@@ -420,6 +422,42 @@ async def get_last_position(
     if pos is None:
         return None
     return LastPositionRead(**pos)
+
+
+# ── POST /me/presence (tsk-591) ─────────────────────────────────────────────
+
+@router.post("/presence", response_model=PresenceResponse)
+async def post_presence(
+    body: PresenceRequest,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> PresenceResponse:
+    """Пульс присутствия: «я в кабинете, вот что открыто, руками делал/не делал».
+
+    tsk-591: без этого сигнала «ученика нет в системе» и «открыл задание и
+    молчит» неразличимы — а оператор просил различать. Кабинет шлёт пульс раз
+    в ``PRESENCE_PING_SECONDS``, пока вкладка открыта и видима; фоновый тик
+    ``lesson_idle_cron_service`` читает последнюю отметку по идущим занятиям.
+
+    Дёшево по построению: один UPSERT в собственную строку ученика, без чтения
+    перед записью и без обращения к учебным сервисам. Ответ говорит клиенту,
+    когда прислать следующий пульс, — частота меняется настройкой на сервере,
+    без выката кабинета.
+
+    401 (без входа) и 403 (сервисный токен) даёт ``require_authenticated``:
+    пульс всегда про того, кто пришёл, чужого ученика здесь не адресовать.
+    """
+    await student_presence_service.touch(
+        db,
+        current_user.id,
+        interacted=body.interacted,
+        context=body.context,
+        course_id=body.course_id,
+        task_id=body.task_id,
+        material_id=body.material_id,
+    )
+    await db.commit()
+    return PresenceResponse(next_ping_seconds=_settings.presence_ping_seconds)
 
 
 # ── GET /me/streak ──────────────────────────────────────────────────────────

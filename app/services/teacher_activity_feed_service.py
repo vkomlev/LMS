@@ -1,11 +1,13 @@
 """Лента активности учеников для преподавателя (tsk-408).
 
-Единый поток трёх типов событий, читаемых из разных таблиц:
+Единый поток четырёх типов событий, читаемых из разных таблиц:
 
 * ``task_solved`` — реальные (не ручной зачёт) результаты ``task_results``;
 * ``help_requested`` — заявки помощи ``help_requests`` (момент создания);
 * ``material_studied`` — завершённые (не ручной зачёт) материалы
-  ``student_material_progress``.
+  ``student_material_progress``;
+* ``student_idle`` — простой ученика во время занятия ``lesson_idle_episode``
+  (tsk-591): ушёл из кабинета или сидит без действий дольше порога.
 
 Каждый источник читается ОТДЕЛЬНЫМ read-only запросом (top-``limit`` по своему
 времени, с ACL и опциональным курсором ``before``), после чего результаты
@@ -241,6 +243,99 @@ async def _fetch_material_studied(
     return events
 
 
+async def _fetch_student_idle(
+    db: AsyncSession, *, teacher_id: int, elevated: bool, limit: int, before: Optional[datetime]
+) -> List[Dict[str, Any]]:
+    """Простои учеников на занятиях (tsk-591) — эпизоды «затих → вернулся».
+
+    ACL шире, чем у остальных источников, и это намеренно: кроме обычной зоны
+    ответственности (свои ученики / свои курсы) событие видит тот, кто ВЕДЁТ
+    это занятие. Иначе преподаватель на подмене не увидел бы простой ученика,
+    сидящего прямо у него на уроке, — то есть ровно того, ради кого сигнал и
+    заводился.
+    """
+    conds = ["1 = 1"]
+    params: Dict[str, Any] = {"teacher_id": teacher_id, "limit": limit}
+    if before is not None:
+        conds.append("e.detected_at < :before")
+        params["before"] = before
+    if not elevated:
+        conds.append(
+            f"""(
+                {_scope_predicate("e.student_id", "e.course_id")}
+                OR EXISTS (
+                    SELECT 1 FROM lesson_occurrence_teacher lot
+                    WHERE lot.occurrence_id = e.occurrence_id
+                      AND lot.teacher_id = :teacher_id AND lot.is_active
+                )
+                OR EXISTS (
+                    SELECT 1 FROM lesson_occurrence lo
+                    WHERE lo.id = e.occurrence_id AND lo.teacher_id = :teacher_id
+                )
+            )"""
+        )
+    where_sql = " AND ".join(conds)
+
+    rows = (
+        await db.execute(
+            text(f"""
+                SELECT e.student_id, u.full_name AS student_name, e.kind,
+                       e.task_id, e.material_id, e.course_id, e.context,
+                       e.silent_since, e.detected_at, e.resolved_at,
+                       t.external_uid, t.task_content->>'title' AS title_raw,
+                       t.task_content->>'stem' AS stem,
+                       m.title AS material_title
+                FROM lesson_idle_episode e
+                JOIN users u ON u.id = e.student_id
+                LEFT JOIN tasks t ON t.id = e.task_id
+                LEFT JOIN materials m ON m.id = e.material_id
+                WHERE {where_sql}
+                ORDER BY e.detected_at DESC
+                LIMIT :limit
+            """),  # nosec B608 — where_sql из закрытого набора литералов модуля
+            params,
+        )
+    ).mappings().fetchall()
+
+    events: List[Dict[str, Any]] = []
+    for r in rows:
+        student = r["student_name"] or f"Ученик #{r['student_id']}"
+        resolved = r["resolved_at"] is not None
+        end = r["resolved_at"] or r["detected_at"]
+        minutes = max(1, int((end - r["silent_since"]).total_seconds() // 60))
+
+        if r["context"] == "task" and r["task_id"] is not None:
+            title = humanize_task_title(
+                r["task_id"], r["title_raw"], r["stem"], r["external_uid"]
+            )
+            where = f", открыто задание «{title}»"
+        elif r["context"] == "material" and r["material_title"]:
+            where = f", открыт материал «{r['material_title']}»"
+        else:
+            where = ""
+
+        if r["kind"] == "away":
+            body = f"вышел из кабинета на {minutes} мин во время занятия"
+        else:
+            body = f"{minutes} мин без действий на занятии{where}"
+        tail = " — уже вернулся" if resolved else ""
+
+        events.append({
+            "type": "student_idle",
+            "student_id": int(r["student_id"]),
+            "student_name": r["student_name"],
+            "task_id": int(r["task_id"]) if r["task_id"] is not None else None,
+            "material_id": int(r["material_id"]) if r["material_id"] is not None else None,
+            "course_id": int(r["course_id"]) if r["course_id"] is not None else None,
+            # Время события — момент обнаружения: лента про свежесть, а простой
+            # становится фактом именно тогда, когда его заметили.
+            "timestamp": r["detected_at"],
+            "summary": f"{student} — {body}{tail}",
+            "outcome": "resolved" if resolved else "ongoing",
+        })
+    return events
+
+
 async def get_activity_feed(
     db: AsyncSession,
     current_user: CurrentUser,
@@ -253,7 +348,7 @@ async def get_activity_feed(
     :param before: курсор пагинации — вернуть только события строго раньше этого
         момента (клиент передаёт ``next_before`` предыдущей страницы).
     :returns: (события, has_more, next_before). ``has_more`` — True в двух
-        случаях: (1) слитый набор трёх источников больше ``limit`` — значит,
+        случаях: (1) слитый набор источников больше ``limit`` — значит,
         страница обрезала уже известные (полученные) события; (2) хотя бы
         один источник вернул ровно ``limit`` строк — у него могут быть ещё
         более старые записи, которые не запрашивались вовсе (``LIMIT`` мог
@@ -266,19 +361,23 @@ async def get_activity_feed(
     elevated = await _is_elevated(db, current_user)
     teacher_id = current_user.id
 
-    task_events, help_events, material_events = [
+    task_events, help_events, material_events, idle_events = [
         await fn(db, teacher_id=teacher_id, elevated=elevated, limit=limit, before=before)
-        for fn in (_fetch_task_solved, _fetch_help_requested, _fetch_material_studied)
+        for fn in (
+            _fetch_task_solved,
+            _fetch_help_requested,
+            _fetch_material_studied,
+            _fetch_student_idle,
+        )
     ]
 
+    sources = (task_events, help_events, material_events, idle_events)
     merged = sorted(
-        task_events + help_events + material_events,
+        [event for source in sources for event in source],
         key=lambda e: e["timestamp"],
         reverse=True,
     )
-    has_more = len(merged) > limit or any(
-        len(source) == limit for source in (task_events, help_events, material_events)
-    )
+    has_more = len(merged) > limit or any(len(source) == limit for source in sources)
     page = merged[:limit]
     next_before = page[-1]["timestamp"] if page else None
     return page, has_more, next_before

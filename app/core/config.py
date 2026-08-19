@@ -471,3 +471,27 @@ class Settings:
         self.lesson_auto_confirm_early_grace_minutes: int = int(
             os.getenv("LESSON_AUTO_CONFIRM_EARLY_GRACE_MINUTES", "15")
         )
+        # tsk-591: простой ученика во время занятия — сигнал преподавателю.
+        self.lesson_idle_cron_enabled: bool = os.getenv(
+            "LESSON_IDLE_CRON_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        # Тик чаще порога: с шагом 3 минуты простой обнаруживается на 10–13-й
+        # минуте, а не на 20-й.
+        self.lesson_idle_cron_interval_min: int = int(
+            os.getenv("LESSON_IDLE_CRON_INTERVAL_MIN", "3")
+        )
+        # Порог тишины. 10 минут — решение оператора 2026-08-09.
+        self.lesson_idle_threshold_minutes: int = int(
+            os.getenv("LESSON_IDLE_THRESHOLD_MINUTES", "10")
+        )
+        # Как часто кабинет шлёт пульс присутствия. Отдаётся клиенту в ответе
+        # на пульс — частоту можно менять без выката SPW.
+        self.presence_ping_seconds: int = int(
+            os.getenv("PRESENCE_PING_SECONDS", "120")
+        )
+        # Сколько пульс считается свежим. Заведомо больше интервала пульса:
+        # один потерянный сигнал (обрыв сети, спящий таймер вкладки) не должен
+        # превращать ученика в «ушёл».
+        self.presence_stale_seconds: int = int(
+            os.getenv("PRESENCE_STALE_SECONDS", "420")
+        )
