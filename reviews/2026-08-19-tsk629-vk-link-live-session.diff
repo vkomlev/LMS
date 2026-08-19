@@ -1,0 +1,306 @@
+diff --git a/app/api/v1/auth/vk.py b/app/api/v1/auth/vk.py
+index 836db6b..34a22f3 100644
+--- a/app/api/v1/auth/vk.py
++++ b/app/api/v1/auth/vk.py
+@@ -28,6 +28,20 @@ router = APIRouter(prefix="/auth/vk", tags=["auth"])
+ _settings = Settings()
+ 
+ 
++async def _live_session_user_id(db: AsyncSession, request: Request) -> int | None:
++    """Чей сеанс жив у пришедшего, если он вообще есть (tsk-629).
++
++    Нужно, чтобы отличить нового ученика от своего же, который уже сидит в
++    кабинете и добавляет второй способ входа. Проверка мягкая: нет cookie,
++    протухла, отозвана — просто None, обычный вход через ВК продолжается.
++    """
++    raw = request.cookies.get("session")
++    if not raw:
++        return None
++    session_obj = await session_service.validate_session(db, raw)
++    return session_obj.user_id if session_obj else None
++
++
+ @router.post("/callback", response_model=AuthTokenResponse)
+ async def vk_callback(
+     body: VkCallbackRequest,
+@@ -86,18 +100,27 @@ async def vk_callback(
+             settings=_settings,
+             ip=ip,
+             user_agent=ua,
++            # tsk-629: если человек уже в кабинете — ВК привяжется к нему, а не
++            # заведёт второй пустой аккаунт.
++            current_user_id=await _live_session_user_id(db, request),
+         )
+     except IdentityConflictError as e:
++        # tsk-629: причина отказа теперь бывает не только про почту — текст
++        # обязан ей соответствовать, иначе человек ищет проблему не там.
++        message = (
++            "Этот аккаунт ВКонтакте уже привязан к другому профилю. "
++            "Войдите через него или обратитесь к преподавателю."
++            if e.conflict_kind.startswith("vk_")
++            else "Этот email уже привязан к другому аккаунту. "
++                 "Войдите через email и привяжите VK в /me."
++        )
+         raise HTTPException(
+             status.HTTP_409_CONFLICT,
+             detail={
+                 "error": "identity_conflict",
+                 "conflict_kind": e.conflict_kind,
+                 "existing_identity_kinds": e.existing_kinds,
+-                "message": (
+-                    "Этот email уже привязан к другому аккаунту. "
+-                    "Войдите через email и привяжите VK в /me."
+-                ),
++                "message": message,
+             },
+         )
+ 
+diff --git a/app/services/auth/vk_oauth_service.py b/app/services/auth/vk_oauth_service.py
+index c2aabdb..60cc47e 100644
+--- a/app/services/auth/vk_oauth_service.py
++++ b/app/services/auth/vk_oauth_service.py
+@@ -128,13 +128,18 @@ async def get_or_create_user_by_vk(
+     settings: Settings,
+     ip: str | None,
+     user_agent: str | None,
++    current_user_id: int | None = None,
+ ) -> tuple[Users, bool]:
+     """Найти пользователя по vk-identity или создать нового атомарно.
+ 
+     Если найден — обновляет VK token поля (ротация при каждом login).
++    Если не найден, но вызывающий уже вошёл (`current_user_id`) — привязывает
++    ВК к его аккаунту вместо заведения нового (tsk-629).
+     Если не найден и email указан — проверяет на overlap c email-only user;
+     при overlap кидает IdentityConflictError (auto-merge запрещён ADR-0021).
+     Возвращает (user, created_flag).
++
++    :param current_user_id: чей сеанс жив в момент входа через ВК, если он есть.
+     """
+     enc_access = encrypt_token(access_token, settings)
+     enc_refresh = encrypt_token(refresh_token, settings) if refresh_token else None
+@@ -149,6 +154,36 @@ async def get_or_create_user_by_vk(
+         )
+         return user, False
+ 
++    # tsk-629: этот ВК ещё ни за кем не закреплён, а человек уже внутри кабинета —
++    # значит перед нами не новый ученик, а свой же, добавляющий второй способ входа.
++    #
++    # Раньше здесь заводился новый пустой аккаунт: ученик оказывался в кабинете без
++    # единого курса и решал, что «всё пропало». Найдено на живом проде — у двух
++    # учеников по два аккаунта; у одного вход через ВК случился через 21 секунду
++    # после входа по почте, то есть прямо поверх живого сеанса.
++    #
++    # Привязка безопасна: владение аккаунтом уже доказано входом в него. Слияние по
++    # совпадающей почте по-прежнему запрещено (ADR-0021): почта от ВК не заверена
++    # провайдером, а живой сеанс — заверен нами.
++    #
++    # Порядок веток важен: если ВК УЖЕ закреплён за другим аккаунтом, мы сюда не
++    # доходим — выше отработал вход в тот аккаунт. Иначе на общем компьютере второй
++    # ученик, забыв про чужой незакрытый сеанс, привязал бы свой ВК к чужому профилю.
++    if current_user_id is not None:
++        await identity_link_service.link_existing_user(
++            db, current_user_id, "vk", vk_user_id,
++            vk_access_token_enc=enc_access,
++            vk_refresh_token_enc=enc_refresh,
++            vk_token_expires_at=expires_at,
++        )
++        linked_user = (await db.execute(
++            select(Users).where(Users.id == current_user_id)
++        )).scalar_one()
++        logger.info(
++            "vk.linked_to_current_session user_id=%d vk_user_id=%s", current_user_id, vk_user_id
++        )
++        return linked_user, False
++
+     if email:
+         existing_email_user = await identity_link_service.get_user_by_identity(
+             db, "email", email
+diff --git a/tests/test_vk_link_to_live_session_tsk629.py b/tests/test_vk_link_to_live_session_tsk629.py
+new file mode 100644
+index 0000000..53d9444
+--- /dev/null
++++ b/tests/test_vk_link_to_live_session_tsk629.py
+@@ -0,0 +1,183 @@
++"""tsk-629: вход через ВК поверх живого сеанса привязывается, а не двоит аккаунт.
++
++Найдено на живом проде по обращению ученика: у него оказалось два аккаунта —
++рабочий (вход по почте, два курса) и заведённый входом через ВК (пустой). ВК
++почту не отдал, поэтому защита от совпадения почты (ADR-0021) не срабатывала, и
++создавался новый пользователь. По логам вход через ВК случился через 21 секунду
++после входа по почте — то есть прямо поверх живого сеанса.
++
++Живой сеанс — доказательство владения аккаунтом, поэтому привязка к нему
++безопасна. Слияние по совпадающей почте так и остаётся запрещённым: почту от ВК
++провайдер не заверяет.
++"""
++import os
++import random
++from datetime import datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import select
++
++from app.core.config import Settings
++from app.models.identity_link import IdentityLink
++from app.models.users import Users
++from app.services.auth.exceptions import IdentityConflictError
++from app.services.auth.vk_oauth_service import get_or_create_user_by_vk
++
++
++def _new_vk_id() -> str:
++    return str(random.SystemRandom().randint(10**8, 10**10))
++
++
++async def _make_user(db, *, email: str | None = None, full_name: str = "Ученик") -> Users:
++    user = Users(email=email, password_hash=None, full_name=full_name, tg_id=None)
++    db.add(user)
++    await db.flush()
++    return user
++
++
++@pytest.mark.asyncio
++async def test_vk_over_live_session_links_instead_of_new_account(db):
++    """Человек уже в кабинете → ВК привязывается к нему, второй аккаунт не заводится."""
++    settings = Settings()
++    vk_id = _new_vk_id()
++    email = f"student-{os.urandom(4).hex()}@example.com"
++    existing = await _make_user(db, email=email, full_name="Астафьев Данил")
++    users_before = len((await db.execute(select(Users.id))).scalars().all())
++
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=vk_id,
++        # Ровно случай с прода: ВК почту не вернул.
++        email=None, full_name="Данил Астафьев",
++        access_token="acc", refresh_token="ref",
++        expires_at=datetime.now(timezone.utc) + timedelta(seconds=3600),
++        settings=settings, ip="127.0.0.1", user_agent="test",
++        current_user_id=existing.id,
++    )
++    await db.commit()
++
++    assert created is False
++    assert user.id == existing.id
++    users_after = len((await db.execute(select(Users.id))).scalars().all())
++    assert users_after == users_before, "новый пользователь заводиться не должен"
++
++    link = (await db.execute(
++        select(IdentityLink).where(IdentityLink.kind == "vk", IdentityLink.value == vk_id)
++    )).scalar_one()
++    assert link.user_id == existing.id
++
++
++@pytest.mark.asyncio
++async def test_vk_over_live_session_keeps_existing_profile(db):
++    """Привязка не перетирает данные аккаунта именем из ВК."""
++    settings = Settings()
++    existing = await _make_user(db, email=f"keep-{os.urandom(4).hex()}@example.com",
++                                full_name="Астафьев Данил Алексеевич")
++
++    user, _ = await get_or_create_user_by_vk(
++        db, vk_user_id=_new_vk_id(), email=None, full_name="Данил А.",
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++        current_user_id=existing.id,
++    )
++    await db.commit()
++
++    assert user.full_name == "Астафьев Данил Алексеевич"
++
++
++@pytest.mark.asyncio
++async def test_known_vk_wins_over_live_session(db):
++    """Чужой незакрытый сеанс не уводит вход: этот ВК уже за своим аккаунтом.
++
++    Общий компьютер: первый ученик не вышел, второй жмёт «войти через ВК». Он
++    обязан попасть в СВОЙ аккаунт, а не привязать свой ВК к чужому профилю.
++    """
++    settings = Settings()
++    vk_id = _new_vk_id()
++    vk_owner = await _make_user(db, full_name="Хозяин ВК")
++    someone_else = await _make_user(db, email=f"other-{os.urandom(4).hex()}@example.com")
++
++    # Первый вход владельца — ВК закрепляется за ним.
++    await get_or_create_user_by_vk(
++        db, vk_user_id=vk_id, email=None, full_name=None,
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++        current_user_id=vk_owner.id,
++    )
++    await db.commit()
++
++    # Теперь тот же ВК приходит поверх чужого живого сеанса.
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=vk_id, email=None, full_name=None,
++        access_token="acc2", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++        current_user_id=someone_else.id,
++    )
++    await db.commit()
++
++    assert created is False
++    assert user.id == vk_owner.id, "вход должен вести в аккаунт владельца ВК"
++    links = (await db.execute(
++        select(IdentityLink).where(IdentityLink.kind == "vk", IdentityLink.value == vk_id)
++    )).scalars().all()
++    assert len(links) == 1 and links[0].user_id == vk_owner.id
++
++
++@pytest.mark.asyncio
++async def test_second_vk_of_same_person_conflicts_with_other_profile(db):
++    """ВК, закреплённый за другим профилем, к текущему не привязывается."""
++    settings = Settings()
++    vk_id = _new_vk_id()
++    owner = await _make_user(db, full_name="Владелец")
++    await get_or_create_user_by_vk(
++        db, vk_user_id=vk_id, email=None, full_name=None,
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None, current_user_id=owner.id,
++    )
++    await db.commit()
++
++    # Прямая привязка того же ВК к другому пользователю (минуя ветку «вход по
++    # известному ВК») обязана упереться в защиту от захвата личности.
++    other = await _make_user(db, full_name="Другой")
++    from app.services.auth import identity_link_service
++    with pytest.raises(IdentityConflictError) as err:
++        await identity_link_service.link_existing_user(db, other.id, "vk", vk_id)
++    assert err.value.conflict_kind == "vk_already_linked"
++
++
++@pytest.mark.asyncio
++async def test_no_live_session_behaves_as_before(db):
++    """Без живого сеанса поведение прежнее: заводится новый аккаунт."""
++    settings = Settings()
++    users_before = len((await db.execute(select(Users.id))).scalars().all())
++
++    user, created = await get_or_create_user_by_vk(
++        db, vk_user_id=_new_vk_id(), email=None, full_name="Новый Ученик",
++        access_token="acc", refresh_token=None, expires_at=None,
++        settings=settings, ip=None, user_agent=None,
++        current_user_id=None,
++    )
++    await db.commit()
++
++    assert created is True
++    users_after = len((await db.execute(select(Users.id))).scalars().all())
++    assert users_after == users_before + 1
++    assert user.full_name == "Новый Ученик"
++
++
++@pytest.mark.asyncio
++async def test_email_overlap_still_forbidden_without_session(db):
++    """Слияние по совпадающей почте по-прежнему запрещено (ADR-0021)."""
++    settings = Settings()
++    email = f"overlap-{os.urandom(4).hex()}@example.com"
++    owner = await _make_user(db, email=email)
++    from app.services.auth import identity_link_service
++    await identity_link_service.link_existing_user(db, owner.id, "email", email)
++    await db.commit()
++
++    with pytest.raises(IdentityConflictError):
++        await get_or_create_user_by_vk(
++            db, vk_user_id=_new_vk_id(), email=email, full_name=None,
++            access_token="acc", refresh_token=None, expires_at=None,
++            settings=settings, ip=None, user_agent=None,
++            current_user_id=None,
++        )

@@ -128,13 +128,18 @@ async def get_or_create_user_by_vk(
     settings: Settings,
     ip: str | None,
     user_agent: str | None,
+    current_user_id: int | None = None,
 ) -> tuple[Users, bool]:
     """Найти пользователя по vk-identity или создать нового атомарно.
 
     Если найден — обновляет VK token поля (ротация при каждом login).
+    Если не найден, но вызывающий уже вошёл (`current_user_id`) — привязывает
+    ВК к его аккаунту вместо заведения нового (tsk-629).
     Если не найден и email указан — проверяет на overlap c email-only user;
     при overlap кидает IdentityConflictError (auto-merge запрещён ADR-0021).
     Возвращает (user, created_flag).
+
+    :param current_user_id: чей сеанс жив в момент входа через ВК, если он есть.
     """
     enc_access = encrypt_token(access_token, settings)
     enc_refresh = encrypt_token(refresh_token, settings) if refresh_token else None
@@ -148,6 +153,36 @@ async def get_or_create_user_by_vk(
             vk_token_expires_at=expires_at,
         )
         return user, False
+
+    # tsk-629: этот ВК ещё ни за кем не закреплён, а человек уже внутри кабинета —
+    # значит перед нами не новый ученик, а свой же, добавляющий второй способ входа.
+    #
+    # Раньше здесь заводился новый пустой аккаунт: ученик оказывался в кабинете без
+    # единого курса и решал, что «всё пропало». Найдено на живом проде — у двух
+    # учеников по два аккаунта; у одного вход через ВК случился через 21 секунду
+    # после входа по почте, то есть прямо поверх живого сеанса.
+    #
+    # Привязка безопасна: владение аккаунтом уже доказано входом в него. Слияние по
+    # совпадающей почте по-прежнему запрещено (ADR-0021): почта от ВК не заверена
+    # провайдером, а живой сеанс — заверен нами.
+    #
+    # Порядок веток важен: если ВК УЖЕ закреплён за другим аккаунтом, мы сюда не
+    # доходим — выше отработал вход в тот аккаунт. Иначе на общем компьютере второй
+    # ученик, забыв про чужой незакрытый сеанс, привязал бы свой ВК к чужому профилю.
+    if current_user_id is not None:
+        await identity_link_service.link_existing_user(
+            db, current_user_id, "vk", vk_user_id,
+            vk_access_token_enc=enc_access,
+            vk_refresh_token_enc=enc_refresh,
+            vk_token_expires_at=expires_at,
+        )
+        linked_user = (await db.execute(
+            select(Users).where(Users.id == current_user_id)
+        )).scalar_one()
+        logger.info(
+            "vk.linked_to_current_session user_id=%d vk_user_id=%s", current_user_id, vk_user_id
+        )
+        return linked_user, False
 
     if email:
         existing_email_user = await identity_link_service.get_user_by_identity(

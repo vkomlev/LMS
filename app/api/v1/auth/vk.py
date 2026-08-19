@@ -28,6 +28,20 @@ router = APIRouter(prefix="/auth/vk", tags=["auth"])
 _settings = Settings()
 
 
+async def _live_session_user_id(db: AsyncSession, request: Request) -> int | None:
+    """Чей сеанс жив у пришедшего, если он вообще есть (tsk-629).
+
+    Нужно, чтобы отличить нового ученика от своего же, который уже сидит в
+    кабинете и добавляет второй способ входа. Проверка мягкая: нет cookie,
+    протухла, отозвана — просто None, обычный вход через ВК продолжается.
+    """
+    raw = request.cookies.get("session")
+    if not raw:
+        return None
+    session_obj = await session_service.validate_session(db, raw)
+    return session_obj.user_id if session_obj else None
+
+
 @router.post("/callback", response_model=AuthTokenResponse)
 async def vk_callback(
     body: VkCallbackRequest,
@@ -86,18 +100,27 @@ async def vk_callback(
             settings=_settings,
             ip=ip,
             user_agent=ua,
+            # tsk-629: если человек уже в кабинете — ВК привяжется к нему, а не
+            # заведёт второй пустой аккаунт.
+            current_user_id=await _live_session_user_id(db, request),
         )
     except IdentityConflictError as e:
+        # tsk-629: причина отказа теперь бывает не только про почту — текст
+        # обязан ей соответствовать, иначе человек ищет проблему не там.
+        message = (
+            "Этот аккаунт ВКонтакте уже привязан к другому профилю. "
+            "Войдите через него или обратитесь к преподавателю."
+            if e.conflict_kind.startswith("vk_")
+            else "Этот email уже привязан к другому аккаунту. "
+                 "Войдите через email и привяжите VK в /me."
+        )
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
                 "error": "identity_conflict",
                 "conflict_kind": e.conflict_kind,
                 "existing_identity_kinds": e.existing_kinds,
-                "message": (
-                    "Этот email уже привязан к другому аккаунту. "
-                    "Войдите через email и привяжите VK в /me."
-                ),
+                "message": message,
             },
         )
 
