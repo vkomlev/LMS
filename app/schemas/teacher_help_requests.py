@@ -40,6 +40,30 @@ class HelpRequestListItem(BaseModel):
     priority: int = Field(100, description="Приоритет (меньше — выше)")
     due_at: Optional[datetime] = Field(None, description="Желательный срок обработки")
     is_overdue: bool = Field(False, description="Просрочена ли по due_at")
+    # tsk-592: состояние захвата. Колонки в БД жили с этапа 3.9, но наружу не
+    # отдавались — интерфейс физически не мог показать «уже в работе», и два
+    # преподавателя брались за одну заявку (на проде так вышло с 4 заявками
+    # из 49 отвеченных). Поля необязательные и с безопасными значениями по
+    # умолчанию — старые клиенты не ломаются.
+    is_claimed: bool = Field(
+        False,
+        description=(
+            "Заявка сейчас в работе: захват стоит и не истёк. Истёкший захват "
+            "считается свободной заявкой"
+        ),
+    )
+    claimed_by: Optional[int] = Field(
+        None, description="ID преподавателя, взявшего заявку; null — свободна"
+    )
+    claimed_by_name: Optional[str] = Field(
+        None, description="Имя преподавателя, взявшего заявку"
+    )
+    claim_expires_at: Optional[datetime] = Field(
+        None, description="До какого момента держится захват"
+    )
+    claimed_by_me: bool = Field(
+        False, description="Захват принадлежит запрашивающему преподавателю"
+    )
 
 
 class HelpRequestListResponse(BaseModel):

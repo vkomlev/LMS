@@ -46,6 +46,51 @@ class HelpRequestClaimNextResponse(BaseModel):
     empty: bool = Field(..., description="True, если нет доступного кейса")
 
 
+# ----- Help Request Claim by id (tsk-592) -----
+
+class HelpRequestClaimRequest(BaseModel):
+    """Тело запроса «взять в работу конкретную заявку» (tsk-592).
+
+    Клиент зовёт при открытии карточки: до tsk-592 отметка ставилась только на
+    пути «взять следующую» (claim-next), поэтому заявка, открытая из списка,
+    для остальных выглядела свободной.
+    """
+    teacher_id: int = Field(..., description="ID преподавателя")
+    ttl_sec: int = Field(
+        300,
+        ge=30,
+        le=1800,
+        description=(
+            "Срок захвата в секундах. По умолчанию 5 минут — карточку читают "
+            "дольше, чем берут кейс из очереди. Повторный вызов продлевает"
+        ),
+    )
+    takeover: bool = Field(
+        False,
+        description=(
+            "Перехватить действующий чужой захват («всё равно взять»). "
+            "Перехват пишется в журнал событий"
+        ),
+    )
+
+
+class HelpRequestClaimResponse(BaseModel):
+    """Ответ захвата конкретной заявки: блокировка выдана (иначе 403/404/409)."""
+    item: HelpRequestClaimItem
+    lock_token: str
+    lock_expires_at: datetime
+    took_over_from: Optional[int] = Field(
+        None,
+        description=(
+            "ID преподавателя, у которого заявка перехвачена; "
+            "null — заявка была свободна"
+        ),
+    )
+    took_over_from_name: Optional[str] = Field(
+        None, description="Имя преподавателя, у которого заявка перехвачена"
+    )
+
+
 # ----- Help Request Release -----
 
 class HelpRequestReleaseRequest(BaseModel):

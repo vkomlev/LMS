@@ -36,6 +36,8 @@ from app.schemas.teacher_next_modes import (
     HelpRequestClaimNextRequest,
     HelpRequestClaimNextResponse,
     HelpRequestClaimItem,
+    HelpRequestClaimRequest,
+    HelpRequestClaimResponse,
     HelpRequestReleaseRequest,
     HelpRequestReleaseResponse,
 )
@@ -51,10 +53,14 @@ from app.services.help_requests_service import (
     get_reopen_kpi,
     MIN_REQUESTS_FOR_RATE,
 )
-from app.services import roles_service
+from app.services import audit_service, roles_service
 from app.services.teacher_queue_service import (
+    claim_help_request_by_id,
     claim_next_help_request,
     release_help_request_claim,
+    HelpClaimConflictError,
+    HelpClaimForbiddenError,
+    HelpClaimNotFoundError,
 )
 
 router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
@@ -282,6 +288,89 @@ async def help_request_close(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Заявка не найдена")
     await db.commit()
     return HelpRequestCloseResponse(**data)
+
+
+@router.post(
+    "/{request_id}/claim",
+    response_model=HelpRequestClaimResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Взять в работу конкретную заявку (claim по request_id, tsk-592)",
+    responses={
+        200: {"description": "Заявка взята в работу (или захват продлён)"},
+        403: {"description": "Заявка вне зоны ответственности преподавателя"},
+        404: {"description": "Заявка не найдена"},
+        409: {"description": "Заявка закрыта или уже в работе у другого преподавателя"},
+    },
+)
+async def help_request_claim(
+    request_id: int = Path(..., description="ID заявки"),
+    body: HelpRequestClaimRequest = Body(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_bare_db),
+) -> HelpRequestClaimResponse:
+    """Отметить заявку «в работе» при открытии карточки.
+
+    Дополняет claim-next: тот выдаёт СЛЕДУЮЩУЮ заявку из очереди, а этот
+    отмечает ту, которую преподаватель открыл сам из списка. Повторный вызов
+    тем же преподавателем продлевает захват. `takeover=true` — перехват
+    действующего чужого захвата (мягкая блокировка), он пишется в журнал.
+    """
+    if not current_user.is_service and current_user.id != body.teacher_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+    try:
+        item, lock_token, lock_expires_at, previous_claim = await claim_help_request_by_id(
+            db,
+            request_id=request_id,
+            teacher_id=body.teacher_id,
+            ttl_sec=body.ttl_sec,
+            takeover=body.takeover,
+        )
+    except HelpClaimNotFoundError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, e.message)
+    except HelpClaimForbiddenError as e:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, e.message)
+    except HelpClaimConflictError as e:
+        # Имя владельца — в тексте ошибки: клиенту нужно показать «у кого»,
+        # а не безымянный отказ. Точное время окончания захвата клиент берёт
+        # из карточки (`claim_expires_at`), чтобы не гадать с часовым поясом.
+        detail = e.message
+        if e.claimed_by_name:
+            detail = f"{e.message}: {e.claimed_by_name}"
+        raise HTTPException(status.HTTP_409_CONFLICT, detail)
+
+    if previous_claim is not None:
+        # Перехват — событие с последствиями для другого человека: он потеряет
+        # свой lock_token и получит 409 при ответе. Пишем в журнал, как того
+        # требует «перехват с записью в историю».
+        await audit_service.log_event(
+            db,
+            audit_service.TEACHER_HELP_REQUEST_CLAIM_TAKEN_OVER,
+            user_id=body.teacher_id,
+            details={
+                "request_id": request_id,
+                "taken_over_from": previous_claim["teacher_id"],
+                "previous_claim_expires_at": (
+                    previous_claim["expires_at"].isoformat()
+                    if previous_claim["expires_at"] is not None
+                    else None
+                ),
+            },
+        )
+    await db.commit()
+    logger.info(
+        "help_request_claim request_id=%s teacher_id=%s ttl=%s took_over_from=%s",
+        request_id,
+        body.teacher_id,
+        body.ttl_sec,
+        previous_claim["teacher_id"] if previous_claim else None,
+    )
+    return HelpRequestClaimResponse(
+        item=HelpRequestClaimItem(**item),
+        lock_token=lock_token,
+        lock_expires_at=lock_expires_at,
+        took_over_from=previous_claim["teacher_id"] if previous_claim else None,
+        took_over_from_name=previous_claim["teacher_name"] if previous_claim else None,
+    )
 
 
 @router.post(

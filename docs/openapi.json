@@ -18920,6 +18920,126 @@
         }
       }
     },
+    "/api/v1/teacher/help-requests/{request_id}/claim": {
+      "post": {
+        "tags": [
+          "teacher_help_requests"
+        ],
+        "summary": "Взять в работу конкретную заявку (claim по request_id, tsk-592)",
+        "description": "Отметить заявку «в работе» при открытии карточки.\n\nДополняет claim-next: тот выдаёт СЛЕДУЮЩУЮ заявку из очереди, а этот\nотмечает ту, которую преподаватель открыл сам из списка. Повторный вызов\nтем же преподавателем продлевает захват. `takeover=true` — перехват\nдействующего чужого захвата (мягкая блокировка), он пишется в журнал.",
+        "operationId": "help_request_claim_api_v1_teacher_help_requests__request_id__claim_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID заявки",
+              "title": "Request Id"
+            },
+            "description": "ID заявки"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HelpRequestClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Заявка взята в работу (или захват продлён)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HelpRequestClaimResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Заявка вне зоны ответственности преподавателя"
+          },
+          "404": {
+            "description": "Заявка не найдена"
+          },
+          "409": {
+            "description": "Заявка закрыта или уже в работе у другого преподавателя"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/help-requests/{request_id}/release": {
       "post": {
         "tags": [
@@ -42109,6 +42229,83 @@
         "title": "HelpRequestClaimNextResponse",
         "description": "Ответ claim-next для help-requests."
       },
+      "HelpRequestClaimRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id",
+            "description": "ID преподавателя"
+          },
+          "ttl_sec": {
+            "type": "integer",
+            "maximum": 1800.0,
+            "minimum": 30.0,
+            "title": "Ttl Sec",
+            "description": "Срок захвата в секундах. По умолчанию 5 минут — карточку читают дольше, чем берут кейс из очереди. Повторный вызов продлевает",
+            "default": 300
+          },
+          "takeover": {
+            "type": "boolean",
+            "title": "Takeover",
+            "description": "Перехватить действующий чужой захват («всё равно взять»). Перехват пишется в журнал событий",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id"
+        ],
+        "title": "HelpRequestClaimRequest",
+        "description": "Тело запроса «взять в работу конкретную заявку» (tsk-592).\n\nКлиент зовёт при открытии карточки: до tsk-592 отметка ставилась только на\nпути «взять следующую» (claim-next), поэтому заявка, открытая из списка,\nдля остальных выглядела свободной."
+      },
+      "HelpRequestClaimResponse": {
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/HelpRequestClaimItem"
+          },
+          "lock_token": {
+            "type": "string",
+            "title": "Lock Token"
+          },
+          "lock_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Lock Expires At"
+          },
+          "took_over_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Took Over From",
+            "description": "ID преподавателя, у которого заявка перехвачена; null — заявка была свободна"
+          },
+          "took_over_from_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Took Over From Name",
+            "description": "Имя преподавателя, у которого заявка перехвачена"
+          }
+        },
+        "type": "object",
+        "required": [
+          "item",
+          "lock_token",
+          "lock_expires_at"
+        ],
+        "title": "HelpRequestClaimResponse",
+        "description": "Ответ захвата конкретной заявки: блокировка выдана (иначе 403/404/409)."
+      },
       "HelpRequestCloseRequest": {
         "properties": {
           "closed_by": {
@@ -42347,6 +42544,55 @@
             "type": "boolean",
             "title": "Is Overdue",
             "description": "Просрочена ли по due_at",
+            "default": false
+          },
+          "is_claimed": {
+            "type": "boolean",
+            "title": "Is Claimed",
+            "description": "Заявка сейчас в работе: захват стоит и не истёк. Истёкший захват считается свободной заявкой",
+            "default": false
+          },
+          "claimed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By",
+            "description": "ID преподавателя, взявшего заявку; null — свободна"
+          },
+          "claimed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Name",
+            "description": "Имя преподавателя, взявшего заявку"
+          },
+          "claim_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Expires At",
+            "description": "До какого момента держится захват"
+          },
+          "claimed_by_me": {
+            "type": "boolean",
+            "title": "Claimed By Me",
+            "description": "Захват принадлежит запрашивающему преподавателю",
             "default": false
           },
           "task_full_title": {
@@ -42626,6 +42872,55 @@
             "type": "boolean",
             "title": "Is Overdue",
             "description": "Просрочена ли по due_at",
+            "default": false
+          },
+          "is_claimed": {
+            "type": "boolean",
+            "title": "Is Claimed",
+            "description": "Заявка сейчас в работе: захват стоит и не истёк. Истёкший захват считается свободной заявкой",
+            "default": false
+          },
+          "claimed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By",
+            "description": "ID преподавателя, взявшего заявку; null — свободна"
+          },
+          "claimed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed By Name",
+            "description": "Имя преподавателя, взявшего заявку"
+          },
+          "claim_expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claim Expires At",
+            "description": "До какого момента держится захват"
+          },
+          "claimed_by_me": {
+            "type": "boolean",
+            "title": "Claimed By Me",
+            "description": "Захват принадлежит запрашивающему преподавателю",
             "default": false
           }
         },

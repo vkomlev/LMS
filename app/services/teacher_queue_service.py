@@ -208,6 +208,28 @@ def _token() -> str:
     return secrets.token_hex(32)
 
 
+def _aware(value: Any) -> Optional[datetime]:
+    """Привести дату из сырого SQL к timezone-aware для сравнения с now().
+
+    Правило проекта (`.claude/CLAUDE.md`, Date/Time Safety): значение из
+    `text(...)` сравнивается только после нормализации. Колонка
+    `claim_expires_at` объявлена `timestamptz` и драйвер отдаёт aware-значение,
+    но опора на это делает сравнение хрупким — смена типа колонки или отдача
+    строки уронила бы захват заявок с TypeError прямо на боевом пути.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return None
+
+
 async def claim_next_help_request(
     db: AsyncSession,
     *,
@@ -358,6 +380,193 @@ async def release_help_request_claim(
         {"id": request_id},
     )
     return (True, None)
+
+
+# ─── tsk-592: захват КОНКРЕТНОЙ заявки (преподаватель открыл её из списка) ───
+# `claim_next_help_request` ставит отметку только на пути «взять следующую».
+# Преподаватель, открывший заявку из списка, до tsk-592 не отмечался нигде —
+# и второй преподаватель не видел, что заявка уже в работе. Прод-факт: из 49
+# заявок с ответами по 4 отвечали РАЗНЫЕ преподаватели (read-only аудит
+# 2026-08-19). Логика — зеркало `claim_review_by_id` для очереди проверок.
+
+
+class HelpClaimError(Exception):
+    """Базовая ошибка захвата конкретной заявки помощи (tsk-592)."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+class HelpClaimNotFoundError(HelpClaimError):
+    """404: заявки нет."""
+
+    def __init__(self) -> None:
+        super().__init__("not_found", "Заявка не найдена")
+
+
+class HelpClaimForbiddenError(HelpClaimError):
+    """403: заявка вне зоны ответственности преподавателя (ACL)."""
+
+    def __init__(self) -> None:
+        super().__init__("forbidden", "Заявка вне вашей зоны ответственности")
+
+
+class HelpClaimConflictError(HelpClaimError):
+    """409: заявка закрыта или уже в работе у другого преподавателя.
+
+    Несёт «кто и до какого времени» — интерфейсу нужно показать не голый
+    отказ, а «в работе у Иванова, до 14:35», иначе преподаватель не понимает,
+    сколько ждать и у кого спросить.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        claimed_by: Optional[int] = None,
+        claimed_by_name: Optional[str] = None,
+        claim_expires_at: Optional[datetime] = None,
+    ) -> None:
+        super().__init__("conflict", message)
+        self.claimed_by = claimed_by
+        self.claimed_by_name = claimed_by_name
+        self.claim_expires_at = claim_expires_at
+
+
+async def claim_help_request_by_id(
+    db: AsyncSession,
+    *,
+    request_id: int,
+    teacher_id: int,
+    ttl_sec: int = 300,
+    takeover: bool = False,
+) -> Tuple[dict, str, datetime, Optional[dict]]:
+    """Захватить КОНКРЕТНУЮ заявку помощи (tsk-592, открытие карточки).
+
+    Повторный вызов тем же преподавателем ПРОДЛЕВАЕТ захват (клиент зовёт его
+    при каждом открытии/обновлении карточки) — конфликта с самим собой нет.
+    Просроченный чужой захват считается свободным: `claim_expires_at` и есть
+    защита от «вечно занятых» заявок, если клиент не позвал release.
+
+    :param ttl_sec: срок захвата. По умолчанию 5 минут — карточку читают и
+        пишут ответ дольше, чем берут кейс из очереди (там 120 с).
+    :param takeover: True — перехватить действующий чужой захват (мягкая
+        блокировка: другой преподаватель может «всё равно взять»). Вызывающая
+        сторона обязана записать перехват в аудит.
+    :returns: (item, lock_token, lock_expires_at, previous_claim). Последнее —
+        не None только при состоявшемся перехвате: {"teacher_id", "teacher_name",
+        "expires_at"} прежнего владельца, для аудита и сообщения.
+    :raises HelpClaimNotFoundError: заявки нет.
+    :raises HelpClaimForbiddenError: заявка вне ACL преподавателя.
+    :raises HelpClaimConflictError: заявка закрыта либо занята другим (без takeover).
+    """
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=ttl_sec)
+    token = _token()
+
+    # Диагностика до записи: разводим 404 / 403 / 409 явными причинами — тот же
+    # принцип, что в claim_review_by_id (иначе клиент покажет «конфликт» там,
+    # где на деле нет доступа).
+    r = await db.execute(
+        text(f"""
+            SELECT hr.status, hr.claimed_by, hr.claim_expires_at,
+                   u.full_name AS claimed_by_name,
+                   {HELP_REQUESTS_ACL_SQL} AS acl_ok
+            FROM help_requests hr
+            LEFT JOIN users u ON u.id = hr.claimed_by
+            WHERE hr.id = :request_id
+        """),  # nosec B608 — HELP_REQUESTS_ACL_SQL собран из литералов модуля
+        {"request_id": request_id, "teacher_id": teacher_id},
+    )
+    row = r.fetchone()
+    if row is None:
+        raise HelpClaimNotFoundError()
+    hr_status, claim_expires_raw, claimed_by_name, acl_ok = row[0], row[2], row[3], row[4]
+    claimed_by = row[1]
+    claim_expires_at = _aware(claim_expires_raw)
+    if not acl_ok:
+        raise HelpClaimForbiddenError()
+    if hr_status != "open":
+        raise HelpClaimConflictError("Заявка уже закрыта")
+
+    claim_active = (
+        claimed_by is not None
+        and claimed_by != teacher_id
+        and claim_expires_at is not None
+        and claim_expires_at >= now
+    )
+    if claim_active and not takeover:
+        raise HelpClaimConflictError(
+            "Заявка уже в работе у другого преподавателя",
+            claimed_by=claimed_by,
+            claimed_by_name=claimed_by_name,
+            claim_expires_at=claim_expires_at,
+        )
+
+    # Атомарный захват: условие в WHERE повторяет проверки выше — между SELECT
+    # и UPDATE заявку мог забрать другой преподаватель.
+    free_cond = "" if takeover else (
+        "AND (hr.claim_expires_at IS NULL"
+        " OR hr.claim_expires_at < :now_ts"
+        " OR hr.claimed_by = :teacher_id)"
+    )
+    r2 = await db.execute(
+        text(f"""
+            UPDATE help_requests hr
+            SET claimed_by = :teacher_id, claim_token = :token,
+                claim_expires_at = :expires_at
+            WHERE hr.id = :request_id
+              AND hr.status = 'open'
+              {free_cond}
+            RETURNING hr.id, hr.status, hr.request_type, hr.student_id, hr.task_id,
+                      hr.course_id, hr.created_at, hr.priority, hr.due_at
+        """),  # nosec B608 — free_cond из закрытого набора литералов
+        {
+            "request_id": request_id,
+            "teacher_id": teacher_id,
+            "token": token,
+            "expires_at": expires_at,
+            "now_ts": now,
+        },
+    )
+    urow = r2.fetchone()
+    if urow is None:
+        logger.info(
+            "help_claim_by_id conflict request_id=%s teacher_id=%s claimed_by=%s expires=%s",
+            request_id, teacher_id, claimed_by, claim_expires_at,
+        )
+        raise HelpClaimConflictError(
+            "Заявку уже взял другой преподаватель",
+            claimed_by=claimed_by,
+            claimed_by_name=claimed_by_name,
+            claim_expires_at=claim_expires_at,
+        )
+
+    due_at = _aware(urow[8])
+    item = {
+        "request_id": urow[0],
+        "status": urow[1],
+        "request_type": urow[2],
+        "student_id": urow[3],
+        "task_id": urow[4],
+        "course_id": urow[5],
+        "created_at": urow[6],
+        "priority": urow[7] if urow[7] is not None else 100,
+        "due_at": due_at,
+        "is_overdue": due_at is not None and due_at < now,
+    }
+    previous_claim = (
+        {
+            "teacher_id": claimed_by,
+            "teacher_name": claimed_by_name,
+            "expires_at": claim_expires_at,
+        }
+        if claim_active
+        else None
+    )
+    return (item, token, expires_at, previous_claim)
 
 
 async def claim_next_review(

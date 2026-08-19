@@ -55,6 +55,41 @@ def _normalize_due_at(due_at: Any) -> Optional[datetime]:
     return None
 
 
+def _claim_state(
+    claimed_by: Optional[int],
+    claim_expires_at: Any,
+    claimed_by_name: Optional[str],
+    viewer_teacher_id: int,
+    now: datetime,
+) -> dict[str, Any]:
+    """Состояние захвата заявки для списка и карточки (tsk-592).
+
+    Единственное место, где «занята» выводится из трёх колонок, — чтобы список
+    и карточка не разъехались в определении занятости (тот же принцип, что у
+    общих предикатов очереди в `teacher_queue_service`).
+
+    Просроченный захват — это СВОБОДНАЯ заявка: `claim_expires_at` и есть
+    защита от «вечно занятых», если клиент не позвал release. Поэтому
+    `is_claimed=False` при истёкшем сроке, хотя `claimed_by` в строке остался.
+
+    :param viewer_teacher_id: кто смотрит — от него зависит `claimed_by_me`
+        (свой захват интерфейс не показывает как блокировку).
+    """
+    expires_norm = _normalize_due_at(claim_expires_at)
+    is_claimed = (
+        claimed_by is not None
+        and expires_norm is not None
+        and expires_norm >= now
+    )
+    return {
+        "claimed_by": claimed_by if is_claimed else None,
+        "claimed_by_name": claimed_by_name if is_claimed else None,
+        "claim_expires_at": expires_norm if is_claimed else None,
+        "is_claimed": is_claimed,
+        "claimed_by_me": bool(is_claimed and claimed_by == viewer_teacher_id),
+    }
+
+
 def _task_title_display(
     task_id: int,
     external_uid: Optional[str],
@@ -448,11 +483,17 @@ async def list_help_requests(
                    t.external_uid AS task_external_uid,
                    c.title AS course_title,
                    t.task_content->>'title' AS task_title_raw,
-                   t.task_content->>'stem' AS task_stem
+                   t.task_content->>'stem' AS task_stem,
+                   -- tsk-592: кто держит заявку в работе и до какого времени.
+                   -- Колонки в БД были с этапа 3.9, но наружу не отдавались —
+                   -- поэтому второй преподаватель не видел занятость и брался
+                   -- за ту же заявку.
+                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
+            LEFT JOIN users cu ON cu.id = hr.claimed_by
             WHERE {acl_sql} {status_cond} {type_cond} {student_cond} {overdue_cond}
             {order_sql}
             LIMIT :limit OFFSET :offset
@@ -491,6 +532,14 @@ async def list_help_requests(
                 row[19] if len(row) > 19 else None,
             ),
             "course_title": row[17] if len(row) > 17 else None,
+            # tsk-592: занятость заявки — колонки 20-22 в порядке SELECT выше.
+            **_claim_state(
+                row[20] if len(row) > 20 else None,
+                row[21] if len(row) > 21 else None,
+                row[22] if len(row) > 22 else None,
+                teacher_id,
+                now,
+            ),
         })
     return (items, total)
 
@@ -528,11 +577,14 @@ async def get_help_request_detail(
                    t.task_content->>'stem' AS task_stem,
                    hr.webinar_link, hr.review_understood, hr.escalated_to_methodist_at,
                    (SELECT COUNT(*) FROM help_request_reopens rr
-                     WHERE rr.request_id = hr.id) AS reopen_count
+                     WHERE rr.request_id = hr.id) AS reopen_count,
+                   -- tsk-592: занятость заявки, то же поле, что в списке.
+                   hr.claimed_by, hr.claim_expires_at, cu.full_name AS claimed_by_name
             FROM help_requests hr
             LEFT JOIN users u ON u.id = hr.student_id
             LEFT JOIN tasks t ON t.id = hr.task_id
             LEFT JOIN courses c ON c.id = hr.course_id
+            LEFT JOIN users cu ON cu.id = hr.claimed_by
             WHERE hr.id = :request_id
         """),
         {"request_id": request_id},
@@ -621,6 +673,16 @@ async def get_help_request_detail(
         "review_understood": row[25] if len(row) > 25 else None,
         "escalated_to_methodist_at": row[26] if len(row) > 26 else None,
         "reopen_count": int(row[27]) if len(row) > 27 and row[27] is not None else 0,
+        # tsk-592: занятость заявки — колонки 28-30 в порядке SELECT выше.
+        # Считается тем же `_claim_state`, что в списке: два экрана обязаны
+        # одинаково понимать «в работе».
+        **_claim_state(
+            row[28] if len(row) > 28 else None,
+            row[29] if len(row) > 29 else None,
+            row[30] if len(row) > 30 else None,
+            teacher_id,
+            now,
+        ),
         "history": replies,
     }, None)
 
