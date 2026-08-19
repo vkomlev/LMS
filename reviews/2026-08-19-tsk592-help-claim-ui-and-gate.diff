@@ -1,0 +1,429 @@
+diff --git a/app/api/v1/teacher_help_requests.py b/app/api/v1/teacher_help_requests.py
+index 696c0f4..a823393 100644
+--- a/app/api/v1/teacher_help_requests.py
++++ b/app/api/v1/teacher_help_requests.py
+@@ -66,6 +66,13 @@ from app.services.teacher_queue_service import (
+ router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
+ logger = logging.getLogger("api.teacher_help_requests")
+ 
++# tsk-592: заявку ведёт другой преподаватель. Текст объясняет и запрет, и выход
++# из него — иначе отказ читается как поломка.
++CLAIMED_BY_OTHER_DETAIL = (
++    "Заявку сейчас ведёт другой преподаватель. Откройте её карточку и нажмите "
++    "«Всё равно взять», если хотите перехватить"
++)
++
+ 
+ # ----- Этап 3.9: claim-next (маршрут до /{request_id}, чтобы "claim-next" не захватывался как id) -----
+ 
+@@ -279,6 +286,11 @@ async def help_request_close(
+     data, already, lock_err = await close_help_request(
+         db, request_id, body.closed_by, body.resolution_comment, lock_token=body.lock_token
+     )
++    if lock_err == "claimed_by_other":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT,
++            detail=CLAIMED_BY_OTHER_DETAIL,
++        )
+     if lock_err == "lock_conflict":
+         raise HTTPException(
+             status_code=status.HTTP_409_CONFLICT,
+@@ -434,6 +446,8 @@ async def help_request_webinar_link(
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+     if err == "forbidden":
+         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
++    if err == "claimed_by_other":
++        raise HTTPException(status.HTTP_409_CONFLICT, CLAIMED_BY_OTHER_DETAIL)
+     if err == "lock_conflict":
+         raise HTTPException(
+             status.HTTP_409_CONFLICT, "Токен блокировки невалиден или просрочен"
+@@ -487,6 +501,10 @@ async def help_request_reply(
+             status_code=status.HTTP_409_CONFLICT,
+             detail="Заявка уже закрыта. Ответ в закрытую заявку запрещён.",
+         )
++    if err == "claimed_by_other":
++        raise HTTPException(
++            status_code=status.HTTP_409_CONFLICT, detail=CLAIMED_BY_OTHER_DETAIL
++        )
+     if err == "lock_conflict":
+         raise HTTPException(
+             status_code=status.HTTP_409_CONFLICT,
+diff --git a/app/services/help_requests_service.py b/app/services/help_requests_service.py
+index 295c924..7cdf93a 100644
+--- a/app/services/help_requests_service.py
++++ b/app/services/help_requests_service.py
+@@ -690,14 +690,30 @@ async def get_help_request_detail(
+ async def check_help_request_lock(
+     db: AsyncSession,
+     request_id: int,
+-    teacher_id: int,
++    teacher_id: Optional[int],
+     lock_token: Optional[str],
+ ) -> Optional[str]:
+     """
+-    Если передан lock_token: проверить, что заявка захвачена этим teacher с этим токеном и не просрочена.
+-    Возвращает None если ок, иначе "lock_conflict" (409).
++    Проверить право писать в заявку. Возвращает None если можно, иначе
++    "lock_conflict" (409).
++
++    Правила:
++    - `teacher_id is None` — системное действие (tsk-339: ученик решил задание
++      сам; tsk-303: ученик подтвердил, что разбор помог). Оно не конкурирует с
++      преподавателем и проходит всегда, иначе заявка зависла бы открытой только
++      потому, что кто-то держит её карточку.
++    - Передан `lock_token` — строгая сверка: заявка захвачена ЭТИМ
++      преподавателем, тем же токеном, срок не истёк.
++    - Токена нет (tsk-592) — раньше это означало «пиши свободно», и второй
++      преподаватель отвечал поверх чужой работы, даже когда заявка была явно
++      взята. Теперь без токена пропускаем, только если заявку никто не держит
++      или держит сам вызывающий. Чужая ДЕЙСТВУЮЩАЯ отметка — отказ; выйти из
++      него можно перехватом (`POST /{id}/claim` с `takeover=true`), который
++      выдаёт свой токен и пишется в журнал событий.
++    - Истёкшая отметка не считается: она и есть защита от «вечно занятых»
++      заявок, если клиент не позвал release.
+     """
+-    if not lock_token:
++    if teacher_id is None:
+         return None
+     r = await db.execute(
+         text("""
+@@ -710,9 +726,23 @@ async def check_help_request_lock(
+         return None
+     claimed_by, claim_token, claim_expires_at = row[0], row[1], row[2]
+     now = datetime.now(timezone.utc)
++    claim_expires_norm = _normalize_due_at(claim_expires_at)
++    claim_active = claimed_by is not None and claim_expires_norm is not None and claim_expires_norm >= now
++
++    if not lock_token:
++        if claim_active and claimed_by != teacher_id:
++            logger.info(
++                "tsk-592 write denied: request_id=%s teacher_id=%s claimed_by=%s (нет токена, заявка у другого)",
++                request_id, teacher_id, claimed_by,
++            )
++            # Отдельный код, а не общий lock_conflict: причина другая, и текст
++            # «токен невалиден» здесь сбил бы с толку — токена не было вовсе.
++            return "claimed_by_other"
++        return None
++
+     if claimed_by != teacher_id or claim_token != lock_token:
+         return "lock_conflict"
+-    if claim_expires_at is None or claim_expires_at < now:
++    if claim_expires_norm is None or claim_expires_norm < now:
+         return "lock_conflict"
+     return None
+ 
+@@ -726,7 +756,8 @@ async def close_help_request(
+ ) -> Tuple[Optional[dict[str, Any]], Optional[bool], Optional[str]]:
+     """
+     Закрыть заявку. Возвращает (data_dict, already_closed, error).
+-    error: None | "lock_conflict" (этап 3.9, при невалидном lock_token).
++    error: None | "lock_conflict" (этап 3.9, при невалидном lock_token) |
++    "claimed_by_other" (tsk-592: заявку ведёт другой преподаватель).
+     data_dict: request_id, status, closed_at, updated_at. Если заявка не найдена — (None, None, None).
+ 
+     ``closed_by=None`` — системное закрытие (tsk-339: задание решено учеником
+@@ -1548,7 +1579,11 @@ async def reply_help_request(
+ 
+     err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
+     if err is not None:
+-        return (None, "lock_conflict")
++        # tsk-592: причина отказа доходит до клиента как есть. Раньше здесь
++        # стоял литерал `lock_conflict`, и новый случай («заявку ведёт другой»)
++        # объяснялся бы ученику словами про невалидный токен, которого он не
++        # присылал.
++        return (None, err)
+ 
+     ok = await can_access_help_request(db, request_id, teacher_id)
+     if not ok:
+diff --git a/reviews/2026-08-19-tsk592-help-claim-ui-and-gate.md b/reviews/2026-08-19-tsk592-help-claim-ui-and-gate.md
+new file mode 100644
+index 0000000..6ae4509
+--- /dev/null
++++ b/reviews/2026-08-19-tsk592-help-claim-ui-and-gate.md
+@@ -0,0 +1,140 @@
++# tsk-592 (хвост): экран портала показывает занятость, сервер не даёт отвечать вторым
++
++**Дата:** 2026-08-19
++**Скиллы:** `/executor-pro` (правка портала и сервера), `/telegram-ux-flow-designer` и `/fastapi-api-developer` — в первой части задачи
++**Задача трекера:** `tsk-592` (P2), вторая половина — хвост, зафиксированный при закрытии первой
++**Решение `/review-gate`: ПРИНЯТО** (две блокирующие находки исправлены до вердикта — см. «Гейт»)
++
++---
++
++## Зачем
++
++Первая половина tsk-592 дала серверу и боту всё нужное, но **портал остался
++слепым**: поля состояния захвата он получал и не читал, поэтому два
++преподавателя по-прежнему могли открыть одну заявку и ответить оба. Плюс сервер
++пропускал ответ без отметки — защита держалась только на том, что клиент сам
++покажет занятость.
++
++---
++
++## Что сделано
++
++### Портал (SPW)
++
++| Что | Где |
++|---|---|
++| Хуки захвата и снятия отметки | `lib/teacher/use-help-requests.ts` (`useClaimHelpRequest`, `useReleaseHelpRequest`) |
++| Отметка при открытии карточки + снятие при уходе | `components/teacher/HelpRequestPanel.tsx` |
++| Плашка «Заявку ведёт …» + кнопка «Всё равно взять» | там же |
++| Пометка «в работе: имя» / «в работе у вас» в списке | `components/teacher/HelpRequestsList.tsx` |
++| Передача своей отметки в ответ и закрытие | `HelpRequestInlineReply.tsx`, хуки reply/close |
++| Типы контракта пересобраны из свежего `openapi.json` | `lib/api-types.ts` |
++
++Под чужой действующей отметкой скрыты **все** действия — ответ, закрытие и
++продление лимита; вместо них плашка с именем, сроком и кнопкой перехвата.
++Карточка при этом открывается целиком: вопрос ученика и переписку видно, иначе
++преподаватель не поймёт, стоит ли вообще перехватывать.
++
++**Про `useEffect` с мутацией.** `frontend-stack-rules` §2 запрещает мутацию в
++эффекте по умолчанию, и это осознанное исключение с обоснованием в коде: захват —
++не «сохранение данных при их появлении», а взятие общего ресурса на время
++присутствия человека на экране. Привязать его к `onClick` нельзя — карточку
++открывают и по прямой ссылке (из бейджа, из письма), а незанятая заявка ровно
++там и уходит второму. Признаки, которых правило требует от обоснованного
++эффекта, соблюдены: стабильные зависимости (`mutate` из React Query),
++защита от повторов (`claimAttemptedRef`) и cleanup, снимающий отметку.
++
++### Сервер (LMS)
++
++`check_help_request_lock` перестал означать «нет токена — пиши свободно»:
++
++| Ситуация | Было | Стало |
++|---|---|---|
++| Токен передан и верный | пропуск | пропуск |
++| Токен передан, но чужой/протухший | 409 | 409 |
++| Токена нет, заявку никто не держит | пропуск | пропуск |
++| Токена нет, отметка **своя** | пропуск | пропуск |
++| Токена нет, отметка **чужая и действует** | **пропуск** | **409 «Заявку ведёт другой преподаватель…»** |
++| Системное действие (`closed_by=None`) | пропуск | пропуск |
++
++Отдельный код ошибки `claimed_by_other` (не общий `lock_conflict`): причина
++другая, и текст «токен невалиден» сбивал бы с толку — токена не было вовсе.
++Текст отказа сразу называет выход: «нажмите „Всё равно взять“».
++
++**Системное закрытие намеренно вне гейта.** Заявку закрывает не только
++преподаватель: ученик решил задание сам (tsk-339) или подтвердил, что разбор
++помог (tsk-303). Такие закрытия идут с `closed_by=None` и обязаны проходить,
++иначе заявка зависла бы открытой только потому, что кто-то держит её карточку.
++Закреплено тестом.
++
++---
++
++## Проверка
++
++| Что | Результат |
++|---|---|
++| Тесты LMS по задаче (`test_tsk592_help_claim_visibility.py`) | 15 из 15 (9 прежних + 6 на гейт) |
++| Полный прогон LMS | 2444 прошли, 0 упавших, 12 пропущено (нет Redis), 14 мин |
++| Тесты портала по заявкам | 41 из 41 (12 новых) |
++| Полный прогон SPW | 1311 прошли, 0 упавших (было 1300) |
++| `tsc --noEmit`, ESLint по изменённым файлам | чисто |
++| `docs/openapi.json` | без изменений — схема та же, изменилось поведение (новые случаи 409) |
++
++Что закрывают новые тесты сервера: ответ вторым преподавателем под чужой
++отметкой — 409 с подсказкой; закрытие из-под чужой работы — 409; владелец
++отметки отвечает и без токена; после перехвата ответ проходит; истёкшая отметка
++никого не держит; системное закрытие проходит под чужой отметкой.
++
++Что закрывают тесты портала: открытие карточки берёт заявку в работу; закрытую —
++не берёт; под чужой отметкой действия скрыты и видно кто и до когда; своя
++отметка блокировкой не считается; «Всё равно взять» шлёт перехват; уход с
++карточки снимает отметку, а без отметки ничего не снимает; в списке видно
++«в работе: имя» и «в работе у вас».
++
++---
++
++## Гейт
++
++Прогон `/review-gate` по 12 измерениям. **Две блокирующие находки**, обе
++исправлены до вердикта:
++
++> **1. Измерение 2 (корректность).** `HelpRequestPanel`: защита от повторного
++> захвата (`claimAttemptedRef`) не сбрасывалась при размонтировании, а строгий
++> режим React (включён в `next.config`) прогоняет эффекты дважды: монтаж →
++> снятие → монтаж. Второй проход отметку не брал, а первый её уже отпускал —
++> карточка открыта, заявка числится свободной. Второй сценарий той же природы:
++> ответ на захват приходит уже после ухода с карточки, и отметка висит ещё пять
++> минут без человека. **Исправлено:** флаг сбрасывается в cleanup, а поздний
++> ответ сразу снимает отметку (`unmountedRef`). Закрыто тестом.
++>
++> **2. Измерение 11 (cross-project).** Поведение публичных адресов изменилось
++> (`reply`/`close`/`webinar-link` теперь могут ответить 409), а `openapi.json`
++> при этом НЕ меняется — схема та же. Автоматическая сверка контракта такое не
++> ловит, поэтому запись в cross-project памяти здесь единственный способ
++> предупредить смежные проекты. **Исправлено:** `contracts/lms-api.md` и
++> `CHANGELOG.md` в ContentBackbone описывают ломающее поведение и что делать
++> сторонним вызывающим.
++
++Остальные измерения — без блокирующих находок:
++
++- **Доступ:** новых точек записи нет, ACL прежний; `teacher_id` по-прежнему
++  сверяется с текущим пользователем.
++- **Обратная совместимость:** проверены все потребители `reply`/`close`
++  (cross-repo grep) — это только TG_LMS и SPW, оба шлют свой токен.
++  ContentBackbone эти адреса не зовёт.
++- **Системные пути:** авто-закрытие заявки учеником не проходит через гейт
++  (`closed_by=None`) — закреплено отдельным тестом, иначе заявка зависала бы
++  открытой из-за чужой карточки.
++- **Дата/время:** срок отметки нормализуется перед сравнением (`_normalize_due_at`),
++  как требует правило проекта.
++
++## Риски
++
++- **Ответ из экрана прогресса ученика** (инлайн-форма, без отметки) теперь может
++  получить 409, если заявку в этот момент кто-то ведёт. Это и есть цель, текст
++  ошибки объясняет выход; форма показывает его как есть.
++- **Перехват не уведомляет прежнего владельца.** Он узнает об этом, когда его
++  ответ упрётся в 409. Уведомление — отдельная задача, если такое случится не
++  единично.
++- **Отметка живёт 5 минут** при обрыве клиента (закрыли вкладку без release).
++  Смягчено перехватом и коротким сроком.
+diff --git a/tests/test_tsk592_help_claim_visibility.py b/tests/test_tsk592_help_claim_visibility.py
+index 2c6aed4..7b2e2a9 100644
+--- a/tests/test_tsk592_help_claim_visibility.py
++++ b/tests/test_tsk592_help_claim_visibility.py
+@@ -309,6 +309,141 @@ async def test_release_frees_the_request(client, scene):
+     assert free["is_claimed"] is False
+ 
+ 
++async def test_reply_blocked_while_someone_else_works(client, scene):
++    """Второй преподаватель не отвечает поверх чужой работы — 409 с подсказкой.
++
++    Ради этого задача и заведена: раньше ответ уходил молча (`lock_token` был
++    обязателен только если клиент сам его прислал), и ученик получал два ответа
++    на один вопрос.
++    """
++    t1_id, t1_token = scene["t1"]
++    t2_id, t2_token = scene["t2"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    r = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
++        json={"teacher_id": t2_id, "message": "Второй ответ на тот же вопрос"},
++        headers=_auth(t2_token),
++    )
++    assert r.status_code == 409, r.text
++    assert "Всё равно взять" in r.json()["detail"]
++
++
++async def test_close_blocked_while_someone_else_works(client, scene):
++    """Закрыть заявку из-под чужой работы тоже нельзя."""
++    t1_id, t1_token = scene["t1"]
++    t2_id, t2_token = scene["t2"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    r = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/close",
++        json={"closed_by": t2_id},
++        headers=_auth(t2_token),
++    )
++    assert r.status_code == 409, r.text
++
++
++async def test_owner_replies_without_token(client, scene):
++    """Владелец отметки отвечает и без токена — блокировка не про него.
++
++    Портал держит токен, но мог его потерять (перезагрузка страницы); наказывать
++    за это того, кто заявку и взял, нельзя.
++    """
++    t1_id, t1_token = scene["t1"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    r = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
++        json={"teacher_id": t1_id, "message": "Ответ владельца отметки"},
++        headers=_auth(t1_token),
++    )
++    assert r.status_code == 200, r.text
++
++
++async def test_reply_allowed_after_takeover(client, scene):
++    """Перехватил — и сразу можешь отвечать: блокировка мягкая, а не запертая."""
++    t1_id, t1_token = scene["t1"]
++    t2_id, t2_token = scene["t2"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    took = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t2_id, "takeover": True},
++        headers=_auth(t2_token),
++    )
++    assert took.status_code == 200, took.text
++    r = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
++        json={
++            "teacher_id": t2_id,
++            "message": "Отвечаю после перехвата",
++            "lock_token": took.json()["lock_token"],
++        },
++        headers=_auth(t2_token),
++    )
++    assert r.status_code == 200, r.text
++
++
++async def test_expired_claim_does_not_block_reply(client, db, scene):
++    """Истёкшая отметка никого не держит — иначе заявка залипла бы навсегда."""
++    t1_id, t1_token = scene["t1"]
++    t2_id, t2_token = scene["t2"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    await db.execute(
++        text("UPDATE help_requests SET claim_expires_at = :exp WHERE id = :r"),
++        {
++            "exp": datetime.now(timezone.utc) - timedelta(minutes=1),
++            "r": scene["request_id"],
++        },
++    )
++    await db.commit()
++    r = await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
++        json={"teacher_id": t2_id, "message": "Отметка протухла — отвечаю"},
++        headers=_auth(t2_token),
++    )
++    assert r.status_code == 200, r.text
++
++
++async def test_system_close_ignores_claim(client, db, scene):
++    """Системное закрытие проходит даже под чужой отметкой.
++
++    Ученик решил задание сам (tsk-339) или подтвердил, что разбор помог
++    (tsk-303) — заявка обязана закрыться, а не висеть только потому, что кто-то
++    держит её карточку открытой.
++    """
++    from app.services.help_requests_service import close_help_request
++
++    t1_id, t1_token = scene["t1"]
++    await client.post(
++        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
++        json={"teacher_id": t1_id},
++        headers=_auth(t1_token),
++    )
++    data, _already, err = await close_help_request(
++        db, scene["request_id"], closed_by=None, resolution_comment="Ученик решил сам"
++    )
++    await db.commit()
++    assert err is None, f"системное закрытие не должно упираться в отметку: {err}"
++    assert data is not None and data["status"] == "closed"
++
++
+ async def test_claim_denied_without_acl(client, scene):
+     """Заявка вне зоны ответственности — 403, а не 409 и не молчаливый захват."""
+     stranger_id, stranger_token = scene["stranger"]

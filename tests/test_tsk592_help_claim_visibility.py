@@ -309,6 +309,141 @@ async def test_release_frees_the_request(client, scene):
     assert free["is_claimed"] is False
 
 
+async def test_reply_blocked_while_someone_else_works(client, scene):
+    """Второй преподаватель не отвечает поверх чужой работы — 409 с подсказкой.
+
+    Ради этого задача и заведена: раньше ответ уходил молча (`lock_token` был
+    обязателен только если клиент сам его прислал), и ученик получал два ответа
+    на один вопрос.
+    """
+    t1_id, t1_token = scene["t1"]
+    t2_id, t2_token = scene["t2"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
+        json={"teacher_id": t2_id, "message": "Второй ответ на тот же вопрос"},
+        headers=_auth(t2_token),
+    )
+    assert r.status_code == 409, r.text
+    assert "Всё равно взять" in r.json()["detail"]
+
+
+async def test_close_blocked_while_someone_else_works(client, scene):
+    """Закрыть заявку из-под чужой работы тоже нельзя."""
+    t1_id, t1_token = scene["t1"]
+    t2_id, t2_token = scene["t2"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/close",
+        json={"closed_by": t2_id},
+        headers=_auth(t2_token),
+    )
+    assert r.status_code == 409, r.text
+
+
+async def test_owner_replies_without_token(client, scene):
+    """Владелец отметки отвечает и без токена — блокировка не про него.
+
+    Портал держит токен, но мог его потерять (перезагрузка страницы); наказывать
+    за это того, кто заявку и взял, нельзя.
+    """
+    t1_id, t1_token = scene["t1"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
+        json={"teacher_id": t1_id, "message": "Ответ владельца отметки"},
+        headers=_auth(t1_token),
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_reply_allowed_after_takeover(client, scene):
+    """Перехватил — и сразу можешь отвечать: блокировка мягкая, а не запертая."""
+    t1_id, t1_token = scene["t1"]
+    t2_id, t2_token = scene["t2"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    took = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t2_id, "takeover": True},
+        headers=_auth(t2_token),
+    )
+    assert took.status_code == 200, took.text
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
+        json={
+            "teacher_id": t2_id,
+            "message": "Отвечаю после перехвата",
+            "lock_token": took.json()["lock_token"],
+        },
+        headers=_auth(t2_token),
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_expired_claim_does_not_block_reply(client, db, scene):
+    """Истёкшая отметка никого не держит — иначе заявка залипла бы навсегда."""
+    t1_id, t1_token = scene["t1"]
+    t2_id, t2_token = scene["t2"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    await db.execute(
+        text("UPDATE help_requests SET claim_expires_at = :exp WHERE id = :r"),
+        {
+            "exp": datetime.now(timezone.utc) - timedelta(minutes=1),
+            "r": scene["request_id"],
+        },
+    )
+    await db.commit()
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/reply",
+        json={"teacher_id": t2_id, "message": "Отметка протухла — отвечаю"},
+        headers=_auth(t2_token),
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_system_close_ignores_claim(client, db, scene):
+    """Системное закрытие проходит даже под чужой отметкой.
+
+    Ученик решил задание сам (tsk-339) или подтвердил, что разбор помог
+    (tsk-303) — заявка обязана закрыться, а не висеть только потому, что кто-то
+    держит её карточку открытой.
+    """
+    from app.services.help_requests_service import close_help_request
+
+    t1_id, t1_token = scene["t1"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    data, _already, err = await close_help_request(
+        db, scene["request_id"], closed_by=None, resolution_comment="Ученик решил сам"
+    )
+    await db.commit()
+    assert err is None, f"системное закрытие не должно упираться в отметку: {err}"
+    assert data is not None and data["status"] == "closed"
+
+
 async def test_claim_denied_without_acl(client, scene):
     """Заявка вне зоны ответственности — 403, а не 409 и не молчаливый захват."""
     stranger_id, stranger_token = scene["stranger"]

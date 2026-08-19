@@ -690,14 +690,30 @@ async def get_help_request_detail(
 async def check_help_request_lock(
     db: AsyncSession,
     request_id: int,
-    teacher_id: int,
+    teacher_id: Optional[int],
     lock_token: Optional[str],
 ) -> Optional[str]:
     """
-    Если передан lock_token: проверить, что заявка захвачена этим teacher с этим токеном и не просрочена.
-    Возвращает None если ок, иначе "lock_conflict" (409).
+    Проверить право писать в заявку. Возвращает None если можно, иначе
+    "lock_conflict" (409).
+
+    Правила:
+    - `teacher_id is None` — системное действие (tsk-339: ученик решил задание
+      сам; tsk-303: ученик подтвердил, что разбор помог). Оно не конкурирует с
+      преподавателем и проходит всегда, иначе заявка зависла бы открытой только
+      потому, что кто-то держит её карточку.
+    - Передан `lock_token` — строгая сверка: заявка захвачена ЭТИМ
+      преподавателем, тем же токеном, срок не истёк.
+    - Токена нет (tsk-592) — раньше это означало «пиши свободно», и второй
+      преподаватель отвечал поверх чужой работы, даже когда заявка была явно
+      взята. Теперь без токена пропускаем, только если заявку никто не держит
+      или держит сам вызывающий. Чужая ДЕЙСТВУЮЩАЯ отметка — отказ; выйти из
+      него можно перехватом (`POST /{id}/claim` с `takeover=true`), который
+      выдаёт свой токен и пишется в журнал событий.
+    - Истёкшая отметка не считается: она и есть защита от «вечно занятых»
+      заявок, если клиент не позвал release.
     """
-    if not lock_token:
+    if teacher_id is None:
         return None
     r = await db.execute(
         text("""
@@ -710,9 +726,23 @@ async def check_help_request_lock(
         return None
     claimed_by, claim_token, claim_expires_at = row[0], row[1], row[2]
     now = datetime.now(timezone.utc)
+    claim_expires_norm = _normalize_due_at(claim_expires_at)
+    claim_active = claimed_by is not None and claim_expires_norm is not None and claim_expires_norm >= now
+
+    if not lock_token:
+        if claim_active and claimed_by != teacher_id:
+            logger.info(
+                "tsk-592 write denied: request_id=%s teacher_id=%s claimed_by=%s (нет токена, заявка у другого)",
+                request_id, teacher_id, claimed_by,
+            )
+            # Отдельный код, а не общий lock_conflict: причина другая, и текст
+            # «токен невалиден» здесь сбил бы с толку — токена не было вовсе.
+            return "claimed_by_other"
+        return None
+
     if claimed_by != teacher_id or claim_token != lock_token:
         return "lock_conflict"
-    if claim_expires_at is None or claim_expires_at < now:
+    if claim_expires_norm is None or claim_expires_norm < now:
         return "lock_conflict"
     return None
 
@@ -726,7 +756,8 @@ async def close_help_request(
 ) -> Tuple[Optional[dict[str, Any]], Optional[bool], Optional[str]]:
     """
     Закрыть заявку. Возвращает (data_dict, already_closed, error).
-    error: None | "lock_conflict" (этап 3.9, при невалидном lock_token).
+    error: None | "lock_conflict" (этап 3.9, при невалидном lock_token) |
+    "claimed_by_other" (tsk-592: заявку ведёт другой преподаватель).
     data_dict: request_id, status, closed_at, updated_at. Если заявка не найдена — (None, None, None).
 
     ``closed_by=None`` — системное закрытие (tsk-339: задание решено учеником
@@ -1548,7 +1579,11 @@ async def reply_help_request(
 
     err = await check_help_request_lock(db, request_id, teacher_id, lock_token)
     if err is not None:
-        return (None, "lock_conflict")
+        # tsk-592: причина отказа доходит до клиента как есть. Раньше здесь
+        # стоял литерал `lock_conflict`, и новый случай («заявку ведёт другой»)
+        # объяснялся бы ученику словами про невалидный токен, которого он не
+        # присылал.
+        return (None, err)
 
     ok = await can_access_help_request(db, request_id, teacher_id)
     if not ok:

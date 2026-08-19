@@ -66,6 +66,13 @@ from app.services.teacher_queue_service import (
 router = APIRouter(prefix="/teacher/help-requests", tags=["teacher_help_requests"])
 logger = logging.getLogger("api.teacher_help_requests")
 
+# tsk-592: заявку ведёт другой преподаватель. Текст объясняет и запрет, и выход
+# из него — иначе отказ читается как поломка.
+CLAIMED_BY_OTHER_DETAIL = (
+    "Заявку сейчас ведёт другой преподаватель. Откройте её карточку и нажмите "
+    "«Всё равно взять», если хотите перехватить"
+)
+
 
 # ----- Этап 3.9: claim-next (маршрут до /{request_id}, чтобы "claim-next" не захватывался как id) -----
 
@@ -279,6 +286,11 @@ async def help_request_close(
     data, already, lock_err = await close_help_request(
         db, request_id, body.closed_by, body.resolution_comment, lock_token=body.lock_token
     )
+    if lock_err == "claimed_by_other":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=CLAIMED_BY_OTHER_DETAIL,
+        )
     if lock_err == "lock_conflict":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -434,6 +446,8 @@ async def help_request_webinar_link(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
     if err == "forbidden":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к заявке")
+    if err == "claimed_by_other":
+        raise HTTPException(status.HTTP_409_CONFLICT, CLAIMED_BY_OTHER_DETAIL)
     if err == "lock_conflict":
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Токен блокировки невалиден или просрочен"
@@ -486,6 +500,10 @@ async def help_request_reply(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Заявка уже закрыта. Ответ в закрытую заявку запрещён.",
+        )
+    if err == "claimed_by_other":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=CLAIMED_BY_OTHER_DETAIL
         )
     if err == "lock_conflict":
         raise HTTPException(
