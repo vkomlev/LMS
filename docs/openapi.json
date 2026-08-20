@@ -38919,6 +38919,11 @@
             "type": "integer",
             "title": "Break Lessons"
           },
+          "not_started_lessons": {
+            "type": "integer",
+            "title": "Not Started Lessons",
+            "default": 0
+          },
           "status": {
             "type": "string",
             "enum": [

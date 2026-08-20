@@ -313,7 +313,12 @@ async def _load_attendance(
         counts = await charge_service.lesson_counts_for_period(
             db, student_id=student_id, period_from=tail_from, period_to=tail_to,
         )
-        planned += counts.expected - counts.on_break
+        # `billable` — то же «за вычетом невыставляемого», что и у денег: хвост
+        # всегда за горизонтом генератора, то есть в будущем, поэтому вычет
+        # «ученик ещё не пришёл» (tsk-630) там нулевой по построению. Зовём
+        # общее свойство, а не повторяем вычитание, чтобы норматив и деньги не
+        # разъехались, если вычетов станет больше.
+        planned += counts.billable
 
     norm_source: Optional[str] = None
     not_conducted: Optional[int] = None
