@@ -21,6 +21,7 @@ from app.api.v1.access_requests import router as access_requests_router
 from app.api.v1.student_teacher_links import router as student_teacher_links_router
 from app.api.v1.messages_extra import router as messages_extra_router  
 from app.api.v1.tasks_extra import router as tasks_extra_router
+from app.api.v1.grading_criteria import router as grading_criteria_router
 from app.api.v1.courses_extra import router as courses_extra_router
 from app.api.v1.materials_extra import router as materials_extra_router
 from app.api.v1.user_courses_extra import router as user_courses_extra_router
@@ -304,6 +305,11 @@ app.include_router(
     prefix=API_PREFIX,
 )
 app.include_router(tasks_extra_router, prefix=API_PREFIX)
+# tsk-590: до generic CRUD `/tasks/{task_id}` — иначе `{task_id}` съедает и
+# слово `grading-criteria`, и адреса очереди вычитки отвечают 422 «не удалось
+# разобрать строку как число» (тот же класс, что мёртвый `/tasks/search`,
+# tsk-493).
+app.include_router(grading_criteria_router, prefix=API_PREFIX)
 app.include_router(
     create_crud_router(
         prefix="/tasks", tags=["tasks"],

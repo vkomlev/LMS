@@ -190,6 +190,22 @@ CRITERION_MAX_LENGTH = 500
 CRITERIA_MAX_ITEMS = 20
 CRITERIA_NOTES_MAX_LENGTH = 2000
 
+#: Состояние критериев (tsk-590). `draft` — заготовка, которую человек ещё не
+#: читал: она видна методисту в редакторе и в очереди вычитки, но проверяющей
+#: машине НЕ отдаётся. `approved` — критерии вычитаны человеком и работают как
+#: замена эталона.
+#:
+#: Значение по умолчанию — `draft`, и это осознанный выбор в сторону
+#: безопасности: цена ошибки несимметрична. Лишний черновик в очереди стоит
+#: методисту одного прочтения, а невычитанный критерий, попавший в машинную
+#: проверку, стоит ученику незачёта по правилу, которого никто не видел.
+CriteriaStatus = Literal["draft", "approved"]
+
+#: Откуда критерии взялись. Нужно не для статистики, а для вычитки: методист
+#: должен видеть, читает он свой текст или предложение модели, — доверие к
+#: этим двум источникам разное.
+CriteriaOrigin = Literal["manual", "ai_draft", "import"]
+
 
 def _clean_criteria_list(values: List[str], *, field_name: str) -> List[str]:
     """Обрезать, проверить осмысленность и отсечь дубли в списке критериев.
@@ -294,6 +310,56 @@ class GradingCriteria(BaseModel):
         examples=[None, "Ученик сдаёт вывод программы; поле ответа схлопывает переносы строк."],
     )
 
+    # ── Вычитка человеком (tsk-590) ─────────────────────────────────────────
+    status: CriteriaStatus = Field(
+        default="draft",
+        description=(
+            "Вычитаны ли критерии человеком. `draft` — заготовка, машине не "
+            "отдаётся; `approved` — методист прочитал и подтвердил. По "
+            "умолчанию `draft`: критерии, про которые неизвестно, читал ли их "
+            "человек, к оценке ученика не допускаются."
+        ),
+    )
+    origin: CriteriaOrigin = Field(
+        default="manual",
+        description=(
+            "Кто составил критерии: `manual` — методист руками, `ai_draft` — "
+            "черновик модели, `import` — пакетная загрузка."
+        ),
+    )
+    generated_by_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Модель, составившая черновик (`origin=ai_draft`). Нужна, чтобы "
+            "при следующей калибровке было видно, чьи заготовки методист "
+            "правил чаще."
+        ),
+        examples=[None, "openai/gpt-5.4-mini"],
+    )
+    generated_at: Optional[str] = Field(
+        default=None,
+        description="Когда составлен черновик, ISO-8601. Строка, а не datetime: "
+        "`solution_rules` уходит в jsonb через `model_dump()` без режима json.",
+    )
+    reviewed_by: Optional[int] = Field(
+        default=None,
+        description="`users.id` того, кто подтвердил критерии (`status=approved`).",
+    )
+    reviewed_at: Optional[str] = Field(
+        default=None,
+        description="Когда критерии подтверждены, ISO-8601 (см. `generated_at` про тип).",
+    )
+    draft_warning: Optional[str] = Field(
+        default=None,
+        description=(
+            "Предупреждение о классе задания, проставленное КОДОМ, а не "
+            "моделью (tsk-590): например, ответ подтверждается файлом, "
+            "которого модель не видит. Модель на такие вопросы отвечать не "
+            "умеет — замер показал, что вычисляющей себя она не признаёт."
+        ),
+        examples=[None, "Ответ подтверждается файлом — критерии машинную проверку не заменят."],
+    )
+
     @model_validator(mode="after")
     def validate_criteria(self) -> "GradingCriteria":
         """Пустой или бессодержательный блок не должен считаться критериями.
@@ -319,7 +385,25 @@ class GradingCriteria(BaseModel):
                     f"grading_criteria.notes длиннее {CRITERIA_NOTES_MAX_LENGTH} символов"
                 )
             self.notes = notes or None
+        if self.status == "approved" and self.reviewed_by is None:
+            raise ValueError(
+                "grading_criteria.status=approved требует reviewed_by: "
+                "подтверждение без имени подтвердившего не отличить от "
+                "заготовки, а именно на этом отличии стоит допуск к машинной "
+                "проверке"
+            )
         return self
+
+    def is_usable(self) -> bool:
+        """Можно ли судить ответ по этим критериям — то есть вычитаны ли они.
+
+        Отдельный метод, а не условие на месте: «критерии есть» спрашивают
+        предикат допуска, промпт судьи и экран методиста, и разъехаться им
+        нельзя (тот же довод, что в `ai_check_policy`).
+
+        :returns: True — критерии непустые И подтверждены человеком.
+        """
+        return bool(self.must) and self.status == "approved"
 
 
 class PenaltiesRules(BaseModel):
@@ -700,11 +784,42 @@ class SolutionRules(BaseModel):
         форма «правило есть, а содержимого нет», из-за которой предикат
         `has_reference_answer` пришлось делать общим (см. его docstring).
 
+        **Черновик критериями не считается (tsk-590).** Заготовка модели
+        живёт в том же поле, и если бы предикат смотрел только на непустоту
+        `must`, задание становилось бы пригодным для машинной проверки в тот
+        момент, когда черновик записан, — то есть до того, как его прочитал
+        человек. Замер 12 живых заданий показал, за что именно эта защита:
+        для заданий «напишите программу» модель уверенно пишет критерии
+        проверки ПРОГРАММЫ, тогда как ученик сдаёт короткий ответ, — текст
+        складный, а проверять по нему нельзя.
+
+        Рубрика TA (`text_answer.rubric`) статуса не имеет и считается
+        подтверждённой: её 148 заданий писал методист руками, машинного
+        происхождения там нет.
+
         :returns: True — проверяющему есть по чему судить ответ без эталона.
         """
-        if self.grading_criteria is not None and self.grading_criteria.must:
+        if self.grading_criteria is not None and self.grading_criteria.is_usable():
             return True
         return bool(self.text_answer is not None and self.text_answer.rubric)
+
+    def criteria_state(self) -> Literal["none", "draft", "approved"]:
+        """Что с критериями у задания — для инвентаря и очереди вычитки (tsk-590).
+
+        Три состояния вместо булева «есть/нет»: методисту нужно различать
+        «писать с нуля» и «прочитать готовую заготовку», это разная работа и
+        разный объём. Предикат один на всех потребителей — по той же причине,
+        что и `has_grading_criteria`.
+
+        :returns: `none` — ни критериев, ни черновика; `draft` — заготовка
+            ждёт вычитки; `approved` — критерии подтверждены человеком.
+        """
+        if self.text_answer is not None and self.text_answer.rubric:
+            return "approved"
+        criteria = self.grading_criteria
+        if criteria is None or not criteria.must:
+            return "none"
+        return "approved" if criteria.status == "approved" else "draft"
 
     def criteria_for_judge(self) -> Optional[dict]:
         """Критерии в едином виде — независимо от того, где они лежат (tsk-605).
@@ -719,7 +834,7 @@ class SolutionRules(BaseModel):
             "notes": str | None, "source": "grading_criteria" | "text_rubric"}`
             либо None, если критериев нет.
         """
-        if self.grading_criteria is not None and self.grading_criteria.must:
+        if self.grading_criteria is not None and self.grading_criteria.is_usable():
             return {
                 "must": list(self.grading_criteria.must),
                 "accept": list(self.grading_criteria.accept),

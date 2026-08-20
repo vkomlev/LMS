@@ -51,6 +51,11 @@ _GOOD_CRITERIA = {
     "reject": ["Округлённый результат вместо точного значения"],
 }
 
+#: Те же критерии, но вычитанные человеком (tsk-590). С тех пор как черновики
+#: модели живут в том же поле, «критерии заполнены» и «критерии работают» —
+#: разные вещи: допуск к машинной проверке даёт только подтверждение.
+_APPROVED_CRITERIA = {**_GOOD_CRITERIA, "status": "approved", "reviewed_by": 1}
+
 
 def _headers() -> dict[str, str]:
     api_key = next(iter(_settings.valid_api_keys))
@@ -112,7 +117,7 @@ async def test_criteria_normalize_whitespace_and_notes():
 
 
 async def test_has_grading_criteria_new_field():
-    rules = SolutionRules.model_validate(_rules(grading_criteria=_GOOD_CRITERIA))
+    rules = SolutionRules.model_validate(_rules(grading_criteria=_APPROVED_CRITERIA))
     assert rules.has_grading_criteria() is True
     assert rules.criteria_for_judge()["source"] == "grading_criteria"
 
@@ -151,7 +156,7 @@ async def test_criteria_for_judge_prefers_new_field_over_rubric():
     """Источник один и тот же у промпта, экрана и инвентаря — иначе разъедутся."""
     rules = SolutionRules.model_validate(
         _rules(
-            grading_criteria=_GOOD_CRITERIA,
+            grading_criteria=_APPROVED_CRITERIA,
             text_answer={"auto_check": False, "rubric": [{"id": "c1", "title": "Старая рубрика задания", "max_score": 1}]},
         )
     )
@@ -174,7 +179,7 @@ async def test_policy_blocks_sa_com_without_reference_and_criteria():
 async def test_policy_allows_sa_com_with_criteria():
     """Критерии — замена эталона: то же задание допускается."""
     verdict = ai_check_policy.evaluate(
-        "SA_COM", _rules(manual_review_required=True, grading_criteria=_GOOD_CRITERIA)
+        "SA_COM", _rules(manual_review_required=True, grading_criteria=_APPROVED_CRITERIA)
     )
     assert verdict.allowed is True
     assert (verdict.has_reference, verdict.has_criteria) == (False, True)
@@ -284,7 +289,7 @@ async def test_machine_verdict_allowed_when_task_is_gradable(db):
         db,
         student_id=student_id,
         task_type="SA_COM",
-        solution_rules=_rules(grading_criteria=_GOOD_CRITERIA),
+        solution_rules=_rules(grading_criteria=_APPROVED_CRITERIA),
     )
     assert (decision.allowed, decision.outcome) == (True, "allowed")
 
@@ -418,7 +423,13 @@ async def test_grading_gaps_lists_task_without_criteria(db, client):
 
 
 async def test_grading_gaps_task_disappears_after_criteria_filled(db, client):
-    """Заполнил критерии — задание ушло из списка. Без этого поле мертво."""
+    """Вычитал критерии — задание ушло из списка. Без этого поле мертво.
+
+    С tsk-590 «ушло» наступает не на записи текста, а на подтверждении: пока
+    критерии в состоянии черновика, машине их не отдают, и пробел остаётся
+    пробелом. Проверяются оба шага подряд — иначе легко было бы починить
+    инвентарь так, что он перестал бы замечать вычитку вовсе.
+    """
     course_id = await _make_course(db)
     task_id = await _make_task(
         db, course_id, task_type="SA_COM", rules=_rules(manual_review_required=True)
@@ -429,6 +440,18 @@ async def test_grading_gaps_task_disappears_after_criteria_filled(db, client):
         text("UPDATE tasks SET solution_rules = CAST(:sr AS jsonb) WHERE id = :t"),
         {
             "sr": json.dumps(_rules(manual_review_required=True, grading_criteria=_GOOD_CRITERIA)),
+            "t": task_id,
+        },
+    )
+    await db.commit()
+    assert (await _gaps(client, course_id))["tasks_total"] == 1
+
+    await db.execute(
+        text("UPDATE tasks SET solution_rules = CAST(:sr AS jsonb) WHERE id = :t"),
+        {
+            "sr": json.dumps(
+                _rules(manual_review_required=True, grading_criteria=_APPROVED_CRITERIA)
+            ),
             "t": task_id,
         },
     )
@@ -540,7 +563,10 @@ async def test_patch_task_saves_grading_criteria(db, client):
     assert resp.status_code == 200, resp.text
     saved = resp.json()["solution_rules"]["grading_criteria"]
     assert saved["must"] == _GOOD_CRITERIA["must"]
-    assert (await _gaps(client, course_id))["tasks_total"] == 0
+    # tsk-590: правка через общий PATCH задания критерии сохраняет, но вычиткой
+    # не является — статус остаётся черновиком, и пробел не закрывается.
+    assert saved["status"] == "draft"
+    assert (await _gaps(client, course_id))["tasks_total"] == 1
 
 
 async def test_patch_task_rejects_meaningless_criteria(db, client):

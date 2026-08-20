@@ -10138,6 +10138,629 @@
         }
       }
     },
+    "/api/v1/tasks/grading-criteria/queue": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Очередь вычитки критериев оценивания (tsk-590)",
+        "description": "Отдать задания, которым нужны критерии, вместе с полным условием.\n\nСводка (`total`, `drafts_total`, `empty_total`) считается по всей выборке,\nа не по странице: постфильтр поверх пагинации молча теряет строки, и\nметодист видел бы «осталось 20» там, где осталось 279 (tsk-605 §1).\n\n:param course_id: показать только один курс.\n:param state: что показывать — заготовки, пустые или всё подряд.\n:param limit: размер страницы.\n:param offset: смещение.",
+        "operationId": "criteria_queue_api_v1_tasks_grading_criteria_queue_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ограничить одним курсом",
+              "title": "Course Id"
+            },
+            "description": "Ограничить одним курсом"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "draft",
+                "none",
+                "all"
+              ],
+              "type": "string",
+              "description": "`draft` — заготовки на вычитку, `none` — пустые, `all` — всё",
+              "default": "all",
+              "title": "State"
+            },
+            "description": "`draft` — заготовки на вычитку, `none` — пустые, `all` — всё"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Сколько заданий вернуть",
+              "default": 20,
+              "title": "Limit"
+            },
+            "description": "Сколько заданий вернуть"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Смещение по очереди",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Смещение по очереди"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Задания, которым нужны критерии или их вычитка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CriteriaQueueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/grading-criteria/export": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Выгрузка критериев оценивания таблицей (tsk-590)",
+        "description": "Выгрузить очередь таблицей — посмотреть список целиком вне кабинета.\n\nПункты внутри ячейки разделяются переносом строки: так их читает и\nтаблица, и человек, и обратная загрузка (`bulk`).\n\n:param course_id: ограничить одним курсом.",
+        "operationId": "criteria_export_api_v1_tasks_grading_criteria_export_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "course_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ограничить одним курсом",
+              "title": "Course Id"
+            },
+            "description": "Ограничить одним курсом"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV со списком заданий и текущими критериями",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/grading-criteria/bulk": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Пакетная загрузка критериев оценивания (tsk-590)",
+        "description": "Записать критерии сразу нескольким заданиям.\n\nПакет не прерывается на первой плохой строке: методисту нужен отчёт по\nвсем, а не «упало на 7-й». Запись коммитится один раз в конце, поэтому\nотчёт и состояние базы совпадают.\n\n:param payload: строки и признак пробного прогона.",
+        "operationId": "criteria_bulk_api_v1_tasks_grading_criteria_bulk_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriteriaBulkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Построчный отчёт: что принято, что отклонено и почему",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CriteriaBulkResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/grading-criteria/draft": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Составить черновик критериев по тексту задания (tsk-590)",
+        "description": "Составить заготовку критериев и положить её в задание как черновик.\n\nЗаготовка НЕ участвует в оценке ответов: она записывается со\n`status=\"draft\"`, а предикат допуска считает критериями только\nподтверждённые человеком. Это главное свойство всей задачи — незачёт по\nправилам, которых никто не читал, хуже, чем очередь на проверку.\n\n:param task_id: задание.\n:param model: явная модель вместо цепочки по умолчанию.",
+        "operationId": "criteria_draft_api_v1_tasks__task_id__grading_criteria_draft_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Задание, для которого нужна заготовка",
+              "title": "Task Id"
+            },
+            "description": "Задание, для которого нужна заготовка"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Явная модель; по умолчанию — цепочка LLM_JUDGE_MODELS",
+              "title": "Model"
+            },
+            "description": "Явная модель; по умолчанию — цепочка LLM_JUDGE_MODELS"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Черновик составлен и записан со статусом «не вычитан»",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "404": {
+            "description": "Задание не найдено"
+          },
+          "409": {
+            "description": "У задания уже есть подтверждённые критерии"
+          },
+          "502": {
+            "description": "Модель не ответила или ответила неразборчиво"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tasks/{task_id}/grading-criteria": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Сохранить и/или подтвердить критерии оценивания (tsk-590)",
+        "description": "Записать критерии задания и, если методист подтвердил, снять с них черновик.\n\nПравка и подтверждение разведены намеренно: методист, который поправил в\nзадании что-то другое, не должен нечаянно допустить непрочитанные\nкритерии к оценке ученика (решение оператора 2026-08-20).\n\n:param task_id: задание.\n:param payload: новые списки и признак подтверждения.",
+        "operationId": "criteria_write_api_v1_tasks__task_id__grading_criteria_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "Задание",
+              "title": "Task Id"
+            },
+            "description": "Задание"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CriteriaWriteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Критерии записаны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CriteriaWriteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Не аутентифицирован"
+          },
+          "403": {
+            "description": "Роль не позволяет (нужна methodist/admin)"
+          },
+          "404": {
+            "description": "Задание не найдено"
+          },
+          "422": {
+            "description": "Критерии не прошли проверку"
+          }
+        }
+      }
+    },
     "/api/v1/tasks/": {
       "post": {
         "tags": [
@@ -40976,6 +41599,516 @@
         ],
         "title": "CourseWithProgressRead"
       },
+      "CriteriaBulkItem": {
+        "properties": {
+          "must": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Must",
+            "description": "Обязательные требования. `null` — не менять."
+          },
+          "accept": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept",
+            "description": "Что засчитывать наравне."
+          },
+          "reject": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject",
+            "description": "Что не засчитывать."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Пояснение проверяющему."
+          },
+          "approve": {
+            "type": "boolean",
+            "title": "Approve",
+            "description": "Подтвердить критерии как вычитанные. Только с этим флагом они начинают работать заменой эталона; правка текста сама по себе черновик не подтверждает.",
+            "default": false
+          },
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "Задание, которому принадлежат критерии."
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "title": "CriteriaBulkItem",
+        "description": "Строка пакетной загрузки."
+      },
+      "CriteriaBulkRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CriteriaBulkItem"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Items"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "description": "Проверить строки и вернуть отчёт, ничего не записывая. Пакет с чужой правкой лучше отклонить целиком до записи, чем разбирать половину применённых строк потом.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "CriteriaBulkRequest",
+        "description": "Пакетная загрузка критериев."
+      },
+      "CriteriaBulkResponse": {
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "title": "Applied"
+          },
+          "rejected": {
+            "type": "integer",
+            "title": "Rejected"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CriteriaBulkResultItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "applied",
+          "rejected",
+          "dry_run",
+          "items"
+        ],
+        "title": "CriteriaBulkResponse",
+        "description": "Построчный отчёт пакетной загрузки."
+      },
+      "CriteriaBulkResultItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "criteria_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Criteria State"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "ok"
+        ],
+        "title": "CriteriaBulkResultItem",
+        "description": "Что стало с одной строкой пакета."
+      },
+      "CriteriaQueueItem": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid"
+          },
+          "course_id": {
+            "type": "integer",
+            "title": "Course Id"
+          },
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type"
+          },
+          "order_position": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Position"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "requires_attachment": {
+            "type": "boolean",
+            "title": "Requires Attachment"
+          },
+          "criteria_state": {
+            "type": "string",
+            "title": "Criteria State"
+          },
+          "criteria": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CriteriaView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "course_id",
+          "stem",
+          "requires_attachment",
+          "criteria_state"
+        ],
+        "title": "CriteriaQueueItem",
+        "description": "Задание в очереди вычитки — с полным условием, а не превью.\n\nПревью хватает инвентарю («что заполнять»), но не вычитке: решить, верны\nли критерии, без текста задания нельзя, а открывать каждое задание в\nсоседней вкладке — та самая работа, из-за которой поле стояло пустым."
+      },
+      "CriteriaQueueResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "drafts_total": {
+            "type": "integer",
+            "title": "Drafts Total"
+          },
+          "empty_total": {
+            "type": "integer",
+            "title": "Empty Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CriteriaQueueItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "drafts_total",
+          "empty_total",
+          "items"
+        ],
+        "title": "CriteriaQueueResponse",
+        "description": "Очередь вычитки критериев."
+      },
+      "CriteriaView": {
+        "properties": {
+          "must": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Must"
+          },
+          "accept": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Accept"
+          },
+          "reject": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Reject"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "generated_by_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated By Model"
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "draft_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Warning"
+          }
+        },
+        "type": "object",
+        "title": "CriteriaView",
+        "description": "Критерии задания в том виде, в каком их правит и читает методист."
+      },
+      "CriteriaWriteRequest": {
+        "properties": {
+          "must": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Must",
+            "description": "Обязательные требования. `null` — не менять."
+          },
+          "accept": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept",
+            "description": "Что засчитывать наравне."
+          },
+          "reject": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reject",
+            "description": "Что не засчитывать."
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Пояснение проверяющему."
+          },
+          "approve": {
+            "type": "boolean",
+            "title": "Approve",
+            "description": "Подтвердить критерии как вычитанные. Только с этим флагом они начинают работать заменой эталона; правка текста сама по себе черновик не подтверждает.",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "CriteriaWriteRequest",
+        "description": "Правка и/или подтверждение критериев одного задания."
+      },
+      "CriteriaWriteResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "criteria_state": {
+            "type": "string",
+            "title": "Criteria State"
+          },
+          "machine_gradable": {
+            "type": "boolean",
+            "title": "Machine Gradable"
+          },
+          "criteria": {
+            "$ref": "#/components/schemas/CriteriaView"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "criteria_state",
+          "machine_gradable",
+          "criteria"
+        ],
+        "title": "CriteriaWriteResponse",
+        "description": "Итог записи по одному заданию."
+      },
       "DifficultyLevelCreate": {
         "properties": {
           "uid": {
@@ -41097,6 +42230,44 @@
         "type": "object",
         "title": "DifficultyLevelUpdate",
         "description": "Схема частичного обновления уровня сложности.\nВсе поля опциональны."
+      },
+      "DraftResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "criteria_state": {
+            "type": "string",
+            "title": "Criteria State"
+          },
+          "criteria": {
+            "$ref": "#/components/schemas/CriteriaView"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "tokens_in": {
+            "type": "integer",
+            "title": "Tokens In"
+          },
+          "tokens_out": {
+            "type": "integer",
+            "title": "Tokens Out"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "criteria_state",
+          "criteria",
+          "model",
+          "tokens_in",
+          "tokens_out"
+        ],
+        "title": "DraftResponse",
+        "description": "Составленный черновик критериев."
       },
       "DuplicateCandidateRead": {
         "properties": {
@@ -41738,6 +42909,95 @@
             "examples": [
               null,
               "Ученик сдаёт вывод программы; поле ответа схлопывает переносы строк."
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "approved"
+            ],
+            "title": "Status",
+            "description": "Вычитаны ли критерии человеком. `draft` — заготовка, машине не отдаётся; `approved` — методист прочитал и подтвердил. По умолчанию `draft`: критерии, про которые неизвестно, читал ли их человек, к оценке ученика не допускаются.",
+            "default": "draft"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "ai_draft",
+              "import"
+            ],
+            "title": "Origin",
+            "description": "Кто составил критерии: `manual` — методист руками, `ai_draft` — черновик модели, `import` — пакетная загрузка.",
+            "default": "manual"
+          },
+          "generated_by_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated By Model",
+            "description": "Модель, составившая черновик (`origin=ai_draft`). Нужна, чтобы при следующей калибровке было видно, чьи заготовки методист правил чаще.",
+            "examples": [
+              null,
+              "openai/gpt-5.4-mini"
+            ]
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At",
+            "description": "Когда составлен черновик, ISO-8601. Строка, а не datetime: `solution_rules` уходит в jsonb через `model_dump()` без режима json."
+          },
+          "reviewed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed By",
+            "description": "`users.id` того, кто подтвердил критерии (`status=approved`)."
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At",
+            "description": "Когда критерии подтверждены, ISO-8601 (см. `generated_at` про тип)."
+          },
+          "draft_warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Draft Warning",
+            "description": "Предупреждение о классе задания, проставленное КОДОМ, а не моделью (tsk-590): например, ответ подтверждается файлом, которого модель не видит. Модель на такие вопросы отвечать не умеет — замер показал, что вычисляющей себя она не признаёт.",
+            "examples": [
+              null,
+              "Ответ подтверждается файлом — критерии машинную проверку не заменят."
             ]
           }
         },

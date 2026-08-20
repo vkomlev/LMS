@@ -201,7 +201,14 @@ _GRADING_GAP_CANDIDATE_SQL = """
     jsonb_array_length(coalesce(solution_rules->'correct_options','[]'::jsonb)) = 0
     AND coalesce(jsonb_typeof(solution_rules->'turtle_sim'), 'null') <> 'object'
     AND jsonb_array_length(coalesce(solution_rules->'short_answer'->'accepted_answers','[]'::jsonb)) = 0
-    AND jsonb_array_length(coalesce(solution_rules->'grading_criteria'->'must','[]'::jsonb)) = 0
+    AND (
+        jsonb_array_length(coalesce(solution_rules->'grading_criteria'->'must','[]'::jsonb)) = 0
+        -- tsk-590: черновик модели заполненными критериями не считается. Иначе
+        -- инвентарь показал бы «пробелов нет» в тот момент, когда заготовки
+        -- записаны, но их ещё никто не читал, — и работа методиста пропала бы
+        -- из виду ровно тогда, когда она началась.
+        OR coalesce(solution_rules->'grading_criteria'->>'status', 'draft') <> 'approved'
+    )
     AND jsonb_array_length(coalesce(solution_rules->'text_answer'->'rubric','[]'::jsonb)) = 0
 """
 
