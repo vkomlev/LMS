@@ -60,6 +60,9 @@ class ChargeRead(BaseModel):
     total_minor: int
     expected_lessons: int
     break_lessons: int
+    #: Занятий месяца до прихода ученика — вычитается наравне с перерывом
+    #: (tsk-630). Знаменатель доли — по-прежнему `expected_lessons`.
+    not_started_lessons: int = 0
     status: ChargeStatus
     closed_at: Optional[datetime] = None
     #: У ученика стоит ручная ЦЕНА (не сумма месяца) — расчёт её не перебивает.
