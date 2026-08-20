@@ -1,0 +1,349 @@
+diff --git a/app/models/charge.py b/app/models/charge.py
+index 1686a0e..5860cca 100644
+--- a/app/models/charge.py
++++ b/app/models/charge.py
+@@ -86,6 +86,8 @@ class StudentMonthlyCharge(Base):
+     manual_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+     expected_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
+     break_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
++    #: Занятий на днях ДО прихода ученика в расписание (tsk-630).
++    not_started_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
+     status: Mapped[str] = mapped_column(Text, server_default="open")
+     closed_at: Mapped[DateTime | None] = mapped_column(
+         DateTime(timezone=True), nullable=True
+diff --git a/app/schemas/charge.py b/app/schemas/charge.py
+index 9aa89f0..820f56a 100644
+--- a/app/schemas/charge.py
++++ b/app/schemas/charge.py
+@@ -60,6 +60,9 @@ class ChargeRead(BaseModel):
+     total_minor: int
+     expected_lessons: int
+     break_lessons: int
++    #: Занятий месяца до прихода ученика — вычитается наравне с перерывом
++    #: (tsk-630). Знаменатель доли — по-прежнему `expected_lessons`.
++    not_started_lessons: int = 0
+     status: ChargeStatus
+     closed_at: Optional[datetime] = None
+     #: У ученика стоит ручная ЦЕНА (не сумма месяца) — расчёт её не перебивает.
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index 87b7bab..6a517d1 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -69,10 +69,28 @@ def charge_total_minor(
+ 
+ @dataclass
+ class ChargeCounts:
+-    """Сколько занятий месяц предполагал и сколько из них съел перерыв."""
++    """Сколько занятий период предполагал и сколько из них не оплачивается.
++
++    Вычетов два, и они независимы: перерыв (ученик есть, но не ходит) и
++    «ещё не пришёл» (расписание месяца существует, но ученика в нём в эти дни
++    ещё не было). Пересечься они не могут: `on_break` считается только среди
++    дней от прихода и дальше, иначе новичок, которому сразу оформили перерыв,
++    получил бы двойной вычет за один и тот же день.
++
++    `expected` — знаменатель доли — остаётся месячным при любых вычетах: экран
++    начислений должен показывать и «занятий в месяце», и сколько из них выпало,
++    иначе сумма перестаёт объясняться (tsk-630).
++    """
+ 
+     expected: int
+     on_break: int
++    #: Занятий на днях ДО постановки ученика в расписание (tsk-630).
++    not_started: int = 0
++
++    @property
++    def billable(self) -> int:
++        """Занятий, за которые берут деньги. Ниже нуля не опускается."""
++        return max(self.expected - self.on_break - self.not_started, 0)
+ 
+ 
+ async def lesson_counts_for_month(
+@@ -93,16 +111,31 @@ async def lesson_counts_for_month(
+ async def lesson_counts_for_period(
+     db: AsyncSession, *, student_id: int, period_from: date, period_to: date
+ ) -> ChargeCounts:
+-    """Занятий за ПРОИЗВОЛЬНЫЙ период по постоянному расписанию и сколько из
+-    них попало в перерыв (границы включительные с обеих сторон).
++    """Занятий за ПРОИЗВОЛЬНЫЙ период по постоянному расписанию, сколько из них
++    попало в перерыв и сколько пришлось на дни до прихода ученика (границы
++    включительные с обеих сторон).
+ 
+     В слоте `weekday` считает от нуля-понедельника (проверено на живых данных:
+     слот 0 → ISODOW 1). Считается пара «день × слот», поэтому два слота в один
+     день дают два занятия, а не одно.
+ 
+-    tsk-556: вынесено из `lesson_counts_for_month` без изменения логики —
+-    дашборду нужен тот же счёт за хвост периода, до которого генератор занятий
+-    ещё не дошёл. Деньги по-прежнему зовут только помесячную обёртку.
++    **Приход ученика (tsk-630)** — самая ранняя постановка в расписание
++    (`lesson_slot_student.created_at`), по МСК и по ВСЕМ привязкам, включая
++    снятые. Три решения, каждое проверено на боевых данных августа 2026:
++
++    * не дата подписки — 39 из 41 подписки заведены одним днём 08.08 при
++      переезде на систему тарифов (tsk-301), это дата миграции, а не прихода
++      человека; доля по ней срезала бы первую неделю августа всем 37 ученикам;
++    * не первое занятие — генератор занятий заполняет календарь вперёд
++      неравномерно, и трое учеников с расписанием ещё с июля потеряли бы по
++      занятию из-за него, а не по существу (та же причина, по которой весь этот
++      счёт идёт от постоянного расписания, см. модуль);
++    * включая снятые привязки — иначе ученику, которому пересоздали слот,
++      месяц срезался бы как новичку.
++
++    tsk-556: вынесено из `lesson_counts_for_month` — дашборду нужен тот же счёт
++    за хвост периода, до которого генератор занятий ещё не дошёл. Хвост всегда
++    в будущем, поэтому `not_started` там ноль по построению.
+     """
+     row = (
+         await db.execute(
+@@ -125,10 +158,26 @@ async def lesson_counts_for_period(
+                      WHERE lss.student_id = :student_id
+                        AND lss.is_active
+                        AND ls.is_active
++                ),
++                joined AS (
++                    -- День прихода: самая ранняя постановка в расписание. NULL,
++                    -- когда привязок нет вовсе, — тогда вычета «ещё не пришёл»
++                    -- нет, и месяц считается как раньше.
++                    SELECT min((lss.created_at AT TIME ZONE 'Europe/Moscow')::date)
++                               AS started_on
++                      FROM lesson_slot_student lss
++                     WHERE lss.student_id = :student_id
+                 )
+                 SELECT count(*) AS expected,
+                        count(*) FILTER (
+-                           WHERE EXISTS (
++                           WHERE days.day < joined.started_on
++                       ) AS not_started,
++                       count(*) FILTER (
++                           -- Только среди дней ОТ прихода: иначе новичок с
++                           -- перерывом получил бы двойной вычет за один день.
++                           WHERE (joined.started_on IS NULL
++                                  OR days.day >= joined.started_on)
++                             AND EXISTS (
+                                SELECT 1 FROM student_break b
+                                 WHERE b.student_id = :student_id
+                                   AND days.day BETWEEN b.starts_on AND b.ends_on
+@@ -136,6 +185,7 @@ async def lesson_counts_for_period(
+                        ) AS on_break
+                   FROM days
+                   JOIN slots ON (EXTRACT(ISODOW FROM days.day)::int - 1) = slots.weekday
++                  CROSS JOIN joined
+                 """
+             ),
+             {
+@@ -145,7 +195,11 @@ async def lesson_counts_for_period(
+             },
+         )
+     ).one()
+-    return ChargeCounts(expected=int(row.expected), on_break=int(row.on_break))
++    return ChargeCounts(
++        expected=int(row.expected),
++        on_break=int(row.on_break),
++        not_started=int(row.not_started),
++    )
+ 
+ 
+ async def _base_price_minor(
+@@ -194,7 +248,12 @@ async def _has_override(db: AsyncSession, *, student_id: int, group_id: int) ->
+ 
+ 
+ def _prorate(base_minor: int, counts: ChargeCounts) -> int:
+-    """Доля месяца за вычетом пропущенных занятий.
++    """Доля месяца за вычетом занятий, за которые денег не берут.
++
++    Вычетов два и они складываются: перерыв и «ученик пришёл среди месяца»
++    (tsk-630). Складываются именно суммой, а не максимумом: месяц, в который
++    человек пришёл 12-го и с 20-го ушёл в перерыв, оплачивается только за
++    промежуток между этими датами.
+ 
+     Округляем ВНИЗ, то есть в пользу ученика: копейка спора не стоит, а
+     предсказуемое направление округления стоит.
+@@ -202,8 +261,7 @@ def _prorate(base_minor: int, counts: ChargeCounts) -> int:
+     if counts.expected <= 0:
+         # Делить не на что — расписания нет. Доля не применяется.
+         return base_minor
+-    attended = max(counts.expected - counts.on_break, 0)
+-    return base_minor * attended // counts.expected
++    return base_minor * counts.billable // counts.expected
+ 
+ 
+ async def recalculate_student_group(
+@@ -275,8 +333,8 @@ async def recalculate_student_group(
+                 """
+                 INSERT INTO student_monthly_charge
+                        (student_id, group_id, period, calculated_minor,
+-                        expected_lessons, break_lessons)
+-                VALUES (:s, :g, :p, :calc, :exp, :brk)
++                        expected_lessons, break_lessons, not_started_lessons)
++                VALUES (:s, :g, :p, :calc, :exp, :brk, :nst)
+                 ON CONFLICT (student_id, group_id, period) DO NOTHING
+                 """
+             ),
+@@ -287,6 +345,7 @@ async def recalculate_student_group(
+                 "calc": calculated,
+                 "exp": counts.expected,
+                 "brk": counts.on_break,
++                "nst": counts.not_started,
+             },
+         )
+         return calculated
+@@ -296,7 +355,8 @@ async def recalculate_student_group(
+             text(
+                 "UPDATE student_monthly_charge "
+                 "SET calculated_minor = :calc, expected_lessons = :exp, "
+-                "    break_lessons = :brk, updated_at = now() "
++                "    break_lessons = :brk, not_started_lessons = :nst, "
++                "    updated_at = now() "
+                 "WHERE id = :id"
+             ),
+             {
+@@ -304,6 +364,7 @@ async def recalculate_student_group(
+                 "calc": calculated,
+                 "exp": counts.expected,
+                 "brk": counts.on_break,
++                "nst": counts.not_started,
+             },
+         )
+         return (
+@@ -391,8 +452,8 @@ async def _ensure_charge_row(
+             """
+             INSERT INTO student_monthly_charge
+                    (student_id, group_id, period, calculated_minor,
+-                    expected_lessons, break_lessons)
+-            VALUES (:s, :g, :p, :calc, :exp, :brk)
++                    expected_lessons, break_lessons, not_started_lessons)
++            VALUES (:s, :g, :p, :calc, :exp, :brk, :nst)
+             ON CONFLICT (student_id, group_id, period) DO NOTHING
+             """
+         ),
+@@ -403,6 +464,7 @@ async def _ensure_charge_row(
+             "calc": calculated,
+             "exp": counts.expected,
+             "brk": counts.on_break,
++            "nst": counts.not_started,
+         },
+     )
+ 
+@@ -542,33 +604,64 @@ async def recalculate_for_student(
+ 
+ 
+ async def recalculate_month(db: AsyncSession, *, period: date) -> int:
+-    """Пересчитать месяц по всем ученикам. Возвращает число затронутых строк."""
++    """Пересчитать месяц по всем ученикам. Возвращает число затронутых строк.
++
++    tsk-630: к парам «ученик × группа» из резолвера обязательно добираются те,
++    по которым в месяце УЖЕ есть открытая строка. Без этого смена тарифа плодила
++    ДВА начисления за один месяц: цикл проходил только по новой группе, а строка
++    старой оставалась нетронутой — её здесь больше никто не пересчитывает, и
++    удалить её как «считать не из чего» было некому. На боевых данных августа
++    2026 перевод пятерых учеников на другой тариф с последующим нажатием
++    «Пересчитать месяц» давал 45 строк вместо 41 и +22 000 рублей из воздуха.
++    `recalculate_for_student` этот добор делал с самого начала — здесь его не
++    было.
++    """
+     period = month_start(period)
+     students = await pricing_service.list_student_pricing(db, period=period)
++    targets: list[tuple[int, int]] = [
++        (student.student_id, group.group_id)
++        for student in students
++        for group in student.groups
++    ]
++    stale = (
++        await db.execute(
++            text(
++                "SELECT student_id, group_id FROM student_monthly_charge "
++                " WHERE period = :p AND status = 'open'"
++            ),
++            {"p": period},
++        )
++    ).all()
++    seen = set(targets)
++    for row in stale:
++        pair = (int(row.student_id), int(row.group_id))
++        if pair not in seen:
++            seen.add(pair)
++            targets.append(pair)
++
+     touched = 0
+-    for student in students:
+-        for group in student.groups:
+-            # Каждый ученик — в своей вложенной транзакции: платёж, пришедший
+-            # ровно между проверкой «нет оплат» и удалением строки месяца
+-            # (tsk-010), уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
+-            try:
+-                async with db.begin_nested():
+-                    await recalculate_student_group(
+-                        db,
+-                        student_id=student.student_id,
+-                        group_id=group.group_id,
+-                        period=period,
+-                    )
+-            except IntegrityError:
+-                logger.warning(
+-                    "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
+-                    student.student_id,
+-                    group.group_id,
+-                    period,
+-                    exc_info=True,
++    for student_id, group_id in targets:
++        # Каждая пара — в своей вложенной транзакции: платёж, пришедший ровно
++        # между проверкой «нет оплат» и удалением строки месяца (tsk-010),
++        # уронил бы иначе пересчёт ВСЕГО месяца, а не одну строку.
++        try:
++            async with db.begin_nested():
++                await recalculate_student_group(
++                    db,
++                    student_id=student_id,
++                    group_id=group_id,
++                    period=period,
+                 )
+-                continue
+-            touched += 1
++        except IntegrityError:
++            logger.warning(
++                "Пересчёт %s/%s за %s пропущен: строка изменилась во время расчёта",
++                student_id,
++                group_id,
++                period,
++                exc_info=True,
++            )
++            continue
++        touched += 1
+     await db.commit()
+     return touched
+ 
+@@ -594,6 +687,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+                        ch.manual_minor,
+                        ch.expected_lessons,
+                        ch.break_lessons,
++                       ch.not_started_lessons,
+                        ch.status,
+                        ch.closed_at,
+                        COALESCE(adj.total, 0) AS adjustments_minor,
+@@ -646,6 +740,7 @@ async def list_charges(db: AsyncSession, *, period: date) -> list[dict]:
+                 "total_minor": total,
+                 "expected_lessons": r.expected_lessons,
+                 "break_lessons": r.break_lessons,
++                "not_started_lessons": r.not_started_lessons,
+                 "status": r.status,
+                 "closed_at": r.closed_at,
+                 "has_price_override": bool(r.has_price_override),
+diff --git a/app/services/student_dashboard_service.py b/app/services/student_dashboard_service.py
+index 74c02bf..060f924 100644
+--- a/app/services/student_dashboard_service.py
++++ b/app/services/student_dashboard_service.py
+@@ -313,7 +313,12 @@ async def _load_attendance(
+         counts = await charge_service.lesson_counts_for_period(
+             db, student_id=student_id, period_from=tail_from, period_to=tail_to,
+         )
+-        planned += counts.expected - counts.on_break
++        # `billable` — то же «за вычетом невыставляемого», что и у денег: хвост
++        # всегда за горизонтом генератора, то есть в будущем, поэтому вычет
++        # «ученик ещё не пришёл» (tsk-630) там нулевой по построению. Зовём
++        # общее свойство, а не повторяем вычитание, чтобы норматив и деньги не
++        # разъехались, если вычетов станет больше.
++        planned += counts.billable
+ 
+     norm_source: Optional[str] = None
+     not_conducted: Optional[int] = None

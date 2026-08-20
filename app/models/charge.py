@@ -86,6 +86,8 @@ class StudentMonthlyCharge(Base):
     manual_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expected_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
     break_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
+    #: Занятий на днях ДО прихода ученика в расписание (tsk-630).
+    not_started_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
     status: Mapped[str] = mapped_column(Text, server_default="open")
     closed_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
