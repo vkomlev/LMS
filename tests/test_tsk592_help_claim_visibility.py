@@ -238,6 +238,80 @@ async def test_takeover_wins_and_is_recorded(client, db, scene):
     assert int(logged or 0) == 1, "перехват обязан оставлять след в журнале"
 
 
+async def test_takeover_tells_previous_owner(client, db, scene):
+    """tsk-637: прежний владелец узнаёт о перехвате сразу, а не из отказа.
+
+    Раньше единственным следом перехвата был журнал событий — его читают потом
+    и не те люди. Преподаватель, у которого забрали заявку, понимал это, когда
+    его ответ упирался в отказ, то есть уже написав ответ.
+    """
+    t1_id, t1_token = scene["t1"]
+    t2_id, t2_token = scene["t2"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    r = await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t2_id, "takeover": True},
+        headers=_auth(t2_token),
+    )
+    assert r.status_code == 200, r.text
+
+    row = (
+        await db.execute(
+            text(
+                "SELECT title, content, payload FROM notifications "
+                "WHERE user_id = :u AND kind = 'help_request_taken_over' "
+                "  AND (payload->>'request_id')::bigint = :r"
+            ),
+            {"u": t1_id, "r": scene["request_id"]},
+        )
+    ).fetchone()
+    assert row is not None, "прежнему владельцу обязано прийти уведомление"
+    title, content, payload = row[0], row[1], row[2]
+    assert "другой преподаватель" in title
+    # В тексте — кто взял: без имени сообщение только пугает, но не помогает
+    # договориться. Имена тестовых преподавателей содержат тег задачи.
+    assert _TAG in content, "в тексте должно стоять имя того, кто перехватил"
+    assert payload["taken_over_by"] == t2_id
+
+    # Сам перехватчик себе ничего не шлёт.
+    mine = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE user_id = :u AND kind = 'help_request_taken_over' "
+                "  AND (payload->>'request_id')::bigint = :r"
+            ),
+            {"u": t2_id, "r": scene["request_id"]},
+        )
+    ).scalar()
+    assert int(mine or 0) == 0
+
+
+async def test_claim_without_takeover_stays_silent(client, db, scene):
+    """Обычный захват свободной заявки никого не уведомляет — уведомлять некого."""
+    t1_id, t1_token = scene["t1"]
+    await client.post(
+        f"/api/v1/teacher/help-requests/{scene['request_id']}/claim",
+        json={"teacher_id": t1_id},
+        headers=_auth(t1_token),
+    )
+    cnt = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications "
+                "WHERE kind = 'help_request_taken_over' "
+                "  AND (payload->>'request_id')::bigint = :r"
+            ),
+            {"r": scene["request_id"]},
+        )
+    ).scalar()
+    assert int(cnt or 0) == 0
+
+
 async def test_expired_claim_frees_the_request(client, db, scene):
     """Просроченный захват — заявка свободна и берётся без перехвата."""
     t1_id, t1_token = scene["t1"]

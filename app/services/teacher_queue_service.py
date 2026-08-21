@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.task_content import MANUAL_REVIEW_TASK_TYPES
 # tsk-575: файл вложения мог быть утрачен дефектом хранения — преподавателю
 # отдаём работу с пометкой, а не с рабочей на вид ссылкой в никуда.
+from app.services import inbox_service
 from app.services.attempt_attachments import mark_missing_one
 from app.utils.task_title import humanize_task_title
 
@@ -567,6 +568,57 @@ async def claim_help_request_by_id(
         else None
     )
     return (item, token, expires_at, previous_claim)
+
+
+async def notify_owner_about_takeover(
+    db: AsyncSession,
+    *,
+    request_id: int,
+    previous_teacher_id: int,
+    new_teacher_id: int,
+) -> None:
+    """Сказать прежнему владельцу заявки, что её взял другой преподаватель.
+
+    tsk-637: перехват молчал. Человек узнавал о нём, когда его ответ упирался в
+    отказ, — то есть уже написав ответ. Сообщение приходит в тот же список
+    уведомлений, где преподаватель видит новые заявки, и ведёт на саму заявку:
+    договориться, кто отвечает, можно только зная, что заявку забрали.
+
+    Не коммитит — вызывающая сторона отвечает за транзакцию (перехват, аудит и
+    уведомление обязаны быть одним событием: уведомление о перехвате, который
+    откатился, хуже молчания).
+    """
+    row = (
+        await db.execute(
+            text("SELECT full_name FROM users WHERE id = :tid"),
+            {"tid": int(new_teacher_id)},
+        )
+    ).fetchone()
+    new_name = (row[0] if row else None) or f"преподаватель #{new_teacher_id}"
+
+    await inbox_service.create_for_user(
+        db,
+        user_id=int(previous_teacher_id),
+        kind="help_request_taken_over",
+        title="Заявку взял другой преподаватель",
+        content=(
+            f"Заявку №{request_id} взял {new_name}. Отвечать по ней теперь ему — "
+            "ваш ответ система не примет. Если вы уже начали отвечать, "
+            "договоритесь, кто заканчивает."
+        ),
+        payload={
+            "request_id": int(request_id),
+            "taken_over_by": int(new_teacher_id),
+            "taken_over_by_name": new_name,
+        },
+        created_by=int(new_teacher_id),
+    )
+    logger.info(
+        "help_request_takeover_notified request_id=%s from_teacher=%s to_teacher=%s",
+        request_id,
+        previous_teacher_id,
+        new_teacher_id,
+    )
 
 
 async def claim_next_review(
