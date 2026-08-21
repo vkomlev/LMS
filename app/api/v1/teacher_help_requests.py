@@ -57,6 +57,7 @@ from app.services import audit_service, roles_service
 from app.services.teacher_queue_service import (
     claim_help_request_by_id,
     claim_next_help_request,
+    notify_owner_about_takeover,
     release_help_request_claim,
     HelpClaimConflictError,
     HelpClaimForbiddenError,
@@ -367,6 +368,15 @@ async def help_request_claim(
                     else None
                 ),
             },
+        )
+        # tsk-637: журнал читают потом и не те люди. Прежнему владельцу говорим
+        # сразу — иначе он узнаёт о перехвате отказом на свой уже написанный
+        # ответ. Одной транзакцией с самим перехватом.
+        await notify_owner_about_takeover(
+            db,
+            request_id=request_id,
+            previous_teacher_id=previous_claim["teacher_id"],
+            new_teacher_id=body.teacher_id,
         )
     await db.commit()
     logger.info(
