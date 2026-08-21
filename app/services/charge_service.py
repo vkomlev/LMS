@@ -202,16 +202,35 @@ async def lesson_counts_for_period(
     )
 
 
+@dataclass
+class _MonthBase:
+    """База месяца и откуда она взялась. Второе решает, применять ли долю."""
+
+    minor: int
+    from_override: bool
+
+
 async def _base_price_minor(
     db: AsyncSession, *, student_id: int, group_id: int, period: date
-) -> Optional[int]:
+) -> Optional[_MonthBase]:
     """База месяца: ручная цена группы, иначе расчёт по тарифу.
 
     Ручная цена НЕ пропорционируется перерывом — договорённость с человеком не
-    должна тихо уезжать. Расчётная цена пропорционируется.
+    должна тихо уезжать. Расчётная цена пропорционируется. Поэтому возвращается
+    не одно число, а пара «сколько» и «откуда»: раньше «откуда» спрашивали
+    вторым запросом (`_has_override`), и два места денежного контура могли
+    разойтись в ответе.
 
     `period` обязателен: расчёт берёт группу подписки, действовавшей на первое
     число месяца, а не сегодняшнюю (контракт прав §7, tsk-585).
+
+    **Ручная цена читается только для ДЕЙСТВУЮЩЕЙ группы ученика** (tsk-634).
+    Её ключ — пара «ученик + группа», и после перевода на другой тариф она
+    осиротевает: к новому тарифу не относится, а строку покинутой группы
+    продолжает оживлять — та не удаляется как «считать не из чего», и за один
+    месяц выходит ДВА начисления. На боевых данных это ровно то, что дало в
+    tsk-630 «45 строк вместо 41». Саму запись не трогаем: вернут ученика на
+    прежний тариф — цена оживёт.
     """
     override = (
         await db.execute(
@@ -223,28 +242,30 @@ async def _base_price_minor(
         )
     ).first()
     if override is not None:
-        return int(override.price_minor)
+        billing = await pricing_service.billing_group_ids(
+            db, student_id=student_id, period=period
+        )
+        if group_id in billing:
+            return _MonthBase(minor=int(override.price_minor), from_override=True)
+        logger.info(
+            "tsk-634: ручная цена %s/%s за %s не применяется — группа покинута",
+            student_id,
+            group_id,
+            period,
+        )
 
     for student in await pricing_service.list_student_pricing(db, period=period):
         if student.student_id != student_id:
             continue
         for group in student.groups:
             if group.group_id == group_id:
-                return group.price_minor
+                # `price_minor` необязательное: резолвер не смог выбрать вариант
+                # (ученик без расписания в группе с частотной осью). Это и есть
+                # «считать не из чего» — не ноль и не «оставить как было».
+                if group.price_minor is None:
+                    return None
+                return _MonthBase(minor=group.price_minor, from_override=False)
     return None
-
-
-async def _has_override(db: AsyncSession, *, student_id: int, group_id: int) -> bool:
-    row = (
-        await db.execute(
-            text(
-                "SELECT 1 FROM student_price_override "
-                "WHERE student_id = :s AND group_id = :g"
-            ),
-            {"s": student_id, "g": group_id},
-        )
-    ).first()
-    return row is not None
 
 
 def _prorate(base_minor: int, counts: ChargeCounts) -> int:
@@ -288,6 +309,20 @@ async def recalculate_student_group(
         # tsk-010: месяц с принятым платежом не удаляем. Иначе вместе со строкой
         # исчезли бы деньги, которые к ней привязаны, — а внешний ключ платежа
         # (ON DELETE RESTRICT) превратил бы это в ошибку посреди пересчёта.
+        #
+        # tsk-634: сумму, поставленную руками, забираем ДО удаления. Она —
+        # след договорённости с человеком, а не производная величина, и
+        # исчезать вместе со строкой не должна.
+        doomed = (
+            await db.execute(
+                text(
+                    "SELECT manual_minor FROM student_monthly_charge "
+                    " WHERE student_id = :s AND group_id = :g AND period = :p "
+                    "   AND status = 'open' AND manual_minor IS NOT NULL"
+                ),
+                {"s": student_id, "g": group_id, "p": period},
+            )
+        ).first()
         res = await db.execute(
             text(
                 "DELETE FROM student_monthly_charge ch "
@@ -307,14 +342,18 @@ async def recalculate_student_group(
                 group_id,
                 period,
             )
+        elif doomed is not None:
+            await _carry_manual_amount(
+                db,
+                student_id=student_id,
+                from_group_id=group_id,
+                period=period,
+                manual_minor=int(doomed.manual_minor),
+            )
         return None
 
     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
-    calculated = (
-        base
-        if await _has_override(db, student_id=student_id, group_id=group_id)
-        else _prorate(base, counts)
-    )
+    calculated = base.minor if base.from_override else _prorate(base.minor, counts)
 
     existing = (
         await db.execute(
@@ -387,6 +426,80 @@ async def recalculate_student_group(
     return frozen
 
 
+async def _carry_manual_amount(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    from_group_id: int,
+    period: date,
+    manual_minor: int,
+) -> None:
+    """Перенести ручную сумму месяца на строку действующей группы (tsk-634).
+
+    Смена тарифа — техническая операция; сумма, поставленная руками, — след
+    договорённости с человеком («Илье 2 750 вместо 5 500»). Раньше строка
+    покинутой группы удалялась вместе с ручной суммой, и месяц вырастал вдвое
+    без единой записи в журнал: пересчёт выглядел нормальным, а неправду в нём
+    можно было заметить только сверив со счётом, который человеку назвали.
+
+    Переносится ТОЛЬКО текущий месяц. Со следующего сумма считается заново по
+    новому тарифу: договорённость на конкретный месяц не должна становиться
+    бессрочной ценой — для бессрочной есть `student_price_override`.
+
+    Не переносим и говорим об этом вслух в трёх случаях: групп для расчёта не
+    осталось вовсе (тариф без денег — начисления нет, и переносить некуда),
+    их несколько (непонятно, в какую), целевой месяц закрыт либо уже несёт свою
+    ручную сумму (её ставили позже — она новее).
+    """
+    targets = await pricing_service.billing_group_ids(
+        db, student_id=student_id, period=period
+    )
+    if len(targets) != 1:
+        logger.warning(
+            "tsk-634: ручная сумма %s коп. ученика %s за %s НЕ перенесена — "
+            "групп расчёта %s (была группа %s)",
+            manual_minor,
+            student_id,
+            period,
+            len(targets),
+            from_group_id,
+        )
+        return
+    target_group = targets[0]
+
+    await _ensure_charge_row(
+        db, student_id=student_id, group_id=target_group, period=period
+    )
+    res = await db.execute(
+        text(
+            "UPDATE student_monthly_charge "
+            "   SET manual_minor = :amt, updated_at = now() "
+            " WHERE student_id = :s AND group_id = :g AND period = :p "
+            "   AND status = 'open' AND manual_minor IS NULL"
+        ),
+        {"s": student_id, "g": target_group, "p": period, "amt": manual_minor},
+    )
+    if res.rowcount == 0:
+        logger.warning(
+            "tsk-634: ручная сумма %s коп. ученика %s за %s НЕ перенесена в группу %s — "
+            "месяц закрыт либо у него уже своя ручная сумма",
+            manual_minor,
+            student_id,
+            period,
+            target_group,
+        )
+        return
+    logger.info(
+        "tsk-634: ручная сумма %s коп. ученика %s за %s перенесена из группы %s в %s "
+        "при смене тарифа",
+        manual_minor,
+        student_id,
+        period,
+        from_group_id,
+        target_group,
+    )
+
+
 async def _carry_forward(
     db: AsyncSession,
     *,
@@ -443,9 +556,7 @@ async def _ensure_charge_row(
     )
     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
     calculated = 0 if base is None else (
-        base
-        if await _has_override(db, student_id=student_id, group_id=group_id)
-        else _prorate(base, counts)
+        base.minor if base.from_override else _prorate(base.minor, counts)
     )
     await db.execute(
         text(

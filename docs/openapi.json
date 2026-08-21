@@ -32434,7 +32434,7 @@
           "subscriptions"
         ],
         "summary": "Тариф ученика: действующий и история",
-        "description": "Что действует сейчас и как к этому пришли.",
+        "description": "Кроме тарифа отдаёт `manual_pricing` — ручные деньги ученика, которые затронет перевод (tsk-634). Экран смены тарифа обязан показать их ДО нажатия: ручная цена ставится там, где есть личная договорённость, и её тихое изменение выглядит нормальным пересчётом. Сумма месяца (`monthly_amounts`) при переводе едет следом на новый тариф; цена группы (`group_prices`) перестаёт действовать — `applies_now = false`.",
         "operationId": "read_student_subscription_api_v1_subscriptions_students__student_id__get",
         "security": [
           {
@@ -32533,7 +32533,7 @@
           "subscriptions"
         ],
         "summary": "Присвоить ученику тариф",
-        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.",
+        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.\n\nРучные деньги перевод не теряет (tsk-634): сумма месяца, поставленная руками, переезжает на строку нового тарифа при ближайшем пересчёте, а бессрочная цена прежней группы перестаёт применяться, но из базы не исчезает. Что именно затронет перевод — в `manual_pricing` ответа `GET /subscriptions/students/{student_id}`; показать это ДО нажатия — работа экрана.",
         "operationId": "change_student_subscription_api_v1_subscriptions_students__student_id__post",
         "security": [
           {
@@ -45948,6 +45948,108 @@
         "title": "ManualAssignResponse",
         "description": "Результат ручного назначения курса."
       },
+      "ManualGroupPrice": {
+        "properties": {
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "price_minor": {
+            "type": "integer",
+            "title": "Price Minor",
+            "description": "Цена руками, в копейках"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "applies_now": {
+            "type": "boolean",
+            "title": "Applies Now",
+            "description": "Действует ли она сейчас. False — группа покинута: цена лежит в базе и оживёт при возврате на прежний тариф, но месяц по ней не считается"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group_id",
+          "group_name",
+          "price_minor",
+          "applies_now"
+        ],
+        "title": "ManualGroupPrice",
+        "description": "Бессрочная цена ученика В ГРУППЕ — другая сущность, чем сумма месяца."
+      },
+      "ManualMonthAmount": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period",
+            "description": "Первое число месяца"
+          },
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "manual_minor": {
+            "type": "integer",
+            "title": "Manual Minor",
+            "description": "Сумма руками, в копейках"
+          },
+          "calculated_minor": {
+            "type": "integer",
+            "title": "Calculated Minor",
+            "description": "Что дал бы расчёт, в копейках"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "group_id",
+          "group_name",
+          "manual_minor",
+          "calculated_minor"
+        ],
+        "title": "ManualMonthAmount",
+        "description": "Сумма ОДНОГО месяца, поставленная руками поверх расчёта (tsk-634)."
+      },
+      "ManualPricingState": {
+        "properties": {
+          "monthly_amounts": {
+            "items": {
+              "$ref": "#/components/schemas/ManualMonthAmount"
+            },
+            "type": "array",
+            "title": "Monthly Amounts",
+            "description": "Ручные суммы ОТКРЫТЫХ месяцев; закрытые перевод не трогает"
+          },
+          "group_prices": {
+            "items": {
+              "$ref": "#/components/schemas/ManualGroupPrice"
+            },
+            "type": "array",
+            "title": "Group Prices"
+          }
+        },
+        "type": "object",
+        "title": "ManualPricingState",
+        "description": "Ручные деньги ученика — то, что смена тарифа затрагивает (tsk-634).\n\nЭкран смены тарифа обязан это показать ДО перевода: ручная цена ставится\nтам, где есть личная договорённость (скидка, особые условия), и её тихое\nизменение выглядит нормальным пересчётом, а не ошибкой.\n\nДве сущности ведут себя по-разному, и сводить их в одну строку нельзя:\n\n* `monthly_amounts` — сумма конкретного месяца. При переводе она **едет\n  следом** на строку нового тарифа; со следующего месяца считается заново;\n* `group_prices` — цена ученика в группе. При переводе она **перестаёт\n  действовать** (`applies_now = false`), но из базы не исчезает."
+      },
       "MarkReadBySenderRequest": {
         "properties": {
           "user_id": {
@@ -53262,6 +53364,10 @@
             },
             "type": "array",
             "title": "History"
+          },
+          "manual_pricing": {
+            "$ref": "#/components/schemas/ManualPricingState",
+            "description": "Ручные деньги ученика: их видно ДО смены тарифа, чтобы личная договорённость не менялась молча (tsk-634)"
           }
         },
         "type": "object",

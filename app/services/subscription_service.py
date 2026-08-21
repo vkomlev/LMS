@@ -28,6 +28,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import pricing_service
+
 logger = logging.getLogger(__name__)
 
 #: Тариф по умолчанию при регистрации.
@@ -747,4 +749,64 @@ async def student_state(db: AsyncSession, student_id: int) -> dict:
     ).mappings().all()
     history = [dict(r) for r in rows]
     current = next((h for h in history if h["ends_on"] is None), None)
-    return {"student_id": student_id, "current": current, "history": history}
+    return {
+        "student_id": student_id,
+        "current": current,
+        "history": history,
+        "manual_pricing": await manual_pricing_state(db, student_id),
+    }
+
+
+async def manual_pricing_state(db: AsyncSession, student_id: int) -> dict:
+    """Ручные деньги ученика — то, что затронет смена тарифа (tsk-634).
+
+    Отдаётся рядом с тарифом намеренно: экран перевода — единственное место,
+    где эту связь видно вовремя. Ручная цена ставится там, где есть личная
+    договорённость, и её изменение не выглядит ошибкой — выглядит обычным
+    пересчётом; заметить его можно, только сверив со счётом, который человеку
+    назвали.
+
+    Закрытые месяцы сюда не попадают: перевод их не трогает, и предупреждать о
+    них значило бы пугать зря.
+    """
+    amounts = (
+        await db.execute(
+            text(
+                "SELECT ch.period, ch.group_id, g.name AS group_name, "
+                "       ch.manual_minor, ch.calculated_minor "
+                "  FROM student_monthly_charge ch "
+                "  JOIN pricing_group g ON g.id = ch.group_id "
+                " WHERE ch.student_id = :sid AND ch.status = 'open' "
+                "   AND ch.manual_minor IS NOT NULL "
+                " ORDER BY ch.period"
+            ),
+            {"sid": student_id},
+        )
+    ).mappings().all()
+
+    # Действующая группа берётся на ПЕРВОЕ ЧИСЛО текущего месяца — тем же
+    # правилом, каким её берут деньги (tsk-585). Спросить «группу сегодня»
+    # значило бы написать «цена действует» там, где месяц считается по другой.
+    billing = set(
+        await pricing_service.billing_group_ids(
+            db, student_id=student_id, period=date.today().replace(day=1)
+        )
+    )
+    prices = (
+        await db.execute(
+            text(
+                "SELECT o.group_id, g.name AS group_name, o.price_minor, o.note "
+                "  FROM student_price_override o "
+                "  JOIN pricing_group g ON g.id = o.group_id "
+                " WHERE o.student_id = :sid ORDER BY g.name"
+            ),
+            {"sid": student_id},
+        )
+    ).mappings().all()
+
+    return {
+        "monthly_amounts": [dict(r) for r in amounts],
+        "group_prices": [
+            {**dict(r), "applies_now": int(r["group_id"]) in billing} for r in prices
+        ],
+    }

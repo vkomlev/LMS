@@ -1,0 +1,809 @@
+diff --git a/app/api/v1/subscriptions.py b/app/api/v1/subscriptions.py
+index b3b2e1a..fa1bfdc 100644
+--- a/app/api/v1/subscriptions.py
++++ b/app/api/v1/subscriptions.py
+@@ -160,6 +160,14 @@ async def read_summary_students(
+     "/students/{student_id}",
+     response_model=StudentSubscriptionState,
+     summary="Тариф ученика: действующий и история",
++    description=(
++        "Кроме тарифа отдаёт `manual_pricing` — ручные деньги ученика, которые "
++        "затронет перевод (tsk-634). Экран смены тарифа обязан показать их ДО "
++        "нажатия: ручная цена ставится там, где есть личная договорённость, и "
++        "её тихое изменение выглядит нормальным пересчётом. Сумма месяца "
++        "(`monthly_amounts`) при переводе едет следом на новый тариф; цена "
++        "группы (`group_prices`) перестаёт действовать — `applies_now = false`."
++    ),
+ )
+ async def read_student_subscription(
+     student_id: int = Path(..., description="ID ученика"),
+@@ -177,7 +185,13 @@ async def read_student_subscription(
+     summary="Присвоить ученику тариф",
+     description=(
+         "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги "
+-        "считаются по тарифу, действовавшему на первое число месяца."
++        "считаются по тарифу, действовавшему на первое число месяца.\n\n"
++        "Ручные деньги перевод не теряет (tsk-634): сумма месяца, поставленная "
++        "руками, переезжает на строку нового тарифа при ближайшем пересчёте, а "
++        "бессрочная цена прежней группы перестаёт применяться, но из базы не "
++        "исчезает. Что именно затронет перевод — в `manual_pricing` ответа "
++        "`GET /subscriptions/students/{student_id}`; показать это ДО нажатия — "
++        "работа экрана."
+     ),
+     responses={
+         404: {"description": "Нет такого ученика или тарифа"},
+diff --git a/app/schemas/subscription.py b/app/schemas/subscription.py
+index cba3d25..d249c8b 100644
+--- a/app/schemas/subscription.py
++++ b/app/schemas/subscription.py
+@@ -49,6 +49,58 @@ class SubscriptionHistoryItem(BaseModel):
+     pricing_group_name: Optional[str] = None
+ 
+ 
++class ManualMonthAmount(BaseModel):
++    """Сумма ОДНОГО месяца, поставленная руками поверх расчёта (tsk-634)."""
++
++    period: date = Field(..., description="Первое число месяца")
++    group_id: int
++    group_name: str
++    manual_minor: int = Field(..., description="Сумма руками, в копейках")
++    calculated_minor: int = Field(..., description="Что дал бы расчёт, в копейках")
++
++
++class ManualGroupPrice(BaseModel):
++    """Бессрочная цена ученика В ГРУППЕ — другая сущность, чем сумма месяца."""
++
++    group_id: int
++    group_name: str
++    price_minor: int = Field(..., description="Цена руками, в копейках")
++    note: Optional[str] = None
++    applies_now: bool = Field(
++        ...,
++        description=(
++            "Действует ли она сейчас. False — группа покинута: цена лежит в базе "
++            "и оживёт при возврате на прежний тариф, но месяц по ней не считается"
++        ),
++    )
++
++
++class ManualPricingState(BaseModel):
++    """Ручные деньги ученика — то, что смена тарифа затрагивает (tsk-634).
++
++    Экран смены тарифа обязан это показать ДО перевода: ручная цена ставится
++    там, где есть личная договорённость (скидка, особые условия), и её тихое
++    изменение выглядит нормальным пересчётом, а не ошибкой.
++
++    Две сущности ведут себя по-разному, и сводить их в одну строку нельзя:
++
++    * `monthly_amounts` — сумма конкретного месяца. При переводе она **едет
++      следом** на строку нового тарифа; со следующего месяца считается заново;
++    * `group_prices` — цена ученика в группе. При переводе она **перестаёт
++      действовать** (`applies_now = false`), но из базы не исчезает.
++    """
++
++    monthly_amounts: list[ManualMonthAmount] = Field(
++        default_factory=list,
++        description="Ручные суммы ОТКРЫТЫХ месяцев; закрытые перевод не трогает",
++    )
++    group_prices: list[ManualGroupPrice] = Field(default_factory=list)
++
++    @property
++    def is_empty(self) -> bool:
++        return not self.monthly_amounts and not self.group_prices
++
++
+ class StudentSubscriptionState(BaseModel):
+     """Тариф ученика: действующий и вся история.
+ 
+@@ -61,6 +113,13 @@ class StudentSubscriptionState(BaseModel):
+         None, description="NULL — тарифа нет вовсе (права закрыты)"
+     )
+     history: list[SubscriptionHistoryItem] = Field(default_factory=list)
++    manual_pricing: ManualPricingState = Field(
++        default_factory=ManualPricingState,
++        description=(
++            "Ручные деньги ученика: их видно ДО смены тарифа, чтобы личная "
++            "договорённость не менялась молча (tsk-634)"
++        ),
++    )
+ 
+ 
+ class SubscriptionSummaryRow(BaseModel):
+diff --git a/app/services/charge_service.py b/app/services/charge_service.py
+index 6a517d1..4f7cf23 100644
+--- a/app/services/charge_service.py
++++ b/app/services/charge_service.py
+@@ -202,16 +202,35 @@ async def lesson_counts_for_period(
+     )
+ 
+ 
++@dataclass
++class _MonthBase:
++    """База месяца и откуда она взялась. Второе решает, применять ли долю."""
++
++    minor: int
++    from_override: bool
++
++
+ async def _base_price_minor(
+     db: AsyncSession, *, student_id: int, group_id: int, period: date
+-) -> Optional[int]:
++) -> Optional[_MonthBase]:
+     """База месяца: ручная цена группы, иначе расчёт по тарифу.
+ 
+     Ручная цена НЕ пропорционируется перерывом — договорённость с человеком не
+-    должна тихо уезжать. Расчётная цена пропорционируется.
++    должна тихо уезжать. Расчётная цена пропорционируется. Поэтому возвращается
++    не одно число, а пара «сколько» и «откуда»: раньше «откуда» спрашивали
++    вторым запросом (`_has_override`), и два места денежного контура могли
++    разойтись в ответе.
+ 
+     `period` обязателен: расчёт берёт группу подписки, действовавшей на первое
+     число месяца, а не сегодняшнюю (контракт прав §7, tsk-585).
++
++    **Ручная цена читается только для ДЕЙСТВУЮЩЕЙ группы ученика** (tsk-634).
++    Её ключ — пара «ученик + группа», и после перевода на другой тариф она
++    осиротевает: к новому тарифу не относится, а строку покинутой группы
++    продолжает оживлять — та не удаляется как «считать не из чего», и за один
++    месяц выходит ДВА начисления. На боевых данных это ровно то, что дало в
++    tsk-630 «45 строк вместо 41». Саму запись не трогаем: вернут ученика на
++    прежний тариф — цена оживёт.
+     """
+     override = (
+         await db.execute(
+@@ -223,30 +242,32 @@ async def _base_price_minor(
+         )
+     ).first()
+     if override is not None:
+-        return int(override.price_minor)
++        billing = await pricing_service.billing_group_ids(
++            db, student_id=student_id, period=period
++        )
++        if group_id in billing:
++            return _MonthBase(minor=int(override.price_minor), from_override=True)
++        logger.info(
++            "tsk-634: ручная цена %s/%s за %s не применяется — группа покинута",
++            student_id,
++            group_id,
++            period,
++        )
+ 
+     for student in await pricing_service.list_student_pricing(db, period=period):
+         if student.student_id != student_id:
+             continue
+         for group in student.groups:
+             if group.group_id == group_id:
+-                return group.price_minor
++                # `price_minor` необязательное: резолвер не смог выбрать вариант
++                # (ученик без расписания в группе с частотной осью). Это и есть
++                # «считать не из чего» — не ноль и не «оставить как было».
++                if group.price_minor is None:
++                    return None
++                return _MonthBase(minor=group.price_minor, from_override=False)
+     return None
+ 
+ 
+-async def _has_override(db: AsyncSession, *, student_id: int, group_id: int) -> bool:
+-    row = (
+-        await db.execute(
+-            text(
+-                "SELECT 1 FROM student_price_override "
+-                "WHERE student_id = :s AND group_id = :g"
+-            ),
+-            {"s": student_id, "g": group_id},
+-        )
+-    ).first()
+-    return row is not None
+-
+-
+ def _prorate(base_minor: int, counts: ChargeCounts) -> int:
+     """Доля месяца за вычетом занятий, за которые денег не берут.
+ 
+@@ -288,6 +309,20 @@ async def recalculate_student_group(
+         # tsk-010: месяц с принятым платежом не удаляем. Иначе вместе со строкой
+         # исчезли бы деньги, которые к ней привязаны, — а внешний ключ платежа
+         # (ON DELETE RESTRICT) превратил бы это в ошибку посреди пересчёта.
++        #
++        # tsk-634: сумму, поставленную руками, забираем ДО удаления. Она —
++        # след договорённости с человеком, а не производная величина, и
++        # исчезать вместе со строкой не должна.
++        doomed = (
++            await db.execute(
++                text(
++                    "SELECT manual_minor FROM student_monthly_charge "
++                    " WHERE student_id = :s AND group_id = :g AND period = :p "
++                    "   AND status = 'open' AND manual_minor IS NOT NULL"
++                ),
++                {"s": student_id, "g": group_id, "p": period},
++            )
++        ).first()
+         res = await db.execute(
+             text(
+                 "DELETE FROM student_monthly_charge ch "
+@@ -307,14 +342,18 @@ async def recalculate_student_group(
+                 group_id,
+                 period,
+             )
++        elif doomed is not None:
++            await _carry_manual_amount(
++                db,
++                student_id=student_id,
++                from_group_id=group_id,
++                period=period,
++                manual_minor=int(doomed.manual_minor),
++            )
+         return None
+ 
+     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
+-    calculated = (
+-        base
+-        if await _has_override(db, student_id=student_id, group_id=group_id)
+-        else _prorate(base, counts)
+-    )
++    calculated = base.minor if base.from_override else _prorate(base.minor, counts)
+ 
+     existing = (
+         await db.execute(
+@@ -387,6 +426,80 @@ async def recalculate_student_group(
+     return frozen
+ 
+ 
++async def _carry_manual_amount(
++    db: AsyncSession,
++    *,
++    student_id: int,
++    from_group_id: int,
++    period: date,
++    manual_minor: int,
++) -> None:
++    """Перенести ручную сумму месяца на строку действующей группы (tsk-634).
++
++    Смена тарифа — техническая операция; сумма, поставленная руками, — след
++    договорённости с человеком («Илье 2 750 вместо 5 500»). Раньше строка
++    покинутой группы удалялась вместе с ручной суммой, и месяц вырастал вдвое
++    без единой записи в журнал: пересчёт выглядел нормальным, а неправду в нём
++    можно было заметить только сверив со счётом, который человеку назвали.
++
++    Переносится ТОЛЬКО текущий месяц. Со следующего сумма считается заново по
++    новому тарифу: договорённость на конкретный месяц не должна становиться
++    бессрочной ценой — для бессрочной есть `student_price_override`.
++
++    Не переносим и говорим об этом вслух в трёх случаях: групп для расчёта не
++    осталось вовсе (тариф без денег — начисления нет, и переносить некуда),
++    их несколько (непонятно, в какую), целевой месяц закрыт либо уже несёт свою
++    ручную сумму (её ставили позже — она новее).
++    """
++    targets = await pricing_service.billing_group_ids(
++        db, student_id=student_id, period=period
++    )
++    if len(targets) != 1:
++        logger.warning(
++            "tsk-634: ручная сумма %s коп. ученика %s за %s НЕ перенесена — "
++            "групп расчёта %s (была группа %s)",
++            manual_minor,
++            student_id,
++            period,
++            len(targets),
++            from_group_id,
++        )
++        return
++    target_group = targets[0]
++
++    await _ensure_charge_row(
++        db, student_id=student_id, group_id=target_group, period=period
++    )
++    res = await db.execute(
++        text(
++            "UPDATE student_monthly_charge "
++            "   SET manual_minor = :amt, updated_at = now() "
++            " WHERE student_id = :s AND group_id = :g AND period = :p "
++            "   AND status = 'open' AND manual_minor IS NULL"
++        ),
++        {"s": student_id, "g": target_group, "p": period, "amt": manual_minor},
++    )
++    if res.rowcount == 0:
++        logger.warning(
++            "tsk-634: ручная сумма %s коп. ученика %s за %s НЕ перенесена в группу %s — "
++            "месяц закрыт либо у него уже своя ручная сумма",
++            manual_minor,
++            student_id,
++            period,
++            target_group,
++        )
++        return
++    logger.info(
++        "tsk-634: ручная сумма %s коп. ученика %s за %s перенесена из группы %s в %s "
++        "при смене тарифа",
++        manual_minor,
++        student_id,
++        period,
++        from_group_id,
++        target_group,
++    )
++
++
+ async def _carry_forward(
+     db: AsyncSession,
+     *,
+@@ -443,9 +556,7 @@ async def _ensure_charge_row(
+     )
+     counts = await lesson_counts_for_month(db, student_id=student_id, period=period)
+     calculated = 0 if base is None else (
+-        base
+-        if await _has_override(db, student_id=student_id, group_id=group_id)
+-        else _prorate(base, counts)
++        base.minor if base.from_override else _prorate(base.minor, counts)
+     )
+     await db.execute(
+         text(
+diff --git a/app/services/subscription_service.py b/app/services/subscription_service.py
+index 53f46ec..25b7e48 100644
+--- a/app/services/subscription_service.py
++++ b/app/services/subscription_service.py
+@@ -28,6 +28,8 @@ from sqlalchemy import text
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.services import pricing_service
++
+ logger = logging.getLogger(__name__)
+ 
+ #: Тариф по умолчанию при регистрации.
+@@ -747,4 +749,64 @@ async def student_state(db: AsyncSession, student_id: int) -> dict:
+     ).mappings().all()
+     history = [dict(r) for r in rows]
+     current = next((h for h in history if h["ends_on"] is None), None)
+-    return {"student_id": student_id, "current": current, "history": history}
++    return {
++        "student_id": student_id,
++        "current": current,
++        "history": history,
++        "manual_pricing": await manual_pricing_state(db, student_id),
++    }
++
++
++async def manual_pricing_state(db: AsyncSession, student_id: int) -> dict:
++    """Ручные деньги ученика — то, что затронет смена тарифа (tsk-634).
++
++    Отдаётся рядом с тарифом намеренно: экран перевода — единственное место,
++    где эту связь видно вовремя. Ручная цена ставится там, где есть личная
++    договорённость, и её изменение не выглядит ошибкой — выглядит обычным
++    пересчётом; заметить его можно, только сверив со счётом, который человеку
++    назвали.
++
++    Закрытые месяцы сюда не попадают: перевод их не трогает, и предупреждать о
++    них значило бы пугать зря.
++    """
++    amounts = (
++        await db.execute(
++            text(
++                "SELECT ch.period, ch.group_id, g.name AS group_name, "
++                "       ch.manual_minor, ch.calculated_minor "
++                "  FROM student_monthly_charge ch "
++                "  JOIN pricing_group g ON g.id = ch.group_id "
++                " WHERE ch.student_id = :sid AND ch.status = 'open' "
++                "   AND ch.manual_minor IS NOT NULL "
++                " ORDER BY ch.period"
++            ),
++            {"sid": student_id},
++        )
++    ).mappings().all()
++
++    # Действующая группа берётся на ПЕРВОЕ ЧИСЛО текущего месяца — тем же
++    # правилом, каким её берут деньги (tsk-585). Спросить «группу сегодня»
++    # значило бы написать «цена действует» там, где месяц считается по другой.
++    billing = set(
++        await pricing_service.billing_group_ids(
++            db, student_id=student_id, period=date.today().replace(day=1)
++        )
++    )
++    prices = (
++        await db.execute(
++            text(
++                "SELECT o.group_id, g.name AS group_name, o.price_minor, o.note "
++                "  FROM student_price_override o "
++                "  JOIN pricing_group g ON g.id = o.group_id "
++                " WHERE o.student_id = :sid ORDER BY g.name"
++            ),
++            {"sid": student_id},
++        )
++    ).mappings().all()
++
++    return {
++        "monthly_amounts": [dict(r) for r in amounts],
++        "group_prices": [
++            {**dict(r), "applies_now": int(r["group_id"]) in billing} for r in prices
++        ],
++    }
+diff --git a/tests/test_tsk634_manual_price_on_tariff_change.py b/tests/test_tsk634_manual_price_on_tariff_change.py
+new file mode 100644
+index 0000000..14c3a30
+--- /dev/null
++++ b/tests/test_tsk634_manual_price_on_tariff_change.py
+@@ -0,0 +1,386 @@
++"""tsk-634: смена тарифа не должна молча трогать ручные деньги.
++
++Два вида «ручной цены» разные, и ведут себя по-разному. Обе привязаны к
++ТАРИФНОЙ ГРУППЕ, а договорённость с человеком привязана к человеку — отсюда
++весь дефект:
++
++* `student_monthly_charge.manual_minor` — сумма КОНКРЕТНОГО месяца, живёт на
++  строке с ключом (ученик, группа, период). Смена тарифа меняет группу, строка
++  прежней группы удаляется как «считать не из чего» — и ручная сумма исчезает
++  вместе с ней, без единой записи в журнал;
++* `student_price_override.price_minor` — цена ученика В ГРУППЕ, бессрочная,
++  ключ (ученик, группа). Смена тарифа её НЕ удаляет — она осиротевает: к новой
++  группе не применяется, а строку старой продолжает «оживлять», из-за чего за
++  один месяц выходит ДВА начисления.
++
++Тесты идут от денежного исхода («сколько человек должен за месяц»), а не от
++внутренностей: строка вправе переехать в другую группу, важно, что сумма месяца
++не выросла молча.
++
++Форма фикстуры повторяет прод: ученик ведётся ПОДПИСКОЙ (так с tsk-301 живут все
++57 человек), группы свои, тариф плоский — доля неполного месяца здесь ни при чём.
++"""
++from __future__ import annotations
++
++import random
++import uuid
++from datetime import date
++
++import pytest
++import pytest_asyncio
++from sqlalchemy import text
++from sqlalchemy.ext.asyncio import AsyncSession
++
++from app.schemas.subscription import ManualPricingState
++from app.services import charge_service, subscription_service
++
++pytestmark = pytest.mark.asyncio
++
++#: Месяц текущий: резолвер денег смотрит на подписку, действовавшую на первое
++#: число, а тестовые подписки заводятся сегодняшним днём.
++PERIOD = date.today().replace(day=1)
++
++OLD_PRICE = 550_000
++NEW_PRICE = 700_000
++MANUAL = 275_000
++
++
++async def _new_group(db: AsyncSession, name: str, price: int) -> int:
++    """Тарифная группа с единственным плоским вариантом."""
++    group_id = (
++        await db.execute(
++            text("INSERT INTO pricing_group (name) VALUES (:n) RETURNING id"),
++            {"n": f"tsk634-{name}-{random.randint(10**6, 10**7)}"},
++        )
++    ).scalar_one()
++    await db.execute(
++        text(
++            "INSERT INTO pricing_tariff "
++            "  (group_id, name, price_minor, match_kind, match_value, sort_order) "
++            "VALUES (:g, 'Общий', :p, NULL, NULL, 0)"
++        ),
++        {"g": group_id, "p": price},
++    )
++    await db.commit()
++    return int(group_id)
++
++
++@pytest_asyncio.fixture(scope="function")
++async def two_tariffs(db: AsyncSession) -> dict[str, int]:
++    """Ученик на группе «старый тариф» и вторая группа для перевода."""
++    student_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (full_name, email, is_active) "
++                    "VALUES ('tsk634 ученик', :e, true) RETURNING id"
++                ),
++                {"e": f"tsk634-{uuid.uuid4().hex[:12]}@example.test"},
++            )
++        ).scalar_one()
++    )
++    old_group = await _new_group(db, "staryj", OLD_PRICE)
++    new_group = await _new_group(db, "novyj", NEW_PRICE)
++    await _subscribe(db, student_id, "base", old_group)
++    return {
++        "student_id": student_id,
++        "old_group": old_group,
++        "new_group": new_group,
++    }
++
++
++async def _subscribe(
++    db: AsyncSession, student_id: int, plan_code: str, group_id: int | None
++) -> None:
++    """Присвоить тариф так же, как штатная смена: закрыть строку, открыть новую."""
++    await db.execute(
++        text(
++            "UPDATE student_subscription SET ends_on = CURRENT_DATE "
++            " WHERE student_id = :s AND ends_on IS NULL"
++        ),
++        {"s": student_id},
++    )
++    await db.execute(
++        text(
++            "INSERT INTO student_subscription "
++            "  (student_id, plan_id, pricing_group_id, starts_on) "
++            "SELECT :s, id, :g, CURRENT_DATE FROM subscription_plan WHERE code = :c"
++        ),
++        {"s": student_id, "g": group_id, "c": plan_code},
++    )
++    await db.commit()
++
++
++async def _charges(db: AsyncSession, student_id: int) -> list[dict]:
++    rows = (
++        await db.execute(
++            text(
++                "SELECT id, group_id, calculated_minor, manual_minor, status "
++                "  FROM student_monthly_charge "
++                " WHERE student_id = :s AND period = :p ORDER BY group_id"
++            ),
++            {"s": student_id, "p": PERIOD},
++        )
++    ).all()
++    return [dict(r._mapping) for r in rows]
++
++
++def _total(rows: list[dict]) -> int:
++    """Сколько человек должен за месяц по ВСЕМ строкам сразу."""
++    return sum(
++        charge_service.charge_total_minor(
++            calculated_minor=r["calculated_minor"],
++            manual_minor=r["manual_minor"],
++            adjustments_minor=0,
++        )
++        for r in rows
++    )
++
++
++# ───────────────── 1. Ручная сумма месяца переживает смену тарифа ───────────
++
++
++async def test_manual_month_amount_survives_tariff_change(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Случай Терехова (4510): 2 750 ₽ руками, потом штатный перевод на тариф.
++
++    Сумма месяца не должна вырасти от технической операции — человеку её уже
++    назвали. Проверяем денежный исход, а не то, на какой группе живёт строка.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    before = await _charges(db, student_id)
++    assert len(before) == 1, "до перевода строка ровно одна"
++    assert _total(before) == OLD_PRICE
++
++    await charge_service.set_manual_amount(
++        db, charge_id=before[0]["id"], amount_minor=MANUAL
++    )
++
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    after = await _charges(db, student_id)
++    assert len(after) == 1, f"перевод не должен плодить второе начисление: {after}"
++    assert _total(after) == MANUAL, (
++        "ручная сумма месяца потеряна при смене тарифа: человеку обещали "
++        f"{MANUAL / 100:.2f} ₽, а вышло {_total(after) / 100:.2f} ₽"
++    )
++
++
++async def test_manual_amount_is_carried_with_a_trace(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Перенос ручной суммы виден в базе: он на новой строке, а не на старой.
++
++    Отдельно от денежного исхода: сумма должна оказаться именно на строке
++    действующей группы, иначе экран начислений покажет её в покинутом тарифе.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    rows = await _charges(db, student_id)
++    await charge_service.set_manual_amount(db, charge_id=rows[0]["id"], amount_minor=MANUAL)
++
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    after = await _charges(db, student_id)
++    assert len(after) == 1
++    assert after[0]["group_id"] == two_tariffs["new_group"], "строка обязана переехать"
++    assert after[0]["manual_minor"] == MANUAL
++    assert after[0]["calculated_minor"] == NEW_PRICE, (
++        "расчёт по новому тарифу должен быть виден рядом — иначе на экране не "
++        "объяснить, почему сумма ниже тарифа"
++    )
++
++
++async def test_clear_manual_still_returns_to_calculation(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Обратный путь «Вернуть к расчёту» обязан снимать ручную сумму намеренно.
++
++    Сохранение суммы при переводе не должно превратить её в несмываемую: кнопка
++    на экране начислений — единственный способ от неё отказаться.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    rows = await _charges(db, student_id)
++    await charge_service.set_manual_amount(db, charge_id=rows[0]["id"], amount_minor=MANUAL)
++
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    after = await _charges(db, student_id)
++    assert await charge_service.clear_manual_amount(db, charge_id=after[0]["id"])
++
++    cleared = await _charges(db, student_id)
++    assert cleared[0]["manual_minor"] is None, "«Вернуть к расчёту» обязано снимать сумму"
++    assert _total(cleared) == NEW_PRICE, "после снятия действует новый тариф"
++
++    # И повторный пересчёт не должен воскресить снятую сумму: иначе кнопка
++    # работала бы «до следующего пересчёта», а это хуже, чем не работать.
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    again = await _charges(db, student_id)
++    assert again[0]["manual_minor"] is None
++    assert _total(again) == NEW_PRICE
++
++
++async def test_closed_month_keeps_its_manual_amount(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Закрытый месяц перевод не трогает: ни суммы, ни строки, ни группы."""
++    student_id = two_tariffs["student_id"]
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    rows = await _charges(db, student_id)
++    await charge_service.set_manual_amount(db, charge_id=rows[0]["id"], amount_minor=MANUAL)
++    await charge_service.close_month(db, period=PERIOD, closed_by=None)
++
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    after = await _charges(db, student_id)
++    closed = [r for r in after if r["status"] == "closed"]
++    assert len(closed) == 1, "закрытая строка обязана остаться на месте"
++    assert closed[0]["group_id"] == two_tariffs["old_group"]
++    assert closed[0]["manual_minor"] == MANUAL
++
++
++# ─────────── 2. Ручная цена группы не должна задваивать начисление ──────────
++
++
++async def test_price_override_of_left_group_does_not_double_charge(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Осиротевшая ручная цена прежней группы оживляет её строку.
++
++    Строка покинутой группы удаляется только если «считать не из чего». Ручная
++    цена группы — основание: `_base_price_minor` находит её по СТАРОЙ группе,
++    строка выживает, и за один месяц выходит два начисления. Именно этот класс
++    дал в tsk-630 «45 строк вместо 41».
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.set_price_override(
++        db,
++        student_id=student_id,
++        group_id=two_tariffs["old_group"],
++        price_minor=OLD_PRICE,
++        note="tsk-634 проверка",
++        created_by=None,
++    )
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    assert len(await _charges(db, student_id)) == 1
++
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    after = await _charges(db, student_id)
++    assert len(after) == 1, (
++        "за один месяц вышло два начисления: ручная цена покинутой группы "
++        f"оживила её строку — {after}"
++    )
++    assert _total(after) == NEW_PRICE, (
++        "после перевода считаем по новому тарифу: ручная цена прежней группы "
++        "к новой не относится"
++    )
++
++
++async def test_price_override_revives_when_student_returns(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Запись ручной цены не удаляется: вернули на прежний тариф — цена ожила.
++
++    Это цена вопроса за решение «не применять» вместо «удалять»: договорённость
++    остаётся в базе, и возврат не требует заводить её заново руками.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.set_price_override(
++        db,
++        student_id=student_id,
++        group_id=two_tariffs["old_group"],
++        price_minor=333_000,
++        note="tsk-634 возврат",
++        created_by=None,
++    )
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    assert _total(await _charges(db, student_id)) == NEW_PRICE
++
++    await _subscribe(db, student_id, "base", two_tariffs["old_group"])
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++
++    back = await _charges(db, student_id)
++    assert len(back) == 1
++    assert _total(back) == 333_000, "ручная цена прежней группы обязана ожить"
++
++
++# ───────────── 3. Предупреждение: ручные деньги видно ДО перевода ───────────
++
++
++async def test_subscription_state_shows_manual_money(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """`GET /subscriptions/students/{id}` показывает ручные деньги ученика.
++
++    Без этого экран смены тарифа не может предупредить: «сохраняем» защищает
++    сумму месяца, но личную договорённость оператор всё равно должен видеть до
++    того, как нажмёт.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.recalculate_for_student(db, student_id=student_id, period=PERIOD)
++    rows = await _charges(db, student_id)
++    await charge_service.set_manual_amount(db, charge_id=rows[0]["id"], amount_minor=MANUAL)
++    await charge_service.set_price_override(
++        db,
++        student_id=student_id,
++        group_id=two_tariffs["old_group"],
++        price_minor=OLD_PRICE,
++        note="старая цена",
++        created_by=None,
++    )
++
++    state = await subscription_service.student_state(db, student_id)
++    manual = ManualPricingState(**state["manual_pricing"])
++
++    assert [a.manual_minor for a in manual.monthly_amounts] == [MANUAL]
++    assert manual.monthly_amounts[0].calculated_minor == OLD_PRICE, (
++        "рядом с ручной суммой нужен расчёт — иначе не видно, о какой разнице речь"
++    )
++    assert [(p.price_minor, p.applies_now) for p in manual.group_prices] == [
++        (OLD_PRICE, True)
++    ]
++
++
++async def test_manual_pricing_marks_left_group_price_as_inactive(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """Цена покинутой группы отдаётся с `applies_now = false`, а не молчит.
++
++    Строка остаётся видимой намеренно: «висит в базе, но не действует» — это то,
++    что оператору нужно знать, чтобы не искать, куда делась старая цена.
++    """
++    student_id = two_tariffs["student_id"]
++    await charge_service.set_price_override(
++        db,
++        student_id=student_id,
++        group_id=two_tariffs["old_group"],
++        price_minor=OLD_PRICE,
++        note=None,
++        created_by=None,
++    )
++    await _subscribe(db, student_id, "self", two_tariffs["new_group"])
++
++    state = await subscription_service.student_state(db, student_id)
++    manual = ManualPricingState(**state["manual_pricing"])
++    assert [(p.group_id, p.applies_now) for p in manual.group_prices] == [
++        (two_tariffs["old_group"], False)
++    ]
++
++
++async def test_manual_pricing_is_empty_for_ordinary_student(
++    db: AsyncSession, two_tariffs: dict[str, int]
++) -> None:
++    """У обычного ученика блок пустой — предупреждать не о чем."""
++    state = await subscription_service.student_state(db, two_tariffs["student_id"])
++    manual = ManualPricingState(**state["manual_pricing"])
++    assert manual.is_empty

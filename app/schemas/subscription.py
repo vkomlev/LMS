@@ -49,6 +49,58 @@ class SubscriptionHistoryItem(BaseModel):
     pricing_group_name: Optional[str] = None
 
 
+class ManualMonthAmount(BaseModel):
+    """Сумма ОДНОГО месяца, поставленная руками поверх расчёта (tsk-634)."""
+
+    period: date = Field(..., description="Первое число месяца")
+    group_id: int
+    group_name: str
+    manual_minor: int = Field(..., description="Сумма руками, в копейках")
+    calculated_minor: int = Field(..., description="Что дал бы расчёт, в копейках")
+
+
+class ManualGroupPrice(BaseModel):
+    """Бессрочная цена ученика В ГРУППЕ — другая сущность, чем сумма месяца."""
+
+    group_id: int
+    group_name: str
+    price_minor: int = Field(..., description="Цена руками, в копейках")
+    note: Optional[str] = None
+    applies_now: bool = Field(
+        ...,
+        description=(
+            "Действует ли она сейчас. False — группа покинута: цена лежит в базе "
+            "и оживёт при возврате на прежний тариф, но месяц по ней не считается"
+        ),
+    )
+
+
+class ManualPricingState(BaseModel):
+    """Ручные деньги ученика — то, что смена тарифа затрагивает (tsk-634).
+
+    Экран смены тарифа обязан это показать ДО перевода: ручная цена ставится
+    там, где есть личная договорённость (скидка, особые условия), и её тихое
+    изменение выглядит нормальным пересчётом, а не ошибкой.
+
+    Две сущности ведут себя по-разному, и сводить их в одну строку нельзя:
+
+    * `monthly_amounts` — сумма конкретного месяца. При переводе она **едет
+      следом** на строку нового тарифа; со следующего месяца считается заново;
+    * `group_prices` — цена ученика в группе. При переводе она **перестаёт
+      действовать** (`applies_now = false`), но из базы не исчезает.
+    """
+
+    monthly_amounts: list[ManualMonthAmount] = Field(
+        default_factory=list,
+        description="Ручные суммы ОТКРЫТЫХ месяцев; закрытые перевод не трогает",
+    )
+    group_prices: list[ManualGroupPrice] = Field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.monthly_amounts and not self.group_prices
+
+
 class StudentSubscriptionState(BaseModel):
     """Тариф ученика: действующий и вся история.
 
@@ -61,6 +113,13 @@ class StudentSubscriptionState(BaseModel):
         None, description="NULL — тарифа нет вовсе (права закрыты)"
     )
     history: list[SubscriptionHistoryItem] = Field(default_factory=list)
+    manual_pricing: ManualPricingState = Field(
+        default_factory=ManualPricingState,
+        description=(
+            "Ручные деньги ученика: их видно ДО смены тарифа, чтобы личная "
+            "договорённость не менялась молча (tsk-634)"
+        ),
+    )
 
 
 class SubscriptionSummaryRow(BaseModel):
