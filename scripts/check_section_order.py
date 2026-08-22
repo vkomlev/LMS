@@ -35,7 +35,11 @@ Python-подростков, привязанные к заданию, и там
 
 Запуск из корня проекта:
     python scripts/check_section_order.py            # отчёт
-    python scripts/check_section_order.py --quiet    # только проблемы (для планировщика)
+    python scripts/check_section_order.py --quiet    # только проблемы
+
+Под планировщиком чек идёт не напрямую, а через общий вход
+``scripts/weekly_checks.py section-order`` — он подставляет боевой DSN и пишет журнал
+``logs/section_order_check.log``. Задачи ставит ``scripts/install_weekly_checks.ps1``.
 
 Коды выхода: 0 — порядок везде верный; 1 — найдены курсы с нарушенным порядком;
 2 — ошибка выполнения. Чинит порядок отдельный скрипт (см. tsk-237), этот только сообщает.

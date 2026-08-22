@@ -44,7 +44,11 @@ tsk-246). Прод — явным override:
 
 Запуск из корня проекта:
     python scripts/check_ungradable_tasks.py            # полный отчёт
-    python scripts/check_ungradable_tasks.py --quiet     # только находки (для планировщика)
+    python scripts/check_ungradable_tasks.py --quiet     # только находки
+
+Под планировщиком чек идёт не напрямую, а через общий вход
+``scripts/weekly_checks.py ungradable`` — он подставляет боевой DSN и пишет журнал
+``logs/ungradable_tasks_check.log``. Задачи ставит ``scripts/install_weekly_checks.ps1``.
 
 Коды выхода: 0 — непроверяемых заданий нет; 1 — найдены; 2 — ошибка выполнения.
 """
@@ -57,7 +61,11 @@ import os
 import sys
 from pathlib import Path
 
-if sys.platform == "win32":
+# tsk-641: LMS_CHECK_NO_CONSOLE ставит `scripts/weekly_checks.py`, когда чек идёт под
+# планировщиком через pythonw.exe. Там консоли нет вовсе, кодовую страницу задавать
+# нечему, а `os.system` ради этого поднял бы cmd.exe — и тот получил бы СВОЮ консоль,
+# то есть окно всё-таки моргнуло бы. Ровно от этого мигания чек и уводили на pythonw.
+if sys.platform == "win32" and not os.environ.get("LMS_CHECK_NO_CONSOLE"):
     os.system("chcp 65001 >nul 2>&1")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

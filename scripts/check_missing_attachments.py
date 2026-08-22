@@ -56,7 +56,13 @@ tsk-246). Прод — явным override:
 
 Запуск из корня проекта:
     python scripts/check_missing_attachments.py            # полный отчёт
-    python scripts/check_missing_attachments.py --quiet     # только находки (для планировщика)
+    python scripts/check_missing_attachments.py --quiet     # только находки
+
+Под планировщиком чек идёт через общий вход
+``scripts/weekly_checks.py missing-attachments`` (журнал —
+``logs/missing_attachments_check.log``). ВНИМАНИЕ: задачи для него сейчас нет — до
+tsk-641 существовали скрипт и обёртка, но в планировщик его так и не поставили.
+Завести: ``install_weekly_checks.ps1 -WithMissingAttachments``.
 
 Коды выхода: 0 — таких заданий нет; 1 — найдены; 2 — ошибка выполнения.
 """
@@ -70,7 +76,9 @@ import os
 import sys
 from pathlib import Path
 
-if sys.platform == "win32":
+# tsk-641: см. пояснение в scripts/check_ungradable_tasks.py — под pythonw консоли нет,
+# и `os.system` поднял бы cmd.exe с собственным окном, то есть вернул бы мигание.
+if sys.platform == "win32" and not os.environ.get("LMS_CHECK_NO_CONSOLE"):
     os.system("chcp 65001 >nul 2>&1")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

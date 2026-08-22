@@ -148,15 +148,14 @@
 валидацию схемой, молчанием не считаются — иначе охват сузился бы, а в журнале
 было бы «чисто».
 
-Вход планировщика — `scripts/stale_verdicts_weekly.py`: он запускает аудит, кладёт
-итог в `logs/stale_verdicts_check.log` и возвращает код выхода. Соседние чеки для
-этого используют обёртку на PowerShell, но им она нужна ради подстановки прод-DSN
-в `DATABASE_URL`, а здесь подключение читается из `.mcp.json` самим аудитом —
-остаётся только журналирование, и ради него Python подходит лучше (см. раздел 5,
-«Планировщик»).
+Вход планировщика — Python, а не обёртка на PowerShell: та мигала бы консольным
+окном раз в неделю (см. раздел 5, «Планировщик»).
 
-Задача ставится скриптом `scripts/install_stale_verdicts_check.ps1`
-(`-Uninstall` снимает).
+> **Дополнено в tsk-641 (в тот же день).** Сначала это был отдельный скрипт
+> `scripts/stale_verdicts_weekly.py` со своим установщиком. Когда на тот же
+> `pythonw` переводили три соседних чека, все четыре свели к общему входу
+> `scripts/weekly_checks.py <имя чека>`; задачи ставит
+> `scripts/install_weekly_checks.ps1`. Оба прежних файла удалены.
 
 ## 4. Изменённые файлы
 
@@ -167,8 +166,8 @@
 | `app/services/checking_service.py` | `has_reference_answer()` вместо `if not rules` |
 | `docs/ai/task-audit.md` | раздел «Как расследовать вердикт», структура, инварианты |
 | `scripts/audit_stale_false_verdicts_tsk602.py` | `--quiet`, коды выхода, `_should_stay_silent` |
-| `scripts/stale_verdicts_weekly.py` | вход планировщика: журнал + коды выхода |
-| `scripts/install_stale_verdicts_check.ps1` | установка/снятие задачи планировщика |
+| `scripts/weekly_checks.py` | вход планировщика: журнал + коды выхода (общий с tsk-641) |
+| `scripts/install_weekly_checks.ps1` | установка/снятие задач планировщика (общий с tsk-641) |
 | `tests/test_tsk636_empty_reference_no_auto_fail.py` | 24 проверки, обе стороны |
 | `tests/test_tsk636_task_rules_audit.py` | 9 интеграционных проверок триггера |
 | `tests/test_audit_stale_false_verdicts_tsk602.py` | 4 проверки тихого режима |
@@ -277,8 +276,6 @@
   теперь уходит к преподавателю вместо «неверно» — это правильно, но самому
   ученику по-прежнему нужен эталон. Инвентарь таких заданий ведёт
   `scripts/check_ungradable_tasks.py` (tsk-361).
-- **Соседние еженедельные чеки по-прежнему мигают окном.** `LMS ungradable tasks
-  weekly` (09:00) и `LMS - chek poryadka razdelov (tsk-237)` (09:10) запускают
-  `powershell.exe` без скрытия окна. Одним флагом это не лечится до конца: чтобы
-  стало по-настоящему тихо, им нужен такой же вход на `pythonw` — а он требует
-  перенести подстановку прод-DSN из обёртки в Python. Отдельная задача.
+- **Соседние еженедельные чеки тоже мигали окном** — `LMS ungradable tasks weekly`
+  и `LMS - chek poryadka razdelov (tsk-237)`. Закрыто в тот же день в tsk-641:
+  все чеки переведены на общий вход через `pythonw`.
