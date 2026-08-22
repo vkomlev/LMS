@@ -1,9 +1,9 @@
-# task_audit — аудит изменений tasks.course_id / tasks.is_active
+# task_audit — аудит изменений tasks.course_id / tasks.is_active / solution_rules
 
-**Источники:** таблица `public.task_audit` (append-only через триггер `task_audit_no_modify`), триггеры `trg_task_audit_update` / `trg_task_audit_delete` на `tasks` (функция `log_task_audit`), модель `app/models/task_audit.py`.
-**Миграция:** `app/db/migrations/versions/20260805_100000_tsk114_task_audit.py`.
+**Источники:** таблица `public.task_audit` (append-only через триггер `task_audit_no_modify`), триггеры `trg_task_audit_update` / `trg_task_audit_delete` на `tasks` (функция `log_task_audit`), SQL-функция `task_answer_key(jsonb)`, модель `app/models/task_audit.py`.
+**Миграции:** `20260805_100000_tsk114_task_audit.py` (курс/активность), `20260822_010000_tsk636_task_rules_audit.py` (правило проверки).
 **Связано:** `docs/database-triggers-contract.md` (раздел 15 — тот же паттерн session-var, что `app.skip_task_order_trigger`), `app/db/audit_context.py`.
-**Задача:** tsk-114, профилактика повтора tsk-113 (353 задания курса «Python для ЕГЭ» тихо переехали в архивный курс сменой `course_id`; расследовать причину и дату не удалось — в `tasks` не было `created_at`/`updated_at`, а `audit_event` пишет только login-события).
+**Задачи:** tsk-114 — профилактика повтора tsk-113 (353 задания курса «Python для ЕГЭ» тихо переехали в архивный курс сменой `course_id`; расследовать причину и дату не удалось — в `tasks` не было `created_at`/`updated_at`, а `audit_event` пишет только login-события). tsk-636 — тот же пробел по правилу проверки: правка эталона не оставляла следа, и десять незаслуженных незачётов пришлось объяснять косвенными уликами.
 
 ## Зачем эта таблица, а не `audit_event`
 
@@ -36,6 +36,41 @@ WHERE action = 'UPDATE' AND old_course_id = :from_course AND new_course_id = :to
 ORDER BY changed_at;
 ```
 
+## Как расследовать вердикт («почему ученик получил незачёт на верный ответ»)
+
+Вопрос, ради которого заведены `old_answer_key`/`new_answer_key` (tsk-636): вердикт был
+ошибкой сравнения — или эталон в тот момент был другим?
+
+```sql
+-- Менялся ли эталон этого задания и когда
+SELECT changed_at, changed_by, db_role,
+       old_answer_key -> 'short_answer' -> 'accepted_answers' AS было,
+       new_answer_key -> 'short_answer' -> 'accepted_answers' AS стало
+FROM task_audit
+WHERE task_id = :task_id AND new_answer_key IS NOT NULL
+ORDER BY changed_at;
+
+-- Правки эталона ПОСЛЕ конкретной сдачи: если такая строка есть, незачёт объясняется
+-- правкой правила, а не сбоем движка
+SELECT a.changed_at, a.changed_by, a.old_answer_key, a.new_answer_key
+FROM task_audit a
+JOIN task_results r ON r.task_id = a.task_id AND r.id = :result_id
+WHERE a.new_answer_key IS NOT NULL AND a.changed_at > r.submitted_at
+ORDER BY a.changed_at;
+```
+
+`answer_key` — не полное правило, а его **выжимка**: всё, от чего зависит вердикт
+(эталон короткого ответа вместе с шагами нормализации, варианты выбора, `partial_rules`,
+режим начисления, `max_score`, флаги `manual_review_required` / `partial_auto_check` /
+`requires_attachment`, настройки таблицы). Из `turtle_sim` исключена `expected_trace` —
+эталонная трасса рисунка в тысячи чисел (tsk-412): факт её правки в журнале виден по
+остальным полям блока, а две копии трассы на каждое изменение раздули бы журнал на
+порядок, ничего не добавив к вопросу «почему вердикт стал другим».
+
+Обе колонки заполняются **только когда `solution_rules` действительно изменилось**: у
+строки, где менялся лишь `course_id`, они `NULL`. У записей, сделанных до tsk-636, их
+нет и не будет — журнал начинается с даты выката миграции.
+
 Каждая строка `UPDATE` — это ПОЛНЫЙ снимок обоих полей (`course_id` и `is_active`) до/после, а не только того, что изменилось: если менялся только `is_active`, `old_course_id = new_course_id` в этой же строке — можно всегда увидеть, в каком курсе задание было в момент изменения, не JOIN'я соседние строки.
 
 ## Структура таблицы
@@ -48,6 +83,7 @@ ORDER BY changed_at;
 | `action` | text NOT NULL | `'UPDATE'` \| `'DELETE'` (CHECK-ограничение). |
 | `old_course_id` / `new_course_id` | integer NULL | `NULL` в `new_*` только для `DELETE`. |
 | `old_is_active` / `new_is_active` | boolean NULL | Аналогично. |
+| `old_answer_key` / `new_answer_key` | jsonb NULL | tsk-636: выжимка `solution_rules` до/после (SQL-функция `task_answer_key`). `NULL` — правило этим `UPDATE` не менялось, либо строка старше tsk-636; `new_answer_key IS NULL` также у `DELETE`. |
 | `changed_at` | timestamptz NOT NULL DEFAULT `clock_timestamp()` | Реальный момент записи строки (не `now()` — тот вернул бы момент начала транзакции, что важно при пакетной обработке). |
 | `changed_by` | text NULL | Кооперативная метка источника, см. ниже. `NULL` = источник не назвался. |
 | `db_role` | text NOT NULL | `current_user` соединения — заполняется ВСЕГДА, независимо от кооперации кода. |
@@ -97,6 +133,6 @@ SELECT set_config('app.skip_task_audit_trigger', 'true', true);  -- is_local
 ## Инварианты
 
 1. **Append-only** — `UPDATE`/`DELETE` строк `task_audit` запрещены триггером `task_audit_no_modify` (`RAISE EXCEPTION`), зеркало `audit_event`/`audit_event_no_modify`. Даже скрипт, способный незаметно передвинуть `course_id`, не может незаметно стереть собственный след.
-2. **Аудируются только реальные изменения** — `WHEN`-условие триггера (`OLD.course_id IS DISTINCT FROM NEW.course_id OR OLD.is_active IS DISTINCT FROM NEW.is_active`) не вызывает функцию на `UPDATE`, где эти поля не менялись (правка `task_content`/`solution_rules`/`order_position` и т.п.) — обычный трафик методиста и Learning Engine не создаёт лишних строк и не замедляется.
+2. **Аудируются только реальные изменения** — `WHEN`-условие триггера (`OLD.course_id IS DISTINCT FROM NEW.course_id OR OLD.is_active IS DISTINCT FROM NEW.is_active OR OLD.solution_rules IS DISTINCT FROM NEW.solution_rules`) не вызывает функцию на `UPDATE`, где эти поля не менялись (правка `task_content`/`order_position` и т.п.). Сравнение `solution_rules` идёт по значению jsonb, а не по тексту, поэтому повторный импорт с теми же правилами строк не пишет. Выжимка `task_answer_key` считается уже внутри функции — то есть только там, где правило действительно изменилось.
 3. **INSERT не аудируется** — у новой строки нет «было», сравнивать не с чем. Аудит начинается с первого `UPDATE`/`DELETE` существующего задания.
 4. **Без FK на `tasks.id`** — намеренно: запись обязана пережить `DELETE` самого задания.

@@ -22,7 +22,7 @@ project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "scripts"))
 
-from audit_stale_false_verdicts_tsk602 import _expected_of  # noqa: E402
+from audit_stale_false_verdicts_tsk602 import _expected_of, _should_stay_silent  # noqa: E402
 
 from app.services.checking_service import CheckingService  # noqa: E402
 
@@ -78,3 +78,31 @@ class TestCriterionIsRealCheckingCode:
         steps = ["trim", "lower"]
         assert not CheckingService._matches_short_answer("10, 0", "10,0", steps)
         assert CheckingService._matches_short_answer("10, 0", "10, 0", steps)
+
+
+class TestQuietMode:
+    """tsk-636: чек стал еженедельным — молчать он обязан только по-настоящему пусто."""
+
+    def test_молчит_когда_смотреть_не_на_что(self) -> None:
+        assert _should_stay_silent(quiet=True, stale=[], type_changed=[], failed=[])
+
+    def test_без_тихого_режима_печатает_всегда(self) -> None:
+        """Ручной прогон обязан отвечать «проверено столько-то, чисто»."""
+        assert not _should_stay_silent(quiet=False, stale=[], type_changed=[], failed=[])
+
+    def test_находка_ломает_молчание(self) -> None:
+        assert not _should_stay_silent(
+            quiet=True, stale=[{"result_id": 1}], type_changed=[], failed=[]
+        )
+
+    def test_смежные_сигналы_тоже_ломают_молчание(self) -> None:
+        """Сменённый тип и непроверяемая работа — другой повод посмотреть, но повод.
+
+        Если считать их молчанием, чек тихо сузит охват, а в журнале будет «чисто».
+        """
+        assert not _should_stay_silent(
+            quiet=True, stale=[], type_changed=[(1, 2, "…")], failed=[]
+        )
+        assert not _should_stay_silent(
+            quiet=True, stale=[], type_changed=[], failed=[(1, "ошибка")]
+        )

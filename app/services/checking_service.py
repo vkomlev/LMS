@@ -616,11 +616,27 @@ class CheckingService:
 
         rules: Optional[ShortAnswerRules] = solution_rules.short_answer
 
-        if not rules:
+        # tsk-636: «эталона нет» — это НЕ только `short_answer is None`. Блок правил
+        # может существовать и быть пустым (ни одного accepted_answers, regex не задан
+        # или выключен) — так выглядит импортированное задание, которому ответ ещё не
+        # завели. Прежнее условие `if not rules` эту форму не ловило: пустая модель
+        # правил — обычный объект, то есть истинный, и ответ проваливался в сравнение
+        # с пустым списком, получая авто-НЕЗАЧЁТ вместо ухода к преподавателю. Ученик
+        # при этом отвечал верно и никакого способа это узнать не имел.
+        #
+        # Тем же предикатом ту же ситуацию уже разбирает `_check_table_answer` (TBL_COM)
+        # и UX-сигнал клиенту (`TaskStateResponse.has_reference_answer`, tsk-547) — общее
+        # условие вызывается функцией, а не переписывается на месте, иначе близнецы-типы
+        # разъезжаются (tsk-247, tsk-372).
+        #
+        # Направление правки безопасно: балл здесь и раньше был 0, а `is_correct` меняется
+        # False → None. Ложного зачёта это дать не может — PASS-гейт движка считает по
+        # `score/max_score`, а не по `is_correct` (см. `_shape_partial_auto_check`).
+        if rules is None or not solution_rules.has_reference_answer():
             # Нечем проверять — считаем, что нужна ручная проверка.
             penalty = solution_rules.penalties.missing_answer if missing_answer else 0
             final_score = max(0, 0 - penalty)
-            
+
             return CheckResult(
                 is_correct=None,
                 score=final_score,
