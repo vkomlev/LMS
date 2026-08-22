@@ -18,10 +18,25 @@
 
 Только чтение. Ни одного UPDATE/INSERT; соединение открывается в режиме read-only.
 
+tsk-636 сделал разовый скрипт РЕГУЛЯРНЫМ. Причина: находку 8 августа (10 работ с
+незаслуженным незачётом) никто не заметил две недели, а за это время добавилась
+одиннадцатая. Расхождение не падает, не пишется в лог и не видно на экране — значит
+искать его должен планировщик, а не случайный разбор. Обёртка —
+``scripts/check_stale_verdicts_weekly.ps1``.
+
+Что тут НЕ доказывается. Расхождение с нынешними правилами само по себе не значит
+«движок ошибся»: у всех десяти работ разбора tsk-636 причиной оказалась правка эталона
+уже после сдачи. Отличать одно от другого умеет журнал ``task_audit`` (колонки
+``old_answer_key`` / ``new_answer_key``, tsk-636, см. docs/ai/task-audit.md) — этот
+скрипт только показывает, где смотреть.
+
 Запуск (из корня LMS):
   python scripts/audit_stale_false_verdicts_tsk602.py
   python scripts/audit_stale_false_verdicts_tsk602.py --course 157
   python scripts/audit_stale_false_verdicts_tsk602.py --csv reviews/stale-verdicts.csv
+  python scripts/audit_stale_false_verdicts_tsk602.py --quiet   # для планировщика
+
+Коды выхода: 0 — расхождений нет; 1 — найдены; 2 — ошибка выполнения.
 """
 from __future__ import annotations
 
@@ -94,6 +109,32 @@ def _prod_connection_params() -> dict[str, Any]:
     )
 
 
+def _should_stay_silent(
+    *,
+    quiet: bool,
+    stale: list[Any],
+    type_changed: list[Any],
+    failed: list[Any],
+) -> bool:
+    """Печатать ли отчёт вообще (tsk-636, режим планировщика).
+
+    Еженедельный чек, пишущий «всё хорошо» каждую неделю, приучает не читать журнал —
+    и настоящая находка тонет среди пятидесяти пустых строк. Поэтому в тихом режиме
+    молчим, когда смотреть не на что.
+
+    Смежные сигналы молчанием НЕ считаются: работа, у которой сменили тип задания, и
+    работа, не прошедшая проверку схемой, — это тоже повод посмотреть, просто другой.
+    Иначе чек тихо сузил бы свой охват, а выглядел бы как «чисто».
+
+    :param quiet: включён ли режим планировщика (``--quiet``).
+    :param stale: работы, расходящиеся с нынешними правилами.
+    :param type_changed: работы, у которых после сдачи сменили тип задания.
+    :param failed: работы, которые не удалось проверить.
+    :returns: True — не печатать ничего.
+    """
+    return quiet and not stale and not type_changed and not failed
+
+
 def _recheck(service: CheckingService, row: dict[str, Any]) -> Optional[bool]:
     """
     Прогоняет одну работу через нынешние правила задания.
@@ -120,6 +161,12 @@ def main() -> int:
     )
     parser.add_argument("--course", type=int, default=None, help="Ограничить одним курсом")
     parser.add_argument("--csv", type=Path, default=None, help="Выгрузить находки в CSV")
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Режим планировщика: при находках отчёт печатается целиком, "
+             "а когда смотреть не на что — ни строки.",
+    )
     args = parser.parse_args()
 
     # Драйвер импортируется здесь, а не на уровне модуля: тогда чистые функции
@@ -173,6 +220,11 @@ def main() -> int:
                 }
             )
 
+    if _should_stay_silent(
+        quiet=args.quiet, stale=stale, type_changed=type_changed, failed=failed
+    ):
+        return 0
+
     print("=== Сверка старых незачётов с нынешними правилами (tsk-602) ===")
     print(f"Проверено работ: {len(rows) - skipped_turtle} (пропущено с песочницей черепахи: {skipped_turtle})")
     print(f"Расходятся с нынешними правилами: {len(stale)}")
@@ -208,9 +260,13 @@ def main() -> int:
 
     print(
         "\nЭто список для человека, а не команда к действию: вердикт мог быть верным "
-        "на момент сдачи. Решение о пересчёте принимает методист."
+        "на момент сдачи. Разбор tsk-636 показал, что так и было у всех десяти работ — "
+        "эталон правили уже после сдачи. Проверить это по конкретному заданию: "
+        "SELECT changed_at, changed_by, old_answer_key, new_answer_key FROM task_audit "
+        "WHERE task_id = <id> AND new_answer_key IS NOT NULL ORDER BY changed_at; "
+        "Решение о пересчёте принимает методист."
     )
-    return 0
+    return 1 if stale else 0
 
 
 if __name__ == "__main__":
@@ -218,4 +274,4 @@ if __name__ == "__main__":
         sys.exit(main())
     except Exception as exc:  # noqa: BLE001
         print("FAIL:", exc, file=sys.stderr)
-        sys.exit(1)
+        sys.exit(2)
