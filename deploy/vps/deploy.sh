@@ -2,6 +2,35 @@
 # Ручной деплой LMS на VPS. Запускать на самом сервере из /opt/lms.
 set -euo pipefail
 
+# Ожидание готовности сервера после рестарта (tsk-640).
+# Единичный curl сразу после `systemctl restart` попадает в момент, когда
+# приложение ещё поднимается, и валит скрипт ложной ошибкой «деплой не удался»,
+# хотя выкат прошёл (у SPW это ловилось как Connection refused / HTTP 000).
+# Здесь socket activation (lms.socket, tsk-403) держит порт через рестарт и
+# обычно прячет эту гонку — но лишь пока drop-in на месте: его откат прямо
+# предусмотрен в socket.conf, и тогда возвращается тот же refused. Плюс без
+# --max-time curl мог висеть неограниченно, если uvicorn не стартовал.
+#
+# /health отдаёт 200 всегда (app/api/main.py), поэтому здесь ждём именно 2xx,
+# а не «любой ответ»: 5xx на /health — настоящий провал, а не старт.
+# Использование: wait_for_http_ok <url> [число_попыток]
+wait_for_http_ok() {
+  local url=$1 attempts=${2:-30} i out code body
+  for ((i = 1; i <= attempts; i++)); do
+    out=$(curl -sS --max-time 5 -w $'\n%{http_code}' "$url" 2>/dev/null || true)
+    code=${out##*$'\n'}
+    body=${out%$'\n'*}
+    if [[ "$code" == 2* ]]; then
+      echo "HTTP $code (готов с попытки $i из $attempts): $body"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "ОШИБКА: $url не ответил 2xx за $attempts попыток (последний код: ${code:-нет ответа})." >&2
+  echo "Смотреть: systemctl status lms; journalctl -u lms -n 50; /var/log/lms/app.log" >&2
+  return 1
+}
+
 # Всё тело — внутри функции: `git reset --hard` ниже переписывает и сам этот
 # файл (bash читает исполняемый скрипт с диска по мере выполнения), поэтому
 # без обёртки в функцию рассинхронизация чтения даёт случайные ошибки на
@@ -55,8 +84,8 @@ main() {
   sleep 2
   systemctl is-active lms
 
-  echo "== smoke: /health =="
-  curl -fsS http://127.0.0.1:8000/health && echo
+  echo "== smoke: /health (ждём готовности сервера, tsk-640) =="
+  wait_for_http_ok http://127.0.0.1:8000/health 30
 
   echo "Deployed: $(git rev-parse --short HEAD)"
 }
