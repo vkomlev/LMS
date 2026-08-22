@@ -43,6 +43,7 @@ from app.services.code_review_service import (
     pick_code_for_review,
     review_student_code,
 )
+from app.services import text_authorship_service as text_authorship
 
 logger = logging.getLogger("app.code_review_cron")
 
@@ -66,7 +67,11 @@ _PENDING_SQL = """
            tr.answer_json->'response'->'meta'->'attachments' AS attachments,
            COALESCE((tr.code_review->>'attempts')::int, 0) AS attempts,
            COALESCE((tr.code_review->>'backfill')::bool, false) AS backfill,
-           tr.code_review->>'code'                AS code_snapshot
+           tr.code_review->>'code'                AS code_snapshot,
+           -- tsk-646: что разбираем. У работ, помеченных до появления текстовой
+           -- ветки, ключа нет — они все про код, отсюда COALESCE.
+           COALESCE(tr.code_review->>'kind', 'code') AS kind,
+           tr.answer_json->'response'->>'text'     AS body_text
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
@@ -105,7 +110,20 @@ async def code_review_cron_tick(
 
         for row in rows:
             (result_id, student_id, attempt_id, task_id, value, comment, stem,
-             attachments, attempts, backfill, code_snapshot) = row
+             attachments, attempts, backfill, code_snapshot, kind, body_text) = row
+
+            # tsk-646: развёрнутый письменный ответ разбирается другой рубрикой
+            # и без линтера — предмет другой, механизм очереди тот же.
+            if kind == "text":
+                await _process_text_row(
+                    db, summary,
+                    result_id=result_id, student_id=student_id, stem=stem,
+                    snapshot=code_snapshot, body_text=body_text,
+                    attempts=attempts, backfill=backfill,
+                    max_attempts=settings.code_review_max_attempts,
+                )
+                continue
+
             # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
             # файл-вложение мог быть удалён следующей загрузкой ученика в этой
             # же попытке (см. комментарий в `attempts.py`).
@@ -194,6 +212,78 @@ async def code_review_cron_tick(
         summary["retried"], summary["failed"], summary["skipped"],
     )
     return summary
+
+
+async def _process_text_row(
+    db: AsyncSession,
+    summary: Dict[str, Any],
+    *,
+    result_id: int,
+    student_id: Optional[int],
+    stem: Optional[str],
+    snapshot: Optional[str],
+    body_text: Optional[str],
+    attempts: int,
+    backfill: bool,
+    max_attempts: int,
+) -> None:
+    """
+    Разбор одной ТЕКСТОВОЙ работы (tsk-646).
+
+    Отличий от кодовой ветки три, и все три по существу предмета:
+
+    * линтера у прозы нет — статический анализ не вызывается вовсе;
+    * «неполный отчёт» здесь означает другое. У кода при недоступной модели
+      остаётся разбор pylint; у текста остаются МЕХАНИЧЕСКИЕ СЛЕДЫ вставки —
+      их считает регулярка, без сети. Они и есть деградированный режим: работа
+      закрывается как `done`, преподаватель видит проверяемую часть признака,
+      и только вывод о слоге отсутствует;
+    * снимок текста при приёме ответа снимается по той же причине, что у кода —
+      чтобы разбор шёл ровно по тому, что сдали, а не по позднейшей редакции.
+    """
+    body = snapshot or text_authorship.pick_text_for_review(body_text)
+    if not body:
+        # Работа короче порога (или текста нет вовсе) — признака в ней нет ни у
+        # кого. Снимаем пометку, чтобы не крутилась в очереди вечно.
+        await _write(db, result_id, {
+            "status": "skipped", "kind": "text", "reason": "too_short",
+        }, backfill=backfill)
+        summary["skipped"] += 1
+        return
+
+    verdict = await text_authorship.review_student_text(
+        body, task_stem=stem, student_id=student_id,
+    )
+    error = verdict.get("error")
+    if not error:
+        await _write(db, result_id, {"status": "done", **verdict}, backfill=backfill)
+        summary["reviewed"] += 1
+        return
+
+    attempts_done = int(attempts) + 1
+    if bool(verdict.get("retryable")) and attempts_done < max_attempts:
+        await _write(db, result_id, {
+            "status": "pending",
+            "kind": "text",
+            "attempts": attempts_done,
+            "last_error": error,
+        }, backfill=backfill, code_snapshot=body)
+        summary["retried"] += 1
+        return
+
+    signals = verdict.get("signals") or []
+    payload: Dict[str, Any] = {
+        "status": "done" if signals else "failed",
+        "kind": "text",
+        "attempts": attempts_done,
+        "error": error,
+        "message": verdict.get("message"),
+        "signals": signals,
+    }
+    if signals:
+        payload["degraded"] = True
+    await _write(db, result_id, payload, backfill=backfill)
+    summary["degraded" if signals else "failed"] += 1
 
 
 async def _write(
