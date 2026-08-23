@@ -1,0 +1,1106 @@
+diff --git a/app/api/v1/learning_gaps.py b/app/api/v1/learning_gaps.py
+index f824ebe..701f0a2 100644
+--- a/app/api/v1/learning_gaps.py
++++ b/app/api/v1/learning_gaps.py
+@@ -37,6 +37,21 @@ class GapSignalRead(BaseModel):
+     wrong_rate: float
+     status: str
+     teacher_comment: Optional[str] = None
++    reason: str = Field(
++        "error_rate",
++        description=(
++            "Повод сигнала: `error_rate` — ученик много ошибается; "
++            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646). У второго "
++            "повода `wrong_rate` честно нулевая и показывать её нельзя — числа "
++            "лежат в `meta` (`reviewed`, `flagged`)"
++        ),
++        examples=["error_rate", "ai_authorship"],
++    )
++    meta: Optional[dict] = Field(
++        None,
++        description="Числа повода. Состав зависит от `reason`",
++        examples=[None, {"reason": "ai_authorship", "reviewed": 12, "flagged": 11}],
++    )
+ 
+     @property
+     def wrong_percent(self) -> int:
+@@ -147,3 +162,48 @@ async def dismiss(
+             status.HTTP_404_NOT_FOUND, "Сигнал не найден или уже закрыт"
+         )
+     return {"status": "dismissed"}
++
++
++class SignalResolution(BaseModel):
++    """Итог разбора методистом."""
++
++    comment: Optional[str] = Field(
++        None, max_length=2000, description="Чем кончился разбор",
++    )
++    mini_course_id: Optional[int] = Field(
++        None,
++        description=(
++            "Курс повторения, если он собран. Не обязателен: разбор не всегда "
++            "кончается курсом. Но если курс есть — это единственное место, где "
++            "видно, ЧЕМ кончилась эскалация"
++        ),
++        examples=[None, 1460],
++    )
++
++
++@router.post("/{signal_id}/resolve", summary="Методист разобрал сигнал")
++async def resolve(
++    signal_id: int,
++    body: SignalResolution,
++    db: AsyncSession = Depends(get_async_db),
++    current_user: CurrentUser = Depends(_METHODIST_GATE),
++) -> dict:
++    """Закрыть переданный методисту сигнал.
++
++    tsk-653: до этой ручки у эскалации не было выхода вовсе. `dismiss` работает
++    только из `new`/`acknowledged`, а из `escalated` закрыть сигнал было нечем —
++    и 5 сигналов висели в проде с 06.08. Это читалось как «методист их не
++    разбирает», хотя кнопки, которая фиксирует разбор, просто не существовало.
++
++    Гейт методистский, а не преподавательский: закрывает тот, кому передали.
++    """
++    ok = await signals.resolve_signal(
++        db, signal_id=signal_id, methodist_id=current_user.id,
++        comment=body.comment, mini_course_id=body.mini_course_id,
++    )
++    if not ok:
++        raise HTTPException(
++            status.HTTP_404_NOT_FOUND,
++            "Сигнал не найден, не был передан методисту или уже закрыт",
++        )
++    return {"status": "resolved"}
+diff --git a/app/services/learning_gap_signals_service.py b/app/services/learning_gap_signals_service.py
+index e5cfa47..a570d15 100644
+--- a/app/services/learning_gap_signals_service.py
++++ b/app/services/learning_gap_signals_service.py
+@@ -17,6 +17,7 @@ tsk-572, фаза 7. Отдельно от `learning_gaps_service` намере
+ """
+ from __future__ import annotations
+ 
++import json
+ import logging
+ 
+ from sqlalchemy import text
+@@ -34,6 +35,24 @@ logger = logging.getLogger(__name__)
+ STUDENT_MIN_SUBMISSIONS = 8
+ STUDENT_ERROR_RATE_THRESHOLD = 0.5
+ 
++#: Поводы сигнала (tsk-653). Раньше повод был один и потому безымянный.
++REASON_ERROR_RATE = "error_rate"
++REASON_AI_AUTHORSHIP = "ai_authorship"
++
++# Пороги признака ИИ-авторства. Оба сразу, а не любой из них: три работы из
++# трёхсот — это шум, а две из двух — слишком мало, чтобы звать человека.
++#
++# Числа взяты из замера на боевом корпусе (2026-08-23,
++# docs/qa/2026-08-23-tsk646-text-authorship-calibration.md): при них на ВСЕЙ
++# базе — 1028 разобранных работ, 34 ученика — порог берёт ровно одну ученицу,
++# ту самую, про которую преподаватель сказал это словами. Ослабить их можно
++# только новым замером, а не ощущением.
++AI_MIN_FLAGGED_WORKS = 3
++AI_MIN_FLAGGED_SHARE = 0.5
++#: Окно шире, чем у датчика ошибок (30 дней): признак авторства копится
++#: медленно — развёрнутых работ у ученика единицы за месяц.
++AI_WINDOW_DAYS = 90
++
+ _STUDENT_GAPS_SQL = """
+ SELECT tr.user_id AS student_id,
+        t.course_id,
+@@ -74,24 +93,122 @@ async def find_student_gaps(
+     return [dict(r) for r in rows]
+ 
+ 
++# Датчик признака ИИ-авторства (tsk-653).
++#
++# **Почему считаем по КОРНЕВОМУ курсу, а не по тому, где лежит задание.**
++# У ученицы, с которой всё началось, 12 разобранных работ лежат в 12 разных
++# подкурсах — по одной в каждом. По подкурсам сигнал не родился бы вовсе
++# (одна работа — не статистика), а роди он их по одной на подкурс, методист
++# получил бы 11 карточек об одном человеке. Корень — тот узел, на который
++# ученик записан, и ровно тот охват, на который методист собирает мини-курс.
++#
++# Дерево строится ВНИЗ от записи ученика (`user_courses`), как в
++# `me_service._ROOT_OF_LEAF_SQL`: записывают только на корень, вверх по
++# `course_parents` идти незачем и неоднозначно. `DISTINCT ON` с тем же
++# правилом разрешения, что и там: узел под двумя записанными деревьями иначе
++# посчитался бы дважды.
++#
++# Работа считается «с признаком», если сработала ЛЮБАЯ ось — механические следы
++# вставки или вердикт модели. Механическая ось идёт первой не случайно: её
++# преподаватель может проверить глазами.
++_AI_AUTHORSHIP_SQL = """
++WITH RECURSIVE trees AS (
++    SELECT uc.user_id, uc.course_id AS root_course_id, uc.course_id AS member_course_id
++    FROM user_courses uc
++    WHERE uc.is_active = true
++    UNION ALL
++    SELECT t.user_id, t.root_course_id, cp.course_id
++    FROM trees t
++    JOIN course_parents cp ON cp.parent_course_id = t.member_course_id
++),
++roots AS (
++    SELECT DISTINCT ON (user_id, member_course_id)
++           user_id, member_course_id, root_course_id
++    FROM trees
++    ORDER BY user_id, member_course_id,
++             (root_course_id = member_course_id) DESC, root_course_id ASC
++),
++reviewed AS (
++    SELECT tr.user_id,
++           t.course_id AS member_course_id,
++           (jsonb_array_length(COALESCE(tr.code_review->'signals', '[]'::jsonb)) > 0
++            OR tr.code_review->'ai_authorship'->>'verdict' = 'ai_likely') AS flagged
++    FROM task_results tr
++    JOIN tasks t ON t.id = tr.task_id AND t.is_active
++    WHERE tr.code_review->>'status' = 'done'
++      AND tr.received_at > now() - make_interval(days => :days)
++      AND {real_student}
++)
++SELECT r.user_id AS student_id,
++       roots.root_course_id AS course_id,
++       c.title AS course_title,
++       COUNT(*) AS reviewed,
++       COUNT(*) FILTER (WHERE r.flagged) AS flagged
++FROM reviewed r
++JOIN roots ON roots.user_id = r.user_id AND roots.member_course_id = r.member_course_id
++JOIN courses c ON c.id = roots.root_course_id
++GROUP BY r.user_id, roots.root_course_id, c.title
++HAVING COUNT(*) FILTER (WHERE r.flagged) >= :min_flagged
++   AND COUNT(*) FILTER (WHERE r.flagged)::float / COUNT(*) >= :min_share
++ORDER BY COUNT(*) FILTER (WHERE r.flagged) DESC
++LIMIT :limit
++"""
++
++
++async def find_ai_authorship_gaps(
++    db: AsyncSession,
++    *,
++    days: int = AI_WINDOW_DAYS,
++    min_flagged: int = AI_MIN_FLAGGED_WORKS,
++    min_share: float = AI_MIN_FLAGGED_SHARE,
++    limit: int = 100,
++) -> list[dict]:
++    """Ученики, чьи работы несут признак ИИ-авторства.
++
++    Отдельный датчик, а не расширение `find_student_gaps`, потому что меряет он
++    другое. Тот считает долю ОШИБОК — и ученика, сдающего чужое, не увидит
++    никогда: у такого ученика ошибок нет, все работы приняты. Живой случай,
++    с которого началась tsk-646, ровно такой: 12 работ, 12 зачётов, ноль ошибок.
++
++    Возвращает строки с `reviewed` и `flagged` — числа кладутся в `meta` сигнала
++    и показываются человеку. Доля ошибок сюда не входит: у этого повода она
++    ничего не значит.
++    """
++    sql = _AI_AUTHORSHIP_SQL.format(real_student=real_student_results_filter("tr"))
++    rows = (await db.execute(text(sql), {
++        "days": days, "min_flagged": min_flagged,
++        "min_share": min_share, "limit": limit,
++    })).mappings().all()
++    return [dict(r) for r in rows]
++
++
+ async def upsert_signal(
+     db: AsyncSession, *, course_id: int, student_id: int | None,
+     submissions: int, students: int, wrong_rate: float,
++    reason: str = REASON_ERROR_RATE, meta: dict | None = None,
+ ) -> int | None:
+     """Завести сигнал, если открытого такого ещё нет.
+ 
+     Повтор молча пропускается: cron ходит по расписанию, и без этого за неделю
+     накопилось бы семь одинаковых записей — верный способ отучить людей их
+-    читать. Единственность держит частичный уникальный индекс в БД.
++    читать. Единственность держит частичный уникальный индекс в БД, и с
++    tsk-653 он включает `reason`: сигналы разных поводов по одной паре
++    «курс + ученик» — разные сигналы, а не повтор.
++
++    :param reason: повод (`error_rate` | `ai_authorship`).
++    :param meta: числа повода. У каждого повода они свои, поэтому лежат здесь,
++        а не в колонках. Без них по строке через месяц не понять, откуда она.
+     """
+     res = await db.execute(text("""
+         INSERT INTO learning_gap_signal
+-            (course_id, student_id, submissions, students, wrong_rate, status)
+-        VALUES (:cid, :sid, :subs, :studs, :rate, 'new')
++            (course_id, student_id, submissions, students, wrong_rate, status, reason, meta)
++        VALUES (:cid, :sid, :subs, :studs, :rate, 'new', :reason,
++                CAST(:meta AS jsonb))
+         ON CONFLICT DO NOTHING
+         RETURNING id
+     """), {"cid": course_id, "sid": student_id, "subs": submissions,
+-           "studs": students, "rate": wrong_rate})
++           "studs": students, "rate": wrong_rate, "reason": reason,
++           "meta": json.dumps(meta, ensure_ascii=False) if meta else None})
+     row = res.first()
+     return int(row[0]) if row else None
+ 
+@@ -104,6 +221,7 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
+     """
+     topics = await find_topic_gaps(db, days=days)
+     students = await find_student_gaps(db, days=days)
++    authorship = await find_ai_authorship_gaps(db)
+ 
+     new_topics = 0
+     for g in topics:
+@@ -122,15 +240,38 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
+         ):
+             new_students += 1
+ 
++    new_authorship = 0
++    for r in authorship:
++        if await upsert_signal(
++            db, course_id=int(r["course_id"]), student_id=int(r["student_id"]),
++            submissions=int(r["reviewed"]), students=1,
++            # У этого повода доля ошибок ничего не значит и у ученика она обычно
++            # нулевая. Ставим настоящий ноль, а не долю работ с признаком: это
++            # то самое число, которое человек читает первым, и врать в нём
++            # нельзя. Смысл несут `meta` и текст карточки.
++            wrong_rate=0.0,
++            reason=REASON_AI_AUTHORSHIP,
++            meta={
++                "reason": REASON_AI_AUTHORSHIP,
++                "reviewed": int(r["reviewed"]),
++                "flagged": int(r["flagged"]),
++                "window_days": AI_WINDOW_DAYS,
++            },
++        ):
++            new_authorship += 1
++
+     await db.commit()
+     logger.info(
+         "learning_gaps: проход завершён — тем найдено %s (новых сигналов %s), "
+-        "учеников %s (новых %s), период %s дн.",
+-        len(topics), new_topics, len(students), new_students, days,
++        "учеников %s (новых %s), признак авторства %s (новых %s), период %s дн.",
++        len(topics), new_topics, len(students), new_students,
++        len(authorship), new_authorship, days,
+     )
+     return {
+         "topics_found": len(topics), "topic_signals_created": new_topics,
+         "students_found": len(students), "student_signals_created": new_students,
++        "authorship_found": len(authorship),
++        "authorship_signals_created": new_authorship,
+     }
+ 
+ 
+@@ -232,6 +373,51 @@ async def dismiss_signal(
+     return ok
+ 
+ 
++async def resolve_signal(
++    db: AsyncSession, *, signal_id: int, methodist_id: int,
++    comment: str | None = None, mini_course_id: int | None = None,
++) -> bool:
++    """Методист разобрал переданный сигнал — закрыть его.
++
++    **Почему этого не было и почему это важно.** У эскалации не было выхода
++    вовсе: `dismiss_signal` работает только из `new`/`acknowledged`, а из
++    `escalated` закрыть сигнал было нечем. На 2026-08-23 в проде так висели
++    5 сигналов, самый старый с 06.08. Это читалось как «методист их не
++    разбирает» — а на деле кнопки, которая фиксирует разбор, не существовало,
++    и экран копил вечную очередь из уже сделанной работы.
++
++    `mini_course_id` не обязателен: разбор не всегда кончается курсом (можно
++    поправить само задание, поговорить с преподавателем, признать сигнал
++    неверным). Но если курс собран — ссылка на него единственное место, где
++    видно, ЧЕМ кончилась эскалация.
++
++    Возвращает False, если сигнал не найден или уже закрыт: повторное нажатие
++    не должно выглядеть как успех.
++    """
++    res = await db.execute(text("""
++        UPDATE learning_gap_signal
++        SET status = 'resolved',
++            teacher_comment = COALESCE(CAST(:comment AS text), teacher_comment),
++            -- Типы заданы явно, потому что аргументы `jsonb_build_object`
++            -- объявлены как `any`: вывести тип пустого `mini_course_id`
++            -- драйверу неоткуда, а пустым он бывает штатно — разбор не всегда
++            -- кончается курсом. (В присваивании текстовой колонке выше тип
++            -- выводится и без приведения; оно оставлено для единообразия.)
++            meta = COALESCE(meta, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object(
++                'resolved_by', CAST(:mid AS int),
++                'resolved_at', to_jsonb(now()),
++                'mini_course_id', CAST(:course_id AS int)
++            ))
++        WHERE id = :sid AND status = 'escalated'
++        RETURNING id
++    """), {"sid": signal_id, "mid": methodist_id, "comment": comment,
++           "course_id": mini_course_id})
++    ok = res.first() is not None
++    if ok:
++        await db.commit()
++    return ok
++
++
+ async def list_signals(
+     db: AsyncSession, *, for_student: bool | None = None,
+     statuses: tuple[str, ...] = ("new", "acknowledged"), limit: int = 50,
+@@ -255,12 +441,24 @@ async def list_signals(
+     rows = (await db.execute(text(f"""
+         SELECT s.id, s.course_id, c.title AS course_title, s.student_id,
+                u.full_name AS student_name, s.submissions, s.students,
+-               s.wrong_rate, s.status, s.teacher_comment, s.created_at
++               s.wrong_rate, s.status, s.teacher_comment, s.created_at,
++               s.reason, s.meta
+         FROM learning_gap_signal s
+         JOIN courses c ON c.id = s.course_id
+         LEFT JOIN users u ON u.id = s.student_id
+         WHERE {clause}
+-        ORDER BY s.wrong_rate DESC, s.created_at DESC
++        -- Порядок по СИЛЕ сигнала, а не по доле ошибок. Пока повод был один,
++        -- это было одно и то же; с tsk-653 сортировка по `wrong_rate`
++        -- отправляла сигнал о признаке авторства в самый низ списка — у него
++        -- доля ошибок честно нулевая. Живой проход это и показал: карточка
++        -- выехала методисту последней строкой с бейджем «0% ошибок».
++        ORDER BY CASE s.reason
++                     WHEN 'ai_authorship' THEN
++                         COALESCE((s.meta->>'flagged')::float
++                                  / NULLIF((s.meta->>'reviewed')::float, 0), 0)
++                     ELSE s.wrong_rate
++                 END DESC,
++                 s.created_at DESC
+         LIMIT :limit
+     """), {"statuses": list(statuses), "limit": limit})).mappings().all()
+     return [dict(r) for r in rows]
+diff --git a/docs/openapi.json b/docs/openapi.json
+index e4b7cb9..221f464 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -37058,6 +37058,117 @@
+         }
+       }
+     },
++    "/api/v1/learning-gaps/{signal_id}/resolve": {
++      "post": {
++        "tags": [
++          "learning_gaps"
++        ],
++        "summary": "Методист разобрал сигнал",
++        "description": "Закрыть переданный методисту сигнал.\n\ntsk-653: до этой ручки у эскалации не было выхода вовсе. `dismiss` работает\nтолько из `new`/`acknowledged`, а из `escalated` закрыть сигнал было нечем —\nи 5 сигналов висели в проде с 06.08. Это читалось как «методист их не\nразбирает», хотя кнопки, которая фиксирует разбор, просто не существовало.\n\nГейт методистский, а не преподавательский: закрывает тот, кому передали.",
++        "operationId": "resolve_api_v1_learning_gaps__signal_id__resolve_post",
++        "security": [
++          {
++            "APIKeyHeader": []
++          },
++          {
++            "APIKeyQuery": []
++          }
++        ],
++        "parameters": [
++          {
++            "name": "signal_id",
++            "in": "path",
++            "required": true,
++            "schema": {
++              "type": "integer",
++              "title": "Signal Id"
++            }
++          },
++          {
++            "name": "token",
++            "in": "query",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Token"
++            }
++          },
++          {
++            "name": "authorization",
++            "in": "header",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Authorization"
++            }
++          },
++          {
++            "name": "session",
++            "in": "cookie",
++            "required": false,
++            "schema": {
++              "anyOf": [
++                {
++                  "type": "string"
++                },
++                {
++                  "type": "null"
++                }
++              ],
++              "title": "Session"
++            }
++          }
++        ],
++        "requestBody": {
++          "required": true,
++          "content": {
++            "application/json": {
++              "schema": {
++                "$ref": "#/components/schemas/SignalResolution"
++              }
++            }
++          }
++        },
++        "responses": {
++          "200": {
++            "description": "Successful Response",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "type": "object",
++                  "additionalProperties": true,
++                  "title": "Response Resolve Api V1 Learning Gaps  Signal Id  Resolve Post"
++                }
++              }
++            }
++          },
++          "422": {
++            "description": "Validation Error",
++            "content": {
++              "application/json": {
++                "schema": {
++                  "$ref": "#/components/schemas/HTTPValidationError"
++                }
++              }
++            }
++          }
++        }
++      }
++    },
+     "/api/v1/topic-mastery/overview": {
+       "get": {
+         "tags": [
+@@ -51633,6 +51744,42 @@
+         "title": "SignalDecision",
+         "description": "Ответ преподавателя на сигнал."
+       },
++      "SignalResolution": {
++        "properties": {
++          "comment": {
++            "anyOf": [
++              {
++                "type": "string",
++                "maxLength": 2000
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Comment",
++            "description": "Чем кончился разбор"
++          },
++          "mini_course_id": {
++            "anyOf": [
++              {
++                "type": "integer"
++              },
++              {
++                "type": "null"
++              }
++            ],
++            "title": "Mini Course Id",
++            "description": "Курс повторения, если он собран. Не обязателен: разбор не всегда кончается курсом. Но если курс есть — это единственное место, где видно, ЧЕМ кончилась эскалация",
++            "examples": [
++              null,
++              1460
++            ]
++          }
++        },
++        "type": "object",
++        "title": "SignalResolution",
++        "description": "Итог разбора методистом."
++      },
+       "SingleCheckRequest": {
+         "properties": {
+           "task_content": {
+diff --git a/app/db/migrations/versions/20260823_010000_tsk653_gap_signal_reason.py b/app/db/migrations/versions/20260823_010000_tsk653_gap_signal_reason.py
+new file mode 100644
+index 0000000..28dcb95
+--- /dev/null
++++ b/app/db/migrations/versions/20260823_010000_tsk653_gap_signal_reason.py
+@@ -0,0 +1,120 @@
++"""tsk-653: у сигнала «нужно повторение» появляется причина.
++
++Контекст. До сих пор сигнал был ровно один по смыслу — «ученик много ошибается»
++(`learning_gap_signals_service.find_student_gaps`: не меньше 8 сдач, не меньше
++50 % неверных). С tsk-646 появился второй повод: у работ ученика машинный
++признак ИИ-авторства. Он про другое, и меряется другим — ошибок у такого
++ученика может не быть вовсе. Живой проход 2026-08-23 (сигнал #66) показал это
++буквально: карточка выехала методисту с бейджем «0% ошибок» в самом низу списка.
++
++Почему колонка, а не поле в `meta`. По причине идёт не только показ, но и
++УНИКАЛЬНОСТЬ: два частичных индекса не дают завести второй открытый сигнал по
++той же паре «курс + ученик». Без причины в индексе сигнал об авторстве молча
++подавился бы открытым сигналом об ошибках — и наоборот. Молча: `upsert_signal`
++написан на `ON CONFLICT DO NOTHING`, то есть пропуск выглядит как штатная работа.
++
++Умолчание `error_rate` намеренно: 27 существующих строк заводились единственным
++тогда датчиком, и это правда о них, а не заглушка.
++
++Числа причины (сколько работ разобрано, сколько с признаком) лежат в `meta` —
++там им и место, они у каждой причины свои. `wrong_rate` остаётся ровно тем, чем
++был: долей ОШИБОК. У сигнала об авторстве она честно нулевая, и переиспользовать
++её под «долю работ с признаком» нельзя — это то самое поле, которое методист
++читает первым.
++
++Rollback: `alembic downgrade tsk644_slow_request` — колонка и индексы с причиной
++удаляются, возвращаются прежние индексы без неё. Данные сигналов не теряются;
++если к тому моменту существуют открытые сигналы обоих видов по одной паре
++«курс + ученик», прежний индекс их не примет — такие строки надо будет закрыть
++руками до отката.
++
++Revision ID: tsk653_gap_signal_reason
++Revises: tsk644_slow_request
++Create Date: 2026-08-23
++"""
++from typing import Sequence, Union
++
++import sqlalchemy as sa
++from alembic import op
++
++revision: str = "tsk653_gap_signal_reason"
++down_revision: Union[str, None] = "tsk644_slow_request"
++branch_labels: Union[str, Sequence[str], None] = None
++depends_on: Union[str, Sequence[str], None] = None
++
++#: Статусы, при которых сигнал считается ОТКРЫТЫМ. Повторение того, что уже
++#: зашито в прежние индексы: список меняется вместе с ними, а не отдельно.
++_OPEN = "('new', 'acknowledged')"
++
++
++def upgrade() -> None:
++    # Новый статус `resolved` — «методист разобрал». До сих пор у эскалации не
++    # было выхода вовсе: `dismiss` работает только из `new`/`acknowledged`, и
++    # 5 сигналов висели в проде с 06.08 просто потому, что закрыть их было
++    # нечем. Список статусов держит CHECK, и без правки здесь сервис падал бы
++    # на записи — что и поймал тест.
++    op.drop_constraint("ck_gap_signal_status", "learning_gap_signal", type_="check")
++    op.create_check_constraint(
++        "ck_gap_signal_status",
++        "learning_gap_signal",
++        "status IN ('new', 'acknowledged', 'escalated', 'dismissed', 'resolved')",
++    )
++
++    op.add_column(
++        "learning_gap_signal",
++        sa.Column(
++            "reason",
++            sa.String(length=32),
++            nullable=False,
++            server_default="error_rate",
++            comment="Повод сигнала: error_rate — доля ошибок; ai_authorship — признак ИИ-авторства работ (tsk-646)",
++        ),
++    )
++
++    # Индексы пересоздаются, а не дополняются: частичный уникальный индекс нельзя
++    # расширить на месте, а держать оба варианта одновременно значит запретить
++    # ровно то, ради чего правка и делается.
++    op.drop_index("uq_gap_signal_open_topic", table_name="learning_gap_signal")
++    op.drop_index("uq_gap_signal_open_student", table_name="learning_gap_signal")
++
++    op.execute(
++        "CREATE UNIQUE INDEX uq_gap_signal_open_topic "
++        "ON learning_gap_signal (course_id, reason) "
++        f"WHERE student_id IS NULL AND status IN {_OPEN}"
++    )
++    op.execute(
++        "CREATE UNIQUE INDEX uq_gap_signal_open_student "
++        "ON learning_gap_signal (course_id, student_id, reason) "
++        f"WHERE student_id IS NOT NULL AND status IN {_OPEN}"
++    )
++
++
++def downgrade() -> None:
++    op.drop_index("uq_gap_signal_open_student", table_name="learning_gap_signal")
++    op.drop_index("uq_gap_signal_open_topic", table_name="learning_gap_signal")
++
++    op.execute(
++        "CREATE UNIQUE INDEX uq_gap_signal_open_topic "
++        "ON learning_gap_signal (course_id) "
++        f"WHERE student_id IS NULL AND status IN {_OPEN}"
++    )
++    op.execute(
++        "CREATE UNIQUE INDEX uq_gap_signal_open_student "
++        "ON learning_gap_signal (course_id, student_id) "
++        f"WHERE student_id IS NOT NULL AND status IN {_OPEN}"
++    )
++
++    op.drop_column("learning_gap_signal", "reason")
++
++    # Закрытые методистом сигналы вернуть в прежний список статусов нечем:
++    # `resolved` в нём нет. Переводим их в `dismissed` — ближайший по смыслу
++    # «закрыт человеком», чтобы откат не упёрся в CHECK и не потерял строки.
++    op.execute(
++        "UPDATE learning_gap_signal SET status = 'dismissed' WHERE status = 'resolved'"
++    )
++    op.drop_constraint("ck_gap_signal_status", "learning_gap_signal", type_="check")
++    op.create_check_constraint(
++        "ck_gap_signal_status",
++        "learning_gap_signal",
++        "status IN ('new', 'acknowledged', 'escalated', 'dismissed')",
++    )
+diff --git a/tests/test_tsk653_ai_authorship_signal.py b/tests/test_tsk653_ai_authorship_signal.py
+new file mode 100644
+index 0000000..581738e
+--- /dev/null
++++ b/tests/test_tsk653_ai_authorship_signal.py
+@@ -0,0 +1,442 @@
++"""tsk-653: признак ИИ-авторства как повод для сигнала «нужно повторение».
++
++Что закрываем:
++- новый датчик находит ученика, которого прежний не увидит НИКОГДА (у него нет
++  ошибок — все работы приняты);
++- пороги держат шум: три работы из трёхсот сигналом не становятся;
++- счёт идёт по КОРНЕВОМУ курсу — иначе у ученика с одной работой в каждом
++  подкурсе родилось бы по карточке на подкурс;
++- сигналы разных поводов по одной паре «курс + ученик» сосуществуют, а не
++  подавляют друг друга молча;
++- у эскалации появился выход: методист может её закрыть.
++
++Живой проход контура, из которого всё это выросло, —
++docs/qa/2026-08-23-tsk653-progon-kontura-eskalatsii.md.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import datetime, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.users import Users
++from app.services import learning_gap_signals_service as sig
++from app.services.auth import identity_link_service
++
++
++async def _user(db, prefix: str) -> int:
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=prefix, tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    await db.commit()
++    return u.id
++
++
++async def _course(db, title: str, parent_id: int | None = None) -> int:
++    cid = int((await db.execute(text(
++        "INSERT INTO courses (title, access_level, is_required, course_uid) "
++        "VALUES (:t,'auto_check',false,:u) RETURNING id"
++    ), {"t": title, "u": f"tsk653-{random.randint(10**8, 10**10)}"})).scalar_one())
++    if parent_id is not None:
++        await db.execute(text(
++            "INSERT INTO course_parents (course_id, parent_course_id, order_number) "
++            "VALUES (:c, :p, 1)"
++        ), {"c": cid, "p": parent_id})
++    await db.commit()
++    return cid
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(text(
++        "INSERT INTO user_courses (user_id, course_id) VALUES (:u, :c)"
++    ), {"u": user_id, "c": course_id})
++    await db.commit()
++
++
++async def _submission(db, *, user_id: int, course_id: int, flagged: bool) -> int:
++    """Разобранная работа: принятая (ошибок нет) и с признаком либо без него.
++
++    `is_correct=True` намеренно у ВСЕХ: в этом и суть случая — ученик, сдающий
++    чужое, ошибок не делает, и датчик по доле ошибок его не увидит.
++    """
++    task_id = int((await db.execute(text(
++        "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++        " course_id, difficulty_id, is_active) "
++        "VALUES (:e, 6, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, 1, true) RETURNING id"
++    ), {
++        "e": f"tsk653-t-{random.randint(10**8, 10**10)}",
++        "c": json.dumps({"type": "TA", "stem": "Опиши алгоритм"}),
++        "r": json.dumps({"max_score": 6}),
++        "cid": course_id,
++    })).scalar_one())
++
++    review = {"status": "done", "kind": "text"}
++    if flagged:
++        review["signals"] = [{"code": "math_render_residue", "label": "…", "evidence": "…"}]
++        review["ai_authorship"] = {"verdict": "ai_likely", "reasoning": "…"}
++    else:
++        review["signals"] = []
++        review["ai_authorship"] = {"verdict": "student_likely", "reasoning": "…"}
++
++    now = datetime.now(timezone.utc)
++    return int((await db.execute(text(
++        "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
++        " received_at, max_score, source_system, is_correct, answer_json, code_review) "
++        "VALUES (6, :u, :t, :now, 0, :now, 6, 'spw_web', true, CAST(:a AS jsonb), "
++        " CAST(:cr AS jsonb)) RETURNING id"
++    ), {
++        "u": user_id, "t": task_id, "now": now,
++        "a": json.dumps({"type": "TA", "response": {"text": "…"}}),
++        "cr": json.dumps(review, ensure_ascii=False),
++    })).scalar_one())
++
++
++async def _cleanup(db, users: list[int], courses: list[int]) -> None:
++    await db.execute(text(
++        "DELETE FROM task_results WHERE task_id IN "
++        "(SELECT id FROM tasks WHERE course_id = ANY(:c))"
++    ), {"c": courses})
++    await db.execute(text("DELETE FROM tasks WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text("DELETE FROM user_courses WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text("DELETE FROM learning_gap_signal WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text("DELETE FROM notifications WHERE user_id = ANY(:u)"), {"u": users})
++    await db.commit()
++    if users:
++        try:
++            await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
++            await db.commit()
++        except Exception:
++            await db.rollback()
++    await db.execute(text("DELETE FROM course_parents WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": courses})
++    await db.commit()
++
++
++# ───────────────────────────── Датчик ────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_finds_student_whom_error_sensor_never_sees(db):
++    """Главный случай: все работы приняты, ошибок ноль — и признак всё равно виден.
++
++    Прежний датчик (`find_student_gaps`) ищет долю неверных ≥ 50 %. Ученик,
++    сдающий чужое, выглядит отличником и не попадает в него никогда — именно так
++    ученица, с которой началась tsk-646, не имела ни одного сигнала за всё время.
++    """
++    root = await _course(db, "tsk653 корень")
++    student = await _user(db, "tsk653-ai")
++    await _enroll(db, student, root)
++    try:
++        for _ in range(4):
++            await _submission(db, user_id=student, course_id=root, flagged=True)
++        await _submission(db, user_id=student, course_id=root, flagged=False)
++
++        found = await sig.find_ai_authorship_gaps(db)
++        mine = [r for r in found if r["student_id"] == student]
++        assert len(mine) == 1, "ученик с четырьмя помеченными работами не найден"
++        assert mine[0]["course_id"] == root
++        assert mine[0]["reviewed"] == 5 and mine[0]["flagged"] == 4
++
++        # И тут же — контроль: старый датчик его действительно не видит.
++        by_errors = await sig.find_student_gaps(db)
++        assert not [r for r in by_errors if r["student_id"] == student]
++    finally:
++        await _cleanup(db, [student], [root])
++
++
++@pytest.mark.asyncio
++async def test_counts_by_root_course_not_by_subcourse(db):
++    """Работы разбросаны по подкурсам — сигнал всё равно один, на корень.
++
++    У ученицы 4538 двенадцать работ лежат в двенадцати подкурсах по одной.
++    По подкурсам сигнал не родился бы вовсе (одна работа — не статистика), а
++    роди он их по одному на подкурс, методист получил бы одиннадцать карточек
++    об одном человеке.
++    """
++    root = await _course(db, "tsk653 корень с главами")
++    subs = [await _course(db, f"tsk653 подкурс {i}", parent_id=root) for i in range(4)]
++    student = await _user(db, "tsk653-tree")
++    await _enroll(db, student, root)
++    try:
++        for sub in subs:
++            await _submission(db, user_id=student, course_id=sub, flagged=True)
++
++        found = [r for r in await sig.find_ai_authorship_gaps(db)
++                 if r["student_id"] == student]
++        assert len(found) == 1, "сигнал размножился по подкурсам"
++        assert found[0]["course_id"] == root
++        assert found[0]["flagged"] == 4
++    finally:
++        await _cleanup(db, [student], [root, *subs])
++
++
++@pytest.mark.asyncio
++async def test_thresholds_hold_back_noise(db):
++    """Две помеченные работы и низкая доля сигналом не становятся.
++
++    Оба порога нужны сразу: три работы из трёхсот — шум, а две из двух — слишком
++    мало, чтобы звать человека и говорить с ребёнком.
++    """
++    root_few = await _course(db, "tsk653 мало работ")
++    root_share = await _course(db, "tsk653 низкая доля")
++    quiet = await _user(db, "tsk653-quiet")
++    diligent = await _user(db, "tsk653-diligent")
++    await _enroll(db, quiet, root_few)
++    await _enroll(db, diligent, root_share)
++    try:
++        # Порог числа: помечены две работы из двух — доля высокая, объём нет.
++        for _ in range(2):
++            await _submission(db, user_id=quiet, course_id=root_few, flagged=True)
++
++        # Порог доли: помечены три работы, но из двенадцати.
++        for _ in range(3):
++            await _submission(db, user_id=diligent, course_id=root_share, flagged=True)
++        for _ in range(9):
++            await _submission(db, user_id=diligent, course_id=root_share, flagged=False)
++
++        found = await sig.find_ai_authorship_gaps(db)
++        assert not [r for r in found if r["student_id"] == quiet]
++        assert not [r for r in found if r["student_id"] == diligent]
++    finally:
++        await _cleanup(db, [quiet, diligent], [root_few, root_share])
++
++
++@pytest.mark.asyncio
++async def test_manual_teacher_marks_do_not_count(db):
++    """Ручная простановка прогресса — не сдача ученика и в счёт не идёт.
++
++    То же правило, что у соседних датчиков: источник берётся из общего фильтра
++    `real_student_results_filter`, а не переписывается здесь.
++    """
++    root = await _course(db, "tsk653 ручная простановка")
++    student = await _user(db, "tsk653-manual")
++    await _enroll(db, student, root)
++    try:
++        for _ in range(4):
++            rid = await _submission(db, user_id=student, course_id=root, flagged=True)
++            await db.execute(text(
++                "UPDATE task_results SET source_system = 'manual_teacher' WHERE id = :r"
++            ), {"r": rid})
++        await db.commit()
++
++        found = await sig.find_ai_authorship_gaps(db)
++        assert not [r for r in found if r["student_id"] == student]
++    finally:
++        await _cleanup(db, [student], [root])
++
++
++# ─────────────────────── Причина как первоклассное поле ──────────────────────
++
++
++@pytest.mark.asyncio
++async def test_two_reasons_coexist_for_the_same_pair(db):
++    """Сигналы разных поводов по одной паре «курс + ученик» не подавляют друг друга.
++
++    Без причины в частичном уникальном индексе второй сигнал молча не завёлся
++    бы: `upsert_signal` написан на `ON CONFLICT DO NOTHING`, и пропуск выглядел
++    бы как штатная работа.
++    """
++    root = await _course(db, "tsk653 два повода")
++    student = await _user(db, "tsk653-two-reasons")
++    try:
++        by_errors = await sig.upsert_signal(
++            db, course_id=root, student_id=student,
++            submissions=10, students=1, wrong_rate=0.7,
++        )
++        by_authorship = await sig.upsert_signal(
++            db, course_id=root, student_id=student,
++            submissions=12, students=1, wrong_rate=0.0,
++            reason=sig.REASON_AI_AUTHORSHIP,
++            meta={"reviewed": 12, "flagged": 11},
++        )
++        await db.commit()
++
++        assert by_errors is not None
++        assert by_authorship is not None, "сигнал второго повода молча не завёлся"
++
++        # А вот повтор ТОГО ЖЕ повода по-прежнему подавляется.
++        again = await sig.upsert_signal(
++            db, course_id=root, student_id=student,
++            submissions=13, students=1, wrong_rate=0.0,
++            reason=sig.REASON_AI_AUTHORSHIP, meta={"reviewed": 13, "flagged": 12},
++        )
++        await db.commit()
++        assert again is None
++    finally:
++        await _cleanup(db, [student], [root])
++
++
++@pytest.mark.asyncio
++async def test_authorship_signal_is_not_sorted_to_the_bottom(db):
++    """Сигнал о признаке не уезжает вниз списка из-за нулевой доли ошибок.
++
++    Живой проход показал ровно это: карточка выехала методисту последней строкой
++    с бейджем «0% ошибок», то есть список работал ПРОТИВ сигнала.
++    """
++    root_weak = await _course(db, "tsk653 слабый по ошибкам")
++    root_strong = await _course(db, "tsk653 сильный по признаку")
++    student = await _user(db, "tsk653-order")
++    try:
++        await sig.upsert_signal(db, course_id=root_weak, student_id=student,
++                                submissions=10, students=1, wrong_rate=0.55)
++        await sig.upsert_signal(
++            db, course_id=root_strong, student_id=student,
++            submissions=12, students=1, wrong_rate=0.0,
++            reason=sig.REASON_AI_AUTHORSHIP, meta={"reviewed": 12, "flagged": 11},
++        )
++        await db.commit()
++
++        rows = [s for s in await sig.list_signals(db, for_student=True)
++                if s["course_id"] in (root_weak, root_strong)]
++        assert [r["course_id"] for r in rows] == [root_strong, root_weak]
++        # Числа повода доехали — без них карточке нечего показать вместо доли.
++        strong = rows[0]
++        assert strong["reason"] == sig.REASON_AI_AUTHORSHIP
++        assert strong["meta"]["flagged"] == 11 and strong["meta"]["reviewed"] == 12
++    finally:
++        await _cleanup(db, [student], [root_weak, root_strong])
++
++
++@pytest.mark.asyncio
++async def test_old_signals_keep_their_reason(db):
++    """Сигнал без явного повода — про ошибки. Это правда о 27 прежних строках."""
++    root = await _course(db, "tsk653 умолчание повода")
++    try:
++        sid = await sig.upsert_signal(db, course_id=root, student_id=None,
++                                      submissions=40, students=5, wrong_rate=0.6)
++        await db.commit()
++        reason = (await db.execute(
++            text("SELECT reason FROM learning_gap_signal WHERE id = :s"), {"s": sid},
++        )).scalar_one()
++        assert reason == sig.REASON_ERROR_RATE
++    finally:
++        await _cleanup(db, [], [root])
++
++
++# ────────────────────────── Выход из эскалации ───────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_escalated_signal_can_finally_be_closed(db):
++    """У эскалации появился выход — до tsk-653 его не было вовсе.
++
++    `dismiss_signal` работает только из `new`/`acknowledged`; из `escalated`
++    закрыть сигнал было нечем, и 5 сигналов висели в проде с 06.08.
++    """
++    root = await _course(db, "tsk653 закрытие эскалации")
++    student = await _user(db, "tsk653-resolve-student")
++    teacher = await _user(db, "tsk653-resolve-teacher")
++    methodist = await _user(db, "tsk653-resolve-methodist")
++    try:
++        sid = await sig.upsert_signal(
++            db, course_id=root, student_id=student,
++            submissions=12, students=1, wrong_rate=0.0,
++            reason=sig.REASON_AI_AUTHORSHIP, meta={"reviewed": 12, "flagged": 11},
++        )
++        await db.commit()
++
++        # Пока сигнал не передан, закрывать методисту нечего.
++        assert await sig.resolve_signal(
++            db, signal_id=sid, methodist_id=methodist
++        ) is False
++
++        await sig.acknowledge_signal(
++            db, signal_id=sid, teacher_id=teacher,
++            comment="Работы не дают судить о знаниях", escalate=True,
++        )
++
++        ok = await sig.resolve_signal(
++            db, signal_id=sid, methodist_id=methodist,
++            comment="Собран мини-курс повторения", mini_course_id=4242,
++        )
++        assert ok is True
++
++        row = (await db.execute(text(
++            "SELECT status, meta FROM learning_gap_signal WHERE id = :s"
++        ), {"s": sid})).mappings().one()
++        assert row["status"] == "resolved"
++        # Ссылка на курс — единственное место, где видно, ЧЕМ кончилась эскалация.
++        assert row["meta"]["mini_course_id"] == 4242
++        assert row["meta"]["resolved_by"] == methodist
++        # Числа повода не затёрты слиянием.
++        assert row["meta"]["flagged"] == 11
++
++        # Повторное нажатие не должно выглядеть как успех.
++        assert await sig.resolve_signal(
++            db, signal_id=sid, methodist_id=methodist
++        ) is False
++    finally:
++        await _cleanup(db, [student, teacher, methodist], [root])
++
++
++@pytest.mark.asyncio
++async def test_resolved_signal_leaves_the_methodist_screen(db):
++    """Закрытый сигнал уходит из списка — иначе экран копит сделанную работу."""
++    root = await _course(db, "tsk653 уходит с экрана")
++    student = await _user(db, "tsk653-gone-student")
++    teacher = await _user(db, "tsk653-gone-teacher")
++    methodist = await _user(db, "tsk653-gone-methodist")
++    try:
++        sid = await sig.upsert_signal(db, course_id=root, student_id=student,
++                                      submissions=10, students=1, wrong_rate=0.8)
++        await db.commit()
++        await sig.acknowledge_signal(db, signal_id=sid, teacher_id=teacher,
++                                     comment="Передаю", escalate=True)
++
++        before = await sig.list_signals(
++            db, for_student=False, statuses=("new", "acknowledged", "escalated"),
++        )
++        assert any(s["id"] == sid for s in before)
++
++        await sig.resolve_signal(db, signal_id=sid, methodist_id=methodist)
++
++        after = await sig.list_signals(
++            db, for_student=False, statuses=("new", "acknowledged", "escalated"),
++        )
++        assert not any(s["id"] == sid for s in after)
++    finally:
++        await _cleanup(db, [student, teacher, methodist], [root])
++
++
++# ───────────────── Соседняя находка: решение без комментария ─────────────────
++
++
++@pytest.mark.asyncio
++async def test_decision_without_comment_does_not_break(db):
++    """Кнопки «Не нужно» и «Разберу сам» без комментария не падают.
++
++    Путь был не покрыт: все существующие тесты передают комментарий, а
++    интерфейс при пустом поле шлёт `comment: null` — то есть преподаватель
++    попадает сюда, просто нажав кнопку без текста. Проверено при работе над
++    tsk-653: дефекта здесь НЕТ, драйвер выводит тип параметра из присваивания
++    текстовой колонке. Тест закрепляет это, чтобы вывод не пришлось делать
++    заново.
++    """
++    course = await _course(db, "tsk653 решение без текста")
++    student = await _user(db, "tsk653-nocomment-student")
++    teacher = await _user(db, "tsk653-nocomment-teacher")
++    try:
++        first = await sig.upsert_signal(db, course_id=course, student_id=student,
++                                        submissions=9, students=1, wrong_rate=0.6)
++        await db.commit()
++        assert await sig.dismiss_signal(db, signal_id=first, teacher_id=teacher) is True
++
++        second = await sig.upsert_signal(db, course_id=course, student_id=student,
++                                         submissions=9, students=1, wrong_rate=0.6)
++        await db.commit()
++        assert await sig.acknowledge_signal(
++            db, signal_id=second, teacher_id=teacher, escalate=False
++        ) is True
++
++        # Транзакция цела — следующий запрос проходит.
++        assert (await db.execute(text("SELECT 1"))).scalar_one() == 1
++    finally:
++        await _cleanup(db, [student, teacher], [course])

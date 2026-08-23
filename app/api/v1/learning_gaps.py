@@ -37,6 +37,21 @@ class GapSignalRead(BaseModel):
     wrong_rate: float
     status: str
     teacher_comment: Optional[str] = None
+    reason: str = Field(
+        "error_rate",
+        description=(
+            "Повод сигнала: `error_rate` — ученик много ошибается; "
+            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646). У второго "
+            "повода `wrong_rate` честно нулевая и показывать её нельзя — числа "
+            "лежат в `meta` (`reviewed`, `flagged`)"
+        ),
+        examples=["error_rate", "ai_authorship"],
+    )
+    meta: Optional[dict] = Field(
+        None,
+        description="Числа повода. Состав зависит от `reason`",
+        examples=[None, {"reason": "ai_authorship", "reviewed": 12, "flagged": 11}],
+    )
 
     @property
     def wrong_percent(self) -> int:
@@ -147,3 +162,48 @@ async def dismiss(
             status.HTTP_404_NOT_FOUND, "Сигнал не найден или уже закрыт"
         )
     return {"status": "dismissed"}
+
+
+class SignalResolution(BaseModel):
+    """Итог разбора методистом."""
+
+    comment: Optional[str] = Field(
+        None, max_length=2000, description="Чем кончился разбор",
+    )
+    mini_course_id: Optional[int] = Field(
+        None,
+        description=(
+            "Курс повторения, если он собран. Не обязателен: разбор не всегда "
+            "кончается курсом. Но если курс есть — это единственное место, где "
+            "видно, ЧЕМ кончилась эскалация"
+        ),
+        examples=[None, 1460],
+    )
+
+
+@router.post("/{signal_id}/resolve", summary="Методист разобрал сигнал")
+async def resolve(
+    signal_id: int,
+    body: SignalResolution,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_METHODIST_GATE),
+) -> dict:
+    """Закрыть переданный методисту сигнал.
+
+    tsk-653: до этой ручки у эскалации не было выхода вовсе. `dismiss` работает
+    только из `new`/`acknowledged`, а из `escalated` закрыть сигнал было нечем —
+    и 5 сигналов висели в проде с 06.08. Это читалось как «методист их не
+    разбирает», хотя кнопки, которая фиксирует разбор, просто не существовало.
+
+    Гейт методистский, а не преподавательский: закрывает тот, кому передали.
+    """
+    ok = await signals.resolve_signal(
+        db, signal_id=signal_id, methodist_id=current_user.id,
+        comment=body.comment, mini_course_id=body.mini_course_id,
+    )
+    if not ok:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "Сигнал не найден, не был передан методисту или уже закрыт",
+        )
+    return {"status": "resolved"}

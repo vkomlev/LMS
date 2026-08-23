@@ -37058,6 +37058,117 @@
         }
       }
     },
+    "/api/v1/learning-gaps/{signal_id}/resolve": {
+      "post": {
+        "tags": [
+          "learning_gaps"
+        ],
+        "summary": "Методист разобрал сигнал",
+        "description": "Закрыть переданный методисту сигнал.\n\ntsk-653: до этой ручки у эскалации не было выхода вовсе. `dismiss` работает\nтолько из `new`/`acknowledged`, а из `escalated` закрыть сигнал было нечем —\nи 5 сигналов висели в проде с 06.08. Это читалось как «методист их не\nразбирает», хотя кнопки, которая фиксирует разбор, просто не существовало.\n\nГейт методистский, а не преподавательский: закрывает тот, кому передали.",
+        "operationId": "resolve_api_v1_learning_gaps__signal_id__resolve_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "signal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Signal Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalResolution"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Resolve Api V1 Learning Gaps  Signal Id  Resolve Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/topic-mastery/overview": {
       "get": {
         "tags": [
@@ -51632,6 +51743,42 @@
         "type": "object",
         "title": "SignalDecision",
         "description": "Ответ преподавателя на сигнал."
+      },
+      "SignalResolution": {
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment",
+            "description": "Чем кончился разбор"
+          },
+          "mini_course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mini Course Id",
+            "description": "Курс повторения, если он собран. Не обязателен: разбор не всегда кончается курсом. Но если курс есть — это единственное место, где видно, ЧЕМ кончилась эскалация",
+            "examples": [
+              null,
+              1460
+            ]
+          }
+        },
+        "type": "object",
+        "title": "SignalResolution",
+        "description": "Итог разбора методистом."
       },
       "SingleCheckRequest": {
         "properties": {
