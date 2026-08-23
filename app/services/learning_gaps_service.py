@@ -58,6 +58,27 @@ def real_student_results_filter(alias: str = "tr") -> str:
     return f"{alias}.source_system IN ({sources})"
 
 
+#: Провенанс ручной отметки — один и тот же у заданий и у материалов.
+MANUAL_TEACHER_SOURCE = "manual_teacher"
+
+
+def real_student_material_filter(alias: str = "smp") -> str:
+    """Условие «материал прошёл САМ ученик» для SQL (tsk-656).
+
+    Парное правило к `real_student_results_filter`, но условие обратное по форме,
+    и перепутать их дорого. У `student_material_progress` провенанс живёт в
+    колонке `source`, и реальное прохождение помечается `'system'`: при настоящем
+    прохождении `learning_events_service` ПЕРЕЗАПИСЫВАЕТ `source` с
+    `'manual_teacher'` на `'system'` (tsk-297) — иначе снятие ручной отметки
+    удалило бы настоящий прогресс ученика. Поэтому здесь чёрный список из одного
+    значения, а не белый: у заданий `'system'` — служебный дефолт колонки и в
+    ученическую работу не входит, у материалов `'system'` — как раз она.
+
+    На проде (2026-08-23): 4662 строки `manual_teacher` против 2186 `system`.
+    """
+    return f"{alias}.source IS DISTINCT FROM '{MANUAL_TEACHER_SOURCE}'"
+
+
 @dataclass
 class TopicGap:
     """Тема-кандидат на мини-курс повторения."""

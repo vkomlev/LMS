@@ -46,7 +46,8 @@ async def _insert_task_result_msk_days_ago(db, user_id: int, task_id: int, days_
     # → корректный interval-литерал; целочисленный path требовал бы make_interval.
     sql = text(
         """
-        INSERT INTO task_results (user_id, task_id, score, max_score, is_correct, received_at)
+        INSERT INTO task_results (user_id, task_id, score, max_score, is_correct,
+                                  received_at, source_system)
         VALUES (
             :user_id,
             :task_id,
@@ -55,7 +56,10 @@ async def _insert_task_result_msk_days_ago(db, user_id: int, task_id: int, days_
                 ((now() AT TIME ZONE 'Europe/Moscow')::date - (:days || ' days')::interval
                  + INTERVAL '12 hours')
                 AT TIME ZONE 'Europe/Moscow'
-            )
+            ),
+            -- tsk-656: серия растёт только от сдач самого ученика; дефолт
+            -- колонки ('system') в белый список источников не входит.
+            'spw_web'
         )
         """
     )

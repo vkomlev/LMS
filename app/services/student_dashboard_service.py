@@ -98,6 +98,11 @@ from app.services.teacher_lesson_summary_service import (
     MANUAL_SOURCE,
     load_homework_window,
 )
+# tsk-656: правило «это реальная сдача ученика» — из одного места.
+from app.services.learning_gaps_service import (
+    real_student_material_filter,
+    real_student_results_filter,
+)
 
 _METRIC_KEYS = ("tasks_completed", "theory_completed", "first_try", "help_requested")
 
@@ -632,11 +637,22 @@ async def _load_course_pace_and_forecast(
     material_ids = [i["item_id"] for i in countable if i["item_type"] == "material"]
     since = now - timedelta(weeks=pace_weeks)
 
+    # tsk-656: темп считается ТОЛЬКО по тому, что ученик сдал сам. Ручная
+    # отметка преподавателя закрывает задание законно (в `done` выше она
+    # учтена — задание действительно пройдено), но темпом ученика не является:
+    # ставится пачками до 473 штук в минуту. У ученика 4526 на проде за окно
+    # было 660 ручных зачётов против 4 реальных сдач — прогноз считал ~166
+    # элементов в неделю вместо одного и обещал финиш почти завтра.
+    # Решение оператора (2026-08-23): при нехватке реальных сдач прогноз не
+    # показывается вовсе (ниже уже есть ветка `pace_per_week <= 0 → None`) —
+    # честнее, чем предсказывать по данным, которых нет.
+    # Соседняя метрика ДЗ в этом же модуле фильтр держала с самого начала.
     done_recent_tasks = (
         await db.execute(
             text(
                 "SELECT COUNT(DISTINCT tr.task_id) FROM task_results tr "
                 "WHERE tr.user_id = :student_id AND tr.is_correct = true "
+                f"  AND {real_student_results_filter('tr')} "
                 "  AND tr.task_id = ANY(:task_ids) AND tr.submitted_at >= :since"
             ),
             {"student_id": student_id, "task_ids": task_ids, "since": since},
@@ -647,6 +663,9 @@ async def _load_course_pace_and_forecast(
             text(
                 "SELECT COUNT(DISTINCT smp.material_id) FROM student_material_progress smp "
                 "WHERE smp.student_id = :student_id AND smp.status = 'completed' "
+                # tsk-656: у материалов та же история — 4662 ручные отметки
+                # против 2186 настоящих прохождений.
+                f"  AND {real_student_material_filter('smp')} "
                 "  AND smp.material_id = ANY(:material_ids) AND smp.completed_at >= :since"
             ),
             {"student_id": student_id, "material_ids": material_ids, "since": since},

@@ -74,6 +74,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import inbox_service
+# tsk-656: правило «это реальная сдача ученика» — из одного места.
+from app.services.learning_gaps_service import (
+    real_student_material_filter,
+    real_student_results_filter,
+)
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger("app.lesson_idle")
@@ -161,11 +166,19 @@ SELECT live.occurrence_id,
            COALESCE((SELECT max(le.created_at) FROM learning_events le
                       WHERE le.student_id = lop.student_id
                         AND le.created_at >= live.lesson_start), to_timestamp(0)),
+           -- tsk-656: сдача считается признаком жизни, только если её сделал
+           -- САМ ученик. Ручная отметка преподавателя (`manual_teacher`)
+           -- ставится пачками, и 2209 таких отметок на проде попали внутрь
+           -- окон идущих занятий: преподаватель проставляет зачёты — датчик
+           -- видит «ученик работает» и молчит ровно тогда, когда должен
+           -- звать. Это тот самый случай, против которого написан модуль.
            COALESCE((SELECT max(tr.submitted_at) FROM task_results tr
                       WHERE tr.user_id = lop.student_id
+                        AND {real_student_results_filter("tr")}
                         AND tr.submitted_at >= live.lesson_start), to_timestamp(0)),
            COALESCE((SELECT max(smp.completed_at) FROM student_material_progress smp
                       WHERE smp.student_id = lop.student_id
+                        AND {real_student_material_filter("smp")}
                         AND smp.completed_at >= live.lesson_start), to_timestamp(0))
        ) AS last_action_at
 FROM live

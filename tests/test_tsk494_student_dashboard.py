@@ -185,7 +185,10 @@ async def _insert_task_result(
         text(
             "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
             "  is_correct, submitted_at, received_at, count_retry, checked_at, source_system) "
-            "VALUES (:u, :t, :a, :sc, 10, :ok, :ts, :ts, 0, :ts, 'test')"
+            # tsk-656: источник — как у настоящего клиента. Аналитика (темп, серия,
+            # признак жизни) считает только реальные сдачи ученика, и строка
+            # со служебным источником в неё намеренно не попадает.
+            "VALUES (:u, :t, :a, :sc, 10, :ok, :ts, :ts, 0, :ts, 'spw_web')"
         ),
         {
             "u": student_id, "t": task_id, "a": attempt_id,

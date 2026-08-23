@@ -16,6 +16,12 @@ from app.models.users import Users
 from app.schemas.task_content import QUIZ_TASK_TYPES
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
+# tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
+# а не отметка преподавателя. Копировать условие сюда нельзя — разъедется.
+from app.services.learning_gaps_service import (
+    real_student_material_filter,
+    real_student_results_filter,
+)
 from app.utils.task_title import humanize_task_title
 
 logger = logging.getLogger(__name__)
@@ -444,12 +450,16 @@ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict
 
 # ── /me/last-position ───────────────────────────────────────────────────────
 
-_LAST_ACTIVITY_SQL = """
+# tsk-656: «продолжить с места» ведёт туда, где ученик остановился САМ.
+# Ручная отметка преподавателя перебрасывала его на задание, которое он даже
+# не открывал: отметки ставятся пачками и всегда свежее реальной работы.
+_LAST_ACTIVITY_SQL = f"""
 WITH last_task AS (
     SELECT tr.received_at AS ts, t.course_id, 'task'::text AS kind, t.id AS task_id, t.external_uid, NULL::int AS material_id
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.user_id = :user_id
+      AND {real_student_results_filter("tr")}
     ORDER BY tr.received_at DESC NULLS LAST
     LIMIT 1
 ),
@@ -458,6 +468,7 @@ last_material AS (
     FROM student_material_progress smp
     JOIN materials m ON m.id = smp.material_id
     WHERE smp.student_id = :user_id AND smp.status = 'completed'
+      AND {real_student_material_filter("smp")}
     ORDER BY smp.completed_at DESC NULLS LAST
     LIMIT 1
 )
@@ -680,11 +691,17 @@ async def get_last_position(db: AsyncSession, user_id: int) -> dict | None:
 #    Y-3.1 fix: исходный spec использовал DESC + минус (математически ломалось — см. test_streak_logic).
 # 3) current_run — записи с MAX(grp) → самый свежий run; внешний Python-код обнуляет
 #    streak если last < today-1.
-_STREAK_SQL = """
+# tsk-656: «активный день» — день, когда ОТВЕЧАЛ САМ УЧЕНИК. Ручная отметка
+# преподавателя (`manual_teacher`, 74% строк `task_results` на проде, ставится
+# пачками до 473 штук в минуту) — не занятие ученика: серия росла бы за дни,
+# когда он ничего не делал, и геймификация показывала бы чужую заслугу.
+# Правило источника берётся из `learning_gaps_service`, а не переписывается тут.
+_STREAK_SQL = f"""
 WITH active_days AS (
-    SELECT DISTINCT (received_at AT TIME ZONE 'Europe/Moscow')::date AS d
-    FROM task_results
-    WHERE user_id = :user_id
+    SELECT DISTINCT (tr.received_at AT TIME ZONE 'Europe/Moscow')::date AS d
+    FROM task_results tr
+    WHERE tr.user_id = :user_id
+      AND {real_student_results_filter("tr")}
 ),
 numbered AS (
     SELECT d,
