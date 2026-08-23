@@ -44,6 +44,8 @@ docs/*
 !docs/briefs/**
 !docs/qa-poligon/
 !docs/qa-poligon/**
+!docs/curriculum/
+!docs/curriculum/**
 .cursor/*
 !.cursor/rules/
 
