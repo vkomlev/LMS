@@ -158,10 +158,45 @@ async def apply(stats: Dict[str, Any]) -> Dict[str, Any]:
     return {"created": True, "signal_id": signal_id, "escalated": escalated}
 
 
+async def fix_reason() -> int:
+    """Проставить сигналу прохода настоящий повод.
+
+    Сигнал #66 заводился РАНЬШЕ, чем у сигналов появилась колонка `reason`
+    (миграция `tsk653_gap_signal_reason`), и получил умолчание `error_rate`.
+    Для него это неправда: у ученицы ошибок нет вовсе, повод — признак
+    авторства, и он же записан в `meta.reason` с самого начала.
+
+    Оставить как есть нельзя по двум причинам: карточка покажет «0% ошибок»
+    вместо числа помеченных работ, а правило «не поднимать разобранный сигнал
+    заново» смотрит именно на `reason` и потому на этот сигнал не сработает.
+
+    Условие сверяет `meta.reason` — то есть чинит ровно ту строку, которая сама
+    себя объявила сигналом об авторстве, и ничего кроме.
+    """
+    async with async_session_factory() as db:
+        res = await db.execute(text("""
+            UPDATE learning_gap_signal
+               SET reason = 'ai_authorship'
+             WHERE reason = 'error_rate'
+               AND meta->>'reason' = 'ai_authorship'
+        """))
+        await db.commit()
+        return res.rowcount or 0
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="tsk-653: живой проход контура эскалации")
     parser.add_argument("--apply", action="store_true", help="завести сигнал и эскалировать")
+    parser.add_argument(
+        "--fix-reason", action="store_true",
+        help="проставить повод сигналам, заведённым до появления колонки",
+    )
     args = parser.parse_args()
+
+    if args.fix_reason:
+        fixed = await fix_reason()
+        print(f"Повод проставлен строкам: {fixed}")
+        return 0
 
     report = await collect()
     s = report["stats"]
