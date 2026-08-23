@@ -1,0 +1,507 @@
+{
+  "_about": {
+    "task": "tsk-653",
+    "why": "Мини-курс повторения для ученицы 4538 по эскалации #66 (признак ИИ-авторства у 11 из 12 развёрнутых работ). Работа, сделанная машиной, не говорит, что ученица темы НЕ знает, — она говорит, что мы этого НЕ ЗНАЕМ. Закрывается это повторением, а не разбирательством.",
+    "design": {
+      "структура": "корень + 3 подкурса по главам (плоский курс на 33 сущности нарушил бы порог ≤20 из lms-wp-export §1.1.1)",
+      "тип заданий": "ТОЛЬКО авто-проверяемые SC/MC/SA. Ни одного TA — и это главное решение: в исходном курсе проектный слот КАЖДОГО урока это развёрнутый текст, и ровно эти 11 слотов ученица и сдала машиной. Дать ей ещё сочинений значит воспроизвести ту же слепую зону.",
+      "проектный слот": "по §3.1a десятое задание урока проектное. Здесь вместо PROJECT стоит HARD — многошаговая задача с вычисляемым ответом. Проект подразумевает артефакт и свободную форму сдачи, то есть ровно то, чего мы избегаем; называть HARD проектом было бы неправдой в справочнике сложности.",
+      "микс на подкурс": "10 заданий = 6 простых (THEORY/EASY) + 3 средних (NORMAL) + 1 сложное (HARD), по нормативу §3.1a школьного урока",
+      "источник содержания": "существующие темы курса 964 «Информатика. 8 класс» (подкурсы 971-974, 977-981, 983, 985) — их формулировки и уровень, а не docs/v2 (это школьный курс, не флагман IT_Businessman)"
+    }
+  },
+
+  "root": {
+    "course_uid": "lms:mini:inf8-povtorenie",
+    "title": "Повторение: логика, алгоритмы и первые программы (8 класс)",
+    "description": "Короткий курс повторения по трём главам «Информатики 8 класса». Все задания проверяются автоматически: ответ — число, слово или вариант. Проходится за один-два подхода.",
+    "access_level": "auto_check"
+  },
+
+  "subcourses": [
+    {
+      "course_uid": "lms:mini:inf8-povtorenie:logika",
+      "title": "Повторение. Алгебра логики",
+      "description": "Высказывания, связки И / ИЛИ / НЕ, таблицы истинности, логические элементы.",
+      "order_number": 1,
+      "access_level": "auto_check",
+      "material": {
+        "external_uid": "lms:mini:inf8-povtorenie:logika:m1",
+        "title": "Напоминалка: логика за пять минут",
+        "body": "**Цель этого блока:** к концу ты сможешь без подсказки посчитать значение логического выражения и сказать, сколько строк будет в его таблице истинности.\n\n**Вспомни:** в главе 2 ты уже разбирала высказывания и связки — здесь мы только освежаем.\n\n---\n\n### Высказывание\n\nВысказывание — это предложение, про которое можно сказать **истинно оно или ложно**.\n\n- «Москва — столица России» — высказывание (истинно).\n- «Дважды два равно пяти» — высказывание (ложно).\n- «Который час?» — **не** высказывание: вопрос нельзя оценить как истину или ложь.\n- «Закрой окно» — **не** высказывание: это приказ.\n\n### Три связки\n\n| Связка | Другое имя | Когда истинна |\n|---|---|---|\n| **И** | конъюнкция, логическое умножение | только когда **обе** части истинны |\n| **ИЛИ** | дизъюнкция, логическое сложение | когда истинна **хотя бы одна** часть |\n| **НЕ** | инверсия, отрицание | меняет значение на противоположное |\n\n```\n  A  B  | A И B | A ИЛИ B | НЕ A\n -------+-------+---------+------\n  0  0  |   0   |    0    |  1\n  0  1  |   0   |    1    |  1\n  1  0  |   0   |    1    |  0\n  1  1  |   1   |    1    |  0\n```\n\n### Порядок действий\n\nСначала **НЕ**, потом **И**, потом **ИЛИ** — как в арифметике сначала умножение, потом сложение. Скобки главнее всего.\n\n### Таблица истинности\n\nПоказывает значение выражения при **всех** наборах переменных. Число строк считается по формуле:\n\n```\n N = 2 ^ n        n — число переменных\n\n n = 2  ->  4 строки\n n = 3  ->  8 строк\n n = 4  ->  16 строк\n```\n\n### Логические элементы\n\nЭто схемы внутри процессора, которые делают то же самое с электрическими сигналами:\n\n```\n  конъюнктор  (И)     — выдаёт 1, только если на ОБОИХ входах 1\n  дизъюнктор  (ИЛИ)   — выдаёт 1, если хотя бы на одном входе 1\n  инвертор    (НЕ)    — один вход, выдаёт противоположное\n```\n\n---\n\n**Итог:** ты помнишь три связки, их порядок и формулу числа строк. Дальше — десять коротких задач на проверку."
+      },
+      "tasks": [
+        {
+          "external_uid": "lms:mini:inf8-povt-log-01-sc",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SC",
+            "title": "Что из этого — высказывание",
+            "stem": "Какое из предложений является высказыванием?",
+            "options": [
+              {"id": "a", "text": "Сколько сейчас времени?", "is_active": true},
+              {"id": "b", "text": "Число 15 делится на 3 без остатка.", "is_active": true},
+              {"id": "c", "text": "Пожалуйста, закрой дверь.", "is_active": true},
+              {"id": "d", "text": "Какой красивый закат!", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Высказывание — то, про что можно сказать «истинно» или «ложно». Вопрос и приказ так оценить нельзя."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-02-sa",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SA",
+            "title": "Значение выражения «1 И 0»",
+            "stem": "Чему равно «1 И 0»? Впиши 1 (истина) или 0 (ложь).",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["И истинно только тогда, когда обе части истинны."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "0"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-03-sc",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SC",
+            "title": "Значение выражения «0 ИЛИ 1»",
+            "stem": "Чему равно «0 ИЛИ 1»?",
+            "options": [
+              {"id": "a", "text": "0", "is_active": true},
+              {"id": "b", "text": "1", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["ИЛИ истинно, когда истинна хотя бы одна часть."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-04-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Инверсия нуля",
+            "stem": "Чему равно «НЕ 0»? Впиши 0 или 1.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["НЕ меняет значение на противоположное."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "1"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-05-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Число строк таблицы истинности при трёх переменных",
+            "stem": "Сколько строк будет в таблице истинности выражения с тремя переменными? Впиши только число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["N = 2 в степени n, где n — число переменных."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "8"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-06-mc",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "MC",
+            "title": "Выбери все высказывания",
+            "stem": "Отметь ВСЕ предложения, которые являются высказываниями.",
+            "options": [
+              {"id": "a", "text": "Сумма углов треугольника равна 180 градусам.", "is_active": true},
+              {"id": "b", "text": "Открой учебник на странице 42.", "is_active": true},
+              {"id": "c", "text": "Вода кипит при 50 градусах.", "is_active": true},
+              {"id": "d", "text": "Ты уже сделала домашнее задание?", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Ложное предложение — тоже высказывание: важно, что его МОЖНО оценить как истину или ложь."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["a", "c"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-07-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Значение «НЕ A И B» при A=1, B=1",
+            "stem": "Вычисли значение выражения «НЕ A И B», если A = 1 и B = 1. Впиши 0 или 1.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Сначала выполняется НЕ, потом И."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "0"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-08-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Значение «A ИЛИ НЕ B» при A=0, B=1",
+            "stem": "Вычисли значение выражения «A ИЛИ НЕ B», если A = 0 и B = 1. Впиши 0 или 1.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["НЕ B посчитай первым, потом соедини результат связкой ИЛИ."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "0"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-09-sc",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SC",
+            "title": "Какой элемент даёт 1 только при двух единицах",
+            "stem": "Какой логический элемент выдаёт на выходе 1 только тогда, когда на ОБОИХ входах 1?",
+            "options": [
+              {"id": "a", "text": "Дизъюнктор (ИЛИ)", "is_active": true},
+              {"id": "b", "text": "Конъюнктор (И)", "is_active": true},
+              {"id": "c", "text": "Инвертор (НЕ)", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Вспомни, какая связка истинна только когда истинны обе части."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-log-10-sa",
+          "difficulty": "HARD",
+          "task_content": {
+            "type": "SA",
+            "title": "Сколько строк таблицы дают истину",
+            "stem": "Построй в уме таблицу истинности выражения «(НЕ A) И (B ИЛИ C)» для трёх переменных A, B, C. В скольких строках выражение равно 1? Впиши только число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Всего строк 8. Первый множитель равен 1 только при A = 0 — значит смотреть надо лишь половину строк."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "3"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        }
+      ]
+    },
+
+    {
+      "course_uid": "lms:mini:inf8-povtorenie:algoritmy",
+      "title": "Повторение. Основы алгоритмизации",
+      "description": "Способы записи алгоритмов, величины, следование, ветвление, циклы.",
+      "order_number": 2,
+      "access_level": "auto_check",
+      "material": {
+        "external_uid": "lms:mini:inf8-povtorenie:algoritmy:m1",
+        "title": "Напоминалка: три способа собрать алгоритм",
+        "body": "**Цель этого блока:** к концу ты сможешь проследить выполнение чужого алгоритма по шагам и назвать его результат, не запуская программу.\n\n**Вспомни:** глава 3 — это следование, ветвление и цикл. Из них собирается любой алгоритм, каким бы сложным он ни был.\n\n---\n\n### Как записывают алгоритм\n\n| Способ | Чем записан | Где удобен |\n|---|---|---|\n| словесный | обычными предложениями | объяснить человеку |\n| **блок-схема** | геометрическими фигурами со стрелками | увидеть ветвления и циклы целиком |\n| программа | на языке программирования | отдать компьютеру |\n\nФигуры блок-схемы:\n\n```\n  ( овал )      начало / конец\n  [прямоуг.]    действие\n  < ромб >      проверка условия  -- из него ДВЕ стрелки: «да» и «нет»\n  / параллел. / ввод / вывод\n```\n\n### Величины\n\nВеличина — это ячейка с именем, в которой лежит значение. У неё есть **имя**, **тип** (целое, вещественное, символьное) и **значение**, которое можно менять.\n\n```\n  a = 7        в ячейку a положили 7\n  b = a + 3    посчитали 7 + 3, положили 10 в b\n  a = a + 1    прочитали a (7), прибавили 1, вернули 8 обратно в a\n```\n\nПоследняя строка не равенство из математики, а команда «посчитай справа и положи в левое».\n\n### Три конструкции\n\n```\n СЛЕДОВАНИЕ        ВЕТВЛЕНИЕ            ЦИКЛ\n [шаг 1]           < условие >          <-- условие >--нет--> дальше\n    |               да/    \\нет               | да\n [шаг 2]         [ветка] [ветка]           [тело цикла]\n    |               \\      /                  |\n [шаг 3]            [дальше]              --вернуться--\n```\n\n**Полное ветвление** — есть обе ветки, «да» и «иначе». **Неполное** — только «да».\n\n### Почему цикл заканчивается\n\nТело цикла обязано менять ту величину, которая стоит в условии. Не меняет — цикл не закончится никогда.\n\n```\n  i = 0\n  пока i < 5:        условие проверяется ПЕРЕД каждым повтором\n      i = i + 1      <- вот это и приближает конец\n```\n\n---\n\n**Итог:** ты помнишь фигуры блок-схемы, смысл присваивания и то, что цикл заканчивается только если тело меняет условие. Дальше — десять задач на след."
+      },
+      "tasks": [
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-01-sc",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SC",
+            "title": "Запись алгоритма фигурами",
+            "stem": "Как называется способ записи алгоритма с помощью геометрических фигур, соединённых стрелками?",
+            "options": [
+              {"id": "a", "text": "Словесный", "is_active": true},
+              {"id": "b", "text": "Блок-схема", "is_active": true},
+              {"id": "c", "text": "Программа", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Ромб, прямоугольник, овал — это фигуры одного конкретного способа записи."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-02-sa",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SA",
+            "title": "Алгоритм без условий и повторов",
+            "stem": "Как называется алгоритм, в котором команды выполняются одна за другой, без условий и повторов? Впиши одно слово (прилагательное).",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Такой алгоритм идёт одной линией, без развилок."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "линейный"}, {"score": 1, "value": "линейным"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-03-sc",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SC",
+            "title": "Фигура проверки условия",
+            "stem": "Какая фигура блок-схемы обозначает проверку условия?",
+            "options": [
+              {"id": "a", "text": "Прямоугольник", "is_active": true},
+              {"id": "b", "text": "Овал", "is_active": true},
+              {"id": "c", "text": "Ромб", "is_active": true},
+              {"id": "d", "text": "Параллелограмм", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Из этой фигуры выходят ДВЕ стрелки — «да» и «нет»."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["c"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-04-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "След линейного алгоритма",
+            "stem": "Выполни по шагам: a = 7; b = a + 3; c = b * 2. Что окажется в величине c? Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Считай строки по порядку, каждый раз подставляя уже полученные значения."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "20"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-05-sc",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SC",
+            "title": "Ложное условие в полном ветвлении",
+            "stem": "В полном ветвлении условие оказалось ложным. Что произойдёт?",
+            "options": [
+              {"id": "a", "text": "Выполнится ветвь «иначе»", "is_active": true},
+              {"id": "b", "text": "Выполнится ветвь «да»", "is_active": true},
+              {"id": "c", "text": "Алгоритм остановится с ошибкой", "is_active": true},
+              {"id": "d", "text": "Не выполнится ничего, алгоритм пойдёт дальше", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Полное ветвление тем и отличается от неполного, что вторая ветка у него есть."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["a"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-06-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Сколько раз повторится тело цикла",
+            "stem": "Величина i равна 0. Цикл «пока i < 5» на каждом повторе увеличивает i на 1. Сколько раз выполнится тело цикла? Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Выпиши значения i перед каждой проверкой: 0, 1, 2, … — и посчитай, сколько раз условие оказалось истинным."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "5"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-07-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Составное условие на конкретной погоде",
+            "stem": "Условие прогулки: «температура ≥ 15 И осадков нет». Сейчас температура 20 градусов, идёт дождь. Условие истинно или ложно? Впиши 1 (истинно) или 0 (ложно).",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Для связки И должны выполниться ОБЕ части, а не одна."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "0"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-08-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Накопление суммы в цикле",
+            "stem": "Выполни алгоритм: s = 0; для i от 1 до 4 повторять s = s + i. Что окажется в s после цикла? Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Выпиши s после каждого повтора: 1, потом 3, потом …"]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "10"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-09-sc",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SC",
+            "title": "Что не даёт циклу зациклиться",
+            "stem": "Что гарантирует, что цикл «пока …» когда-нибудь закончится?",
+            "options": [
+              {"id": "a", "text": "Тело цикла меняет величину, которая стоит в условии", "is_active": true},
+              {"id": "b", "text": "Условие записано со знаком «меньше», а не «больше»", "is_active": true},
+              {"id": "c", "text": "В теле цикла не больше пяти команд", "is_active": true},
+              {"id": "d", "text": "Перед циклом величине присвоили ноль", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Условие проверяется заново перед каждым повтором. Что должно измениться, чтобы оно однажды стало ложным?"]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["a"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-alg-10-sa",
+          "difficulty": "HARD",
+          "task_content": {
+            "type": "SA",
+            "title": "Сколько шагов до единицы",
+            "stem": "Дан алгоритм. Начальное значение x = 12. Пока x > 1 повторять: если x чётное, то x = x / 2, иначе x = x * 3 + 1. Сколько раз выполнится тело цикла, прежде чем x станет равен 1? Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Выпиши цепочку значений столбиком: 12, 6, 3, 10, … Считать надо переходы, а не сами числа."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "9"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        }
+      ]
+    },
+
+    {
+      "course_uid": "lms:mini:inf8-povtorenie:python",
+      "title": "Повторение. Начала программирования на Python",
+      "description": "Переменные и типы, ввод и вывод, арифметика, линейные программы.",
+      "order_number": 3,
+      "access_level": "auto_check",
+      "material": {
+        "external_uid": "lms:mini:inf8-povtorenie:python:m1",
+        "title": "Напоминалка: что делает каждая строка",
+        "body": "**Цель этого блока:** к концу ты сможешь сказать, что напечатает короткая программа, не запуская её.\n\n**Вспомни:** в главе 4 ты писала линейные программы — ввод, вычисление, вывод. Здесь мы проверяем именно это умение читать чужой код.\n\n---\n\n### Переменная\n\n```python\na = 6          в ячейку a положили число 6\nb = 4\np = 2 * (a + b)    сначала скобки, потом умножение\nprint(p)           напечатает 20\n```\n\n### Типы значений\n\n| Тип | Что это | Пример |\n|---|---|---|\n| `int` | целое число | `6`, `-3`, `0` |\n| `float` | вещественное (с точкой) | `3.5`, `2.0` |\n| `str` | строка (текст) | `\"Привет\"`, `\"42\"` |\n\n`\"42\"` в кавычках — это **строка**, а не число. Разница не косметическая:\n\n```python\nprint(2 + 3)        ->  5     сложили числа\nprint(\"2\" + \"3\")    ->  23    склеили строки\n```\n\n### Ввод\n\n`input()` всегда возвращает **строку**, даже если человек ввёл цифры. Чтобы считать, её надо превратить в число:\n\n```python\na = input()          в a лежит строка, например \"7\"\na = int(input())     в a лежит число 7 — теперь можно складывать\n```\n\n### Два деления\n\n```python\nprint(10 / 3)     ->  3.3333333333333335    обычное, даёт float\nprint(10 // 3)    ->  3                     целочисленное, отбрасывает остаток\nprint(10 % 3)     ->  1                     остаток от деления\n```\n\n---\n\n**Итог:** ты помнишь, что input даёт строку, чем `/` отличается от `//` и почему `\"2\" + \"3\"` это не 5. Дальше — десять задач на чтение кода."
+      },
+      "tasks": [
+        {
+          "external_uid": "lms:mini:inf8-povt-py-01-sa",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SA",
+            "title": "Функция вывода на экран",
+            "stem": "Как называется функция, которая выводит значение на экран в Python? Впиши только имя функции, без скобок.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Она стоит в самом первом примере любой программы."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "print"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-02-sc",
+          "difficulty": "THEORY",
+          "task_content": {
+            "type": "SC",
+            "title": "Что возвращает input",
+            "stem": "Значение какого типа возвращает функция input()?",
+            "options": [
+              {"id": "a", "text": "Целое число (int)", "is_active": true},
+              {"id": "b", "text": "Строку (str)", "is_active": true},
+              {"id": "c", "text": "Тип зависит от того, что ввёл человек", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Именно поэтому вокруг input так часто пишут int()."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-03-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Сумма двух переменных",
+            "stem": "Что напечатает программа? a = 6; b = 4; print(a + b). Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Здесь складываются числа, а не строки: кавычек нет."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "10"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-04-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Тип значения 3.5",
+            "stem": "Какой тип у значения 3.5 в Python? Впиши название типа так, как оно пишется в коде.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Число с точкой — не целое."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "float"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-05-sc",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SC",
+            "title": "Сложение строк",
+            "stem": "Что напечатает print(\"2\" + \"3\")?",
+            "options": [
+              {"id": "a", "text": "5", "is_active": true},
+              {"id": "b", "text": "23", "is_active": true},
+              {"id": "c", "text": "\"2\" + \"3\"", "is_active": true},
+              {"id": "d", "text": "Ошибку", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Значения в кавычках — строки. Плюс для строк означает не сложение, а склейку."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["b"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-06-sa",
+          "difficulty": "EASY",
+          "task_content": {
+            "type": "SA",
+            "title": "Целочисленное деление",
+            "stem": "Что напечатает программа? a = 10; b = 3; print(a // b). Впиши результат.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Две косые черты — деление без остатка, дробная часть отбрасывается."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "3"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-07-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Периметр прямоугольника программой",
+            "stem": "Что напечатает программа? a = 6; b = 4; p = 2 * (a + b); print(p). Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["Скобки считаются первыми, потом умножение."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "20"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-08-sa",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SA",
+            "title": "Ввод числа и удвоение",
+            "stem": "Программа: a = int(input()); print(a * 2). Человек ввёл 7. Что напечатает программа? Впиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["int() превратил строку в число — значит умножение здесь обычное, арифметическое."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "14"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-09-sc",
+          "difficulty": "NORMAL",
+          "task_content": {
+            "type": "SC",
+            "title": "Почему падает print(input() + 1)",
+            "stem": "Строка print(input() + 1) выдаёт ошибку. Почему?",
+            "options": [
+              {"id": "a", "text": "input() даёт строку, а к строке нельзя прибавить число", "is_active": true},
+              {"id": "b", "text": "print умеет печатать только одно значение", "is_active": true},
+              {"id": "c", "text": "Внутри print нельзя вызывать другие функции", "is_active": true},
+              {"id": "d", "text": "У input() не указан текст приглашения", "is_active": true}
+            ],
+            "has_hints": true,
+            "hints_text": ["Вспомни, значение какого типа возвращает input()."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": null, "correct_options": ["a"], "partial_rules": [], "manual_review_required": false}
+        },
+        {
+          "external_uid": "lms:mini:inf8-povt-py-10-sa",
+          "difficulty": "HARD",
+          "task_content": {
+            "type": "SA",
+            "title": "Сумма квадратов в цикле",
+            "stem": "Что напечатает программа?\n\ns = 0\nfor i in range(1, 6):\n    s = s + i * i\nprint(s)\n\nВпиши число.",
+            "options": null,
+            "has_hints": true,
+            "hints_text": ["range(1, 6) даёт числа 1, 2, 3, 4, 5 — шестёрка не входит. Складываются их квадраты."]
+          },
+          "solution_rules": {"max_score": 1, "auto_check": true, "scoring_mode": "all_or_nothing", "short_answer": {"use_regex": false, "normalization": ["trim", "lower", "strip_punctuation", "collapse_spaces"], "accepted_answers": [{"score": 1, "value": "55"}]}, "correct_options": [], "partial_rules": [], "manual_review_required": false}
+        }
+      ]
+    }
+  ]
+}
