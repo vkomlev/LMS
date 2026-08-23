@@ -959,9 +959,14 @@ async def submit_attempt_answers(
         # снимаем его ОДИН раз на задание и переиспользуем в обоих гейтах ниже.
         # Раньше здесь стояло три обращения к диску подряд, и с хранилищем это
         # были бы три запроса на каждый принятый ответ.
+        # tsk-654: для TA список файлов нужен только когда текст пуст — на
+        # обычной сдаче с текстом лишнего обращения к хранилищу не будет.
+        ta_text_missing = task_content.type == "TA" and not (answer.response.text or "").strip()
         task_attachment_files: Optional[list[str]] = None
         if not attempt.time_expired and (
-            solution_rules.requires_attachment or task_content.type in COMMENT_TASK_TYPES
+            solution_rules.requires_attachment
+            or task_content.type in COMMENT_TASK_TYPES
+            or ta_text_missing
         ):
             task_attachment_files = await _task_attachment_files(attempt.id, task.id)
 
@@ -1015,6 +1020,51 @@ async def submit_attempt_answers(
                         general=(
                             "Добавьте комментарий (например, ход решения) или приложите файл — "
                             "без этого ответ не засчитывается."
+                        )
+                    ),
+                )
+
+        # 2.3g tsk-654: развёрнутый ответ (TA) не может быть пустым. Гейт 2.3d
+        # выше ставит TA полный балл БЕЗУСЛОВНО («сверять нечем, вердикт даст
+        # преподаватель»), и пустой текст получал score=max_score/is_correct=True.
+        # Найдено при разборе прода: у всех 39 сдач TA через SPW текст непустой —
+        # дыру закрывали только клиенты (SPW `TaskFormTA.canSubmit`, TG_LMS
+        # `has_answer`), серверной проверки не было ни одной. Прямой вызов API
+        # или третий клиент проходил на полный балл. Тот же класс, что tsk-419
+        # закрыл для SA_COM/TBL_COM, и та же форма правила: текст ИЛИ реально
+        # загруженный файл (ученик мог сдать работу файлом), причём файл —
+        # только из хранилища, не `meta.attachments` из тела запроса.
+        #
+        # `checking_service._check_text_answer` пустоту видит, но применяет к ней
+        # лишь `penalties.missing_answer`, а он у всех 152 TA-заданий прода равен
+        # нулю — и всё равно затирается оптимистичным пассом. Поэтому гейт стоит
+        # здесь, ПОСЛЕ 2.3d, а не в сервисе проверки.
+        #
+        # При истёкшем времени не трогаем: попытка уже провалена выше, дописать
+        # ответ или вложить файл ученик всё равно не может.
+        #
+        # Порядок тот же, что у 2.3f: если у задания вложение обязательно
+        # (`requires_attachment`) и файла нет, важнее сообщение 2.3e — файл
+        # требуется конкретно, и текст его не заменяет. Иначе наше общее
+        # «напишите ответ или приложите файл» затёрло бы точную причину.
+        if (
+            ta_text_missing
+            and not attempt.time_expired
+            and not (solution_rules.requires_attachment and not bool(task_attachment_files))
+        ):
+            if not bool(task_attachment_files):
+                logger.info(
+                    "POST /attempts/%s/answers: TA task_id=%s без текста и вложения → не зачёт (tsk-654)",
+                    attempt_id, task.id,
+                )
+                check_result = CheckResult(
+                    score=0,
+                    max_score=check_result.max_score,
+                    is_correct=False,
+                    feedback=CheckFeedback(
+                        general=(
+                            "Напишите развёрнутый ответ или приложите файл с работой — "
+                            "пустой ответ не засчитывается."
                         )
                     ),
                 )

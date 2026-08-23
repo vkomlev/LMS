@@ -1,0 +1,85 @@
+diff --git a/app/api/v1/attempts.py b/app/api/v1/attempts.py
+index e664783..fee440d 100644
+--- a/app/api/v1/attempts.py
++++ b/app/api/v1/attempts.py
+@@ -959,9 +959,14 @@ async def submit_attempt_answers(
+         # снимаем его ОДИН раз на задание и переиспользуем в обоих гейтах ниже.
+         # Раньше здесь стояло три обращения к диску подряд, и с хранилищем это
+         # были бы три запроса на каждый принятый ответ.
++        # tsk-654: для TA список файлов нужен только когда текст пуст — на
++        # обычной сдаче с текстом лишнего обращения к хранилищу не будет.
++        ta_text_missing = task_content.type == "TA" and not (answer.response.text or "").strip()
+         task_attachment_files: Optional[list[str]] = None
+         if not attempt.time_expired and (
+-            solution_rules.requires_attachment or task_content.type in COMMENT_TASK_TYPES
++            solution_rules.requires_attachment
++            or task_content.type in COMMENT_TASK_TYPES
++            or ta_text_missing
+         ):
+             task_attachment_files = await _task_attachment_files(attempt.id, task.id)
+ 
+@@ -1019,6 +1024,51 @@ async def submit_attempt_answers(
+                     ),
+                 )
+ 
++        # 2.3g tsk-654: развёрнутый ответ (TA) не может быть пустым. Гейт 2.3d
++        # выше ставит TA полный балл БЕЗУСЛОВНО («сверять нечем, вердикт даст
++        # преподаватель»), и пустой текст получал score=max_score/is_correct=True.
++        # Найдено при разборе прода: у всех 39 сдач TA через SPW текст непустой —
++        # дыру закрывали только клиенты (SPW `TaskFormTA.canSubmit`, TG_LMS
++        # `has_answer`), серверной проверки не было ни одной. Прямой вызов API
++        # или третий клиент проходил на полный балл. Тот же класс, что tsk-419
++        # закрыл для SA_COM/TBL_COM, и та же форма правила: текст ИЛИ реально
++        # загруженный файл (ученик мог сдать работу файлом), причём файл —
++        # только из хранилища, не `meta.attachments` из тела запроса.
++        #
++        # `checking_service._check_text_answer` пустоту видит, но применяет к ней
++        # лишь `penalties.missing_answer`, а он у всех 152 TA-заданий прода равен
++        # нулю — и всё равно затирается оптимистичным пассом. Поэтому гейт стоит
++        # здесь, ПОСЛЕ 2.3d, а не в сервисе проверки.
++        #
++        # При истёкшем времени не трогаем: попытка уже провалена выше, дописать
++        # ответ или вложить файл ученик всё равно не может.
++        #
++        # Порядок тот же, что у 2.3f: если у задания вложение обязательно
++        # (`requires_attachment`) и файла нет, важнее сообщение 2.3e — файл
++        # требуется конкретно, и текст его не заменяет. Иначе наше общее
++        # «напишите ответ или приложите файл» затёрло бы точную причину.
++        if (
++            ta_text_missing
++            and not attempt.time_expired
++            and not (solution_rules.requires_attachment and not bool(task_attachment_files))
++        ):
++            if not bool(task_attachment_files):
++                logger.info(
++                    "POST /attempts/%s/answers: TA task_id=%s без текста и вложения → не зачёт (tsk-654)",
++                    attempt_id, task.id,
++                )
++                check_result = CheckResult(
++                    score=0,
++                    max_score=check_result.max_score,
++                    is_correct=False,
++                    feedback=CheckFeedback(
++                        general=(
++                            "Напишите развёрнутый ответ или приложите файл с работой — "
++                            "пустой ответ не засчитывается."
++                        )
++                    ),
++                )
++
+         # 2.4 Записываем в task_results.
+         #
+         # tsk-273: запись под точечным advisory-замком против гонки (TOCTOU).
+diff --git a/docs/ai/glossary.md b/docs/ai/glossary.md
+index 962251f..583a5f9 100644
+--- a/docs/ai/glossary.md
++++ b/docs/ai/glossary.md
+@@ -61,7 +61,7 @@
+ - **TBL_COM** (Table with Comment, tsk-366) — табличный ответ: `value` одной строкой, ячейки ряда через пробел, ряды через перевод строки; сравнение поячеечное, правила — тот же блок `short_answer`, что у SA/SA_COM. Во всём остальном ведёт себя как SA_COM, включая обязательность комментария-или-файла. `table.columns=1` + мини-тесты Python (tsk-383): при многострочном ответе строка не режется по пробелу — целая строка (с внутренними пробелами) = одна ячейка, чтобы фраза «Первое число больше» (вывод одного запуска программы) не дробилась на слова; однострочный ответ по-прежнему режется по словам. Плюс fallback: если построчное сравнение не даёт балл, ответ сверяется ещё и целиком против эталона целиком (как SA_COM) — инвариант «TBL_COM не строже SA_COM на том же правиле».
+ - **TA** (Text Answer) — развёрнутый ответ (эссе). **По умолчанию — ручная проверка** (`is_correct=NULL` до grade). Автопроверка (regex/ИИ) — на будущее.
+ - **`manual_review_required`** (флаг `SolutionRules`, tsk-230) — единый переключатель обязательной ручной проверки. При `true` авто-вердикт не выставляется, и работа попадает в обязательную очередь преподавателя, даже если тип авто-проверяем. Ось обязательности — **этот флаг, а не тип задания** (tsk-420): предикат очереди (`teacher_queue_service.mandatory_review_sql`, общий для бота и портала) берёт `TA` безусловно, а `SA`/`SA_COM`/`TBL_COM` — только с флагом. Default `false`. Читается в `checking_service` для SA/SA_COM/TBL_COM; TA манулен по умолчанию независимо от флага.
+-- **Оптимистичный зачёт** (optimistic-pass, tsk-210) — для `TA` и для `SA_COM`/`TBL_COM` без авто-вердикта (`is_correct=None`, в т.ч. при `manual_review_required=true`) на приёме ответа ставится `score=max_score, is_correct=true`, чтобы учебный поток не блокировался; `checked_at` при этом остаётся пустым — работа висит в очереди, преподаватель может зачёт снять через `/regrade`. У плоского `SA` этого нет (tsk-438). Перекрывается гейтами вложения и доказательства, если те не выполнены.
++- **Оптимистичный зачёт** (optimistic-pass, tsk-210) — для `TA` и для `SA_COM`/`TBL_COM` без авто-вердикта (`is_correct=None`, в т.ч. при `manual_review_required=true`) на приёме ответа ставится `score=max_score, is_correct=true`, чтобы учебный поток не блокировался; `checked_at` при этом остаётся пустым — работа висит в очереди, преподаватель может зачёт снять через `/regrade`. У плоского `SA` этого нет (tsk-438). Перекрывается гейтами вложения (tsk-227), доказательства (tsk-419) и непустоты развёрнутого ответа (tsk-654: `TA` без текста и без файла → `score=0, is_correct=false`), если те не выполнены.
+ 
+ ## Гейты (процессные)
+ 
