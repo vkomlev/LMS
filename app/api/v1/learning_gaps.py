@@ -198,7 +198,12 @@ async def resolve(
     Гейт методистский, а не преподавательский: закрывает тот, кому передали.
     """
     ok = await signals.resolve_signal(
-        db, signal_id=signal_id, methodist_id=current_user.id,
+        db, signal_id=signal_id,
+        # У сервисного ключа человека нет: `get_current_user` отдаёт таким
+        # вызовам `CurrentUser(id=0, is_service=True)`. Записать сюда ноль
+        # значит соврать в журнале — «закрыл пользователь 0». Пустое значение
+        # честнее и выпадает из `meta` само (`jsonb_strip_nulls`).
+        methodist_id=None if current_user.is_service else current_user.id,
         comment=body.comment, mini_course_id=body.mini_course_id,
     )
     if not ok:

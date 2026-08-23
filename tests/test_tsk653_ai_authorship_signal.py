@@ -495,3 +495,32 @@ async def test_closed_signal_is_not_raised_again_for_the_same_works(db):
         assert len(again) == 1 and again[0]["flagged"] == 3
     finally:
         await _cleanup(db, [student, teacher], [root])
+
+
+@pytest.mark.asyncio
+async def test_service_key_does_not_pretend_to_be_a_person(db):
+    """Закрытие без человека не пишет в журнал «пользователь 0».
+
+    У сервисного ключа человека нет: `get_current_user` отдаёт таким вызовам
+    `CurrentUser(id=0, is_service=True)`. Ноль в `resolved_by` читался бы как
+    настоящий пользователь — а решение принимал не он.
+    """
+    root = await _course(db, "tsk653 закрытие без человека")
+    student = await _user(db, "tsk653-service-student")
+    teacher = await _user(db, "tsk653-service-teacher")
+    try:
+        sid = await sig.upsert_signal(db, course_id=root, student_id=student,
+                                      submissions=9, students=1, wrong_rate=0.6)
+        await db.commit()
+        await sig.acknowledge_signal(db, signal_id=sid, teacher_id=teacher,
+                                     comment="Передаю", escalate=True)
+
+        assert await sig.resolve_signal(db, signal_id=sid) is True
+
+        meta = (await db.execute(text(
+            "SELECT meta FROM learning_gap_signal WHERE id = :s"
+        ), {"s": sid})).scalar_one()
+        assert "resolved_by" not in (meta or {})
+        assert meta["resolved_at"]
+    finally:
+        await _cleanup(db, [student, teacher], [root])
