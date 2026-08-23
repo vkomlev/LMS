@@ -80,3 +80,7 @@ reviews/tsk392-oge/files/
 # восстанавливаются scripts/tsk384_build_visuals.py, источник истины по
 # опубликованным файлам — CAS/прод-S3 (sha256 в reviews/2026-08-03-tsk384-*.md).
 reviews/tsk384-chess-visuals/
+
+# Снапшот локального Redis: `redis-server`, запущенный из корня проекта
+# (стенд для прогона), кладёт `dump.rdb` рядом с кодом. В репозиторий не нужен.
+dump.rdb
