@@ -70,8 +70,27 @@ _PENDING_SQL = """
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
+      AND (
+            tr.code_review->>'claimed_at' IS NULL
+            OR (tr.code_review->>'claimed_at')::timestamptz
+                 < now() - make_interval(mins => :claim_ttl_min)
+          )
     ORDER BY tr.submitted_at ASC
     LIMIT :limit
+"""
+
+# tsk-644: пометка «работа взята этим тиком». Нужна с тех пор, как замок больше
+# не держится на всё время прохода: без неё второй worker (или следующий тик
+# после перезапуска процесса) забрал бы ту же работу и заплатил бы провайдеру
+# второй раз за тот же ответ.
+#
+# Пометка живёт ровно до записи отчёта: `_write` пишет payload целиком, поэтому
+# любая запись — и готовый вердикт, и повтор — её стирает. Если процесс умер
+# посередине, работу освободит срок `claim_ttl`.
+_CLAIM_SQL = """
+    UPDATE task_results
+       SET code_review = code_review || jsonb_build_object('claimed_at', to_jsonb(now()))
+     WHERE id = ANY(:ids)
 """
 
 
@@ -86,6 +105,16 @@ async def code_review_cron_tick(
         "retried": 0, "failed": 0, "skipped": 0, "degraded": 0,
     }
 
+    # Фаза 1 — захват пачки. Короткая транзакция: замок, выборка, пометка,
+    # коммит. Всё вместе — доли секунды.
+    #
+    # tsk-644: раньше эта транзакция держалась до КОНЦА прохода, то есть через
+    # все вызовы модели. Замер стенда 2026-08-22 (молчащий провайдер, 10 работ
+    # в очереди): транзакция висела `idle in transaction` 298 c и продолжала
+    # висеть — при полной пачке это ~20 минут на одном подключении из пула, и
+    # столько же PG не может убрать мёртвые версии строк (горизонт xmin стоит).
+    # Живым запросам это на стенде не мешало, но подключение и горизонт — плата
+    # ни за что: модели транзакция не нужна вовсе.
     async with factory() as db:
         got = await db.execute(
             text("SELECT pg_try_advisory_xact_lock(:k) AS locked"),
@@ -97,95 +126,103 @@ async def code_review_cron_tick(
         summary["locked"] = True
 
         rows = (await db.execute(
-            text(_PENDING_SQL), {"limit": settings.code_review_batch_size},
+            text(_PENDING_SQL),
+            {
+                "limit": settings.code_review_batch_size,
+                "claim_ttl_min": settings.code_review_claim_ttl_min,
+            },
         )).fetchall()
         summary["picked"] = len(rows)
-        if not rows:
-            return summary
-
-        for row in rows:
-            (result_id, student_id, attempt_id, task_id, value, comment, stem,
-             attachments, attempts, backfill, code_snapshot) = row
-            # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
-            # файл-вложение мог быть удалён следующей загрузкой ученика в этой
-            # же попытке (см. комментарий в `attempts.py`).
-            # tsk-593: разбор читает вложение из объектного хранилища —
-            # синхронный сетевой вызов, поэтому уносим с петли событий.
-            code = code_snapshot or await asyncio.to_thread(
-                pick_code_for_review,
-                value, comment, attachments,
-                attempt_id=attempt_id, task_id=task_id,
-            )
-            if not code:
-                # Программы в ответе нет (одно вложение, ответ-однострочник) —
-                # оценивать нечего. Снимаем пометку, чтобы работа не крутилась
-                # в очереди вечно.
-                #
-                # Причину различаем: работа с вложением, из которой код достать
-                # не вышло, — это не то же самое, что честное «программы нет».
-                # Со сваленными в одну кучу такие работы уже не найти и не
-                # пересчитать после починки разбора.
-                reason = "extract_failed" if pick_code_attachment(attachments) else "no_code"
-                await _write(db, result_id, {"status": "skipped", "reason": reason}, backfill=backfill)
-                summary["skipped"] += 1
-                continue
-
-            # Статический анализ считаем ПЕРВЫМ и НЕЗАВИСИМО от модели.
-            # Находка ревью Б1: раньше он вызывался только внутри ветки успеха
-            # модели — а на проде ключа ещё нет, значит модель отвечает
-            # `LLMConfigError`, и преподаватель вместо работающего pylint-отчёта
-            # (этап 0, уже был на проде) увидел бы «оценка не выполнена». Теперь
-            # при недоступной модели фича деградирует до уровня этапа 0, а не
-            # исчезает. На не-Python анализ сам вернёт syntax_error — тогда
-            # секции просто не будет.
-            static = await asyncio.to_thread(analyze_student_code_quality, code)
-            static_ok = bool(static) and not static.get("error")
-
-            verdict = await review_student_code(
-                code, task_stem=stem, student_id=student_id,
-            )
-
-            error = verdict.get("error")
-            if not error:
-                payload: Dict[str, Any] = {"status": "done", **verdict}
-                if static_ok:
-                    payload["static"] = static
-                await _write(db, result_id, payload, backfill=backfill)
-                summary["reviewed"] += 1
-                continue
-
-            attempts_done = int(attempts) + 1
-            can_retry = bool(verdict.get("retryable")) and attempts_done < settings.code_review_max_attempts
-            if can_retry:
-                # Остаёмся в очереди: следующий тик попробует снова. Переносим
-                # ФАКТИЧЕСКИ использованный код, а не то, что лежало в снимке:
-                # если снимка не было и код прочитан из файла, повтор иначе
-                # остался бы ни с чем — файл к тому времени мог исчезнуть.
-                await _write(db, result_id, {
-                    "status": "pending",
-                    "attempts": attempts_done,
-                    "last_error": error,
-                }, backfill=backfill, code_snapshot=code)
-                summary["retried"] += 1
-            else:
-                # Модель недоступна окончательно — но статический анализ мог
-                # сработать. Отдаём что есть: это ровно тот отчёт, который
-                # преподаватель видел до этапа 3.
-                payload = {
-                    "status": "done" if static_ok else "failed",
-                    "attempts": attempts_done,
-                    "error": error,
-                    "message": verdict.get("message"),
-                }
-                if static_ok:
-                    payload["static"] = static
-                    payload["degraded"] = True
-                await _write(db, result_id, payload, backfill=backfill)
-                # Считаем раздельно: в БД у деградированной работы `done`, и
-                # называть её в логе провалом — врать самому себе при разборе.
-                summary["degraded" if static_ok else "failed"] += 1
-
+        if rows:
+            await db.execute(text(_CLAIM_SQL), {"ids": [r[0] for r in rows]})
         await db.commit()
+
+    if not rows:
+        return summary
+
+    # Фаза 2 — работа. Открытой транзакции здесь нет: вызов модели идёт вне БД,
+    # а каждый отчёт `_write` пишет и коммитит сам, своей короткой транзакцией.
+    for row in rows:
+        (result_id, student_id, attempt_id, task_id, value, comment, stem,
+         attachments, attempts, backfill, code_snapshot) = row
+        # Снимок кода, снятый при приёме ответа, главнее повторного разбора:
+        # файл-вложение мог быть удалён следующей загрузкой ученика в этой
+        # же попытке (см. комментарий в `attempts.py`).
+        # tsk-593: разбор читает вложение из объектного хранилища —
+        # синхронный сетевой вызов, поэтому уносим с петли событий.
+        code = code_snapshot or await asyncio.to_thread(
+            pick_code_for_review,
+            value, comment, attachments,
+            attempt_id=attempt_id, task_id=task_id,
+        )
+        if not code:
+            # Программы в ответе нет (одно вложение, ответ-однострочник) —
+            # оценивать нечего. Снимаем пометку, чтобы работа не крутилась
+            # в очереди вечно.
+            #
+            # Причину различаем: работа с вложением, из которой код достать
+            # не вышло, — это не то же самое, что честное «программы нет».
+            # Со сваленными в одну кучу такие работы уже не найти и не
+            # пересчитать после починки разбора.
+            reason = "extract_failed" if pick_code_attachment(attachments) else "no_code"
+            await _write(factory, result_id, {"status": "skipped", "reason": reason}, backfill=backfill)
+            summary["skipped"] += 1
+            continue
+
+        # Статический анализ считаем ПЕРВЫМ и НЕЗАВИСИМО от модели.
+        # Находка ревью Б1: раньше он вызывался только внутри ветки успеха
+        # модели — а на проде ключа ещё нет, значит модель отвечает
+        # `LLMConfigError`, и преподаватель вместо работающего pylint-отчёта
+        # (этап 0, уже был на проде) увидел бы «оценка не выполнена». Теперь
+        # при недоступной модели фича деградирует до уровня этапа 0, а не
+        # исчезает. На не-Python анализ сам вернёт syntax_error — тогда
+        # секции просто не будет.
+        static = await asyncio.to_thread(analyze_student_code_quality, code)
+        static_ok = bool(static) and not static.get("error")
+
+        verdict = await review_student_code(
+            code, task_stem=stem, student_id=student_id,
+        )
+
+        error = verdict.get("error")
+        if not error:
+            payload: Dict[str, Any] = {"status": "done", **verdict}
+            if static_ok:
+                payload["static"] = static
+            await _write(factory, result_id, payload, backfill=backfill)
+            summary["reviewed"] += 1
+            continue
+
+        attempts_done = int(attempts) + 1
+        can_retry = bool(verdict.get("retryable")) and attempts_done < settings.code_review_max_attempts
+        if can_retry:
+            # Остаёмся в очереди: следующий тик попробует снова. Переносим
+            # ФАКТИЧЕСКИ использованный код, а не то, что лежало в снимке:
+            # если снимка не было и код прочитан из файла, повтор иначе
+            # остался бы ни с чем — файл к тому времени мог исчезнуть.
+            await _write(factory, result_id, {
+                "status": "pending",
+                "attempts": attempts_done,
+                "last_error": error,
+            }, backfill=backfill, code_snapshot=code)
+            summary["retried"] += 1
+        else:
+            # Модель недоступна окончательно — но статический анализ мог
+            # сработать. Отдаём что есть: это ровно тот отчёт, который
+            # преподаватель видел до этапа 3.
+            payload = {
+                "status": "done" if static_ok else "failed",
+                "attempts": attempts_done,
+                "error": error,
+                "message": verdict.get("message"),
+            }
+            if static_ok:
+                payload["static"] = static
+                payload["degraded"] = True
+            await _write(factory, result_id, payload, backfill=backfill)
+            # Считаем раздельно: в БД у деградированной работы `done`, и
+            # называть её в логе провалом — врать самому себе при разборе.
+            summary["degraded" if static_ok else "failed"] += 1
 
     logger.info(
         "tsk-302 code_review_cron_tick done picked=%s reviewed=%s degraded=%s "
@@ -197,7 +234,7 @@ async def code_review_cron_tick(
 
 
 async def _write(
-    db: AsyncSession,
+    factory: async_sessionmaker[AsyncSession],
     result_id: int,
     payload: Dict[str, Any],
     *,
@@ -205,6 +242,14 @@ async def _write(
     code_snapshot: Optional[str] = None,
 ) -> None:
     """Записывает отчёт целиком: он самодостаточен, сливать со старым нечего.
+
+    tsk-644: своя короткая транзакция на каждый отчёт. Раньше все записи прохода
+    шли одной транзакцией, открытой на всё время прохода, — то есть подключение
+    было занято, пока тик ждал модель. Теперь между работами открытой транзакции
+    нет вовсе. Побочно это чинит и «всё или ничего»: сбой на девятой работе
+    больше не отменяет восемь уже посчитанных вердиктов.
+
+    Запись стирает и пометку захвата (`claimed_at`): payload пишется целиком.
 
     :param backfill: работа попала в очередь пересчётом задним числом. Метку
         переносим в новый отчёт: запись идёт целиком, и иначе она потерялась бы
@@ -219,10 +264,12 @@ async def _write(
         payload = {**payload, "backfill": True}
     if code_snapshot and payload.get("status") == "pending":
         payload = {**payload, "code": code_snapshot}
-    await db.execute(
-        text("UPDATE task_results SET code_review = CAST(:payload AS jsonb) WHERE id = :id"),
-        {"payload": _json(payload), "id": result_id},
-    )
+    async with factory() as db:
+        await db.execute(
+            text("UPDATE task_results SET code_review = CAST(:payload AS jsonb) WHERE id = :id"),
+            {"payload": _json(payload), "id": result_id},
+        )
+        await db.commit()
 
 
 def _json(payload: Dict[str, Any]) -> str:

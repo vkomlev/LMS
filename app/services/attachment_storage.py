@@ -164,8 +164,15 @@ def content_disposition(filename: str, *, inline: bool = False) -> str:
 
 
 def _client():
-    """Создаёт boto3-клиент S3. Импорт локальный: без ключей зависимость не нужна."""
+    """Создаёт boto3-клиент S3. Импорт локальный: без ключей зависимость не нужна.
+
+    tsk-644: таймауты заданы явно. На умолчаниях botocore (60 c соединение,
+    60 c чтение, режим повторов `legacy`) молчащее хранилище держит вызывающего
+    минутами — а зовут отсюда в том числе приём ответа ученика, синхронно.
+    Замер стенда 2026-08-22: до починки одно чтение держало 211 c.
+    """
     import boto3  # локальный импорт: разработка без S3 живёт без установленного boto3
+    from botocore.config import Config
 
     return boto3.client(
         "s3",
@@ -173,6 +180,11 @@ def _client():
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
+        config=Config(
+            connect_timeout=settings.s3_connect_timeout_sec,
+            read_timeout=settings.s3_read_timeout_sec,
+            retries={"max_attempts": settings.s3_retries, "mode": "standard"},
+        ),
     )
 
 

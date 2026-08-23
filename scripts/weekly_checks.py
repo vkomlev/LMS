@@ -117,6 +117,20 @@ CHECKS: dict[str, Check] = {
         hint=r"  Как чинить — tsk-369 в трекере (скрипты scripts\tsk369_*.py).",
         takes_quiet=True,
     ),
+    "slow-requests": Check(
+        module="check_slow_requests",
+        log="slow_requests_check.log",
+        needs_dsn=True,
+        ok="OK: запросов дольше порога не было",
+        found="МЕДЛЕННЫЕ ЗАПРОСЫ:",
+        hint="  Как читать — tsk-644 в трекере.",
+        takes_quiet=True,
+        # Сводка печатает шапку «База: …» только в подробном режиме, поэтому в
+        # тихом любая строка при коде 0 — это фон медленных запросов ниже порога
+        # тревоги. Такой фон видеть полезно: по нему заметно, что дни стали
+        # тяжелее, ещё до того как это станет затором.
+        report_on_zero=True,
+    ),
     "stale-verdicts": Check(
         module="audit_stale_false_verdicts_tsk602",
         log="stale_verdicts_check.log",

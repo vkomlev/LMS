@@ -42,7 +42,7 @@ from app.services.tasks_service import TasksService
 from app.services.checking_service import CheckingService
 # tsk-302 этап 3: сам анализ переехал в фоновый тик
 # (`code_review_cron_service`), здесь работа только помечается к оценке.
-from app.services.code_review_service import pick_code_for_review
+from app.services.code_review_service import pick_code_attachment, pick_code_for_review
 # tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
 # правило живёт в одном месте на все точки принуждения (пробел П13).
 from app.services import entitlements_service
@@ -69,6 +69,7 @@ from app.services import (
 from app.core.config import Settings
 
 from app.utils.exceptions import DomainError
+from app.api.error_handlers import retry_after_seconds
 
 import logging
 
@@ -106,8 +107,44 @@ async def _task_attachment_files(attempt_id: int, task_id: int) -> list[str]:
 
     tsk-593: список приходит из объектного хранилища, поэтому вызов сетевой —
     результат берётся ОДИН раз на задание и переиспользуется обоими гейтами.
+
+    tsk-644: и ограничен по времени. Замер стенда 2026-08-22: при молчащем
+    хранилище перечисление держало приём ответа 60 c, после чего ученик всё
+    равно получал отказ — то есть минуту он ждал ОТКАЗА. Ответ по сути тот же
+    (сдать сейчас нельзя), но приходит он за секунды и говорит, когда вернуться.
+
+    Отказ, а не «примем без проверки»: гейт `requires_attachment` — защита
+    (tsk-227/tsk-575), без него зачёт получает работа без файла. Отключать
+    защиту на время аварии хранилища значит раздать незаслуженные зачёты именно
+    тем, кто сдавал в эти минуты. Выбор подтверждён оператором (tsk-644):
+    честный отказ за секунды, а не тихий пропуск проверки и не ожидание.
+
+    :raises HTTPException: 503 с `Retry-After`, если хранилище не ответило.
     """
-    return await attempt_attachment_names(attempt_id, task_id, include_untagged=True)
+    try:
+        return await asyncio.wait_for(
+            attempt_attachment_names(attempt_id, task_id, include_untagged=True),
+            timeout=settings.attachment_gate_timeout_sec,
+        )
+    except (asyncio.TimeoutError, DomainError) as exc:
+        # Пауза считается тем же способом, что и при исчерпании пула (tsk-624):
+        # с разбросом, чтобы получившие отказ клиенты не вернулись все разом.
+        retry_after = retry_after_seconds(settings.attachment_gate_timeout_sec * 2)
+        logger.error(
+            "POST /attempts/%s/answers: хранилище не ответило за %.0f c "
+            "(task_id=%s, %s) → 503, повтор через %d c (tsk-644)",
+            attempt_id, settings.attachment_gate_timeout_sec, task_id,
+            type(exc).__name__, retry_after,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Файловое хранилище сейчас не отвечает, поэтому ответ с "
+                f"вложением принять не можем. Повторите через {retry_after} с — "
+                "работа не потеряна."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        ) from exc
 
 
 def _validate_attempt_attachment_id(attempt_id: int, attachment_id: str) -> str:
@@ -725,16 +762,58 @@ async def submit_attempt_answers(
         if not skip_code_review:
             # Чтение файла — синхронный ввод-вывод, и теперь оно случается на
             # КАЖДОЙ сдаче с вложением, а не изредка. Уносим с петли событий.
-            picked_code = await asyncio.to_thread(
-                pick_code_for_review,
-                answer.response.value,
-                answer.response.comment,
-                (answer.response.meta or {}).get("attachments"),
-                attempt_id=attempt_id,
-                task_id=task.id,
-            )
+            #
+            # tsk-644: и ограничиваем по времени. Замер стенда 2026-08-22: при
+            # молчащем объектном хранилище это чтение держало приём ответа 211 c
+            # — ученик две с половиной минуты смотрел в экран после «Ответить»,
+            # ожидая снимок кода, который заводится РАДИ ПРЕПОДАВАТЕЛЯ и самому
+            # ученику не показывается никогда. Такой размен неприемлем: сдача
+            # важнее снимка.
+            #
+            # Не успели — ставим в очередь без снимка. Фоновый тик прочитает
+            # файл сам (ветка `code_snapshot or ...` в тике ровно про это).
+            # Риск, ради которого снимок заводился, остаётся ровно один: ученик
+            # перезальёт файл раньше, чем тик до него дойдёт. Он редкий и стоит
+            # дешевле, чем ожидание в две минуты на каждой сдаче.
+            #
+            # `wait_for` отменяет ОЖИДАНИЕ, но не сам поток: чтение продолжит
+            # висеть в фоне до своего таймаута. Поэтому короткий срок здесь —
+            # половина решения, вторая половина — явные таймауты клиента
+            # хранилища (`S3_READ_TIMEOUT_SEC`), иначе поток общего пула
+            # оставался бы занят минутами.
+            pick_timed_out = False
+            try:
+                picked_code = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        pick_code_for_review,
+                        answer.response.value,
+                        answer.response.comment,
+                        (answer.response.meta or {}).get("attachments"),
+                        attempt_id=attempt_id,
+                        task_id=task.id,
+                    ),
+                    timeout=settings.code_pick_timeout_sec,
+                )
+            except asyncio.TimeoutError:
+                picked_code = None
+                pick_timed_out = True
+                logger.warning(
+                    "POST /attempts/%s/answers: снимок кода не снят за %.0f c "
+                    "(task_id=%s) — работа в очередь без снимка (tsk-644)",
+                    attempt_id, settings.code_pick_timeout_sec, task.id,
+                )
             if picked_code:
                 code_review_report = {"status": "pending", "code": picked_code}
+            elif pick_timed_out and pick_code_attachment(
+                (answer.response.meta or {}).get("attachments")
+            ):
+                # Не успели прочитать ВЛОЖЕНИЕ — ставим в очередь без снимка:
+                # иначе таймаут хранилища молча отменял бы оценку. Условие про
+                # вложение обязательно: без него сюда попадали бы и работы, где
+                # программы просто нет, а это ровно тот «вечный признак оценка
+                # готовится» у преподавателя, ради которого порог и вводился
+                # (находки Н1/Б2 ревью этапа 3).
+                code_review_report = {"status": "pending"}
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
