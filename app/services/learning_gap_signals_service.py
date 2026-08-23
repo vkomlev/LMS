@@ -131,6 +131,7 @@ roots AS (
 reviewed AS (
     SELECT tr.user_id,
            t.course_id AS member_course_id,
+           tr.received_at,
            (jsonb_array_length(COALESCE(tr.code_review->'signals', '[]'::jsonb)) > 0
             OR tr.code_review->'ai_authorship'->>'verdict' = 'ai_likely') AS flagged
     FROM task_results tr
@@ -138,6 +139,18 @@ reviewed AS (
     WHERE tr.code_review->>'status' = 'done'
       AND tr.received_at > now() - make_interval(days => :days)
       AND {real_student}
+),
+-- Когда по этой паре в последний раз ЗАКРЫВАЛИ такой сигнал. Работы, сданные
+-- до этого момента, человек уже разобрал — считать их заново значит поднимать
+-- один и тот же сигнал бесконечно.
+closed AS (
+    SELECT student_id, course_id,
+           MAX(COALESCE(acknowledged_at, created_at)) AS closed_at
+    FROM learning_gap_signal
+    WHERE reason = 'ai_authorship'
+      AND status IN ('resolved', 'dismissed')
+      AND student_id IS NOT NULL
+    GROUP BY student_id, course_id
 )
 SELECT r.user_id AS student_id,
        roots.root_course_id AS course_id,
@@ -147,6 +160,9 @@ SELECT r.user_id AS student_id,
 FROM reviewed r
 JOIN roots ON roots.user_id = r.user_id AND roots.member_course_id = r.member_course_id
 JOIN courses c ON c.id = roots.root_course_id
+LEFT JOIN closed ON closed.student_id = r.user_id
+                AND closed.course_id = roots.root_course_id
+WHERE closed.closed_at IS NULL OR r.received_at > closed.closed_at
 GROUP BY r.user_id, roots.root_course_id, c.title
 HAVING COUNT(*) FILTER (WHERE r.flagged) >= :min_flagged
    AND COUNT(*) FILTER (WHERE r.flagged)::float / COUNT(*) >= :min_share
@@ -169,6 +185,14 @@ async def find_ai_authorship_gaps(
     другое. Тот считает долю ОШИБОК — и ученика, сдающего чужое, не увидит
     никогда: у такого ученика ошибок нет, все работы приняты. Живой случай,
     с которого началась tsk-646, ровно такой: 12 работ, 12 зачётов, ноль ошибок.
+
+    **Почему учитывается дата последнего закрытия.** Признак у уже разобранной
+    работы не «стареет»: он останется в отчёте навсегда. У датчика по ошибкам
+    этого вопроса нет — старые сдачи сами выпадают из окна в 30 дней, — а здесь
+    без поправки сигнал поднимался бы заново на следующем же проходе после
+    каждого закрытия, и так бесконечно. Поэтому после разбора считаются только
+    работы, сданные ПОСЛЕ него: сигнал вернётся, если признак появился снова, и
+    не вернётся, если человек уже всё разобрал.
 
     Возвращает строки с `reviewed` и `flagged` — числа кладутся в `meta` сигнала
     и показываются человеку. Доля ошибок сюда не входит: у этого повода она

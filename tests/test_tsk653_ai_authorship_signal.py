@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
@@ -58,7 +58,9 @@ async def _enroll(db, user_id: int, course_id: int) -> None:
     await db.commit()
 
 
-async def _submission(db, *, user_id: int, course_id: int, flagged: bool) -> int:
+async def _submission(
+    db, *, user_id: int, course_id: int, flagged: bool, days_ago: int = 0
+) -> int:
     """Разобранная работа: принятая (ошибок нет) и с признаком либо без него.
 
     `is_correct=True` намеренно у ВСЕХ: в этом и суть случая — ученик, сдающий
@@ -83,8 +85,8 @@ async def _submission(db, *, user_id: int, course_id: int, flagged: bool) -> int
         review["signals"] = []
         review["ai_authorship"] = {"verdict": "student_likely", "reasoning": "…"}
 
-    now = datetime.now(timezone.utc)
-    return int((await db.execute(text(
+    now = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    result_id = int((await db.execute(text(
         "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
         " received_at, max_score, source_system, is_correct, answer_json, code_review) "
         "VALUES (6, :u, :t, :now, 0, :now, 6, 'spw_web', true, CAST(:a AS jsonb), "
@@ -94,6 +96,13 @@ async def _submission(db, *, user_id: int, course_id: int, flagged: bool) -> int
         "a": json.dumps({"type": "TA", "response": {"text": "…"}}),
         "cr": json.dumps(review, ensure_ascii=False),
     })).scalar_one())
+    # Коммит на каждой работе — не косметика. `now()` в PostgreSQL это время
+    # НАЧАЛА ТРАНЗАКЦИИ: держи мы все сдачи и последующее закрытие сигнала в
+    # одной транзакции, отметка закрытия оказалась бы РАНЬШЕ работ, и проверка
+    # «работа сдана после разбора» ничего бы не проверила. На проде каждая
+    # сдача — свой запрос, то есть своя транзакция.
+    await db.commit()
+    return result_id
 
 
 async def _cleanup(db, users: list[int], courses: list[int]) -> None:
@@ -440,3 +449,49 @@ async def test_decision_without_comment_does_not_break(db):
         assert (await db.execute(text("SELECT 1"))).scalar_one() == 1
     finally:
         await _cleanup(db, [student, teacher], [course])
+
+
+@pytest.mark.asyncio
+async def test_closed_signal_is_not_raised_again_for_the_same_works(db):
+    """Разобранный сигнал не поднимается заново на тех же работах.
+
+    Признак у уже разобранной работы не «стареет» — он останется в отчёте
+    навсегда. Без поправки на дату закрытия датчик поднимал бы один и тот же
+    сигнал на каждом проходе, и методист получал бы его вечно. У датчика по
+    ошибкам такого вопроса нет: старые сдачи сами выпадают из окна.
+    """
+    root = await _course(db, "tsk653 закрытый не возвращается")
+    student = await _user(db, "tsk653-reraise-student")
+    teacher = await _user(db, "tsk653-reraise-teacher")
+    await _enroll(db, student, root)
+    try:
+        # Работы сданы неделю назад, разбор будет «сегодня»: на проде между
+        # сдачей и решением человека проходят часы или дни, и проверка обязана
+        # выражать это явно, а не полагаться на доли секунды внутри теста.
+        for _ in range(4):
+            await _submission(db, user_id=student, course_id=root,
+                              flagged=True, days_ago=7)
+
+        assert [r for r in await sig.find_ai_authorship_gaps(db)
+                if r["student_id"] == student]
+
+        sid = await sig.upsert_signal(
+            db, course_id=root, student_id=student, submissions=4, students=1,
+            wrong_rate=0.0, reason=sig.REASON_AI_AUTHORSHIP,
+            meta={"reviewed": 4, "flagged": 4},
+        )
+        await db.commit()
+        assert await sig.dismiss_signal(db, signal_id=sid, teacher_id=teacher) is True
+
+        # Те же работы больше не считаются.
+        assert not [r for r in await sig.find_ai_authorship_gaps(db)
+                    if r["student_id"] == student]
+
+        # А новые — считаются: признак появился снова, значит и разговор снова нужен.
+        for _ in range(3):
+            await _submission(db, user_id=student, course_id=root, flagged=True)
+        again = [r for r in await sig.find_ai_authorship_gaps(db)
+                 if r["student_id"] == student]
+        assert len(again) == 1 and again[0]["flagged"] == 3
+    finally:
+        await _cleanup(db, [student, teacher], [root])
