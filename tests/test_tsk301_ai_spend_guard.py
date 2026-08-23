@@ -85,6 +85,13 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
     "app/services/code_review_cron_service.py": SpendPoint(
         capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
     ),
+    # tsk-646: разбор развёрнутых текстовых работ. Гейт — тот же самый и в том
+    # же месте: работа попадает сюда только через прогейченный вход в
+    # `attempts.py`. Возможность намеренно НЕ заведена новая — иначе у тарифа
+    # появилось бы право, которого никто не покупал, а расход остался бы тем же.
+    "app/services/text_authorship_service.py": SpendPoint(
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+    ),
 }
 
 

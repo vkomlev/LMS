@@ -46,6 +46,27 @@ class CodeReviewAuthorship(BaseModel):
     reasoning: Optional[str] = Field(None, description="Почему модель так решила")
 
 
+class TextPasteSignal(BaseModel):
+    """
+    Один механический след вставки текста из чужого окна (tsk-646).
+
+    Отличается от `CodeReviewAuthorship` природой: это не мнение модели о слоге,
+    а факт о символах в тексте, который преподаватель может проверить глазами.
+    Поэтому у каждого следа есть кусок текста — иначе признак снова превратился
+    бы в «похоже на ИИ» без оснований, то есть в то, с чего задача началась.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    code: Optional[str] = Field(
+        None,
+        description="Код следа: math_render_residue | latex_markup | markdown_residue",
+        examples=["math_render_residue"],
+    )
+    label: Optional[str] = Field(None, description="Объяснение человеческим языком")
+    evidence: Optional[str] = Field(None, description="Кусок текста, где след найден")
+
+
 class CodeReviewLintMessage(BaseModel):
     """Одно замечание линтера."""
 
@@ -100,9 +121,26 @@ class CodeReviewReport(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     status: Optional[str] = Field(None, examples=["done", "pending", "failed", "skipped"])
+    kind: Optional[str] = Field(
+        None,
+        description=(
+            "Что именно разобрано: `code` — программа (tsk-302), `text` — развёрнутый "
+            "письменный ответ (tsk-646). Пусто у отчётов, созданных до появления "
+            "текстовой ветки: они все про код"
+        ),
+        examples=["code", "text"],
+    )
     language: Optional[str] = Field(None, examples=["Python", "C++ (Arduino)"])
     code_quality: Optional[CodeReviewQuality] = None
     ai_authorship: Optional[CodeReviewAuthorship] = None
+    signals: Optional[list[TextPasteSignal]] = Field(
+        None,
+        description=(
+            "Механические следы вставки в текстовой работе (tsk-646). Считаются "
+            "регулярками, без модели, и остаются доступны, даже когда модель не "
+            "ответила. Пустой список — следов нет; это не значит «писал сам»"
+        ),
+    )
     static: Optional[CodeReviewStatic] = Field(
         None, description="Разбор линтера (pylint/radon) — только для Python"
     )
@@ -132,8 +170,9 @@ class CodeReviewBadge(BaseModel):
     ai_suspected: bool = Field(
         False,
         description=(
-            "Модель сочла стиль похожим на код от ИИ. Это эвристика и повод "
-            "присмотреться, а не вывод о списывании"
+            "Есть повод присмотреться: модель сочла стиль похожим на ИИ либо в "
+            "тексте нашлись механические следы вставки. Эвристика, а не вывод "
+            "о списывании"
         ),
     )
     degraded: bool = Field(
@@ -171,10 +210,14 @@ def build_code_review_badge(raw: Optional[Dict[str, Any]]) -> Optional[CodeRevie
         score = int(lint_score + 0.5) if isinstance(lint_score, (int, float)) else None
 
     verdict = (raw.get("ai_authorship") or {}).get("verdict")
+    # Механический след зажигает значок наравне с вердиктом модели (tsk-646).
+    # Иначе работа, где следы вставки нашлись, а модель промолчала, выглядела
+    # бы в ленте чистой — при том, что след как раз ПРОВЕРЯЕМ, а вердикт нет.
+    signals = raw.get("signals")
 
     return CodeReviewBadge(
         status=str(status),
         score=score,
-        ai_suspected=(verdict == "ai_likely"),
+        ai_suspected=(verdict == "ai_likely" or bool(signals)),
         degraded=bool(raw.get("degraded")),
     )

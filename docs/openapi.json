@@ -39957,7 +39957,7 @@
           "ai_suspected": {
             "type": "boolean",
             "title": "Ai Suspected",
-            "description": "Модель сочла стиль похожим на код от ИИ. Это эвристика и повод присмотреться, а не вывод о списывании",
+            "description": "Есть повод присмотреться: модель сочла стиль похожим на ИИ либо в тексте нашлись механические следы вставки. Эвристика, а не вывод о списывании",
             "default": false
           },
           "degraded": {
@@ -40161,6 +40161,22 @@
               "skipped"
             ]
           },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind",
+            "description": "Что именно разобрано: `code` — программа (tsk-302), `text` — развёрнутый письменный ответ (tsk-646). Пусто у отчётов, созданных до появления текстовой ветки: они все про код",
+            "examples": [
+              "code",
+              "text"
+            ]
+          },
           "language": {
             "anyOf": [
               {
@@ -40195,6 +40211,21 @@
                 "type": "null"
               }
             ]
+          },
+          "signals": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TextPasteSignal"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signals",
+            "description": "Механические следы вставки в текстовой работе (tsk-646). Считаются регулярками, без модели, и остаются доступны, даже когда модель не ответила. Пустой список — следов нет; это не значит «писал сам»"
           },
           "static": {
             "anyOf": [
@@ -58008,6 +58039,53 @@
         "type": "object",
         "title": "TextAnswerRules",
         "description": "Настройки проверки развёрнутых ответов (TA)."
+      },
+      "TextPasteSignal": {
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code",
+            "description": "Код следа: math_render_residue | latex_markup | markdown_residue",
+            "examples": [
+              "math_render_residue"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label",
+            "description": "Объяснение человеческим языком"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence",
+            "description": "Кусок текста, где след найден"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "TextPasteSignal",
+        "description": "Один механический след вставки текста из чужого окна (tsk-646).\n\nОтличается от `CodeReviewAuthorship` природой: это не мнение модели о слоге,\nа факт о символах в тексте, который преподаватель может проверить глазами.\nПоэтому у каждого следа есть кусок текста — иначе признак снова превратился\nбы в «похоже на ИИ» без оснований, то есть в то, с чего задача началась."
       },
       "TextRubricItem": {
         "properties": {

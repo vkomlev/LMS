@@ -43,6 +43,9 @@ from app.services.checking_service import CheckingService
 # tsk-302 этап 3: сам анализ переехал в фоновый тик
 # (`code_review_cron_service`), здесь работа только помечается к оценке.
 from app.services.code_review_service import pick_code_attachment, pick_code_for_review
+# tsk-646: та же очередь, но для развёрнутых текстовых работ — там разбирается
+# не чистота кода, а признак ИИ-авторства прозы.
+from app.services.text_authorship_service import pick_text_for_review
 # tsk-301: единственная дверь прав подписки. Своей проверки здесь быть не должно —
 # правило живёт в одном месте на все точки принуждения (пробел П13).
 from app.services import entitlements_service
@@ -803,17 +806,37 @@ async def submit_attempt_answers(
                     attempt_id, settings.code_pick_timeout_sec, task.id,
                 )
             if picked_code:
-                code_review_report = {"status": "pending", "code": picked_code}
+                code_review_report = {"status": "pending", "kind": "code", "code": picked_code}
+            elif task_content.type == "TA":
+                # tsk-646: развёрнутый письменный ответ. Разбирается тем же
+                # механизмом, но по другому предмету — прозу оценивают не за
+                # чистоту, а на признак ИИ-авторства.
+                #
+                # Только `TA`, и это решение по замеру, а не по осторожности.
+                # На прод-корпусе прозы из `SA_COM` детектор дал 5 сработок,
+                # и ВСЕ пять — у одного ученика курса про ИИ, где задание
+                # прямо просит вставить ответ агента. Там признак означал бы
+                # «ученик выполнил задание», то есть ровно ложное обвинение.
+                # Замер: docs/qa/2026-08-23-tsk646-text-authorship-calibration.md
+                #
+                # Текст лежит в `response.text` — у `TA` поля `value` и
+                # `comment` пустые всегда (проверено на всех 64 сдачах прода),
+                # поэтому кодовая ветка выше по ним ничего и не находит.
+                picked_text = pick_text_for_review(answer.response.text)
+                if picked_text:
+                    code_review_report = {
+                        "status": "pending", "kind": "text", "code": picked_text,
+                    }
             elif pick_timed_out and pick_code_attachment(
                 (answer.response.meta or {}).get("attachments")
             ):
-                # Не успели прочитать ВЛОЖЕНИЕ — ставим в очередь без снимка:
-                # иначе таймаут хранилища молча отменял бы оценку. Условие про
-                # вложение обязательно: без него сюда попадали бы и работы, где
-                # программы просто нет, а это ровно тот «вечный признак оценка
-                # готовится» у преподавателя, ради которого порог и вводился
-                # (находки Н1/Б2 ревью этапа 3).
-                code_review_report = {"status": "pending"}
+                # tsk-644: не успели прочитать ВЛОЖЕНИЕ — ставим в очередь без
+                # снимка: иначе таймаут хранилища молча отменял бы оценку.
+                # Условие про вложение обязательно: без него сюда попадали бы и
+                # работы, где программы просто нет, а это ровно тот «вечный
+                # признак оценка готовится» у преподавателя, ради которого порог
+                # и вводился (находки Н1/Б2 ревью этапа 3).
+                code_review_report = {"status": "pending", "kind": "code"}
 
         # 2.3c Learning Engine V1: таймлимит из tasks.time_limit_sec; при просрочке score=0
         now = datetime.now(timezone.utc)
