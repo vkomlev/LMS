@@ -179,6 +179,7 @@ async def measure_last_position(
     meter: QueryMeter,
     *,
     student_id: int,
+    top: int = 0,
 ) -> dict[str, Any]:
     """Один прогон `GET /me/last-position` — сколько запросов он стоит.
 
@@ -210,6 +211,10 @@ async def measure_last_position(
         wall - meter.total_seconds,
         " | ПЫТАЛСЯ ЗАПИСАТЬ" if write_attempt else "",
     )
+    if top:
+        logger.info("  самые частые запросы:")
+        for statement, times in meter.by_statement.most_common(top):
+            logger.info("    %4d раз | %6.2f с | %s", times, meter.seconds_by_statement[statement], statement)
     return {
         "student_id": student_id,
         "queries": meter.count,
@@ -250,7 +255,9 @@ async def main_async(args: argparse.Namespace) -> None:
     results: list[dict[str, Any]] = []
     try:
         for student_id in args.last_position:
-            results.append(await measure_last_position(session_factory, meter, student_id=student_id))
+            results.append(
+                await measure_last_position(session_factory, meter, student_id=student_id, top=args.top)
+            )
         for occurrence_id in args.occurrence:
             results.append(
                 await measure_one(
