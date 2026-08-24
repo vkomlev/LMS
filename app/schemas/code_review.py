@@ -97,6 +97,63 @@ class CodeReviewRadon(BaseModel):
     complexity: Optional[list[CodeReviewComplexity]] = None
 
 
+class RubricReviewItem(BaseModel):
+    """Один пункт рубрики и что по нему видно в ответе ученика (tsk-658)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: Optional[str] = Field(None, description="ID критерия из `text_answer.rubric`")
+    title: Optional[str] = Field(None, description="Формулировка критерия")
+    max_score: Optional[int] = Field(
+        None, description="Вес критерия. Пусто у критериев без баллов"
+    )
+    met: Optional[str] = Field(
+        None,
+        description=(
+            "yes — критерий выполнен и подтверждён местом в ответе; no — этого нет "
+            "либо сказано неверно; unclear — по тексту решить нельзя"
+        ),
+        examples=["yes", "no", "unclear"],
+    )
+    evidence: Optional[str] = Field(
+        None, description="Цитата из ответа ученика либо объяснение, почему пункт не засчитан"
+    )
+
+
+class RubricReview(BaseModel):
+    """
+    Раскладка развёрнутого ответа по рубрике задания (tsk-658).
+
+    Это ОПОРА для преподавателя, а не решение: зачёт по таким работам ставит
+    человек. Балл здесь предложенный и сложен нашим кодом из выполненных
+    пунктов — модель его не считает и не видит (довод tsk-605: на арифметике
+    без эталона она ошибается заметно чаще).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    items: Optional[list[RubricReviewItem]] = Field(
+        None, description="Пункты рубрики в том же порядке, что у задания"
+    )
+    suggested_score: Optional[int] = Field(
+        None,
+        description=(
+            "Сумма баллов за пункты со значением yes. Предложение, а не оценка. "
+            "Пусто, если у критериев нет весов"
+        ),
+        examples=[4, None],
+    )
+    max_score: Optional[int] = Field(
+        None, description="Потолок рубрики — чтобы предложенный балл читался («4 из 6»)"
+    )
+    summary: Optional[str] = Field(
+        None, description="1–2 предложения: что в работе есть, чего не хватает"
+    )
+    error: Optional[str] = Field(
+        None, description="Разбор не выполнен: модель недоступна либо ответ не разобран"
+    )
+
+
 class CodeReviewStatic(BaseModel):
     """Разбор линтера — только для Python; для прочих языков секции нет."""
 
@@ -139,6 +196,14 @@ class CodeReviewReport(BaseModel):
             "Механические следы вставки в текстовой работе (tsk-646). Считаются "
             "регулярками, без модели, и остаются доступны, даже когда модель не "
             "ответила. Пустой список — следов нет; это не значит «писал сам»"
+        ),
+    )
+    rubric_review: Optional[RubricReview] = Field(
+        None,
+        description=(
+            "Раскладка развёрнутого ответа по рубрике задания (tsk-658). Есть только "
+            "у текстовых работ, у которых задание несёт критерии. Опора для "
+            "преподавателя: зачёт по таким работам ставит человек"
         ),
     )
     static: Optional[CodeReviewStatic] = Field(

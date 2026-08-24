@@ -40338,6 +40338,17 @@
             "title": "Signals",
             "description": "Механические следы вставки в текстовой работе (tsk-646). Считаются регулярками, без модели, и остаются доступны, даже когда модель не ответила. Пустой список — следов нет; это не значит «писал сам»"
           },
+          "rubric_review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RubricReview"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Раскладка развёрнутого ответа по рубрике задания (tsk-658). Есть только у текстовых работ, у которых задание несёт критерии. Опора для преподавателя: зачёт по таким работам ставит человек"
+          },
           "static": {
             "anyOf": [
               {
@@ -51562,6 +51573,154 @@
         },
         "type": "object",
         "title": "RoleUpdate"
+      },
+      "RubricReview": {
+        "properties": {
+          "items": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RubricReviewItem"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items",
+            "description": "Пункты рубрики в том же порядке, что у задания"
+          },
+          "suggested_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggested Score",
+            "description": "Сумма баллов за пункты со значением yes. Предложение, а не оценка. Пусто, если у критериев нет весов",
+            "examples": [
+              4,
+              null
+            ]
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Потолок рубрики — чтобы предложенный балл читался («4 из 6»)"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary",
+            "description": "1–2 предложения: что в работе есть, чего не хватает"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error",
+            "description": "Разбор не выполнен: модель недоступна либо ответ не разобран"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "RubricReview",
+        "description": "Раскладка развёрнутого ответа по рубрике задания (tsk-658).\n\nЭто ОПОРА для преподавателя, а не решение: зачёт по таким работам ставит\nчеловек. Балл здесь предложенный и сложен нашим кодом из выполненных\nпунктов — модель его не считает и не видит (довод tsk-605: на арифметике\nбез эталона она ошибается заметно чаще)."
+      },
+      "RubricReviewItem": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id",
+            "description": "ID критерия из `text_answer.rubric`"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Формулировка критерия"
+          },
+          "max_score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Score",
+            "description": "Вес критерия. Пусто у критериев без баллов"
+          },
+          "met": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Met",
+            "description": "yes — критерий выполнен и подтверждён местом в ответе; no — этого нет либо сказано неверно; unclear — по тексту решить нельзя",
+            "examples": [
+              "yes",
+              "no",
+              "unclear"
+            ]
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence",
+            "description": "Цитата из ответа ученика либо объяснение, почему пункт не засчитан"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "title": "RubricReviewItem",
+        "description": "Один пункт рубрики и что по нему видно в ответе ученика (tsk-658)."
       },
       "SenderStats": {
         "properties": {

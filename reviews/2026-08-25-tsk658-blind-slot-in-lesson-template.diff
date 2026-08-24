@@ -1,0 +1,224 @@
+diff --git a/app/schemas/code_review.py b/app/schemas/code_review.py
+index 7d36c90..4aa4c3d 100644
+--- a/app/schemas/code_review.py
++++ b/app/schemas/code_review.py
+@@ -97,6 +97,63 @@ class CodeReviewRadon(BaseModel):
+     complexity: Optional[list[CodeReviewComplexity]] = None
+ 
+ 
++class RubricReviewItem(BaseModel):
++    """Один пункт рубрики и что по нему видно в ответе ученика (tsk-658)."""
++
++    model_config = ConfigDict(extra="allow")
++
++    id: Optional[str] = Field(None, description="ID критерия из `text_answer.rubric`")
++    title: Optional[str] = Field(None, description="Формулировка критерия")
++    max_score: Optional[int] = Field(
++        None, description="Вес критерия. Пусто у критериев без баллов"
++    )
++    met: Optional[str] = Field(
++        None,
++        description=(
++            "yes — критерий выполнен и подтверждён местом в ответе; no — этого нет "
++            "либо сказано неверно; unclear — по тексту решить нельзя"
++        ),
++        examples=["yes", "no", "unclear"],
++    )
++    evidence: Optional[str] = Field(
++        None, description="Цитата из ответа ученика либо объяснение, почему пункт не засчитан"
++    )
++
++
++class RubricReview(BaseModel):
++    """
++    Раскладка развёрнутого ответа по рубрике задания (tsk-658).
++
++    Это ОПОРА для преподавателя, а не решение: зачёт по таким работам ставит
++    человек. Балл здесь предложенный и сложен нашим кодом из выполненных
++    пунктов — модель его не считает и не видит (довод tsk-605: на арифметике
++    без эталона она ошибается заметно чаще).
++    """
++
++    model_config = ConfigDict(extra="allow")
++
++    items: Optional[list[RubricReviewItem]] = Field(
++        None, description="Пункты рубрики в том же порядке, что у задания"
++    )
++    suggested_score: Optional[int] = Field(
++        None,
++        description=(
++            "Сумма баллов за пункты со значением yes. Предложение, а не оценка. "
++            "Пусто, если у критериев нет весов"
++        ),
++        examples=[4, None],
++    )
++    max_score: Optional[int] = Field(
++        None, description="Потолок рубрики — чтобы предложенный балл читался («4 из 6»)"
++    )
++    summary: Optional[str] = Field(
++        None, description="1–2 предложения: что в работе есть, чего не хватает"
++    )
++    error: Optional[str] = Field(
++        None, description="Разбор не выполнен: модель недоступна либо ответ не разобран"
++    )
++
++
+ class CodeReviewStatic(BaseModel):
+     """Разбор линтера — только для Python; для прочих языков секции нет."""
+ 
+@@ -141,6 +198,14 @@ class CodeReviewReport(BaseModel):
+             "ответила. Пустой список — следов нет; это не значит «писал сам»"
+         ),
+     )
++    rubric_review: Optional[RubricReview] = Field(
++        None,
++        description=(
++            "Раскладка развёрнутого ответа по рубрике задания (tsk-658). Есть только "
++            "у текстовых работ, у которых задание несёт критерии. Опора для "
++            "преподавателя: зачёт по таким работам ставит человек"
++        ),
++    )
+     static: Optional[CodeReviewStatic] = Field(
+         None, description="Разбор линтера (pylint/radon) — только для Python"
+     )
+diff --git a/app/services/code_review_cron_service.py b/app/services/code_review_cron_service.py
+index 0e34b4b..1ccb782 100644
+--- a/app/services/code_review_cron_service.py
++++ b/app/services/code_review_cron_service.py
+@@ -43,6 +43,7 @@ from app.services.code_review_service import (
+     pick_code_for_review,
+     review_student_code,
+ )
++from app.services import rubric_review_service
+ from app.services import text_authorship_service as text_authorship
+ 
+ logger = logging.getLogger("app.code_review_cron")
+@@ -71,7 +72,10 @@ _PENDING_SQL = """
+            -- tsk-646: что разбираем. У работ, помеченных до появления текстовой
+            -- ветки, ключа нет — они все про код, отсюда COALESCE.
+            COALESCE(tr.code_review->>'kind', 'code') AS kind,
+-           tr.answer_json->'response'->>'text'     AS body_text
++           tr.answer_json->'response'->>'text'     AS body_text,
++           -- tsk-658: критерии задания. Нужны только текстовой ветке — по ним
++           -- раскладывается ответ; у кода своя рубрика в промпте.
++           t.solution_rules                        AS solution_rules
+     FROM task_results tr
+     JOIN tasks t ON t.id = tr.task_id
+     WHERE tr.code_review->>'status' = 'pending'
+@@ -149,7 +153,8 @@ async def code_review_cron_tick(
+     # а каждый отчёт `_write` пишет и коммитит сам, своей короткой транзакцией.
+     for row in rows:
+         (result_id, student_id, attempt_id, task_id, value, comment, stem,
+-         attachments, attempts, backfill, code_snapshot, kind, body_text) = row
++         attachments, attempts, backfill, code_snapshot, kind, body_text,
++         solution_rules) = row
+ 
+         # tsk-646: развёрнутый письменный ответ разбирается другой рубрикой
+         # и без линтера — предмет другой, механизм очереди тот же.
+@@ -158,6 +163,7 @@ async def code_review_cron_tick(
+                 factory, summary,
+                 result_id=result_id, student_id=student_id, stem=stem,
+                 snapshot=code_snapshot, body_text=body_text,
++                solution_rules=solution_rules,
+                 attempts=attempts, backfill=backfill,
+                 max_attempts=settings.code_review_max_attempts,
+             )
+@@ -260,12 +266,13 @@ async def _process_text_row(
+     stem: Optional[str],
+     snapshot: Optional[str],
+     body_text: Optional[str],
++    solution_rules: Any,
+     attempts: int,
+     backfill: bool,
+     max_attempts: int,
+ ) -> None:
+     """
+-    Разбор одной ТЕКСТОВОЙ работы (tsk-646).
++    Разбор одной ТЕКСТОВОЙ работы (tsk-646) и её раскладка по рубрике (tsk-658).
+ 
+     Отличий от кодовой ветки три, и все три по существу предмета:
+ 
+@@ -292,13 +299,11 @@ async def _process_text_row(
+         body, task_stem=stem, student_id=student_id,
+     )
+     error = verdict.get("error")
+-    if not error:
+-        await _write(factory, result_id, {"status": "done", **verdict}, backfill=backfill)
+-        summary["reviewed"] += 1
+-        return
+ 
+     attempts_done = int(attempts) + 1
+-    if bool(verdict.get("retryable")) and attempts_done < max_attempts:
++    if error and bool(verdict.get("retryable")) and attempts_done < max_attempts:
++        # Работа остаётся в очереди целиком, вместе с раскладкой по рубрике:
++        # платить за разбор, который через минуту посчитается заново, незачем.
+         await _write(factory, result_id, {
+             "status": "pending",
+             "kind": "text",
+@@ -308,19 +313,39 @@ async def _process_text_row(
+         summary["retried"] += 1
+         return
+ 
++    # tsk-658: раскладка по критериям — ОТДЕЛЬНЫМ вызовом и независимо от того,
++    # чем кончился признак авторства. Оси не должны подсказывать друг другу
++    # (довод tsk-646), а преподавателю разбор по рубрике нужен и тогда, когда
++    # вердикта о слоге нет вовсе.
++    rubric = await rubric_review_service.review_against_rubric(
++        body, solution_rules=solution_rules, task_stem=stem, student_id=student_id,
++    )
++
++    if not error:
++        await _write(
++            factory, result_id, {"status": "done", **verdict, **rubric}, backfill=backfill,
++        )
++        summary["reviewed"] += 1
++        return
++
+     signals = verdict.get("signals") or []
++    # Раскладка по рубрике — такая же проверяемая часть отчёта, как следы
++    # вставки: если она посчиталась, работа закрывается, а не числится
++    # неудачей с пустым отчётом.
++    has_rubric = bool(rubric.get("rubric_review", {}).get("items"))
+     payload: Dict[str, Any] = {
+-        "status": "done" if signals else "failed",
++        "status": "done" if (signals or has_rubric) else "failed",
+         "kind": "text",
+         "attempts": attempts_done,
+         "error": error,
+         "message": verdict.get("message"),
+         "signals": signals,
++        **rubric,
+     }
+-    if signals:
++    if signals or has_rubric:
+         payload["degraded"] = True
+     await _write(factory, result_id, payload, backfill=backfill)
+-    summary["degraded" if signals else "failed"] += 1
++    summary["degraded" if (signals or has_rubric) else "failed"] += 1
+ 
+ 
+ async def _write(
+diff --git a/tests/test_tsk301_ai_spend_guard.py b/tests/test_tsk301_ai_spend_guard.py
+index c301de6..659f7e4 100644
+--- a/tests/test_tsk301_ai_spend_guard.py
++++ b/tests/test_tsk301_ai_spend_guard.py
+@@ -92,6 +92,19 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
+     "app/services/text_authorship_service.py": SpendPoint(
+         capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+     ),
++    # tsk-658: раскладка развёрнутого ответа по рубрике задания. Гейт тот же и
++    # там же — работа доходит сюда только через прогейченный вход `attempts.py`,
++    # и новой возможности намеренно не заводится по тому же доводу, что в
++    # tsk-646.
++    #
++    # Что ЗДЕСЬ ново и о чём нельзя молчать: на текстовой работе с критериями
++    # это ВТОРОЙ вызов модели вместо одного. Совмещать его с признаком авторства
++    # нельзя — оси обязаны считаться независимо (tsk-646), — поэтому расход на
++    # такую сдачу примерно удваивается. Порог тот же, что у соседей: работы
++    # короче `MIN_TEXT_CHARS` и задания без критериев к модели не идут вовсе.
++    "app/services/rubric_review_service.py": SpendPoint(
++        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
++    ),
+ }
+ 
+ 

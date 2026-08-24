@@ -43,6 +43,7 @@ from app.services.code_review_service import (
     pick_code_for_review,
     review_student_code,
 )
+from app.services import rubric_review_service
 from app.services import text_authorship_service as text_authorship
 
 logger = logging.getLogger("app.code_review_cron")
@@ -71,7 +72,10 @@ _PENDING_SQL = """
            -- tsk-646: что разбираем. У работ, помеченных до появления текстовой
            -- ветки, ключа нет — они все про код, отсюда COALESCE.
            COALESCE(tr.code_review->>'kind', 'code') AS kind,
-           tr.answer_json->'response'->>'text'     AS body_text
+           tr.answer_json->'response'->>'text'     AS body_text,
+           -- tsk-658: критерии задания. Нужны только текстовой ветке — по ним
+           -- раскладывается ответ; у кода своя рубрика в промпте.
+           t.solution_rules                        AS solution_rules
     FROM task_results tr
     JOIN tasks t ON t.id = tr.task_id
     WHERE tr.code_review->>'status' = 'pending'
@@ -149,7 +153,8 @@ async def code_review_cron_tick(
     # а каждый отчёт `_write` пишет и коммитит сам, своей короткой транзакцией.
     for row in rows:
         (result_id, student_id, attempt_id, task_id, value, comment, stem,
-         attachments, attempts, backfill, code_snapshot, kind, body_text) = row
+         attachments, attempts, backfill, code_snapshot, kind, body_text,
+         solution_rules) = row
 
         # tsk-646: развёрнутый письменный ответ разбирается другой рубрикой
         # и без линтера — предмет другой, механизм очереди тот же.
@@ -158,6 +163,7 @@ async def code_review_cron_tick(
                 factory, summary,
                 result_id=result_id, student_id=student_id, stem=stem,
                 snapshot=code_snapshot, body_text=body_text,
+                solution_rules=solution_rules,
                 attempts=attempts, backfill=backfill,
                 max_attempts=settings.code_review_max_attempts,
             )
@@ -260,12 +266,13 @@ async def _process_text_row(
     stem: Optional[str],
     snapshot: Optional[str],
     body_text: Optional[str],
+    solution_rules: Any,
     attempts: int,
     backfill: bool,
     max_attempts: int,
 ) -> None:
     """
-    Разбор одной ТЕКСТОВОЙ работы (tsk-646).
+    Разбор одной ТЕКСТОВОЙ работы (tsk-646) и её раскладка по рубрике (tsk-658).
 
     Отличий от кодовой ветки три, и все три по существу предмета:
 
@@ -292,13 +299,11 @@ async def _process_text_row(
         body, task_stem=stem, student_id=student_id,
     )
     error = verdict.get("error")
-    if not error:
-        await _write(factory, result_id, {"status": "done", **verdict}, backfill=backfill)
-        summary["reviewed"] += 1
-        return
 
     attempts_done = int(attempts) + 1
-    if bool(verdict.get("retryable")) and attempts_done < max_attempts:
+    if error and bool(verdict.get("retryable")) and attempts_done < max_attempts:
+        # Работа остаётся в очереди целиком, вместе с раскладкой по рубрике:
+        # платить за разбор, который через минуту посчитается заново, незачем.
         await _write(factory, result_id, {
             "status": "pending",
             "kind": "text",
@@ -308,19 +313,39 @@ async def _process_text_row(
         summary["retried"] += 1
         return
 
+    # tsk-658: раскладка по критериям — ОТДЕЛЬНЫМ вызовом и независимо от того,
+    # чем кончился признак авторства. Оси не должны подсказывать друг другу
+    # (довод tsk-646), а преподавателю разбор по рубрике нужен и тогда, когда
+    # вердикта о слоге нет вовсе.
+    rubric = await rubric_review_service.review_against_rubric(
+        body, solution_rules=solution_rules, task_stem=stem, student_id=student_id,
+    )
+
+    if not error:
+        await _write(
+            factory, result_id, {"status": "done", **verdict, **rubric}, backfill=backfill,
+        )
+        summary["reviewed"] += 1
+        return
+
     signals = verdict.get("signals") or []
+    # Раскладка по рубрике — такая же проверяемая часть отчёта, как следы
+    # вставки: если она посчиталась, работа закрывается, а не числится
+    # неудачей с пустым отчётом.
+    has_rubric = bool(rubric.get("rubric_review", {}).get("items"))
     payload: Dict[str, Any] = {
-        "status": "done" if signals else "failed",
+        "status": "done" if (signals or has_rubric) else "failed",
         "kind": "text",
         "attempts": attempts_done,
         "error": error,
         "message": verdict.get("message"),
         "signals": signals,
+        **rubric,
     }
-    if signals:
+    if signals or has_rubric:
         payload["degraded"] = True
     await _write(factory, result_id, payload, backfill=backfill)
-    summary["degraded" if signals else "failed"] += 1
+    summary["degraded" if (signals or has_rubric) else "failed"] += 1
 
 
 async def _write(

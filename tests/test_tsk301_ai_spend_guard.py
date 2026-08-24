@@ -92,6 +92,19 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
     "app/services/text_authorship_service.py": SpendPoint(
         capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
     ),
+    # tsk-658: раскладка развёрнутого ответа по рубрике задания. Гейт тот же и
+    # там же — работа доходит сюда только через прогейченный вход `attempts.py`,
+    # и новой возможности намеренно не заводится по тому же доводу, что в
+    # tsk-646.
+    #
+    # Что ЗДЕСЬ ново и о чём нельзя молчать: на текстовой работе с критериями
+    # это ВТОРОЙ вызов модели вместо одного. Совмещать его с признаком авторства
+    # нельзя — оси обязаны считаться независимо (tsk-646), — поэтому расход на
+    # такую сдачу примерно удваивается. Порог тот же, что у соседей: работы
+    # короче `MIN_TEXT_CHARS` и задания без критериев к модели не идут вовсе.
+    "app/services/rubric_review_service.py": SpendPoint(
+        capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+    ),
 }
 
 
