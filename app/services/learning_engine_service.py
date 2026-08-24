@@ -28,7 +28,7 @@ from app.schemas.learning_engine import (
     CourseStateType,
 )
 from app.repos.user_courses_repo import UserCoursesRepository
-from app.repos.courses_repo import CoursesRepository
+from app.repos.courses_repo import CoursesRepository, course_tree_cache
 from app.repos.course_dependencies_repository import CourseDependenciesRepository
 from app.schemas.task_content import QUIZ_TASK_TYPES
 from app.schemas.course_sampling import CourseSamplingConfig
@@ -542,6 +542,7 @@ class LearningEngineService:
         task_ids: List[int],
         *,
         last_results: Optional[dict[int, Any]] = None,
+        root_course_id: Optional[int] = None,
     ) -> dict[int, TaskStateResult]:
         """Пакетная версия `compute_task_state` для дерева заданий (review tsk-297, находка S3-3).
 
@@ -554,13 +555,13 @@ class LearningEngineService:
         `compute_task_state`), но ДВА запроса на весь `task_ids` — плюс
         переиспользование уже загруженного вызывающим `last_results`.
 
-        Ограничение (сознательное, не молчаливое): считается ТОЛЬКО ветка
-        `root_course_id=None` — как и у единственного вызывающего на сегодня,
-        который зовёт движок без `root_course_id`, то есть попытки считаются
-        по ВСЕМ корням задания (см. docstring `compute_task_state`, tsk-264).
-        Если появится вызывающий с конкретным `root_course_id` — расширять
-        по образцу `compute_task_state` (там квиз игнорирует переданный
-        корень), а не тянуть эту функцию молча.
+        tsk-662: граница корня (`root_course_id`) поддержана — раньше здесь
+        считалась ТОЛЬКО ветка `root_course_id=None`, и это закрывало дорогу
+        главному потребителю. `resolve_next_item` идёт по дереву конкретного
+        корня и звал `compute_task_state` на КАЖДОЕ задание: ~6 запросов на
+        задание (тип задания — дважды, переопределение лимита, `max_attempts`,
+        счёт попыток, последний результат). Замер на боевой базе (tsk-655):
+        533 из 627 запросов одного `GET /me/last-position` — ровно это.
 
         Args:
             db: сессия БД.
@@ -572,10 +573,16 @@ class LearningEngineService:
                 `attempt_id, submitted_at, score, max_score, answer_json,
                 is_correct, checked_at`). Не передан — загружается здесь же
                 отдельным запросом (тогда всего запросов не 2, а 3).
+            root_course_id: корень дерева, которым ученик пришёл к заданиям
+                (tsk-264). Задан — попытки считаются в его границах; `None` —
+                по всем корням. Квиз (`QUIZ_TASK_TYPES`) корень игнорирует
+                всегда: его ответ один навсегда и submit отклоняет повтор
+                глобально — паритет с `compute_task_state`.
 
         Returns:
             `task_id -> TaskStateResult`, поэлементно эквивалентно
-            `compute_task_state(db, student_id, tid)` для тех же `task_ids`.
+            `compute_task_state(db, student_id, tid, root_course_id)` для тех
+            же `task_ids`.
         """
         if not task_ids:
             return {}
@@ -610,18 +617,31 @@ class LearningEngineService:
             else:
                 limits[tid] = DEFAULT_MAX_ATTEMPTS
 
-        # 2) attempts_used — root_course_id=None у вызывающего, поэтому считаем
-        #    ВСЕ попытки задания (см. ограничение в docstring).
+        # 2) attempts_used. При заданном корне (tsk-264) считаем попытки только
+        #    этого корня — кроме квиза, который корень игнорирует (tsk-662, тот
+        #    же порядок ветвлений, что в `compute_task_state`). Попытки с
+        #    `root_course_id IS NULL` лимит не расходуют ни в одном корне.
         count_rows = (
             await db.execute(
                 text(
                     "SELECT tr.task_id, COUNT(*) "
                     "FROM task_results tr "
                     "INNER JOIN attempts a ON a.id = tr.attempt_id AND a.cancelled_at IS NULL "
+                    "INNER JOIN tasks t ON t.id = tr.task_id "
                     "WHERE tr.user_id = :student_id AND tr.task_id = ANY(:ids) "
+                    "  AND ( "
+                    "        CAST(:root_course_id AS INTEGER) IS NULL "
+                    "        OR t.task_content->>'type' = ANY(:quiz_types) "
+                    "        OR a.root_course_id = CAST(:root_course_id AS INTEGER) "
+                    "  ) "
                     "GROUP BY tr.task_id"
                 ),
-                {"student_id": student_id, "ids": ids},
+                {
+                    "student_id": student_id,
+                    "ids": ids,
+                    "root_course_id": root_course_id,
+                    "quiz_types": list(QUIZ_TASK_TYPES),
+                },
             )
         ).fetchall()
         attempts_used: dict[int, int] = {int(tid): int(cnt) for tid, cnt in count_rows}
@@ -1179,7 +1199,22 @@ class LearningEngineService:
         ПЕРВОЕ вхождение, и ученика со второго вхождения отбрасывало назад —
         ровно тот дефект, который позиция и чинит. Заодно снимается многократный
         опрос материалов/заданий одного и того же узла.
+
+        tsk-662: результат КЕШИРУЕТСЯ на время сессии БД (то есть на один
+        запрос; см. `courses_repo.course_tree_cache`). Один и тот же корень
+        обходился по нескольку раз за вызов: `resolve_next_item` считает и
+        множество доступных курсов (`_reachable`), и обход самого корня, а
+        сводка занятия шла по КАЖДОМУ из 7-12 участников группы — у которых
+        дерево одно и то же. Замер на боевой базе (tsk-655): сводка на 12
+        участников — 1093 запроса, `/me/last-position` одного ученика —
+        645-1597. Кеш сбрасывается при правке иерархии в той же сессии
+        (`set_parent_courses`, `update_course_parent_order`).
         """
+        cache = course_tree_cache(db)
+        cached = cache.get(root_id)
+        if cached is not None:
+            return list(cached)
+
         result: List[int] = []
         seen: set[int] = set()
 
@@ -1187,14 +1222,20 @@ class LearningEngineService:
             if course_id in seen:
                 return
             seen.add(course_id)
-            children = await self._courses_repo.get_children(db, course_id)
-            # order_number ASC NULLS LAST, затем id
-            for _c, _ord in sorted(children, key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id)):
-                await walk(_c.id)
+            # tsk-662: `get_child_rows`, а не `get_children` — обходу нужны
+            # только id и порядок, а подгрузка родителей узла добавляла
+            # ВТОРОЙ запрос на каждый узел дерева.
+            children = await self._courses_repo.get_child_rows(db, course_id)
+            # order_number ASC NULLS LAST, затем id — тот же ключ, что у
+            # элементов курса (`_order_key`), а не его копия: правило одно,
+            # и меняться оно должно в одном месте.
+            for _cid, _ord, _title in sorted(children, key=lambda x: self._order_key(x[1], x[0])):
+                await walk(_cid)
             # Материалы/задания самого курса — после всех его подкурсов (post-order).
             result.append(course_id)
 
         await walk(root_id)
+        cache[root_id] = list(result)
         return result
 
     @staticmethod
@@ -1430,12 +1471,24 @@ class LearningEngineService:
         else:
             skipped_ids = set()
 
-        for tid in task_ids:
-            if tid in skipped_ids:
+        # tsk-662: состояния считаются ПАКЕТОМ — три запроса на весь список
+        # заданий узла вместо ~6 на каждое. Поэлементный `compute_task_state`
+        # здесь был главной ценой `/me/last-position`: движок идёт по учебному
+        # порядку до первого незавершённого элемента, то есть проверяет ВСЁ, что
+        # ученик уже прошёл, — 533 запроса из 627 на замере боевой базы
+        # (tsk-655). Цена росла по мере прохождения курса: хуже всего вызов
+        # чувствовал себя у самых сильных учеников.
+        candidates = [tid for tid in task_ids if tid not in skipped_ids]
+        if not candidates:
+            return (None, None)
+
+        states = await self.compute_task_states_batch(
+            db, student_id, candidates, root_course_id=root_course_id
+        )
+        for tid in candidates:
+            state_result = states.get(tid)
+            if state_result is None:
                 continue
-            state_result = await self.compute_task_state(
-                db, student_id, tid, root_course_id=root_course_id
-            )
             if state_result.state == "BLOCKED_LIMIT":
                 return (None, tid)
             if state_result.state in ("OPEN", "IN_PROGRESS", "FAILED"):

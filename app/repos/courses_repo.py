@@ -11,6 +11,30 @@ from app.models.association_tables import t_course_parents
 from app.repos.base import BaseRepository
 
 
+# tsk-662: ключ кеша дерева курса внутри `AsyncSession.info`. Сессия живёт
+# ровно один запрос (`get_async_db` открывает её на запрос и закрывает), а
+# крон — один тик, поэтому кеш не переживает запрос и не может «залипнуть»
+# между ними. Один и тот же корень раньше обходился по нескольку раз за
+# запрос: `resolve_next_item` считает и множество доступных курсов, и обход
+# самого корня, а сводка занятия — на КАЖДОГО из 7-12 участников группы,
+# у которых дерево одно и то же.
+_TREE_CACHE_KEY = "tsk662_course_tree_cache"
+
+
+def course_tree_cache(db: AsyncSession) -> Dict[int, List[int]]:
+    """Кеш обхода дерева курса, живущий ровно столько же, сколько сессия."""
+    cache = db.info.get(_TREE_CACHE_KEY)
+    if cache is None:
+        cache = {}
+        db.info[_TREE_CACHE_KEY] = cache
+    return cache
+
+
+def invalidate_course_tree_cache(db: AsyncSession) -> None:
+    """Сбросить кеш дерева: иерархия в этой сессии изменилась."""
+    db.info.pop(_TREE_CACHE_KEY, None)
+
+
 class CoursesRepository(BaseRepository[Courses]):
     """
     Репозиторий для курсов.
@@ -26,10 +50,14 @@ class CoursesRepository(BaseRepository[Courses]):
     ) -> List[tuple[Courses, Optional[int]]]:
         """
         Получить прямых детей курса (потомки первого уровня).
-        
+
         Возвращает список кортежей (course, order_number).
         Сортировка: по order_number (NULL в конце), затем по id.
         ⚠️ ВАЖНО: order_number автоматически управляется триггером БД.
+
+        ⚠️ Отдаёт ORM-объекты с подгруженными родителями (второй запрос) —
+        это нужно API (`CourseRead.parent_course_ids`). Обходу дерева нужны
+        только id/порядок: там `get_child_rows`, а не этот метод (tsk-662).
         """
         stmt = (
             select(Courses, t_course_parents.c.order_number)
@@ -43,6 +71,43 @@ class CoursesRepository(BaseRepository[Courses]):
         )
         result = await db.execute(stmt)
         return [(row[0], row[1]) for row in result.all()]
+
+    async def get_child_rows(
+        self,
+        db: AsyncSession,
+        course_id: int,
+    ) -> List[Tuple[int, Optional[int], str]]:
+        """Прямые дети курса для ОБХОДА дерева: `(id, order_number, title)`.
+
+        Лёгкий брат `get_children` (tsk-662). Отличий два, оба про цену:
+
+        1. Не грузит `parent_courses`. Родители узла обходу не нужны, а
+           `selectinload` — это ВТОРОЙ запрос на каждый узел: обход дерева
+           из 103 узлов стоил 206 запросов вместо 103.
+        2. Не создаёт ORM-объекты `Courses` вовсе. Иначе частично
+           загруженный курс осел бы в identity map сессии, и соседний код,
+           отдающий этот же курс наружу, получил бы пустой
+           `parent_course_ids` — свойство модели молча отдаёт `[]`, когда
+           связь не загружена, то есть поле обнулилось бы БЕЗ ошибки.
+
+        Сортировка та же, что у `get_children`: `order_number ASC NULLS
+        LAST`, затем `id` — порядок обхода от замены метода не меняется.
+        """
+        stmt = (
+            select(
+                t_course_parents.c.course_id,
+                t_course_parents.c.order_number,
+                Courses.title,
+            )
+            .join(Courses, Courses.id == t_course_parents.c.course_id)
+            .where(t_course_parents.c.parent_course_id == course_id)
+            .order_by(
+                t_course_parents.c.order_number.asc().nulls_last(),
+                t_course_parents.c.course_id.asc(),
+            )
+        )
+        result = await db.execute(stmt)
+        return [(row[0], row[1], row[2]) for row in result.all()]
 
     async def get_all_children(
         self,
@@ -321,6 +386,8 @@ class CoursesRepository(BaseRepository[Courses]):
         if values:
             await db.execute(t_course_parents.insert().values(values))
 
+        # tsk-662: иерархия изменилась — кеш обхода этой сессии больше не верен.
+        invalidate_course_tree_cache(db)
         await db.commit()
     
     async def update_course_parent_order(
@@ -347,6 +414,8 @@ class CoursesRepository(BaseRepository[Courses]):
             .values(order_number=order_number)
         )
         await db.execute(stmt)
+        # tsk-662: порядок подкурсов изменился — обход этой сессии пересчитать.
+        invalidate_course_tree_cache(db)
         await db.commit()
 
     async def filter_existing_ids(

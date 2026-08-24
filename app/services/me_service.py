@@ -1067,22 +1067,29 @@ async def _collect_section_meta(
     )
 
     async def walk(parent_id: int, depth: int) -> None:
-        children = await courses_repo.get_children(db, parent_id)
+        # tsk-662: `get_child_rows`, а не `get_children` — sticky-headers
+        # нужны title/depth/order_number, а не родители узла; подгрузка
+        # родителей стоила ВТОРОГО запроса на каждый узел дерева (до 103).
+        children = await courses_repo.get_child_rows(db, parent_id)
+        # Ключ сортировки берём у движка, а не копируем: sections[] и items[]
+        # обязаны идти в одном порядке, а копия правила разъезжается молча.
+        from app.services.learning_engine_service import LearningEngineService
+
         sorted_children = sorted(
             children,
-            key=lambda x: (0 if x[1] is not None else 1, x[1] or 0, x[0].id),
+            key=lambda x: LearningEngineService._order_key(x[1], x[0]),  # noqa: SLF001
         )
-        for course, order in sorted_children:
+        for course_id, order, title in sorted_children:
             result.append(
                 {
-                    "course_id": course.id,
-                    "title": course.title,
+                    "course_id": course_id,
+                    "title": title,
                     "depth": depth,
                     "parent_course_id": parent_id,
                     "order_number": order,
                 }
             )
-            await walk(course.id, depth + 1)
+            await walk(course_id, depth + 1)
 
     await walk(root_id, 1)
     return result

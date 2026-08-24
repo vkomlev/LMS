@@ -367,3 +367,95 @@ async def test_legacy_call_without_root_counts_globally(graph):
     )
     state = await engine_svc.compute_task_state(s, ids["user"], ids["task_reused"])
     assert state.attempts_used == 2
+
+
+# ── tsk-662: пакетный расчёт обязан совпадать с поэлементным ────────────────
+#
+# `resolve_next_item` перешёл с `compute_task_state` на каждое задание
+# (~6 запросов на задание, 533 из 627 в замере боевой базы) на
+# `compute_task_states_batch`. Пакетный расчёт раньше умел ТОЛЬКО ветку
+# «без корня», и именно граница корня здесь — самое хрупкое место: ошибись
+# в ней, и вернётся ровно жалоба tsk-261 A7, ради которой писан этот файл.
+# Поэтому проверяем не «батч работает», а «батч == поэлементно» на тех же
+# состояниях, что и тесты выше.
+
+
+async def _assert_batch_matches_single(s, user_id, task_ids, root_course_id):
+    """Пакет и поэлементный расчёт дают одно и то же состояние по каждому заданию."""
+    batch = await engine_svc.compute_task_states_batch(
+        s, user_id, list(task_ids), root_course_id=root_course_id
+    )
+    for tid in task_ids:
+        single = await engine_svc.compute_task_state(
+            s, user_id, tid, root_course_id=root_course_id
+        )
+        got = batch[tid]
+        assert (got.state, got.attempts_used, got.attempts_limit_effective) == (
+            single.state, single.attempts_used, single.attempts_limit_effective
+        ), (
+            f"батч разошёлся с поэлементным на задании {tid} (корень {root_course_id}): "
+            f"{got.state}/{got.attempts_used} против {single.state}/{single.attempts_used}"
+        )
+
+
+async def test_batch_matches_single_on_clean_state(graph):
+    """Ничего не решено: батч и поэлементный сходятся во всех трёх корнях."""
+    ids, s = graph
+    tasks = [ids["task_reused"], ids["task_quiz"]]
+    for root_key in ("root_a", "root_b"):
+        await _assert_batch_matches_single(s, ids["user"], tasks, ids[root_key])
+    await _assert_batch_matches_single(s, ids["user"], tasks, None)
+
+
+async def test_batch_keeps_root_boundary_for_attempts(graph):
+    """Исчерпанные в курсе A попытки не блокируют задание в курсе B и в батче.
+
+    Тот же сценарий, что `test_reused_node_attempts_do_not_cross_roots`, но
+    через пакетный расчёт: если граница корня в нём потеряется, движок начнёт
+    отдавать `blocked_limit` в чужом курсе.
+    """
+    ids, s = graph
+    await _burn_attempts(
+        s, ids["user"], ids["task_reused"], ids["reused"],
+        ids["root_a"], DEFAULT_MAX_ATTEMPTS,
+    )
+    in_a = await engine_svc.compute_task_states_batch(
+        s, ids["user"], [ids["task_reused"]], root_course_id=ids["root_a"]
+    )
+    in_b = await engine_svc.compute_task_states_batch(
+        s, ids["user"], [ids["task_reused"]], root_course_id=ids["root_b"]
+    )
+    assert in_a[ids["task_reused"]].state == "BLOCKED_LIMIT"
+    assert in_b[ids["task_reused"]].attempts_used == 0, (
+        "попытки курса A просочились в курс B через пакетный расчёт"
+    )
+    assert in_b[ids["task_reused"]].state != "BLOCKED_LIMIT"
+    await _assert_batch_matches_single(s, ids["user"], [ids["task_reused"]], ids["root_b"])
+
+
+async def test_batch_counts_quiz_globally(graph):
+    """Квиз игнорирует корень и в батче — иначе SPW предложит повтор, а сервер даст 409."""
+    ids, s = graph
+    await _burn_attempts(s, ids["user"], ids["task_quiz"], ids["reused"], ids["root_a"], 1)
+    in_b = await engine_svc.compute_task_states_batch(
+        s, ids["user"], [ids["task_quiz"]], root_course_id=ids["root_b"]
+    )
+    assert in_b[ids["task_quiz"]].attempts_used == 1, "счёт квиза обязан быть общим"
+    assert in_b[ids["task_quiz"]].state == "BLOCKED_LIMIT"
+    await _assert_batch_matches_single(s, ids["user"], [ids["task_quiz"]], ids["root_b"])
+
+
+async def test_batch_ignores_attempts_without_root(graph):
+    """Попытка с неизвестным путём не расходует лимит и в пакетном расчёте."""
+    ids, s = graph
+    await _burn_attempts(
+        s, ids["user"], ids["task_reused"], ids["reused"], None, DEFAULT_MAX_ATTEMPTS,
+    )
+    for root_key in ("root_a", "root_b"):
+        batch = await engine_svc.compute_task_states_batch(
+            s, ids["user"], [ids["task_reused"]], root_course_id=ids[root_key]
+        )
+        assert batch[ids["task_reused"]].attempts_used == 0, (
+            f"попытка без пути посчиталась в {root_key}"
+        )
+    await _assert_batch_matches_single(s, ids["user"], [ids["task_reused"]], None)
