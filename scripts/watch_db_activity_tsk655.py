@@ -102,8 +102,15 @@ def _dsn_from_mcp(server: str) -> str:
     raise RuntimeError(f"в .mcp.json у сервера {server} нет строки подключения")
 
 
-async def _plan_windows(conn: Any, horizon_hours: int) -> list[tuple[datetime, datetime, dict[str, Any]]]:
-    """Окна караула вокруг границ ближайших занятий."""
+async def _plan_windows(
+    conn: Any, horizon_hours: int, min_participants: int = 0,
+) -> list[tuple[datetime, datetime, dict[str, Any]]]:
+    """Окна караула вокруг границ ближайших занятий.
+
+    ``min_participants`` отсекает мелкие группы: затор — явление залпа, на трёх
+    учениках он может не случиться вовсе, и караулить такое окно значит потратить
+    прогон впустую.
+    """
     rows = await conn.fetch(
         """
         SELECT lo.id, lo.scheduled_at, lo.duration_minutes,
@@ -123,6 +130,12 @@ async def _plan_windows(conn: Any, horizon_hours: int) -> list[tuple[datetime, d
         start = ends_at - timedelta(minutes=_BEFORE_END_MINUTES)
         stop = ends_at + timedelta(minutes=_AFTER_END_MINUTES)
         if stop <= datetime.now(timezone.utc):
+            continue
+        if int(row["participants"]) < min_participants:
+            logger.info(
+                "    пропускаю занятие %s: учеников %s, меньше порога %s",
+                row["id"], row["participants"], min_participants,
+            )
             continue
         windows.append((start, stop, {
             "occurrence_id": row["id"],
@@ -239,12 +252,14 @@ async def main_async(args: argparse.Namespace) -> None:
         logger.info("Журнал медленных запросов: последняя строка id=%s", last_slow_id)
 
         if args.auto:
-            windows = await _plan_windows(conn, args.horizon_hours)
+            windows = await _plan_windows(conn, args.horizon_hours, args.min_participants)
             if not windows:
                 logger.info(
-                    "Занятий в ближайшие %s ч не нашлось — караулить нечего. "
-                    "Запустите с --minutes, если нужно снять окно вручную.",
+                    "Занятий в ближайшие %s ч не нашлось (порог по ученикам: %s) — "
+                    "караулить нечего. Увеличьте --horizon-hours, снизьте "
+                    "--min-participants или снимите окно вручную через --minutes.",
                     args.horizon_hours,
+                    args.min_participants,
                 )
                 return
             logger.info("Окна караула (по границам занятий, время UTC):")
@@ -285,7 +300,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--prod", action="store_true", help="боевая база из .mcp.json (только чтение)")
     parser.add_argument("--dsn", default=None, help="явная строка подключения")
     parser.add_argument("--auto", action="store_true", help="караулить границы ближайших занятий")
-    parser.add_argument("--horizon-hours", type=int, default=12, help="на сколько часов вперёд искать занятия")
+    # Сутки, а не полсуток: типичный сценарий — запустить вечером и поймать
+    # утреннее занятие следующего дня. С горизонтом в 12 часов такой запуск
+    # молча не находил ничего и выглядел как «занятий нет».
+    parser.add_argument("--horizon-hours", type=int, default=24, help="на сколько часов вперёд искать занятия")
+    parser.add_argument(
+        "--min-participants", type=int, default=0,
+        help="караулить только занятия, где учеников не меньше этого числа",
+    )
     parser.add_argument("--minutes", type=float, default=15, help="длина окна вручную (без --auto)")
     parser.add_argument("--interval", type=float, default=2.0, help="секунд между снимками")
     parser.add_argument("--out", default=None, help="куда писать снимки (.jsonl)")
