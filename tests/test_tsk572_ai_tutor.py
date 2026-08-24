@@ -330,6 +330,40 @@ async def test_stale_session_expires_and_frees_the_slot(db):
 
 
 @pytest.mark.asyncio
+async def test_stale_session_expires_without_janitor(db):
+    """Срок жизни разговора работает сам, без уборщика (tsk-659).
+
+    Тест выше зовёт `expire_stale` руками — и это скрывало главное: в рабочем
+    коде её не звал НИКТО, ни планировщик, ни эндпоинт. Срок жизни существовал
+    только в тесте, а ученик, вернувшийся к заданию через неделю, попадал во
+    вчерашний разговор с чужим контекстом.
+    """
+    course = await _course(db)
+    task = await _task(db, course, stem="Задача")
+    student = await _student(db, "ttl-lazy")
+    try:
+        old, _ = await session_service.get_or_create(db, student_id=student, task_id=task)
+        await db.execute(text(
+            "UPDATE ai_tutor_session SET last_activity_at = now() - interval '48 hours' "
+            "WHERE id = :sid"
+        ), {"sid": old.id})
+        await db.commit()
+
+        # Никакого `expire_stale` — только обычный возврат ученика к заданию.
+        fresh, created = await session_service.get_or_create(
+            db, student_id=student, task_id=task)
+        assert created is True, "ученик заперт во вчерашнем разговоре"
+        assert fresh.id != old.id
+
+        status = (await db.execute(
+            text("SELECT status FROM ai_tutor_session WHERE id = :sid"), {"sid": old.id}
+        )).scalar()
+        assert status == "expired"
+    finally:
+        await _cleanup(db, user_ids=[student], course_ids=[course])
+
+
+@pytest.mark.asyncio
 async def test_snapshot_survives_task_rewrite(db):
     """Переиздание задания не ломает уже идущий разговор.
 
