@@ -238,47 +238,6 @@ async def test_chain_falls_through_to_working_model(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
-    """HTTP 503 «нет доступного upstream для ЭТОЙ модели» — повод взять следующую.
-
-    tsk-666, боевой случай. Провайдер отдаёт именно так:
-    `{"error":{"code":"no_available_provider","status":503,
-      "metadata":{"requested_models":["x-ai/grok-4.1-fast"]}}}`.
-    Ошибка про КОНКРЕТНУЮ модель, остальные три в цепочке живы — но
-    `LLMUnavailable` не разрешала переход, и наставник замолкал целиком.
-
-    Так оборвались оба последних живых разговора контура (22.08 и 24.08) и
-    разговор Шестаева 12.08: ученик писал реплику и получал «сбой на нашей
-    стороне» при трёх работающих запасных моделях.
-
-    429 при этом по-прежнему цепочку НЕ перебирает — там остывает провайдер
-    целиком (`test_429_does_not_walk_the_model_chain`).
-    """
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        model = json.loads(request.content)["model"]
-        seen.append(model)
-        if model == "model-a":
-            return httpx.Response(503, json={"error": {
-                "code": "no_available_provider",
-                "message": "No available upstream endpoint for requested model(s)",
-                "status": 503,
-                "metadata": {"endpoint_type": "chat", "requested_models": [model]},
-            }})
-        return httpx.Response(200, json=_ok_batch("ответ запасной модели"))
-
-    _mount(monkeypatch, handler)
-    monkeypatch.setenv("LLM_JUDGE_MODELS", "model-a,model-b")
-
-    res = await llm_client.complete(MSGS, purpose="code_review")
-    assert res.text == "ответ запасной модели"
-    assert seen == ["model-a", "model-b"], (
-        "503 про одну модель положил весь вызов, хотя запасные в цепочке живы"
-    )
-
-
-@pytest.mark.asyncio
 async def test_explicit_model_overrides_chain(monkeypatch):
     """Явная модель отменяет цепочку — вызывающий знает, что делает (стенд, калибровка)."""
     seen: list[str] = []

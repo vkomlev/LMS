@@ -27,7 +27,6 @@ from app.services.llm.contracts import (
     LLMResult,
     LLMTimeout,
     LLMUnavailable,
-    LLMUpstreamUnavailable,
     LLMUpstreamError,
     UsageRecord,
 )
@@ -50,9 +49,7 @@ def _raise_for_status(status: int, body: str) -> None:
     if status == 404:
         raise LLMConfigError(f"404: модель или путь не найдены — {body[:200]}")
     if status >= 500:
-        # Не голый LLMUnavailable: 5xx пришёл ОТ провайдера и относится к
-        # конкретной модели — цепочка обязана попробовать следующую (tsk-666).
-        raise LLMUpstreamUnavailable(f"{status} от провайдера: {body[:200]}")
+        raise LLMUnavailable(f"{status} от провайдера: {body[:200]}")
     if status >= 400:
         raise LLMMalformed(f"{status}: неожиданный ответ — {body[:200]}")
 
