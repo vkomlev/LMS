@@ -12,9 +12,26 @@ from app.schemas.checking import StudentAnswer, CheckResult
 from app.schemas.task_results import TaskResultCreate
 from app.services.base import BaseService
 from app.services.checking_service import CheckingService
+from app.services.learning_gaps_service import REAL_STUDENT_SOURCES
 
 # Learning Engine V1, этап 6: порог для PASS по последней попытке
 PASS_THRESHOLD_RATIO = 0.5
+
+# tsk-663: качество работ считается ТОЛЬКО по реальным сдачам ученика.
+#
+# На проде `task_results` на три четверти состоит из ручных зачётов
+# преподавателя (11 948 строк `manual_teacher` против 4 289 `spw_web`): у них
+# `is_correct = true` и полный балл по определению — это отметка «пройдено», а
+# не ответ. Пока они попадали в средние, статистика показывала 94.3% верных
+# вместо реальных 78.6% и средний балл 1.02 вместо 0.94 (замер по проду
+# 2026-08-25). Правило источника берём из `learning_gaps_service` — там оно
+# живёт в одном месте специально, чтобы такие запросы не заводили своё.
+#
+# Показатели ПРОХОЖДЕНИЯ (`progress_percent`, пройдено/не пройдено по последней
+# попытке, `completion_percentage`) считаются по-прежнему по всем источникам:
+# ручной зачёт — это законно пройденное задание, и вычесть его значило бы
+# показать ученика непроходящим там, где в кабинете у него всё зачтено.
+_REAL_STUDENT_RESULTS = TaskResults.source_system.in_(REAL_STUDENT_SOURCES)
 
 
 def _correct_percentage(correct_count: int, judged_count: int) -> float | None:
@@ -473,7 +490,11 @@ class TaskResultsService(BaseService[TaskResults]):
             select(func.count(TaskResults.id))
             .select_from(TaskResults)
             .join(Attempts, TaskResults.attempt_id == Attempts.id)
-            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
+            .where(
+                TaskResults.task_id == task_id,
+                Attempts.cancelled_at.is_(None),
+                _REAL_STUDENT_RESULTS,
+            )
         )
         total_result = await db.execute(total_query)
         total_attempts = total_result.scalar() or 0
@@ -513,7 +534,11 @@ class TaskResultsService(BaseService[TaskResults]):
             )
             .select_from(TaskResults)
             .join(Attempts, TaskResults.attempt_id == Attempts.id)
-            .where(TaskResults.task_id == task_id, Attempts.cancelled_at.is_(None))
+            .where(
+                TaskResults.task_id == task_id,
+                Attempts.cancelled_at.is_(None),
+                _REAL_STUDENT_RESULTS,
+            )
         )
         stats_result = await db.execute(stats_query)
         stats_row = stats_result.first()
@@ -592,6 +617,7 @@ class TaskResultsService(BaseService[TaskResults]):
             .where(
                 TaskResults.task_id.in_(task_ids),
                 Attempts.cancelled_at.is_(None),
+                _REAL_STUDENT_RESULTS,
             )
         )
         stats_result = await db.execute(stats_query)
@@ -643,6 +669,24 @@ class TaskResultsService(BaseService[TaskResults]):
                 func.sum(case((TaskResults.is_correct == True, 1), else_=0)).label("correct_count"),
                 # См. `_correct_percentage`: знаменатель — оценённые попытки.
                 func.count(TaskResults.is_correct).label("judged_count"),
+            )
+            .select_from(TaskResults)
+            .join(Attempts, TaskResults.attempt_id == Attempts.id)
+            .where(
+                TaskResults.user_id == user_id,
+                Attempts.cancelled_at.is_(None),
+                _REAL_STUDENT_RESULTS,
+            )
+        )
+        stats_result = await db.execute(stats_query)
+        stats_row = stats_result.first()
+
+        # tsk-663: сумма баллов и `completion_percentage` — про ПРОЙДЕННОЕ, а не
+        # про качество сдач, поэтому здесь ручные зачёты остаются. Иначе ученик,
+        # которому перенесли прошлый прогресс, показывал бы прогресс близкий к
+        # нулю при полностью зачтённых курсах в кабинете.
+        totals_query = (
+            select(
                 func.sum(TaskResults.max_score).label("total_max_score"),
                 func.sum(TaskResults.score).label("total_score"),
             )
@@ -650,8 +694,7 @@ class TaskResultsService(BaseService[TaskResults]):
             .join(Attempts, TaskResults.attempt_id == Attempts.id)
             .where(TaskResults.user_id == user_id, Attempts.cancelled_at.is_(None))
         )
-        stats_result = await db.execute(stats_query)
-        stats_row = stats_result.first()
+        totals_row = (await db.execute(totals_query)).first()
 
         total_attempts = stats_row.total_attempts or 0
         hints_total, hints_text, hints_video = await get_hint_open_counts(db, user_id=user_id)
@@ -681,8 +724,8 @@ class TaskResultsService(BaseService[TaskResults]):
         average_score = float(stats_row.avg_score or 0)
         correct_count = stats_row.correct_count or 0
         correct_percentage = _correct_percentage(correct_count, stats_row.judged_count or 0)
-        total_score = stats_row.total_score or 0
-        total_max_score = stats_row.total_max_score or 0
+        total_score = totals_row.total_score or 0
+        total_max_score = totals_row.total_max_score or 0
         completion_percentage = (total_score / total_max_score * 100) if total_max_score and total_max_score > 0 else 0.0
 
         return {
