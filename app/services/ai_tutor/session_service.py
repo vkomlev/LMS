@@ -85,6 +85,22 @@ async def _last_student_answer(db: AsyncSession, student_id: int, task_id: int) 
     Берём только реальные ученические сдачи (`spw_web`): ручная простановка
     преподавателя (`manual_teacher`) — это его отметка, а не текст ученика, и
     подсовывать её наставнику как «твой ответ» бессмысленно.
+
+    **Ответ лежит ВЛОЖЕННО (tsk-666).** Клиент сохраняет сдачу как
+    `{"type": ..., "response": {"value": ..., "comment": ...}, ...}`, а разбор
+    искал ключи на верхнем уровне — там их нет никогда. Итог по проду: снимок
+    ответа пуст у **27 сессий из 27**, то есть наставник не видел ответа ученика
+    ни разу за всё время работы контура. Три молчаливых последствия:
+
+    1. Наставник не знает, ЧТО ученик ответил, и вынужден спрашивать.
+    2. `pick_mode` считает `has_student_code=False` всегда — режим `debug`
+       («разберём твой код») недостижим в принципе: на проде 15 `concept`,
+       8 `thin`, 4 `mission` и **ноль** `debug`.
+    3. Первая реплика всегда идёт по ветке «ученик ещё НЕ отправлял ответ»
+       («где ты застрял?») вместо «как ты рассуждал» — даже сразу после
+       неверной сдачи, ради которой наставник и открылся.
+
+    Плоская форма оставлена запасным путём: старые строки и другие клиенты.
     """
     row = (await db.execute(text("""
         SELECT tr.answer_json
@@ -97,12 +113,27 @@ async def _last_student_answer(db: AsyncSession, student_id: int, task_id: int) 
     if not row or row[0] is None:
         return None
     payload = row[0]
-    if isinstance(payload, dict):
+    if not isinstance(payload, dict):
+        return str(payload)
+
+    response = payload.get("response")
+    parts: list[str] = []
+    if isinstance(response, dict):
+        for key in ("value", "text", "code"):
+            if response.get(key):
+                parts.append(str(response[key]))
+                break
+        # Комментарий — это рассуждение ученика своими словами. Для наставника
+        # он ценнее самого ответа: там видно, ГДЕ сломалась мысль.
+        if response.get("comment"):
+            parts.append(f"Пояснение ученика: {response['comment']}")
+    else:
         for key in ("answer", "value", "text", "code"):
             if payload.get(key):
-                return str(payload[key])
-        return None
-    return str(payload)
+                parts.append(str(payload[key]))
+                break
+
+    return "\n".join(parts) or None
 
 
 async def get_or_create(
@@ -157,7 +188,7 @@ async def get_or_create(
     })).mappings().first()
 
     session = TutorSession(**dict(created))
-    system_prompt = build_system_prompt(view, mode)
+    system_prompt = build_system_prompt(view, mode, student_answer=answer)
     await add_message(db, session.id, "system", system_prompt)
     await db.commit()
     logger.info(
@@ -205,7 +236,11 @@ async def build_llm_messages(
     Историю при этом берём из БД — она и есть память разговора.
     """
     view, _ = await _load_task_view(db, session.task_id)
-    system = build_system_prompt(view, session.mode, soft_limit=session.soft_limit_reached)
+    system = build_system_prompt(
+        view, session.mode,
+        student_answer=session.student_answer_snapshot,
+        soft_limit=session.soft_limit_reached,
+    )
     messages: list[LLMMessage] = [LLMMessage(role="system", content=system)]
 
     rows = await history(db, session.id)

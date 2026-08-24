@@ -273,16 +273,34 @@ def pick_mode(view: TutorTaskView, has_student_code: bool) -> TutorMode:
     return "concept"
 
 
-def build_system_prompt(view: TutorTaskView, mode: TutorMode, *, soft_limit: bool = False) -> str:
+def build_system_prompt(
+    view: TutorTaskView,
+    mode: TutorMode,
+    *,
+    student_answer: str | None = None,
+    soft_limit: bool = False,
+) -> str:
     """Собрать системную инструкцию наставника.
 
     Задание попадает в промпт как ДАННЫЕ (в секции ученика), а не как часть
     инструкции: иначе формулировка задания, содержащая слова вроде «выведи
     ответ», читалась бы наставником как команда ему.
+
+    **Условие лежит ЗДЕСЬ, а не только в первой реплике (tsk-666).** Системная
+    инструкция пересобирается на каждом ходе, поэтому задание видно наставнику
+    всегда. Раньше `view` в этой функции был объявлен и НЕ использован, а условие
+    уезжало ровно один раз — вместе с `build_opening_user_message`. Со второго
+    хода наставник оставался без задания и начинал выпрашивать его у ученика:
+    «покажи полное условие — без контекста нельзя понять», «расскажи условие
+    своей задачи», «какой именно вопрос в задании?». Так вёл себя КАЖДЫЙ из пяти
+    живых разговоров, доживших до второй реплики: ученик вставлял условие
+    целиком, и на этом разговор кончался. Единственный тест на сборку проверял
+    ровно первый ход, где всё было на месте.
     """
     parts = [_CORE.format(open=STUDENT_DATA_OPEN, close=STUDENT_DATA_CLOSE), _MODES[mode]]
     if soft_limit:
         parts.append(_SOFT_LIMIT_NOTE)
+    parts.append(build_context_block(view, student_answer))
     return "\n".join(parts).strip()
 
 
@@ -327,4 +345,6 @@ def build_opening_user_message(view: TutorTaskView, student_answer: str | None) 
             "рассуждал и что уже попробовал. Не объясняй тему и не разбирай "
             "задание, пока он не ответил."
         )
-    return f"{build_context_block(view, student_answer)}\n\n{opening}"
+    # Условие здесь НЕ повторяем: с tsk-666 оно лежит в системной инструкции и
+    # приходит на КАЖДОМ ходе. Дубль в первой реплике только раздувал бы промпт.
+    return opening

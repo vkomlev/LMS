@@ -77,6 +77,11 @@ async def _task(db, course_id: int, *, stem: str, ttype: str = "SA_COM") -> int:
     return tid
 
 
+def _json_obj(obj) -> str:
+    import json
+    return json.dumps(obj, ensure_ascii=False)
+
+
 def _json(s: str) -> str:
     import json
     return json.dumps(s, ensure_ascii=False)
@@ -218,6 +223,96 @@ async def test_student_answer_is_wrapped_as_data_not_instruction(db):
         await _cleanup(db, user_ids=[student], course_ids=[course])
 
 
+@pytest.mark.asyncio
+async def test_task_stays_in_context_on_every_turn(db):
+    """Условие задания видно наставнику НА КАЖДОМ ходе, а не только на первом.
+
+    tsk-666, разбор живых диалогов. В 5 из 5 разговоров, доживших до второй
+    реплики, наставник просил ученика прислать то, что обязан был знать сам:
+    «Покажи полное условие задания — без контекста нельзя понять», «Расскажи
+    условие своей задачи», «Какой именно вопрос в задании?». Ученик послушно
+    вставлял условие целиком — и разговор на этом кончался.
+
+    Причина не в промпте, а в сборке: условие уезжало модели только первым
+    сообщением (`build_opening_user_message`), а со второго хода
+    `build_llm_messages` слал системную инструкцию + одну историю реплик. Единственный
+    тест на сборку проверял ровно первый ход, где всё на месте.
+    """
+    course = await _course(db)
+    stem = "Повторяемые действия внутри конструкции, которая крутится по кругу, называют телом…"
+    task = await _task(db, course, stem=stem)
+    student = await _student(db, "ctx")
+    try:
+        session, _ = await session_service.get_or_create(
+            db, student_id=student, task_id=task
+        )
+        # Разговор уже начался: наставник поздоровался, ученик ответил.
+        await session_service.add_message(db, session.id, "tutor", "Где ты застрял?")
+        await session_service.add_message(db, session.id, "student", "Не знаю как ответить")
+        await db.commit()
+
+        messages = await session_service.build_llm_messages(db, session, "а что тут вообще?")
+        whole = "\n".join(m.content for m in messages)
+        assert stem in whole, (
+            "со второго хода наставник не видит условия задания и вынужден "
+            "спрашивать его у ученика"
+        )
+    finally:
+        await _cleanup(db, user_ids=[student], course_ids=[course])
+
+
+@pytest.mark.asyncio
+async def test_student_answer_snapshot_reads_real_client_shape(db):
+    """Ответ ученика доезжает до наставника — в той форме, в какой его шлёт клиент.
+
+    tsk-666. Клиент сохраняет сдачу вложенно:
+    `{"type": ..., "response": {"value": ..., "comment": ...}}`, а разбор искал
+    ключи на верхнем уровне. На проде это дало снимок ответа пустым у 27 сессий
+    из 27 — наставник не видел ответа ученика ни разу. Отсюда же ноль сессий в
+    режиме `debug`: `has_student_code` считался по пустому ответу.
+    """
+    course = await _course(db)
+    task = await _task(db, course, stem="Впиши четыре действия CRUD русскими словами.")
+    student = await _student(db, "shape")
+    try:
+        await db.execute(text(
+            "INSERT INTO attempts (user_id, course_id) VALUES (:u, :c)"
+        ), {"u": student, "c": course})
+        await db.commit()
+        att = (await db.execute(text(
+            "SELECT id FROM attempts WHERE user_id = :u ORDER BY id DESC LIMIT 1"
+        ), {"u": student})).scalar()
+        real_shape = {
+            "type": "SA",
+            "task_id": None,
+            "response": {
+                "meta": None, "text": None,
+                "value": "создать, читать, изменить, удалить",
+                "comment": "думаю, ошибка в переводе update",
+                "selected_option_ids": None,
+            },
+            "external_uid": None,
+        }
+        await db.execute(text("""
+            INSERT INTO task_results (user_id, task_id, attempt_id, answer_json,
+                                      score, max_score, is_correct, submitted_at, source_system)
+            VALUES (:u, :t, :a, CAST(:aj AS jsonb), 0, 1, false, now(), 'spw_web')
+        """), {"u": student, "t": task, "a": att, "aj": _json_obj(real_shape)})
+        await db.commit()
+
+        session, _ = await session_service.get_or_create(
+            db, student_id=student, task_id=task
+        )
+        assert session.student_answer_snapshot, (
+            "снимок ответа пуст — наставник не знает, что ученик отправил"
+        )
+        assert "создать, читать, изменить, удалить" in session.student_answer_snapshot
+        # Комментарий ценнее самого ответа: там видно, где сломалась мысль.
+        assert "переводе update" in session.student_answer_snapshot
+    finally:
+        await _cleanup(db, user_ids=[student], course_ids=[course])
+
+
 def test_new_student_reply_also_wrapped():
     """Реплика в чате тоже данные — не только первый подставленный ответ."""
     view = TutorTaskView(task_id=1, stem="стем", task_type="SA")
@@ -265,7 +360,12 @@ def test_opening_message_asks_about_reasoning_not_explains():
     opening = build_opening_user_message(view, "мой ответ 42")
     assert "как ученик рассуждал" in opening
     assert "Не объясняй тему" in opening
-    assert "Задача про циклы" in opening
+    # tsk-666: условие переехало из первой реплики в системную инструкцию —
+    # там оно приходит на КАЖДОМ ходе, а не только на первом. Смысл решения
+    # оператора 11 («наставник знает задание») тот же, проверяем его там.
+    assert "Задача про циклы" in build_system_prompt(
+        view, "concept", student_answer="мой ответ 42"
+    )
 
 
 def test_core_forbids_ready_solution_in_all_modes():
