@@ -110,6 +110,20 @@ async def list_teacher_occurrences(
 async def get_teacher_lesson_summary(
     occurrence_id: int,
     teacher_id: int = Query(..., description="ID преподавателя"),
+    include_progress: bool = Query(
+        True,
+        description=(
+            "Считать ли прогресс по курсу и заблокированные задания (tsk-665). "
+            "false — `course_progress` и `blocked_tasks` придут как null "
+            "(null = не считалось, [] = посчитали и пусто). Это самая дорогая "
+            "часть сводки: обход дерева курса и состояния всех заданий на "
+            "каждого участника."
+        ),
+    ),
+    student_id: Optional[int] = Query(
+        None,
+        description="Вернуть только этого участника (tsk-665: подробности по клику).",
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> TeacherLessonOccurrenceSummaryRead:
@@ -117,7 +131,11 @@ async def get_teacher_lesson_summary(
     tsk-410 «после занятия» — общий источник, см.
     ``teacher_lesson_summary_service``): последнее выполненное задание/
     материал, метрики ДЗ между занятиями, заблокированные лимитом задания,
-    открытые заявки помощи, серия пропусков подряд, % прогресса курса."""
+    открытые заявки помощи, серия пропусков подряд, % прогресса курса.
+
+    tsk-665: панель преподавателя опрашивает сводку раз в минуту всё занятие.
+    Список строк обходится без прогресса (`include_progress=false`), а
+    подробности одного ученика запрашиваются по клику (`student_id`)."""
     await _ensure_self_or_service(db, current_user, teacher_id)
     threshold_minutes = Settings().lesson_no_show_threshold_minutes
     data = await teacher_lesson_summary_service.get_occurrence_summary(
@@ -126,6 +144,8 @@ async def get_teacher_lesson_summary(
         teacher_id=teacher_id,
         current_user=current_user,
         no_show_threshold_minutes=threshold_minutes,
+        include_progress=include_progress,
+        student_id=student_id,
     )
     return TeacherLessonOccurrenceSummaryRead(**data)
 

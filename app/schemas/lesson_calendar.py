@@ -326,7 +326,14 @@ class TeacherSummaryParticipant(BaseModel):
         "(у каждого участника группы своя история занятий); None — предыдущего не было",
     )
     homework: TeacherSummaryHomework
-    blocked_tasks: list[TeacherSummaryBlockedTask] = Field(default_factory=list)
+    blocked_tasks: Optional[list[TeacherSummaryBlockedTask]] = Field(
+        default_factory=list,
+        description=(
+            "tsk-665: `null` — не считалось (запрос без `include_progress`), "
+            "пустой список — посчитали, заблокированных нет. Спутать эти два "
+            "смысла нельзя: первый требует запроса подробностей, второй нет."
+        ),
+    )
     open_help_requests: list[TeacherSummaryHelpRequest] = Field(default_factory=list)
     closed_help_requests: list[TeacherSummaryHelpRequest] = Field(
         default_factory=list,
@@ -336,7 +343,10 @@ class TeacherSummaryParticipant(BaseModel):
     missed_streak: int = Field(
         description="Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
     )
-    course_progress: list[TeacherSummaryCourseProgress] = Field(default_factory=list)
+    course_progress: Optional[list[TeacherSummaryCourseProgress]] = Field(
+        default_factory=list,
+        description="tsk-665: `null` — не считалось; пустой список — курсов нет.",
+    )
 
 
 class TeacherLessonOccurrenceSummaryRead(BaseModel):

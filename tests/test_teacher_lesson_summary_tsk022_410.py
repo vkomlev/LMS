@@ -765,3 +765,116 @@ async def test_summary_participant_carries_timezone(db, client):
     by_student = {p["student_id"]: p for p in resp.json()["participants"]}
     assert by_student[student_orsk]["timezone"] == "Asia/Yekaterinburg"
     assert by_student[student_empty]["timezone"] is None
+
+
+# ── tsk-665: подробности по клику, а не всем и каждую минуту ────────────────
+#
+# Панель преподавателя опрашивает сводку раз в минуту всё занятие, а самая
+# дорогая её часть — прогресс по курсу и заблокированные задания (обход дерева
+# и состояния всех заданий НА КАЖДОГО участника). В списке они видны одним
+# значком; подробности открываются по клику на одного ученика.
+
+
+@pytest.mark.asyncio
+async def test_summary_without_progress_returns_null_not_empty(db, client):
+    """`include_progress=false`: `null`, а НЕ пустой список.
+
+    Пустой список означает «посчитали, ничего нет». Отдай мы его вместо
+    `null` — фронт не отличил бы «нечего показывать» от «ещё не спрашивали»,
+    и значок пропал бы молча.
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+    await _enroll_student(db, student_id=student_id, course_id=course_id)
+    await _new_task(db, course_id=course_id, uid="a")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    light = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "include_progress": "false"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert light.status_code == 200, light.text
+    p = light.json()["participants"][0]
+    assert p["course_progress"] is None, "не считали — обязан быть null"
+    assert p["blocked_tasks"] is None, "не считали — обязан быть null"
+    # Дешёвые поля строки списка на месте: без них список рисовать нечем.
+    assert p["student_id"] == student_id
+    assert "missed_streak" in p and "homework" in p
+    assert p["open_help_requests"] == []
+
+    full = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert full.status_code == 200, full.text
+    p_full = full.json()["participants"][0]
+    assert p_full["course_progress"] is not None, "по умолчанию поведение прежнее"
+    assert p_full["blocked_tasks"] == [], "посчитали и пусто — это [], а не null"
+
+
+@pytest.mark.asyncio
+async def test_summary_student_id_returns_only_that_participant(db, client):
+    """`student_id` сужает ответ до одного ученика — с подробностями."""
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    first_id, _ = await _new_user(db, role="student", name="one")
+    second_id, _ = await _new_user(db, role="student", name="two")
+    course_id = await _new_course(db, f"{_TAG}-course")
+    for sid in (first_id, second_id):
+        await _link_student_teacher(db, student_id=sid, teacher_id=teacher_id)
+        await _enroll_student(db, student_id=sid, course_id=course_id)
+    await _new_task(db, course_id=course_id, uid="a")
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=first_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    db.add(
+        LessonOccurrenceParticipant(
+            occurrence_id=occ_id, student_id=second_id, status="scheduled"
+        )
+    )
+    await db.commit()
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "student_id": second_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    participants = resp.json()["participants"]
+    assert [p["student_id"] for p in participants] == [second_id]
+    assert participants[0]["course_progress"] is not None, "по клику подробности нужны"
+
+
+@pytest.mark.asyncio
+async def test_summary_unknown_student_id_gives_empty_list_not_404(db, client):
+    """Занятие есть, а такого участника нет — пустой список, не 404.
+
+    Состав занятия меняется (перенос, отмена участия), и 404 на живом занятии
+    прочитался бы как «занятие пропало».
+    """
+    teacher_id, token = await _new_user(db, role="teacher", name="teach")
+    student_id, _ = await _new_user(db, role="student", name="stud")
+    stranger_id, _ = await _new_user(db, role="student", name="stranger")
+    await _link_student_teacher(db, student_id=student_id, teacher_id=teacher_id)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        f"/api/v1/teacher/lesson-occurrences/{occ_id}/summary",
+        params={"teacher_id": teacher_id, "student_id": stranger_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["participants"] == []

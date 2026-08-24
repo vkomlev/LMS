@@ -364,13 +364,35 @@ async def get_occurrence_summary(
     teacher_id: int,
     current_user: CurrentUser,
     no_show_threshold_minutes: int,
+    include_progress: bool = True,
+    student_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """Сводка по всем участникам occurrence — общий источник для сводки ДО
-    занятия (встраивается в карточку) и кнопки «Подвести итоги» ПОСЛЕ."""
+    занятия (встраивается в карточку) и кнопки «Подвести итоги» ПОСЛЕ.
+
+    tsk-665: два необязательных сужения. Панель преподавателя тянет сводку
+    РАЗ В МИНУТУ всё занятие, а самая дорогая её часть — прогресс по курсу и
+    заблокированные задания (обход дерева курса и состояния всех заданий на
+    каждого участника). В списке эти данные видны одним значком, подробности
+    преподаватель открывает по клику на одного ученика — значит считать их на
+    всех и каждую минуту незачем.
+
+    Args:
+        include_progress: считать ли прогресс по курсу и заблокированные
+            задания. `False` — в ответе `course_progress` и `blocked_tasks`
+            равны `None`. Именно `None`, а не пустой список: пустой список
+            означает «посчитали, ничего нет», и спутать эти два смысла —
+            ровно тот класс ошибки, когда поле молча обнуляется.
+        student_id: вернуть только этого участника (для боковой панели).
+            Не найден среди участников занятия — пустой список участников,
+            а не 404: занятие существует, состав мог измениться.
+    """
     occurrence = await lesson_occurrence_service.get_occurrence_for_teacher(
         db, occurrence_id=occurrence_id, teacher_id=teacher_id,
     )
     participants = await _participant_repo.list_for_occurrence(db, occurrence_id)
+    if student_id is not None:
+        participants = [p for p in participants if p.student_id == student_id]
 
     now_utc = datetime.now(timezone.utc)
     threshold = timedelta(minutes=no_show_threshold_minutes)
@@ -410,9 +432,12 @@ async def get_occurrence_summary(
             window_from=window_from,
             window_to=now_utc,
         )
-        course_progress, blocked_tasks = await _load_course_progress_and_blocked(
-            db, current_user=current_user, student_id=p.student_id,
-        )
+        course_progress: Optional[list[dict[str, Any]]] = None
+        blocked_tasks: Optional[list[dict[str, Any]]] = None
+        if include_progress:
+            course_progress, blocked_tasks = await _load_course_progress_and_blocked(
+                db, current_user=current_user, student_id=p.student_id,
+            )
 
         result_participants.append({
             "student_id": p.student_id,

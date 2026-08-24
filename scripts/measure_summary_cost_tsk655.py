@@ -120,8 +120,14 @@ async def measure_one(
     occurrence_id: int,
     teacher_id: int,
     top: int,
+    include_progress: bool = True,
 ) -> dict[str, Any]:
-    """Один прогон сводки: сколько запросов, сколько времени где."""
+    """Один прогон сводки: сколько запросов, сколько времени где.
+
+    `include_progress=False` (tsk-665) — режим списка строк: прогресс по курсу
+    и заблокированные задания не считаются, их запрашивают по клику на
+    ученика. Нужен, чтобы мерить оба режима одним и тем же счётчиком.
+    """
     # Импорт внутри функции: модули приложения тянут настройки, а скрипт
     # должен уметь стартовать и без них до разбора аргументов.
     from app.auth.current_user import CurrentUser  # noqa: PLC0415
@@ -136,6 +142,7 @@ async def measure_one(
             teacher_id=teacher_id,
             current_user=CurrentUser(id=teacher_id),
             no_show_threshold_minutes=15,
+            include_progress=include_progress,
         )
     wall = time.perf_counter() - started
 
@@ -266,6 +273,7 @@ async def main_async(args: argparse.Namespace) -> None:
                     occurrence_id=occurrence_id,
                     teacher_id=args.teacher_id,
                     top=args.top,
+                    include_progress=not args.no_progress,
                 )
             )
     finally:
@@ -301,6 +309,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--teacher-id", type=int, default=2, help="ID преподавателя (по умолчанию 2)")
     parser.add_argument("--top", type=int, default=8, help="сколько самых частых запросов показать")
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="сводка в режиме списка строк: без прогресса по курсу и заблокированных (tsk-665)",
+    )
     parser.add_argument("--json-out", default=None, help="куда сохранить итог в JSON")
     return parser.parse_args(argv)
 

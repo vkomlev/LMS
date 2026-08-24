@@ -1,0 +1,184 @@
+diff --git a/app/api/v1/teacher_lesson_occurrences.py b/app/api/v1/teacher_lesson_occurrences.py
+index 08a1097..b667fcd 100644
+--- a/app/api/v1/teacher_lesson_occurrences.py
++++ b/app/api/v1/teacher_lesson_occurrences.py
+@@ -110,6 +110,20 @@ async def list_teacher_occurrences(
+ async def get_teacher_lesson_summary(
+     occurrence_id: int,
+     teacher_id: int = Query(..., description="ID преподавателя"),
++    include_progress: bool = Query(
++        True,
++        description=(
++            "Считать ли прогресс по курсу и заблокированные задания (tsk-665). "
++            "false — `course_progress` и `blocked_tasks` придут как null "
++            "(null = не считалось, [] = посчитали и пусто). Это самая дорогая "
++            "часть сводки: обход дерева курса и состояния всех заданий на "
++            "каждого участника."
++        ),
++    ),
++    student_id: Optional[int] = Query(
++        None,
++        description="Вернуть только этого участника (tsk-665: подробности по клику).",
++    ),
+     db: AsyncSession = Depends(get_async_db),
+     current_user: CurrentUser = Depends(get_current_user),
+ ) -> TeacherLessonOccurrenceSummaryRead:
+@@ -117,7 +131,11 @@ async def get_teacher_lesson_summary(
+     tsk-410 «после занятия» — общий источник, см.
+     ``teacher_lesson_summary_service``): последнее выполненное задание/
+     материал, метрики ДЗ между занятиями, заблокированные лимитом задания,
+-    открытые заявки помощи, серия пропусков подряд, % прогресса курса."""
++    открытые заявки помощи, серия пропусков подряд, % прогресса курса.
++
++    tsk-665: панель преподавателя опрашивает сводку раз в минуту всё занятие.
++    Список строк обходится без прогресса (`include_progress=false`), а
++    подробности одного ученика запрашиваются по клику (`student_id`)."""
+     await _ensure_self_or_service(db, current_user, teacher_id)
+     threshold_minutes = Settings().lesson_no_show_threshold_minutes
+     data = await teacher_lesson_summary_service.get_occurrence_summary(
+@@ -126,6 +144,8 @@ async def get_teacher_lesson_summary(
+         teacher_id=teacher_id,
+         current_user=current_user,
+         no_show_threshold_minutes=threshold_minutes,
++        include_progress=include_progress,
++        student_id=student_id,
+     )
+     return TeacherLessonOccurrenceSummaryRead(**data)
+ 
+diff --git a/app/schemas/lesson_calendar.py b/app/schemas/lesson_calendar.py
+index df10002..f926733 100644
+--- a/app/schemas/lesson_calendar.py
++++ b/app/schemas/lesson_calendar.py
+@@ -326,7 +326,14 @@ class TeacherSummaryParticipant(BaseModel):
+         "(у каждого участника группы своя история занятий); None — предыдущего не было",
+     )
+     homework: TeacherSummaryHomework
+-    blocked_tasks: list[TeacherSummaryBlockedTask] = Field(default_factory=list)
++    blocked_tasks: Optional[list[TeacherSummaryBlockedTask]] = Field(
++        default_factory=list,
++        description=(
++            "tsk-665: `null` — не считалось (запрос без `include_progress`), "
++            "пустой список — посчитали, заблокированных нет. Спутать эти два "
++            "смысла нельзя: первый требует запроса подробностей, второй нет."
++        ),
++    )
+     open_help_requests: list[TeacherSummaryHelpRequest] = Field(default_factory=list)
+     closed_help_requests: list[TeacherSummaryHelpRequest] = Field(
+         default_factory=list,
+@@ -336,7 +343,10 @@ class TeacherSummaryParticipant(BaseModel):
+     missed_streak: int = Field(
+         description="Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
+     )
+-    course_progress: list[TeacherSummaryCourseProgress] = Field(default_factory=list)
++    course_progress: Optional[list[TeacherSummaryCourseProgress]] = Field(
++        default_factory=list,
++        description="tsk-665: `null` — не считалось; пустой список — курсов нет.",
++    )
+ 
+ 
+ class TeacherLessonOccurrenceSummaryRead(BaseModel):
+diff --git a/app/services/teacher_lesson_summary_service.py b/app/services/teacher_lesson_summary_service.py
+index 6ff6bbe..2e6f999 100644
+--- a/app/services/teacher_lesson_summary_service.py
++++ b/app/services/teacher_lesson_summary_service.py
+@@ -364,13 +364,35 @@ async def get_occurrence_summary(
+     teacher_id: int,
+     current_user: CurrentUser,
+     no_show_threshold_minutes: int,
++    include_progress: bool = True,
++    student_id: Optional[int] = None,
+ ) -> dict[str, Any]:
+     """Сводка по всем участникам occurrence — общий источник для сводки ДО
+-    занятия (встраивается в карточку) и кнопки «Подвести итоги» ПОСЛЕ."""
++    занятия (встраивается в карточку) и кнопки «Подвести итоги» ПОСЛЕ.
++
++    tsk-665: два необязательных сужения. Панель преподавателя тянет сводку
++    РАЗ В МИНУТУ всё занятие, а самая дорогая её часть — прогресс по курсу и
++    заблокированные задания (обход дерева курса и состояния всех заданий на
++    каждого участника). В списке эти данные видны одним значком, подробности
++    преподаватель открывает по клику на одного ученика — значит считать их на
++    всех и каждую минуту незачем.
++
++    Args:
++        include_progress: считать ли прогресс по курсу и заблокированные
++            задания. `False` — в ответе `course_progress` и `blocked_tasks`
++            равны `None`. Именно `None`, а не пустой список: пустой список
++            означает «посчитали, ничего нет», и спутать эти два смысла —
++            ровно тот класс ошибки, когда поле молча обнуляется.
++        student_id: вернуть только этого участника (для боковой панели).
++            Не найден среди участников занятия — пустой список участников,
++            а не 404: занятие существует, состав мог измениться.
++    """
+     occurrence = await lesson_occurrence_service.get_occurrence_for_teacher(
+         db, occurrence_id=occurrence_id, teacher_id=teacher_id,
+     )
+     participants = await _participant_repo.list_for_occurrence(db, occurrence_id)
++    if student_id is not None:
++        participants = [p for p in participants if p.student_id == student_id]
+ 
+     now_utc = datetime.now(timezone.utc)
+     threshold = timedelta(minutes=no_show_threshold_minutes)
+@@ -410,9 +432,12 @@ async def get_occurrence_summary(
+             window_from=window_from,
+             window_to=now_utc,
+         )
+-        course_progress, blocked_tasks = await _load_course_progress_and_blocked(
+-            db, current_user=current_user, student_id=p.student_id,
+-        )
++        course_progress: Optional[list[dict[str, Any]]] = None
++        blocked_tasks: Optional[list[dict[str, Any]]] = None
++        if include_progress:
++            course_progress, blocked_tasks = await _load_course_progress_and_blocked(
++                db, current_user=current_user, student_id=p.student_id,
++            )
+ 
+         result_participants.append({
+             "student_id": p.student_id,
+diff --git a/scripts/measure_summary_cost_tsk655.py b/scripts/measure_summary_cost_tsk655.py
+index 8024e95..a0569d6 100644
+--- a/scripts/measure_summary_cost_tsk655.py
++++ b/scripts/measure_summary_cost_tsk655.py
+@@ -120,8 +120,14 @@ async def measure_one(
+     occurrence_id: int,
+     teacher_id: int,
+     top: int,
++    include_progress: bool = True,
+ ) -> dict[str, Any]:
+-    """Один прогон сводки: сколько запросов, сколько времени где."""
++    """Один прогон сводки: сколько запросов, сколько времени где.
++
++    `include_progress=False` (tsk-665) — режим списка строк: прогресс по курсу
++    и заблокированные задания не считаются, их запрашивают по клику на
++    ученика. Нужен, чтобы мерить оба режима одним и тем же счётчиком.
++    """
+     # Импорт внутри функции: модули приложения тянут настройки, а скрипт
+     # должен уметь стартовать и без них до разбора аргументов.
+     from app.auth.current_user import CurrentUser  # noqa: PLC0415
+@@ -136,6 +142,7 @@ async def measure_one(
+             teacher_id=teacher_id,
+             current_user=CurrentUser(id=teacher_id),
+             no_show_threshold_minutes=15,
++            include_progress=include_progress,
+         )
+     wall = time.perf_counter() - started
+ 
+@@ -266,6 +273,7 @@ async def main_async(args: argparse.Namespace) -> None:
+                     occurrence_id=occurrence_id,
+                     teacher_id=args.teacher_id,
+                     top=args.top,
++                    include_progress=not args.no_progress,
+                 )
+             )
+     finally:
+@@ -301,6 +309,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+     )
+     parser.add_argument("--teacher-id", type=int, default=2, help="ID преподавателя (по умолчанию 2)")
+     parser.add_argument("--top", type=int, default=8, help="сколько самых частых запросов показать")
++    parser.add_argument(
++        "--no-progress",
++        action="store_true",
++        help="сводка в режиме списка строк: без прогресса по курсу и заблокированных (tsk-665)",
++    )
+     parser.add_argument("--json-out", default=None, help="куда сохранить итог в JSON")
+     return parser.parse_args(argv)
+ 
