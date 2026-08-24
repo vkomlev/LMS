@@ -10,6 +10,7 @@ app/tests/*
 uploads/*
 # Документация: игнорируем все файлы в docs, кроме указанных
 docs/*
+!docs/NORTH_STAR.md
 !docs/API_TEACHERS_MANAGEMENT.md
 !docs/API_STUDENTS_MANAGEMENT.md
 !docs/API_TEACHER_COURSES.md
