@@ -26,7 +26,7 @@ import pytest
 from sqlalchemy import text
 
 from app.schemas.code_review import build_code_review_badge
-from app.services import code_review_cron_service
+from app.services import code_review_cron_service, text_authorship_service
 from app.services.text_authorship_service import (
     MIN_TEXT_CHARS,
     detect_paste_signals,
@@ -140,6 +140,61 @@ def test_short_answer_is_not_reviewed() -> None:
 def test_long_answer_is_reviewed_and_trimmed() -> None:
     long_text = "а" * MIN_TEXT_CHARS
     assert pick_text_for_review(f"  {long_text}  ") == long_text
+
+
+# ─────────────────────────── Кривой ответ модели ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "broken", ['[{"verdict": "ambiguous"}]', '"просто строка"', "не json вовсе"],
+)
+async def test_broken_model_answer_does_not_crash_the_tick(
+    broken: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Кривой ответ модели становится записью об ошибке, а не исключением.
+
+    Важно именно про массив: `data.get` на списке бросает `AttributeError`, а
+    он не входит в перехват `review_student_text` — один такой ответ уронил бы
+    фоновый тик вместе с работами, которые в пачке ещё не разобраны. Тот же
+    дефект закрыт в rubric_review_service (tsk-658), здесь — по его образцу.
+    """
+    async def _fake_complete(messages, **kwargs):
+        return type("R", (), {"text": broken, "model": "test-model"})()
+
+    monkeypatch.setattr(text_authorship_service, "complete", _fake_complete)
+
+    review = await text_authorship_service.review_student_text(
+        _PROD_AI_PASTE + " и так далее по шагам. " * 10
+    )
+    assert review["error"] == "unparsable_verdict"
+    assert review["retryable"] is True
+    # Следы вставки считаются без модели и обязаны доехать даже на её мусоре.
+    assert [s["code"] for s in review["signals"]]
+
+
+async def test_non_object_authorship_section_degrades_to_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Объект пришёл, а секция внутри него — не объект: это «сигнала нет».
+
+    Здесь мы уже не теряем ответ модели целиком, поэтому и не отправляем работу
+    на повтор: обвинение из мусора не выдумываем, вердикт — `ambiguous`. Та же
+    развилка, что и у мусора вместо самого вердикта.
+    """
+    async def _fake_complete(messages, **kwargs):
+        return type("R", (), {
+            "text": json.dumps({"ai_authorship": ["ai_likely"]}), "model": "test-model",
+        })()
+
+    monkeypatch.setattr(text_authorship_service, "complete", _fake_complete)
+
+    review = await text_authorship_service.review_student_text(
+        _PROD_AI_PASTE + " и так далее по шагам. " * 10
+    )
+    assert "error" not in review
+    assert review["ai_authorship"]["verdict"] == "ambiguous"
 
 
 # ──────────────────────────── Фоновый тик ────────────────────────────────────

@@ -268,7 +268,19 @@ def _parse_verdict(raw: str) -> Dict[str, Any]:
         text_ = text_.strip()
 
     data = json.loads(text_)
-    authorship = data.get("ai_authorship") or {}
+    if not isinstance(data, dict):
+        # Модель вернула массив или строку вместо объекта. Проверка явная, а не
+        # «наверное придёт словарь»: `data.get` на списке бросает AttributeError,
+        # а он не входит в перехват вызывающего — то есть один кривой ответ
+        # модели уронил бы весь фоновый тик вместе с ещё не разобранными
+        # работами пачки. Тот же дефект, что закрыт в rubric_review_service.
+        raise ValueError(f"ожидался объект, пришло {type(data).__name__}")
+
+    authorship = data.get("ai_authorship")
+    if not isinstance(authorship, dict):
+        # Секция есть, но не объект — трактуем как «сигнала нет», ровно как
+        # мусор вместо самого вердикта ниже.
+        authorship = {}
 
     verdict = authorship.get("verdict")
     if verdict not in _VERDICTS:
