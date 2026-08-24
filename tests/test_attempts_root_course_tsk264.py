@@ -118,8 +118,11 @@ async def graph():
                     )
                 ).scalar()
 
-            ids["task_reused"] = await new_task(ids["reused"], "tsk264-reused")
-            ids["task_plain"] = await new_task(ids["plain"], "tsk264-plain")
+            # Уникальный uid на прогон (tsk-333): фиксированный переживал
+            # прерванный прогон и валил следующий с UniqueViolation.
+            run_uid = uuid.uuid4().hex[:12]
+            ids["task_reused"] = await new_task(ids["reused"], f"tsk264-reused-{run_uid}")
+            ids["task_plain"] = await new_task(ids["plain"], f"tsk264-plain-{run_uid}")
             # Квиз на переиспользуемом узле — у него ответ один навсегда.
             ids["task_quiz"] = (
                 await s.execute(
@@ -132,9 +135,7 @@ async def graph():
                         "tc": '{"type": "SC_Qw", "question": "tsk264 quiz"}',
                         "cid": ids["reused"],
                         "did": difficulty_id,
-                        # Уникальный uid на прогон (tsk-333): фиксированный переживал
-                        # прерванный прогон и валил следующий с UniqueViolation.
-                        "uid": f"tsk264-quiz-{uuid.uuid4().hex[:12]}",
+                        "uid": f"tsk264-quiz-{run_uid}",
                     },
                 )
             ).scalar()
