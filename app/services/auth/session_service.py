@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.user_session import UserSession
 
@@ -113,12 +114,82 @@ def _last_used_is_stale(last_used_at: datetime | None, *, now: datetime) -> bool
     перерастает таймаут пула — и 500 получают уже все пользователи, а не только
     владелец сессии (прод, 17.08.2026: 14 из 15 подключений ждали эту строку).
 
+    Это ДЕШЁВЫЙ предфильтр, а не защита: он работает по значению, прочитанному
+    до записи, без блокировки между чтением и записью. Когда порог открывается,
+    его видят все параллельные запросы разом — за дедупликацию и за отсутствие
+    очереди отвечает сам оператор записи (`_TOUCH_LAST_USED_SQL`), а эта
+    проверка лишь избавляет от похода в базу в те 99% запросов, где писать
+    заведомо нечего.
+
     Naive-значение (без часового пояса) сравнивать с aware-`now` нельзя —
     считаем его устаревшим и обновляем, приводя к корректному типу.
     """
     if last_used_at is None or last_used_at.tzinfo is None:
         return True
     return now - last_used_at >= _LAST_USED_MIN_INTERVAL
+
+
+#: Запись отметки, которая не выстраивает залп запросов одного ученика в
+#: очередь (tsk-675). Две части, и обе обязательны:
+#:
+#: * `last_used_at < :threshold` — из залпа строку переписывает ровно один
+#:   запрос, остальным условие уже ложно;
+#: * `FOR UPDATE SKIP LOCKED` — остальные не ЖДУТ, а сразу проходят мимо.
+#:
+#: Второе без первого не работает, и это не теория: замер 25.08 показал, что
+#: один лишь условный `UPDATE ... AND last_used_at < ...` очередь НЕ убирает —
+#: залп из шести так и занял 2,95-3,00 с против 2,95-3,10 с у безусловной
+#: записи, хотя строку переписал ровно один запрос. Причина в самом
+#: PostgreSQL: при READ COMMITTED ждущий `UPDATE` сначала встаёт на замок
+#: строки и только потом перепроверяет условие по свежей версии, а взятый
+#: замок остаётся до конца его транзакции даже когда обновлять уже нечего.
+#: Со `SKIP LOCKED` занятая строка просто не попадает в выборку: залп занял
+#: 0,95-1,28 с при базовой линии 0,90-1,01 с — сложения нет вовсе.
+#:
+#: Цена — отметка может пропустить такт, если строка занята соседним запросом
+#: или ротацией токена. Для следа активности это ничего не значит: следующий
+#: запрос ученика поставит её заново.
+_TOUCH_LAST_USED_SQL = text(
+    """
+    UPDATE user_session
+       SET last_used_at = :now
+     WHERE id = (
+           SELECT id
+             FROM user_session
+            WHERE id = CAST(:session_id AS uuid)
+              AND last_used_at < :threshold
+              FOR UPDATE SKIP LOCKED
+           )
+    """
+)
+
+
+async def _touch_last_used(
+    db: AsyncSession, session: "UserSession", *, now: datetime
+) -> None:
+    """Отметить активность сессии, не задерживая соседние запросы (tsk-675).
+
+    Запись идёт в транзакции запроса — отдельная короткая транзакция сюда
+    просилась, но замер её не оправдал: она снимает удержание замка, а не
+    саму запись, поэтому шесть запросов залпа по-прежнему пишут шесть раз и
+    берут по лишнему подключению из пула (1,44-1,60 с против 0,95-1,28 с у
+    выбранного варианта). Исчерпание пула — та самая авария tsk-621, ради
+    которой всё это и затевалось.
+    """
+    result = await db.execute(
+        _TOUCH_LAST_USED_SQL,
+        {
+            "now": now,
+            "session_id": str(session.id),
+            "threshold": now - _LAST_USED_MIN_INTERVAL,
+        },
+    )
+    if result.rowcount:
+        # Записали мы — синхронизируем объект в памяти как УЖЕ сохранённое
+        # значение. Обычным присваиванием нельзя: объект стал бы «изменённым»,
+        # и `commit()` роутера выпустил бы ещё один `UPDATE user_session` —
+        # ровно ту запись, от которой здесь уходим.
+        set_committed_value(session, "last_used_at", now)
 
 
 async def create_session(
@@ -171,8 +242,7 @@ async def validate_session(
     if session:
         now = _now()
         if _last_used_is_stale(session.last_used_at, now=now):
-            session.last_used_at = now
-            await db.flush()
+            await _touch_last_used(db, session, now=now)
     return session
 
 
