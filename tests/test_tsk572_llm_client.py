@@ -643,3 +643,89 @@ def test_frame_split_across_network_chunks_is_not_lost():
     assert text_out == "что уже попробовал сделать", (
         f"кусок потерялся на границе чтения: {text_out!r}"
     )
+
+
+# ───────────────── Учёт расхода: время до первого куска (tsk-683) ───────────
+
+
+@pytest.mark.asyncio
+async def test_stream_usage_keeps_time_to_first_chunk(monkeypatch, _isolate):
+    """В учёте видно, сколько ученик ждал НАЧАЛА текста, а не только весь поток.
+
+    tsk-683 (находка tsk-680). `duration_ms` меряет поток целиком, и по нему
+    нельзя сказать, уложился ли вызов в предел первого токена: в учёте видно
+    лишь «ok» или «LLMTimeout». Ради tsk-680 пришлось поднимать отдельный
+    замерщик на проде. Здесь первый кусок приходит сразу, а хвост тянется —
+    записи обязаны отличаться друг от друга.
+    """
+    async def body():
+        yield _sse({"choices": [{"delta": {"content": "Пред"}}]})
+        await asyncio.sleep(0.2)
+        yield _sse({"choices": [{"delta": {"content": "ставь"}}],
+                    "usage": {"prompt_tokens": 9, "completion_tokens": 4}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body(),
+                              headers={"Content-Type": "text/event-stream"})
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a")
+
+    chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]
+    assert "".join(c.delta for c in chunks) == "Представь"
+
+    ok = [e for e in _isolate if e.outcome == "ok"]
+    assert ok, "успешный поток не попал в учёт"
+    assert "first_ms" in ok[-1].meta, "время первого куска не записано"
+    assert ok[-1].meta["first_ms"] < ok[-1].duration_ms, (
+        "записано полное время потока, а не время до первого куска: "
+        f"first_ms={ok[-1].meta['first_ms']}, duration_ms={ok[-1].duration_ms}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_usage_omits_first_ms_when_nothing_arrived(monkeypatch, _isolate):
+    """Отказ ДО первого куска не пишет `first_ms`: ждать было нечего.
+
+    Ноль здесь соврал бы сильнее пропуска — он неотличим от мгновенного ответа
+    и испортил бы любую сводку по времени ожидания.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(
+            {"error": {"message": "upstream boom", "status": 502}},
+        ), headers={"Content-Type": "text/event-stream"})
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a")
+
+    with pytest.raises(LLMUpstreamError):
+        async for _ in llm_client.stream(MSGS, purpose="tutor"):
+            pass
+
+    assert _isolate, "неуспешный поток не попал в учёт"
+    assert "first_ms" not in _isolate[-1].meta
+    assert _isolate[-1].meta["chars"] == 0, "пустой поток различается по chars"
+
+
+@pytest.mark.asyncio
+async def test_stream_usage_keeps_first_ms_on_broken_stream(monkeypatch, _isolate):
+    """Оборванный поток тоже несёт время первого куска.
+
+    Ученик успел увидеть начало ответа — значит вопрос «долго ли он ждал» имеет
+    смысл ровно так же, как у доведённого до конца потока.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_sse(
+            {"choices": [{"delta": {"content": "Начало ответа"}}]},
+            {"error": {"message": "upstream died", "status": 502}},
+        ), headers={"Content-Type": "text/event-stream"})
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a")
+
+    chunks = [c async for c in llm_client.stream(MSGS, purpose="tutor")]
+    assert chunks[-1].truncated is True
+
+    assert _isolate and _isolate[-1].outcome != "ok"
+    assert "first_ms" in _isolate[-1].meta, "у оборванного потока время первого куска потеряно"
+    assert _isolate[-1].meta["chars"] == len("Начало ответа")

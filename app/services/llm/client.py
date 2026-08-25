@@ -182,6 +182,27 @@ async def _usage_ok(
     ))
 
 
+def _stream_meta(started: float, first_at: Optional[float], text_len: int) -> dict:
+    """Мета потоковой записи учёта: сколько ученик ждал НАЧАЛА текста (tsk-683).
+
+    `duration_ms` меряет поток целиком и на вопрос «уложились ли в предел
+    первого токена» (`Budget.INTERACTIVE.first_token_timeout`) не отвечает: по
+    учёту расхода видно только «ok» или «LLMTimeout», а не то, сколько ученик
+    смотрел в «Наставник думает…» до первой буквы. Ради tsk-680 пришлось
+    поднимать отдельный замерщик на проде — с этим ключом та же мерка снимается
+    по уже накопленным строкам.
+
+    Ключ пишется, только когда кусок реально пришёл. У пустого потока и у
+    отказа до первого куска ждать было нечего, и ноль здесь соврал бы сильнее
+    пропуска: он неотличим от мгновенного ответа. Различить эти случаи можно по
+    `chars` — он пишется всегда.
+    """
+    meta: dict = {"chars": text_len}
+    if first_at is not None:
+        meta["first_ms"] = int((first_at - started) * 1000)
+    return meta
+
+
 # ──────────────────────────────── Батч ──────────────────────────────────────
 
 
@@ -474,7 +495,8 @@ async def stream(
                 await _usage_ok(
                     purpose=purpose, student_id=student_id, model=candidate,
                     provider=cfg.name, tokens_in=tokens_in, tokens_out=tokens_out,
-                    duration_ms=duration_ms, outcome="ok", meta={"chars": text_len},
+                    duration_ms=duration_ms, outcome="ok",
+                    meta=_stream_meta(started, first_at, text_len),
                 )
                 yield LLMChunk(
                     done=True, model=candidate, tokens_in=tokens_in,
@@ -503,7 +525,8 @@ async def stream(
                 purpose=purpose, student_id=student_id, model=candidate,
                 provider=cfg.name, tokens_in=tokens_in, tokens_out=tokens_out,
                 duration_ms=duration_ms, outcome=type(last_error).__name__,
-                meta={"message": str(last_error)[:300], "chars": text_len},
+                meta={"message": str(last_error)[:300],
+                      **_stream_meta(started, first_at, text_len)},
             )
 
             if got_any:
