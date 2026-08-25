@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 >nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy-lms.ps1"
+REM Аргументы пробрасываются в ps1: deploy-lms.cmd -HoldOk (см. tsk-672).
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0deploy-lms.ps1" %*
 echo.
 pause

@@ -67,8 +67,55 @@ main() {
   git rev-parse HEAD > .last-deploy-sha
   echo "Версия перед деплоем (цель отката): $(cat .last-deploy-sha)"
 
-  echo "== git fetch + reset to origin/main =="
+  echo "== git fetch =="
   git fetch origin
+
+  # Выкат делает reset --hard на origin/main, то есть на прод уезжает ВСЁ
+  # закоммиченное в ветке, а не только работа выкатывающего. Чипы работают в
+  # одну ветку, поэтому «я свою правку не выкатывал» не значит «её нет на
+  # проде»: 25.08 неодобренная работа уехала прицепом с чужим деплоем (tsk-672,
+  # увезло tsk-665, увезло работу tsk-658).
+  #
+  # Кто сознательно придерживает работу до решения оператора — ставит в тело
+  # СВОЕГО коммита строку:
+  #   Hold-For-Operator: <что должен решить оператор>
+  # Гейт ниже не даёт соседу увезти такой коммит молча.
+  # Осознанно выкатить всё равно:
+  #   sudo -u app env DEPLOY_HOLD_OK=1 bash /opt/lms/deploy/vps/deploy.sh
+  local range="HEAD..origin/main" ahead held
+  echo "== что уедет на прод сверх текущей версии =="
+  ahead=$(git rev-list --count "$range")
+  if [[ "$ahead" -eq 0 ]]; then
+    echo "Новых коммитов нет: прод уже на origin/main."
+  else
+    echo "Коммитов к выкату: $ahead"
+    git --no-pager log --oneline "$range"
+  fi
+
+  echo "== проверка пометок «ждёт решения оператора» (tsk-672) =="
+  held=$(git log "$range" --grep='Hold-For-Operator:' --format='%h %s' || true)
+  if [[ -z "$held" ]]; then
+    echo "Помеченных коммитов нет."
+  elif [[ "${DEPLOY_HOLD_OK:-}" == "1" ]]; then
+    echo "ВНИМАНИЕ: помеченные коммиты есть, выкат продолжен по DEPLOY_HOLD_OK=1:"
+    echo "$held"
+  else
+    echo "ОСТАНОВЛЕНО: в ветке есть работа, помеченная как ждущая решения оператора." >&2
+    echo "$held" >&2
+    echo "" >&2
+    echo "Чего ждут:" >&2
+    git log "$range" --grep='Hold-For-Operator:' --format='%B' \
+      | grep -i '^Hold-For-Operator:' >&2 || true
+    echo "" >&2
+    echo "Ничего не тронуто: прод остался на прежней версии." >&2
+    echo "Выкат идёт целиком из ветки — выкатить «только своё» нельзя, ветка одна." >&2
+    echo "Что делать:" >&2
+    echo "  1) дождаться решения оператора по пункту выше;" >&2
+    echo "  2) решение получено — повторить деплой с DEPLOY_HOLD_OK=1 и записать это в задачу." >&2
+    exit 2
+  fi
+
+  echo "== reset to origin/main =="
   git reset --hard origin/main
 
   echo "== pip install =="
@@ -86,6 +133,12 @@ main() {
 
   echo "== smoke: /health (ждём готовности сервера, tsk-640) =="
   wait_for_http_ok http://127.0.0.1:8000/health 30
+
+  # Сверка по факту, а не по намерению (tsk-672/tsk-676): печатаем то, что
+  # реально приехало в рабочее дерево, а не то, что выкатывающий собирался
+  # выкатить. Список до reset — прогноз, этот — факт.
+  echo "== что фактически уехало на прод =="
+  git --no-pager log --oneline "$(cat .last-deploy-sha)..HEAD" || true
 
   echo "Deployed: $(git rev-parse --short HEAD)"
 }
