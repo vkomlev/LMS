@@ -16,6 +16,8 @@ from app.services import llm_chain_check_cron_service as chain_check
 from app.services.llm import client as llm_client
 from app.services.llm import cooldown, providers, usage
 
+SSE_SEP = chr(10) * 2
+
 GOOD_VERDICT = {
     "language": "Python",
     "code_quality": {"score": 8, "notes": ["строка 5: имя переменной ни о чём не говорит"]},
@@ -71,6 +73,30 @@ def _by_model(request: httpx.Request) -> str:
     return json.loads(request.content.decode())["model"]
 
 
+def _is_stream(request: httpx.Request) -> bool:
+    return bool(json.loads(request.content.decode()).get("stream"))
+
+
+def _sse_ok(text: str = "готов") -> httpx.Response:
+    frame = "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}) + SSE_SEP
+    return httpx.Response(200, content=frame.encode(),
+                          headers={"content-type": "text/event-stream"})
+
+
+def _tutor_ok_first(handler):
+    """Наставник отвечает потоком, судья — как решит обёрнутый обработчик.
+
+    Наставницкая проба идёт стримингом и по бюджету интерактива: её вопрос — «за
+    сколько пришёл ПЕРВЫЙ кусок», а не «за сколько пришёл весь ответ».
+    """
+    def routed(request: httpx.Request) -> httpx.Response:
+        if _is_stream(request):
+            return _sse_ok()
+        return handler(request)
+
+    return routed
+
+
 @pytest.mark.asyncio
 async def test_alive_but_useless_judge_is_demoted(monkeypatch):
     """«Жива» и «годна судить» — разное, и проход обязан их различать.
@@ -83,7 +109,7 @@ async def test_alive_but_useless_judge_is_demoted(monkeypatch):
         model = _by_model(request)
         return _answer(NO_SCORE_VERDICT if model == "judge-b" else GOOD_VERDICT)
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     summary = await chain_check.llm_chain_check_tick()
 
@@ -103,7 +129,7 @@ async def test_check_never_changes_chain_composition(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503, json={"error": {"message": "no_available_provider"}})
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
     before = providers.judge_models()
 
     await chain_check.llm_chain_check_tick()
@@ -122,7 +148,7 @@ async def test_dead_head_raises_alert(monkeypatch):
             return httpx.Response(503, json={"error": {"message": "no_available_provider"}})
         return _answer(GOOD_VERDICT)
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     summary = await chain_check.llm_chain_check_tick()
 
@@ -142,7 +168,7 @@ async def test_thin_bench_raises_alert_even_when_head_is_fine(monkeypatch):
             return _answer(GOOD_VERDICT)
         return httpx.Response(503, json={"error": {"message": "no_available_provider"}})
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     summary = await chain_check.llm_chain_check_tick()
 
@@ -161,14 +187,15 @@ async def test_check_spend_is_visible_in_usage_under_own_purpose(monkeypatch, _i
     def handler(request: httpx.Request) -> httpx.Response:
         return _answer(GOOD_VERDICT)
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     await chain_check.llm_chain_check_tick()
 
     purposes = {e.purpose for e in _isolate}
     assert purposes == {chain_check.CHECK_PURPOSE}
-    # Три судьи + два наставника: каждая модель обеих цепочек проверена ровно раз.
-    assert len(_isolate) == 5
+    # Три судьи на каждом образце работы + два наставника: ни одна модель обеих
+    # цепочек не осталась непроверенной и невидимой на пульте.
+    assert len(_isolate) == 3 * len(chain_check.PROBE_WORKS) + 2
 
 
 @pytest.mark.asyncio
@@ -183,7 +210,7 @@ async def test_slow_judge_is_demoted_even_when_answer_is_good(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return _answer(GOOD_VERDICT)
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     summary = await chain_check.llm_chain_check_tick()
 
@@ -205,10 +232,76 @@ async def test_provider_cooldown_postpones_pass_instead_of_condemning_chain(monk
     def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
         raise AssertionError("при остывании провайдера сеть трогать нельзя")
 
-    _mount(monkeypatch, handler)
+    _mount(monkeypatch, _tutor_ok_first(handler))
 
     summary = await chain_check.llm_chain_check_tick()
 
     assert summary.get("skipped") is True
     assert summary["alerts"] == []
     assert not cooldown.is_cooling("model:judge-a"), "цепочку задвигать не за что"
+
+
+@pytest.mark.asyncio
+async def test_tutor_is_judged_by_first_chunk_not_by_full_answer(monkeypatch):
+    """Наставник проверяется его собственной меркой: стриминг и первый кусок.
+
+    Первый боевой проход объявил `claude-sonnet-4.6` недоступным. Диагностика на
+    проде показала: модель отдавала слово «Готов» целиком за 22 c — то есть была
+    жива, а мерили её батч-вызовом с потолком батча. Для ученика, который видит
+    текст по мере генерации, важен ПЕРВЫЙ кусок, а не полное время.
+
+    Сторож, который так врёт, хуже отсутствующего: на его тревоги перестают
+    смотреть.
+    """
+    seen: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode())
+        seen.append((body["model"], bool(body.get("stream"))))
+        if body.get("stream"):
+            return _sse_ok()
+        return _answer(GOOD_VERDICT)
+
+    _mount(monkeypatch, handler)
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary["tutor_ok"] == 2 and summary["tutor_bad"] == 0
+    tutor_calls = [(m, s) for m, s in seen if m.startswith("tutor-")]
+    assert tutor_calls and all(streamed for _, streamed in tutor_calls), (
+        "наставника нельзя проверять батч-вызовом — у него другая мерка"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slow_judge_gets_second_measurement_before_demotion(monkeypatch):
+    """Медленность подтверждается вторым замером, а не приговором с первого.
+
+    Время у провайдера пляшет втрое за пять минут: 25.08 `gemini-3.7-flash` дал
+    24,6 c в проходе и 5,4 c спустя пять минут. Задвинутая по шуму голова уводит
+    все разборы к худшей модели — а это деньги.
+    """
+    calls = {"n": 0}
+    # Поддельные часы: ПЕРВЫЙ судейский замер выходит за бюджет попытки, все
+    # следующие — нет. Бюджет при этом настоящий, подменять его нельзя: он
+    # читается ещё и при сборке таймаутов запроса.
+    ticks = iter([0.0, 100.0] + [200.0 + i for i in range(200)])
+    monkeypatch.setattr(chain_check.time, "monotonic", lambda: next(ticks))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if _is_stream(request):
+            return _sse_ok()
+        calls["n"] += 1
+        return _answer(GOOD_VERDICT)
+
+    _mount(monkeypatch, handler)
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert not cooldown.is_cooling("model:judge-a"), (
+        "по одному медленному замеру голову цепочки не задвигают"
+    )
+    assert summary["judge_ok"] == 3
+    works = len(chain_check.PROBE_WORKS)
+    # Три судьи по всем образцам плюс ОДИН повторный замер медленного — не больше.
+    assert calls["n"] == 3 * works + 1, "медленного судью обязаны перемерить ровно один раз"

@@ -15,10 +15,12 @@
 
 **Что делает проход:**
 
-* по каждой модели судейской цепочки — один НАСТОЯЩИЙ разбор боевым промптом:
-  держит ли модель формат (ответ обязан разобраться нашим же разборщиком) и
-  укладывается ли в бюджет попытки. «Жива» и «годна судить» — разное, ровно на
-  этом и попался haiku: отвечал быстро и бодро, а балла в ответе не было;
+* по каждой модели судейской цепочки — НАСТОЯЩИЙ разбор боевым промптом на ДВУХ
+  разных образцах работ: держит ли модель формат (ответ обязан разобраться нашим
+  же разборщиком) и укладывается ли в бюджет попытки. «Жива» и «годна судить» —
+  разное, ровно на этом и попался haiku: отвечал быстро и бодро, а балла в ответе
+  не было. Образцов два, потому что sonnet-4.6 прошёл гейт 3 раза из 3 на одном
+  и вернул другую схему целиком на другом (см. `PROBE_WORKS`);
 * по каждой модели наставницкой цепочки — дешёвый вызов «жива ли». Качество
   наставника проверяется гейтом на слив эталона, а это три полных прогона на
   модель — дорого для еженедельника и требует решения оператора. Здесь только
@@ -57,7 +59,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import Settings
-from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers
+from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers, stream
 from app.services.llm.contracts import LLMCooldown
 
 # Разбор ответа берём ТОТ ЖЕ, что работает на бою. Своя копия проверки формата
@@ -75,15 +77,61 @@ _scheduler: Optional[AsyncIOScheduler] = None
 
 CHECK_PURPOSE = "chain_check"
 
-# Образец работы для судейской проверки. Синтетический намеренно: настоящая
-# сдача — данные ученика, и брать их для еженедельного пинга незачем. Размер
-# близок к типичной короткой сдаче; на длительность размер входа влияет слабо
-# (замер 25.08: 999 токенов дали 4,2 c, 5767 токенов — 5,4 c).
-PROBE_STEM = (
-    "Составь программу: пользователь вводит числа, пока не введёт 0. "
-    "Выведи сумму введённых чисел и их количество."
-)
-PROBE_CODE = """summa = 0
+# ОБРАЗЦЫ работ для судейской проверки — их ДВА, и это не запас, а урок.
+#
+# 25.08 `claude-sonnet-4.6` прошёл гейт формата 3 раза из 3 на одном образце и
+# был поставлен вторым в боевую цепочку. На другом образце он вернул не просто
+# другой формат, а ДРУГУЮ СХЕМУ ЦЕЛИКОМ — русскими ключами
+# («правильность», «оценка», «замечания») вместо нашей. То же и у
+# `openai/gpt-5.4-mini`: 3/3 на первом образце, 2/3 на втором.
+#
+# Значит, три прогона на ОДНОМ примере не доказывают дисциплину формата: они
+# доказывают её для этого примера. Годной считается модель, разобравшаяся на
+# ОБОИХ — они намеренно разной формы: рисование в цикле с побочным эффектом и
+# счётный цикл с вводом.
+#
+# Образцы синтетические: настоящая сдача — данные ученика, и брать их для
+# еженедельного пинга незачем. Размер близок к типичной короткой сдаче; на
+# длительность размер входа влияет слабо (замер 25.08: 999 токенов дали 4,2 c,
+# 5767 токенов — 5,4 c).
+PROBE_WORKS: tuple[tuple[str, str], ...] = (
+    (
+        "Черепашка должна нарисовать домик: квадрат со стороной 100 и "
+        "треугольную крышу над ним. Используй цикл для стен и отдельные команды "
+        "для крыши. Цвет стен — синий, цвет крыши — красный.",
+        """import turtle
+
+t = turtle.Turtle()
+t.speed(3)
+
+t.color("blue")
+for i in range(4):
+    t.forward(100)
+    t.left(90)
+
+t.color("red")
+t.forward(100)
+t.left(60)
+t.forward(100)
+t.left(120)
+t.forward(100)
+
+# risuem okno
+t.penup()
+t.goto(30, 30)
+t.pendown()
+t.color("blue")
+for i in range(4):
+    t.forward(40)
+    t.left(90)
+
+turtle.done()
+""",
+    ),
+    (
+        "Составь программу: пользователь вводит числа, пока не введёт 0. "
+        "Выведи сумму введённых чисел и их количество.",
+        """summa = 0
 kol = 0
 
 while True:
@@ -95,21 +143,35 @@ while True:
 
 print("summa =", summa)
 print("kolichestvo =", kol)
-"""
+""",
+    ),
+)
+
+# Совместимость для стенда и прежних вызовов: первый образец под старыми именами.
+PROBE_STEM, PROBE_CODE = PROBE_WORKS[0]
 
 
-async def probe_judge_model(model: str) -> tuple[bool, str, float]:
+async def probe_judge_model(model: str, work: tuple[str, str]) -> tuple[bool, str, str]:
     """Один настоящий разбор конкретной моделью: годна ли она судить.
 
-    Возвращает «годна», причину и длительность в секундах. Годна — это три
-    условия сразу, и каждое из них уже подводило нас по отдельности:
-    ответ вообще пришёл, ответ разобрался нашим разборщиком до балла чистоты,
-    и модель уложилась в бюджет ОДНОЙ попытки (иначе на бою она в него не
-    уложится тем более — там ещё и очередь работ).
+    Возвращает «годна», причину и КЛАСС отказа. Класс нужен потому, что отказы
+    здесь разного веса:
+
+    * `error` и `format` — твёрдые. Модель либо не ответила, либо ответила не по
+      нашей схеме; повторять незачем.
+    * `slow` — шаткий. Время у провайдера пляшет втрое за пять минут (замер
+      25.08: `gemini-3.7-flash` — 24,6 c в проходе и 5,4 c спустя пять минут).
+      Задвигать голову цепочки по одному такому замеру значит гонять разборы к
+      худшей модели из-за шума, а это деньги.
+
+    Годна — это три условия сразу, и каждое уже подводило нас по отдельности:
+    ответ пришёл, ответ разобрался нашим разборщиком до балла чистоты, и модель
+    уложилась в бюджет ОДНОЙ попытки (на бою у неё сверху ещё очередь работ).
     """
+    stem, code = work
     messages = [
         LLMMessage(role="system", content=_SYSTEM_PROMPT),
-        LLMMessage(role="user", content=_build_user_message(PROBE_CODE, task_stem=PROBE_STEM)),
+        LLMMessage(role="user", content=_build_user_message(code, task_stem=stem)),
     ]
     started = time.monotonic()
     try:
@@ -126,36 +188,55 @@ async def probe_judge_model(model: str) -> tuple[bool, str, float]:
         # тревогу на ровном месте. Пусть проход отложится до следующего раза.
         raise
     except LLMError as exc:
-        return False, f"{type(exc).__name__}: {exc}"[:200], time.monotonic() - started
+        return False, f"{type(exc).__name__}: {exc}"[:200], "error"
 
     took = time.monotonic() - started
     try:
         verdict = _parse_verdict(result.text)
     except Exception as exc:  # noqa: BLE001 — любой кривой ответ здесь равнозначен
-        return False, f"ответ не разобрался: {type(exc).__name__}: {exc}"[:200], took
+        return False, f"ответ не разобрался: {type(exc).__name__}: {exc}"[:200], "format"
     if verdict["code_quality"]["score"] is None:
-        return False, "разобралось, но балла чистоты в ответе нет", took
+        return False, "разобралось, но балла чистоты в ответе нет", "format"
     if took > Budget.BATCH.attempt_timeout:
-        return False, f"{took:.1f} c — не уложилась в бюджет попытки", took
-    return True, f"{took:.1f} c, балл получен", took
+        return False, f"{took:.1f} c — не уложилась в бюджет попытки", "slow"
+    return True, f"{took:.1f} c, балл получен", "ok"
 
 
-async def probe_model_alive(model: str) -> tuple[bool, str, float]:
-    """Дешёвый вызов «жива ли модель»: пять токенов, без суждения о качестве."""
+async def probe_tutor_model(model: str) -> tuple[bool, str, float]:
+    """Жива ли модель наставника — по МЕРКЕ НАСТАВНИКА, а не батча.
+
+    Мерка здесь не формальность, а суть. Наставник стримит: ученик видит текст по
+    мере генерации, и «отвечает ли модель» для него значит «пришёл ли ПЕРВЫЙ
+    кусок за 12 c» (`Budget.INTERACTIVE`). Полное время ответа ему безразлично.
+
+    Первый же боевой проход это доказал: `claude-sonnet-4.6` отдал слово «Готов»
+    целиком за 22 c и был объявлен недоступным — батч-вызовом, с потолком батча.
+    Для ученика он при этом мог быть совершенно жив. Сторож, который так врёт,
+    хуже отсутствующего: на его тревоги перестают смотреть.
+    """
     started = time.monotonic()
+    first_at: float | None = None
     try:
-        await complete(
+        async for chunk in stream(
             [LLMMessage(role="user", content="Ответь одним словом: готов")],
             model=model,
             purpose=CHECK_PURPOSE,
-            budget=Budget.BATCH,
-            max_tokens=5,
-        )
+            budget=Budget.INTERACTIVE,
+            max_tokens=32,
+        ):
+            if chunk.delta and first_at is None:
+                first_at = time.monotonic() - started
+            # Поток дочитываем ДО КОНЦА, хотя ответ нам уже не нужен. Выйти на
+            # первом куске значит закрыть генератор до того, как он запишет
+            # расход: проба стала бы невидимой на пульте — ровно там, где она и
+            # задумана как видимая. Ответ в 32 токена этого не стоит.
     except LLMCooldown:
         raise  # см. `probe_judge_model`: это про провайдера, а не про модель
     except LLMError as exc:
         return False, f"{type(exc).__name__}: {exc}"[:200], time.monotonic() - started
-    return True, "жива", time.monotonic() - started
+    if first_at is None:
+        return False, "поток закончился, не отдав ни куска", time.monotonic() - started
+    return True, f"первый кусок за {first_at:.1f} c", first_at
 
 
 def _demote(model: str, seconds: float, reason: str) -> None:
@@ -167,6 +248,26 @@ def _demote(model: str, seconds: float, reason: str) -> None:
     """
     cooldown.start("model:" + model, seconds)
     logger.warning("LLM_CHAIN_ALERT: %s задвинута в конец очереди — %s", model, reason)
+
+
+async def _judge_all_works(model: str) -> tuple[bool, str, str]:
+    """Годна ли модель судить — по ВСЕМ образцам, а не по одному.
+
+    Достаточно провалиться на одном: дисциплина формата, доказанная на единственном
+    примере, — это дисциплина для этого примера (см. `PROBE_WORKS`).
+
+    Медленность подтверждаем вторым замером. Один медленный ответ у этого
+    провайдера ничего не доказывает — 25.08 время плясало втрое за пять минут, —
+    а задвинутая по шуму голова уводит все разборы к худшей модели, и это деньги.
+    """
+    for index, work in enumerate(PROBE_WORKS, 1):
+        good, why, kind = await probe_judge_model(model, work)
+        if not good and kind == "slow":
+            logger.info("chain_check: судья %s медлил (%s), перемеряю", model, why)
+            good, why, kind = await probe_judge_model(model, work)
+        if not good:
+            return False, f"образец {index} из {len(PROBE_WORKS)}: {why}", kind
+    return True, f"все образцы разобраны ({len(PROBE_WORKS)})", "ok"
 
 
 async def llm_chain_check_tick() -> dict:
@@ -184,18 +285,18 @@ async def llm_chain_check_tick() -> dict:
     try:
         judge_chain = providers.judge_models()
         for position, model in enumerate(judge_chain, 1):
-            good, why, _ = await probe_judge_model(model)
+            good, why, kind = await _judge_all_works(model)
             if good:
                 summary["judge_ok"] += 1
                 logger.info("chain_check: судья %s (%d) годен — %s", model, position, why)
                 continue
             summary["judge_bad"] += 1
-            _demote(model, demote_for, f"судья не годен: {why}")
+            _demote(model, demote_for, f"судья не годен ({kind}): {why}")
             if position == 1:
                 summary["alerts"].append(f"первая модель судьи не годна: {model} — {why}")
 
         for position, model in enumerate(providers.tutor_models(), 1):
-            good, why, _ = await probe_model_alive(model)
+            good, why, _ = await probe_tutor_model(model)
             if good:
                 summary["tutor_ok"] += 1
                 continue

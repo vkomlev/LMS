@@ -184,12 +184,17 @@ JUDGE_BUDGET_SEC = 60.0  # значение по умолчанию, переч�
 # работу — иначе их числа не сравнить, а сравнивать их придётся: проход находит
 # «что-то испортилось», стенд отвечает «на что менять».
 
-def _judge_prompt() -> tuple[str, str]:
-    """Взять БОЕВОЙ промпт судьи из сервиса, а не переписать его в стенд.
+def _judge_prompt() -> tuple[str, list[str]]:
+    """Взять БОЕВОЙ промпт судьи и ВСЕ образцы работ из сервиса проверки цепочек.
 
     Копия промпта в стенде означала бы, что стенд меряет не то, что работает на
     бою: рубрика правится задачами tsk-646/tsk-658, и разошлись бы они молча.
     `.env` подгружается в окружение до импорта — сервис тянет `Settings`.
+
+    Образцов несколько, и прогоны идут по ним по кругу: 25.08 `sonnet-4.6` прошёл
+    гейт формата 3 раза из 3 на одном образце и вернул другую схему целиком на
+    другом. Три прогона на ОДНОМ примере доказывают дисциплину для этого примера,
+    и не более того.
     """
     for k, v in dotenv_values(ROOT / ".env", encoding="utf-8-sig").items():
         if v is not None:
@@ -198,12 +203,14 @@ def _judge_prompt() -> tuple[str, str]:
     from app.services.code_review_service import _SYSTEM_PROMPT, _build_user_message
 
     from app.services.llm.contracts import Budget
-    from app.services.llm_chain_check_cron_service import PROBE_CODE, PROBE_STEM
+    from app.services.llm_chain_check_cron_service import PROBE_WORKS
 
     global JUDGE_BUDGET_SEC
     JUDGE_BUDGET_SEC = float(Budget.BATCH.attempt_timeout)
 
-    return _SYSTEM_PROMPT, _build_user_message(PROBE_CODE, task_stem=PROBE_STEM)
+    return _SYSTEM_PROMPT, [
+        _build_user_message(code, task_stem=stem) for stem, code in PROBE_WORKS
+    ]
 
 
 def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: str) -> dict:
@@ -426,14 +433,17 @@ def main() -> None:
                                  .get("LLM_JUDGE_MODELS") or "").split(",") if m.strip()]
         if not models:
             sys.exit("нечего мерить: задай --models или LLM_JUDGE_MODELS в .env")
-        system_prompt, user_msg = _judge_prompt()
+        system_prompt, user_msgs = _judge_prompt()
         print(f"судейская ось: кандидатов {len(models)}, прогонов на каждого {args.runs}\n")
 
         jobs = [(m, i) for m in models for i in range(args.runs)]
         # Последовательно, а не пачкой: на бою судья ходит к провайдеру строго по
         # одному (проверено на боевых данных — перекрытий вызовов ноль), и
         # параллельный стенд мерил бы не ту нагрузку.
-        raw = [judge_probe(j[0], system_prompt, user_msg, base, key) for j in jobs]
+        # Прогон i идёт по образцу i — так три прогона накрывают оба образца
+        # без лишних вызовов, а не троекратно подтверждают один и тот же.
+        raw = [judge_probe(j[0], system_prompt, user_msgs[j[1] % len(user_msgs)],
+                           base, key) for j in jobs]
         by_model: dict[str, list[dict]] = {}
         for r in raw:
             by_model.setdefault(r["model"], []).append(r)
