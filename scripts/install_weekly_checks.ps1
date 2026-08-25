@@ -32,8 +32,8 @@
 
 .PARAMETER Only
     Завести только одну задачу — по имени чека (ungradable, section-order,
-    missing-attachments, stale-verdicts, slow-requests). По умолчанию заводятся все, кроме
-    missing-attachments (см. -WithMissingAttachments).
+    missing-attachments, stale-verdicts, slow-requests, tutor-outcomes). По умолчанию
+    заводятся все, кроме missing-attachments (см. -WithMissingAttachments).
 
 .PARAMETER WithMissingAttachments
     Добавить чек файлов-приложений. Отдельным флагом, потому что раньше он в
@@ -54,7 +54,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests')]
+    [ValidateSet('ungradable', 'section-order', 'missing-attachments', 'stale-verdicts', 'slow-requests', 'tutor-outcomes')]
     [string]$Only,
     [switch]$WithMissingAttachments,
     [switch]$Uninstall
@@ -69,6 +69,7 @@ $plan = @(
     [pscustomobject]@{ Check = 'ungradable';          TaskName = 'LMS ungradable tasks weekly';            At = '09:10'; Default = $true;  Why = 'задания, которые невозможно проверить (tsk-361)' }
     [pscustomobject]@{ Check = 'stale-verdicts';      TaskName = 'LMS stale verdicts weekly';              At = '09:20'; Default = $true;  Why = 'незачёты, устаревшие после правки эталона (tsk-636)' }
     [pscustomobject]@{ Check = 'slow-requests';       TaskName = 'LMS slow requests weekly';               At = '09:25'; Default = $true;  Why = 'запросы, которые ученик ждал дольше порога (tsk-644)' }
+    [pscustomobject]@{ Check = 'tutor-outcomes';      TaskName = 'LMS tutor outcomes weekly';              At = '09:28'; Default = $true;  Why = 'чем кончаются разговоры с ИИ-наставником (tsk-661)' }
     [pscustomobject]@{ Check = 'missing-attachments'; TaskName = 'LMS missing attachments weekly';         At = '09:30'; Default = $false; Why = 'задания с файловым условием без файла (tsk-369)' }
 )
 

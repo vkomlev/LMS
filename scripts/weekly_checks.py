@@ -131,6 +131,21 @@ CHECKS: dict[str, Check] = {
         # тяжелее, ещё до того как это станет затором.
         report_on_zero=True,
     ),
+    "tutor-outcomes": Check(
+        module="check_tutor_outcomes",
+        log="tutor_outcomes_check.log",
+        needs_dsn=True,
+        ok="OK: с наставником всё в порядке",
+        found="НАСТАВНИК:",
+        hint="  Что с этим делать — tsk-661 в трекере (охват — tsk-659, молчание модели — tsk-678).",
+        takes_quiet=True,
+        # Здесь важен именно фон, а не только тревога: главный смысл чека — чтобы
+        # пара цифр «сколько поводов дошло» и «чем кончилось» попадала в журнал
+        # КАЖДУЮ неделю. Молчание при нуле находок вернуло бы ровно ту слепоту,
+        # ради которой чек и заведён: контур полтора месяца выглядел работающим,
+        # потому что никто не видел его цифр.
+        report_on_zero=True,
+    ),
     "stale-verdicts": Check(
         module="audit_stale_false_verdicts_tsk602",
         log="stale_verdicts_check.log",
