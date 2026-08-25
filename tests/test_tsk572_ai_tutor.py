@@ -368,6 +368,38 @@ def test_opening_message_asks_about_reasoning_not_explains():
     )
 
 
+def test_core_never_blames_the_student_in_all_modes():
+    """Тон «ученик не виноват» стоит во ВСЕХ режимах (tsk-666, просьба оператора).
+
+    Ученик попадает к наставнику сразу после неверного ответа, на красном экране,
+    и по живым диалогам видно, что разговор для него — продолжение упрёка:
+    «Не знаю как ответить на этот вопрос» и уход после третьего подряд «а почему
+    ты так думаешь?». Правила ниже — про это, а не про вежливость вообще.
+    """
+    view = TutorTaskView(task_id=1, stem="s", task_type="SA")
+    for mode in ("concept", "debug", "deepen", "thin", "mission"):
+        flat = " ".join(build_system_prompt(view, mode).split())
+        assert "Неверный ответ — рабочий материал, а не проступок" in flat, mode
+        assert "НОРМАЛЬНЫЕ ответы" in flat, mode
+        assert "подряд больше двух раз" in flat, mode
+        assert "НЕ проси прислать то, что у тебя уже есть" in flat, mode
+
+
+def test_opening_after_wrong_answer_does_not_demand_a_report():
+    """Первая реплика снимает вину, а не требует отчёта (tsk-666).
+
+    Было: «Как ты рассуждал и что уже попробовал сделать?» сразу под красным
+    «Неверно ✗». Для ученика, который не понял вообще ничего, честный ответ —
+    «ничего», и произносить его стыдно. Так ушла Омельченко 17.08.
+    """
+    view = TutorTaskView(task_id=1, stem="Задача про циклы", task_type="SA")
+    opening = build_opening_user_message(view, "мой ответ 42")
+    assert "ошибиться здесь нормально" in opening
+    assert "не знаю" in opening.lower()
+    # Подсказка до попытки по-прежнему запрещена — решение оператора 11.
+    assert "Не объясняй тему" in opening
+
+
 def test_core_forbids_ready_solution_in_all_modes():
     view = TutorTaskView(task_id=1, stem="s", task_type="SA")
     for mode in ("concept", "debug", "deepen", "thin"):
@@ -653,4 +685,8 @@ def test_opening_does_not_ask_what_he_tried_before_first_submission():
     assert "где он застрял" in opening
 
     with_answer = build_opening_user_message(view, "мой ответ")
-    assert "что уже попробовал" in with_answer
+    # tsk-666: формулировка смягчена, смысл прежний — при СДАННОМ ответе
+    # спрашиваем про ход мысли, а не «что непонятно». Отчёта при этом не
+    # требуем: «ничего не пробовал» объявлено нормальным ответом.
+    assert "как ученик рассуждал" in with_answer
+    assert "Не требуй отчёта" in with_answer
