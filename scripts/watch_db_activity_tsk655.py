@@ -242,6 +242,58 @@ def report(path: Path) -> None:
         logger.info("    %5d × %s", times, wait)
 
 
+#: Насколько широкую полосу вокруг окна проверять на «событие рядом, а не внутри».
+_MISS_BAND_MINUTES = 30
+
+
+async def _warn_if_event_missed(conn: Any, windows: list) -> None:
+    """Сказать вслух, если затор случился РЯДОМ с окном, а не внутри него.
+
+    Сторож на ту самую ошибку, которая 25.08 стоила замера: занятие кончилось
+    в 08:00 UTC, окно закрылось в 08:05 и сняло тишину — а затор пришёл в
+    08:06:39, через две минуты после закрытия. Разбор чуть не закончился
+    выводом «затора не было»; поймал его человек, сверивший журнал руками.
+
+    Проверка сравнивает снятое окно с журналом медленных запросов в полосе
+    ±30 минут. Молчание тут значит «рядом тоже тихо», а не «мы не смотрели» —
+    ровно та разница, которой не хватало.
+
+    Ошибка самой проверки не должна ронять прогон: снимки уже на диске, они
+    ценнее сторожа.
+    """
+    try:
+        for start, stop, meta in windows:
+            rows = await conn.fetch(
+                """
+                SELECT ts, path, duration_ms
+                FROM slow_request
+                WHERE ts >= $1::timestamptz - make_interval(mins => $3)
+                  AND ts <= $2::timestamptz + make_interval(mins => $3)
+                  AND (ts < $1::timestamptz OR ts > $2::timestamptz)
+                ORDER BY ts
+                """,
+                start, stop, _MISS_BAND_MINUTES,
+            )
+            if not rows:
+                continue
+            logger.warning(
+                "ВНИМАНИЕ: у занятия %s медленные запросы есть РЯДОМ с окном "
+                "(%s-%s UTC), но ВНЕ него — %s штук за ±%s мин. Окно взято не "
+                "туда: «затора не было» тут сказать нельзя.",
+                meta["occurrence_id"], start.strftime("%H:%M"), stop.strftime("%H:%M"),
+                len(rows), _MISS_BAND_MINUTES,
+            )
+            for row in rows[:10]:
+                logger.warning(
+                    "    %s %s — %.1f с",
+                    row["ts"].strftime("%H:%M:%S"), row["path"], row["duration_ms"] / 1000,
+                )
+            if len(rows) > 10:
+                logger.warning("    ... и ещё %s", len(rows) - 10)
+    except Exception as exc:  # noqa: BLE001 — сторож не важнее снимков
+        logger.warning("Проверку «событие рядом с окном» выполнить не удалось: %s", exc)
+
+
 async def main_async(args: argparse.Namespace) -> None:
     import asyncpg  # noqa: PLC0415
     from asyncpg.exceptions import InterfaceError  # noqa: PLC0415
@@ -325,6 +377,8 @@ async def main_async(args: argparse.Namespace) -> None:
                             dsn, server_settings={"default_transaction_read_only": "on"}
                         )
                     await asyncio.sleep(max(0.0, args.interval - (time.perf_counter() - tick)))
+
+        await _warn_if_event_missed(conn, windows)
     finally:
         await conn.close()
 
