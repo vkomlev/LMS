@@ -305,3 +305,57 @@ async def test_slow_judge_gets_second_measurement_before_demotion(monkeypatch):
     works = len(chain_check.PROBE_WORKS)
     # Три судьи по всем образцам плюс ОДИН повторный замер медленного — не больше.
     assert calls["n"] == 3 * works + 1, "медленного судью обязаны перемерить ровно один раз"
+
+
+@pytest.mark.asyncio
+async def test_single_timeout_does_not_condemn_anyone(monkeypatch):
+    """Таймаут — крайняя степень медленности, и мерить его одним замером неверно.
+
+    Второй боевой проход задвинул `openai/gpt-5.4`, который двадцатью минутами
+    раньше давал 10,1 c медианы на стенде: приговор по такому замеру — это
+    приговор вечеру у провайдера, а не модели. То же и с наставником: тревога
+    «первая модель недоступна» по одному таймауту — ложная, а на ложные тревоги
+    перестают смотреть.
+    """
+    attempts: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = _by_model(request)
+        attempts[model] = attempts.get(model, 0) + 1
+        if attempts[model] == 1:  # первый заход у каждой модели молчит
+            raise httpx.ReadTimeout("модель молчит", request=request)
+        return _sse_ok() if _is_stream(request) else _answer(GOOD_VERDICT)
+
+    _mount(monkeypatch, handler)
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary["alerts"] == [], f"одиночный таймаут не повод бить тревогу: {summary}"
+    assert summary["judge_bad"] == 0 and summary["tutor_bad"] == 0
+    # Модель всё же остывает — но МИНУТЫ, а не неделю: это обычная ротация
+    # рантайма, которая срабатывает на любом таймауте и сама отпускает. Задвинуть
+    # до следующего прохода (неделя) — совсем другое дело, и вот его-то одиночный
+    # таймаут вызывать не должен.
+    assert cooldown.remaining("model:judge-a") < 3600, (
+        "недельного задвигания по одному таймауту быть не должно"
+    )
+    assert cooldown.remaining("model:tutor-a") < 3600
+
+
+@pytest.mark.asyncio
+async def test_repeated_timeout_still_demotes(monkeypatch):
+    """Но молчание, подтверждённое вторым замером, — уже отказ.
+
+    Иначе перемер превратился бы в способ никогда никого не задвигать, и мёртвая
+    цепочка 25.08 прошла бы проверку насквозь.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("модель молчит", request=request)
+
+    _mount(monkeypatch, handler)
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary["judge_bad"] == 3 and summary["tutor_bad"] == 2
+    assert cooldown.is_cooling("model:judge-a")
+    assert any("первая модель наставника" in a for a in summary["alerts"])

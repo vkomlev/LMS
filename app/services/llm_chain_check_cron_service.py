@@ -21,7 +21,8 @@
   разное, ровно на этом и попался haiku: отвечал быстро и бодро, а балла в ответе
   не было. Образцов два, потому что sonnet-4.6 прошёл гейт 3 раза из 3 на одном
   и вернул другую схему целиком на другом (см. `PROBE_WORKS`);
-* по каждой модели наставницкой цепочки — дешёвый вызов «жива ли». Качество
+* по каждой модели наставницкой цепочки — стриминговый вызов по ЕЁ мерке:
+  пришёл ли первый кусок за 12 c. Качество
   наставника проверяется гейтом на слив эталона, а это три полных прогона на
   модель — дорого для еженедельника и требует решения оператора. Здесь только
   доступность: она ловит ровно ту аварию, что случилась 25.08;
@@ -60,7 +61,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import Settings
 from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers, stream
-from app.services.llm.contracts import LLMCooldown
+from app.services.llm.contracts import LLMCooldown, LLMTimeout
 
 # Разбор ответа берём ТОТ ЖЕ, что работает на бою. Своя копия проверки формата
 # означала бы, что проход одобряет модель, которую сервис потом не примет —
@@ -187,6 +188,12 @@ async def probe_judge_model(model: str, work: tuple[str, str]) -> tuple[bool, st
         # Записать её в негодные значило бы задвинуть всю цепочку и поднять
         # тревогу на ровном месте. Пусть проход отложится до следующего раза.
         raise
+    except LLMTimeout as exc:
+        # Таймаут — та же медленность, только крайняя её степень, и мерить её
+        # одним замером так же неверно. `gpt-5.4` дал 10,1 c медианы на стенде и
+        # упёрся в потолок двадцатью минутами позже: приговор по такому замеру —
+        # это приговор вечеру у провайдера, а не модели.
+        return False, f"{type(exc).__name__}: {exc}"[:200], "slow"
     except LLMError as exc:
         return False, f"{type(exc).__name__}: {exc}"[:200], "error"
 
@@ -202,7 +209,7 @@ async def probe_judge_model(model: str, work: tuple[str, str]) -> tuple[bool, st
     return True, f"{took:.1f} c, балл получен", "ok"
 
 
-async def probe_tutor_model(model: str) -> tuple[bool, str, float]:
+async def probe_tutor_model(model: str) -> tuple[bool, str, str]:
     """Жива ли модель наставника — по МЕРКЕ НАСТАВНИКА, а не батча.
 
     Мерка здесь не формальность, а суть. Наставник стримит: ученик видит текст по
@@ -232,11 +239,15 @@ async def probe_tutor_model(model: str) -> tuple[bool, str, float]:
             # задумана как видимая. Ответ в 32 токена этого не стоит.
     except LLMCooldown:
         raise  # см. `probe_judge_model`: это про провайдера, а не про модель
+    except LLMTimeout as exc:
+        # Класс отказа, а не текст ошибки: разбирать сообщение подстрокой —
+        # значит завязаться на формулировку, которая переживёт максимум одну правку.
+        return False, f"{type(exc).__name__}: {exc}"[:200], "slow"
     except LLMError as exc:
-        return False, f"{type(exc).__name__}: {exc}"[:200], time.monotonic() - started
+        return False, f"{type(exc).__name__}: {exc}"[:200], "error"
     if first_at is None:
-        return False, "поток закончился, не отдав ни куска", time.monotonic() - started
-    return True, f"первый кусок за {first_at:.1f} c", first_at
+        return False, "поток закончился, не отдав ни куска", "error"
+    return True, f"первый кусок за {first_at:.1f} c", "ok"
 
 
 def _demote(model: str, seconds: float, reason: str) -> None:
@@ -248,6 +259,21 @@ def _demote(model: str, seconds: float, reason: str) -> None:
     """
     cooldown.start("model:" + model, seconds)
     logger.warning("LLM_CHAIN_ALERT: %s задвинута в конец очереди — %s", model, reason)
+
+
+async def _tutor_verdict(model: str) -> tuple[bool, str, str]:
+    """Жив ли наставник, с подтверждением одиночного таймаута вторым замером.
+
+    Правило то же, что у судьи: не отдать первый кусок за 12 c модель может и
+    из-за плохой минуты у провайдера. Тревога «первая модель наставника
+    недоступна» по одному такому замеру — это ложная тревога, а на ложные
+    перестают смотреть.
+    """
+    good, why, kind = await probe_tutor_model(model)
+    if not good and kind == "slow":
+        logger.info("chain_check: наставник %s молчал (%s), перемеряю", model, why)
+        good, why, kind = await probe_tutor_model(model)
+    return good, why, kind
 
 
 async def _judge_all_works(model: str) -> tuple[bool, str, str]:
@@ -296,7 +322,7 @@ async def llm_chain_check_tick() -> dict:
                 summary["alerts"].append(f"первая модель судьи не годна: {model} — {why}")
 
         for position, model in enumerate(providers.tutor_models(), 1):
-            good, why, _ = await probe_tutor_model(model)
+            good, why, _ = await _tutor_verdict(model)
             if good:
                 summary["tutor_ok"] += 1
                 continue
