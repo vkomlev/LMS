@@ -324,6 +324,14 @@ async def stream(
             got_any = False
             text_len = 0
             tokens_in = tokens_out = 0
+            # Наблюдаемость перебора (tsk-671). Без этих двух строк «ученик ждёт»
+            # выглядит одинаково при молчащей модели, при зависшем запросе и при
+            # исправной работе: в учёте расхода запись появляется только ПОСЛЕ
+            # завершения попытки, поэтому незавершённая попытка невидима вовсе.
+            logger.info(
+                "LLM: пробую модель %s (%d из %d), назначение=%s",
+                candidate, chain.index(candidate) + 1, len(chain), purpose,
+            )
 
             try:
                 async with http.stream(
@@ -448,5 +456,9 @@ async def stream(
 
             if not last_error.try_next_model:
                 raise last_error
+            logger.warning(
+                "LLM: модель %s не подошла (%s), беру следующую из цепочки",
+                candidate, type(last_error).__name__,
+            )
 
     raise last_error or LLMUnavailable("цепочка моделей исчерпана без результата")
