@@ -102,9 +102,20 @@ def _payload(
 
 
 def _timeout(budget: Budget) -> httpx.Timeout:
+    """Таймауты одной попытки.
+
+    `read` — это предел ОДНОГО чтения, в том числе чтения заголовков ответа.
+    Раньше здесь стоял общий бюджет (40 c у интерактива), и модель, которая не
+    прислала даже заголовки, забирала его целиком: до следующей в цепочке ученик
+    не доживал (tsk-671). Берём предел первого куска — 12 c. Для потока это
+    безопасно: между кусками генерации проходят миллисекунды, а если пауза всё же
+    случится посреди ответа, уже написанное покажется как незавершённый ответ, а
+    не как ошибка. У батча предела первого куска нет — там остаётся общий.
+    """
+    read = budget.first_token_timeout or budget.total_timeout
     return httpx.Timeout(
         connect=budget.connect_timeout,
-        read=budget.total_timeout,
+        read=read,
         write=budget.total_timeout,
         pool=budget.connect_timeout,
     )
@@ -324,6 +335,7 @@ async def stream(
             got_any = False
             text_len = 0
             tokens_in = tokens_out = 0
+            remaining = deadline - time.monotonic()
             # Наблюдаемость перебора (tsk-671). Без этих двух строк «ученик ждёт»
             # выглядит одинаково при молчащей модели, при зависшем запросе и при
             # исправной работе: в учёте расхода запись появляется только ПОСЛЕ
@@ -334,96 +346,110 @@ async def stream(
             )
 
             try:
-                async with http.stream(
-                    "POST", cfg.chat_url, headers=_headers(cfg),
-                    json=_payload(messages, model=candidate, temperature=temperature,
-                                  max_tokens=max_tokens, stream=True, seed=seed,
-                                  response_format=None),
-                ) as resp:
-                    if resp.status_code != 200:
-                        body = (await resp.aread()).decode("utf-8", "ignore")
-                        _raise_for_status(resp.status_code, body)
+                # Потолок на ПОПЫТКУ целиком, а не только на чтение (tsk-671).
+                # Предел первого куска ниже покрывает уже открытый поток, но
+                # висеть можно и раньше — на ожидании заголовков ответа, куда
+                # ни он, ни проверка между моделями не достают. Здесь потолок
+                # один на всё: сколько бы ни осталось от бюджета вызова,
+                # попытка в него укладывается или обрывается.
+                async with asyncio.timeout(max(remaining, 0.1)):
+                    async with http.stream(
+                        "POST", cfg.chat_url, headers=_headers(cfg),
+                        json=_payload(messages, model=candidate, temperature=temperature,
+                                      max_tokens=max_tokens, stream=True, seed=seed,
+                                      response_format=None),
+                    ) as resp:
+                        if resp.status_code != 200:
+                            body = (await resp.aread()).decode("utf-8", "ignore")
+                            _raise_for_status(resp.status_code, body)
 
-                    # Хвост НЕЛЬЗЯ терять: сеть режет поток произвольно, и кадр
-                    # запросто приходит разорванным пополам между двумя
-                    # чтениями. Разбор каждого куска по отдельности молча
-                    # выбрасывал такой кадр — ответ выходил слегка неправильным
-                    # («что ужеовал сделать» вместо «что уже попробовал»),
-                    # и это не ловится ничем, кроме чтения глазами.
-                    buffer = ""
-                    reader = resp.aiter_text().__aiter__()
-                    while True:
-                        # Ждать первый кусок бесконечно нельзя. Проверка ниже
-                        # (`first_at is None and ... > first_token_timeout`) стоит
-                        # ВНУТРИ обработки куска, поэтому при полностью молчащем
-                        # upstream не выполняется ни разу: цикл не делает ни одной
-                        # итерации, и ученик ждёт до общего таймаута соединения.
-                        # Живой случай tsk-671: «Наставник думает…» две минуты
-                        # подряд, в учёте расхода — ни одной записи (tsk-666).
-                        if first_at is None and budget.first_token_timeout is not None:
-                            left = budget.first_token_timeout - (time.monotonic() - started)
-                            if left <= 0:
+                        # Хвост НЕЛЬЗЯ терять: сеть режет поток произвольно, и кадр
+                        # запросто приходит разорванным пополам между двумя
+                        # чтениями. Разбор каждого куска по отдельности молча
+                        # выбрасывал такой кадр — ответ выходил слегка неправильным
+                        # («что ужеовал сделать» вместо «что уже попробовал»),
+                        # и это не ловится ничем, кроме чтения глазами.
+                        buffer = ""
+                        reader = resp.aiter_text().__aiter__()
+                        while True:
+                            # Ждать первый кусок бесконечно нельзя. Проверка ниже
+                            # (`first_at is None and ... > first_token_timeout`) стоит
+                            # ВНУТРИ обработки куска, поэтому при полностью молчащем
+                            # upstream не выполняется ни разу: цикл не делает ни одной
+                            # итерации, и ученик ждёт до общего таймаута соединения.
+                            # Живой случай tsk-671: «Наставник думает…» две минуты
+                            # подряд, в учёте расхода — ни одной записи (tsk-666).
+                            if first_at is None and budget.first_token_timeout is not None:
+                                left = budget.first_token_timeout - (time.monotonic() - started)
+                                if left <= 0:
+                                    raise LLMTimeout(
+                                        f"первый токен не пришёл за {budget.first_token_timeout} c"
+                                    )
+                                try:
+                                    raw = await asyncio.wait_for(reader.__anext__(), timeout=left)
+                                except asyncio.TimeoutError:
+                                    raise LLMTimeout(
+                                        f"первый токен не пришёл за {budget.first_token_timeout} c"
+                                    )
+                                except StopAsyncIteration:
+                                    break
+                            else:
+                                try:
+                                    raw = await reader.__anext__()
+                                except StopAsyncIteration:
+                                    break
+                            buffer += raw
+                            head, sep, tail = buffer.rpartition("\n\n")
+                            if not sep:
+                                continue
+                            buffer = tail
+                            for payload in _sse_lines_to_payloads(head + "\n\n"):
+                                # Ошибка внутри HTTP 200 — главная ловушка провайдера.
+                                _check_payload_error(payload)
+
+                                block = payload.get("usage") or {}
+                                if block:
+                                    tokens_in = int(block.get("prompt_tokens") or tokens_in)
+                                    tokens_out = int(block.get("completion_tokens") or tokens_out)
+
+                                for choice in payload.get("choices") or []:
+                                    delta = (choice.get("delta") or {}).get("content") or ""
+                                    if not delta:
+                                        continue
+                                    if first_at is None:
+                                        first_at = time.monotonic()
+                                    got_any = True
+                                    text_len += len(delta)
+                                    yield LLMChunk(delta=delta, model=candidate)
+
+                            if (
+                                first_at is None
+                                and budget.first_token_timeout is not None
+                                and time.monotonic() - started > budget.first_token_timeout
+                            ):
                                 raise LLMTimeout(
                                     f"первый токен не пришёл за {budget.first_token_timeout} c"
                                 )
-                            try:
-                                raw = await asyncio.wait_for(reader.__anext__(), timeout=left)
-                            except asyncio.TimeoutError:
-                                raise LLMTimeout(
-                                    f"первый токен не пришёл за {budget.first_token_timeout} c"
-                                )
-                            except StopAsyncIteration:
-                                break
-                        else:
-                            try:
-                                raw = await reader.__anext__()
-                            except StopAsyncIteration:
-                                break
-                        buffer += raw
-                        head, sep, tail = buffer.rpartition("\n\n")
-                        if not sep:
-                            continue
-                        buffer = tail
-                        for payload in _sse_lines_to_payloads(head + "\n\n"):
-                            # Ошибка внутри HTTP 200 — главная ловушка провайдера.
-                            _check_payload_error(payload)
 
-                            block = payload.get("usage") or {}
-                            if block:
-                                tokens_in = int(block.get("prompt_tokens") or tokens_in)
-                                tokens_out = int(block.get("completion_tokens") or tokens_out)
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    await _usage_ok(
+                        purpose=purpose, student_id=student_id, model=candidate,
+                        provider=cfg.name, tokens_in=tokens_in, tokens_out=tokens_out,
+                        duration_ms=duration_ms, outcome="ok", meta={"chars": text_len},
+                    )
+                    yield LLMChunk(
+                        done=True, model=candidate, tokens_in=tokens_in,
+                        tokens_out=tokens_out, duration_ms=duration_ms,
+                    )
+                    return
 
-                            for choice in payload.get("choices") or []:
-                                delta = (choice.get("delta") or {}).get("content") or ""
-                                if not delta:
-                                    continue
-                                if first_at is None:
-                                    first_at = time.monotonic()
-                                got_any = True
-                                text_len += len(delta)
-                                yield LLMChunk(delta=delta, model=candidate)
-
-                        if (
-                            first_at is None
-                            and budget.first_token_timeout is not None
-                            and time.monotonic() - started > budget.first_token_timeout
-                        ):
-                            raise LLMTimeout(
-                                f"первый токен не пришёл за {budget.first_token_timeout} c"
-                            )
-
-                duration_ms = int((time.monotonic() - started) * 1000)
-                await _usage_ok(
-                    purpose=purpose, student_id=student_id, model=candidate,
-                    provider=cfg.name, tokens_in=tokens_in, tokens_out=tokens_out,
-                    duration_ms=duration_ms, outcome="ok", meta={"chars": text_len},
+            except TimeoutError:
+                # Потолок попытки: цепочка идёт дальше, но общий бюджет вызова
+                # при этом уже почти исчерпан — проверка перед следующей
+                # моделью его и остановит.
+                last_error = LLMTimeout(
+                    f"попытка не уложилась в остаток бюджета {budget.value}"
                 )
-                yield LLMChunk(
-                    done=True, model=candidate, tokens_in=tokens_in,
-                    tokens_out=tokens_out, duration_ms=duration_ms,
-                )
-                return
-
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = (
                     LLMTimeout(f"таймаут бюджета {budget.value}: {exc}")

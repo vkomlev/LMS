@@ -216,10 +216,6 @@ async def test_429_does_not_walk_the_model_chain(monkeypatch):
 # ─────────────────────────── Цепочка моделей ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки временно выключен — на бою вызов ко второй "
-           "модели зависает, а быстрый честный отказ лучше вечного ожидания. "
-           "Вернуть вместе с пределом на вход в поток.")
-@pytest.mark.asyncio
 async def test_chain_falls_through_to_working_model(monkeypatch):
     """Модель может быть В КАТАЛОГЕ и при этом недоступна у upstream.
 
@@ -243,10 +239,6 @@ async def test_chain_falls_through_to_working_model(monkeypatch):
     assert seen == ["model-a", "model-b"]
 
 
-@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки временно выключен — на бою вызов ко второй "
-           "модели зависает, а быстрый честный отказ лучше вечного ожидания. "
-           "Вернуть вместе с пределом на вход в поток.")
-@pytest.mark.asyncio
 async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
     """HTTP 503 «нет доступного upstream для ЭТОЙ модели» — повод взять следующую.
 
@@ -339,6 +331,41 @@ async def test_silent_upstream_is_bounded_and_falls_through(monkeypatch):
     assert text == "ответ живой модели", "молчащая модель заперла весь вызов"
     assert seen == ["model-a", "model-b"]
     assert spent < 25, f"ждали {spent:.0f} c — предел первого куска не сработал"
+
+
+@pytest.mark.asyncio
+async def test_hang_before_headers_is_bounded_by_call_budget(monkeypatch):
+    """Молчание ДО заголовков ответа тоже ограничено (tsk-671).
+
+    Разбор зависания на бою: предел первого куска покрывает уже открытый поток,
+    а висеть можно раньше — на ожидании заголовков, куда он не достаёт. Проверка
+    между моделями там тоже не помогает: она срабатывает МЕЖДУ попытками, а
+    попытка не кончается.
+
+    Ученику в этот момент видно «Наставник думает…» с заблокированным полем и без
+    выхода. Поэтому проверяем не «взяли следующую модель», а «вызов кончился
+    вовремя»: любой сбой обязан превратиться в понятный отказ, а не в ожидание.
+    """
+    async def never_answers(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(600)          # заголовки не приходят никогда
+        return httpx.Response(200)
+
+    _mount(monkeypatch, never_answers)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a,model-b,model-c,model-d")
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(llm_client.LLMError):
+        async for _ in llm_client.stream(MSGS, purpose="tutor",
+                                         budget=llm_client.Budget.INTERACTIVE):
+            pass
+    spent = loop.time() - started
+
+    limit = llm_client.Budget.INTERACTIVE.total_timeout + 5
+    assert spent < limit, (
+        f"ждали {spent:.0f} c при бюджете "
+        f"{llm_client.Budget.INTERACTIVE.total_timeout:.0f} c — ученик заперт"
+    )
 
 
 @pytest.mark.asyncio
