@@ -216,6 +216,8 @@ async def test_429_does_not_walk_the_model_chain(monkeypatch):
 # ─────────────────────────── Цепочка моделей ────────────────────────────────
 
 
+@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
+@pytest.mark.asyncio
 async def test_chain_falls_through_to_working_model(monkeypatch):
     """Модель может быть В КАТАЛОГЕ и при этом недоступна у upstream.
 
@@ -239,6 +241,8 @@ async def test_chain_falls_through_to_working_model(monkeypatch):
     assert seen == ["model-a", "model-b"]
 
 
+@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
+@pytest.mark.asyncio
 async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
     """HTTP 503 «нет доступного upstream для ЭТОЙ модели» — повод взять следующую.
 
@@ -279,6 +283,7 @@ async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
     )
 
 
+@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
 @pytest.mark.asyncio
 async def test_silent_upstream_is_bounded_and_falls_through(monkeypatch):
     """Молчащий upstream ограничен по времени и не запирает ученика (tsk-671).
