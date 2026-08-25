@@ -338,45 +338,49 @@ async def test_silent_upstream_is_bounded_and_falls_through(monkeypatch):
     assert spent < 25, f"ждали {spent:.0f} c — предел первого куска не сработал"
 
 
-@pytest.mark.skip(
-    reason="tsk-671: тест ВИСИТ, а не падает, и блокирует прогон всему дереву. "
-           "Его заглушка подменяет транспорт на httpx.MockTransport и спит 600 c, "
-           "а таймауты httpx живут в НАСТОЯЩЕМ транспорте — мок их не производит. "
-           "То есть тест требует предела, который сам же не может создать. "
-           "Переписать на настоящий молчащий сокет вместе с разбором tsk-671."
-)
 @pytest.mark.asyncio
-async def test_hang_before_headers_is_bounded_by_call_budget(monkeypatch):
-    """Молчание ДО заголовков ответа тоже ограничено (tsk-671).
+async def test_silent_socket_is_bounded_by_read_timeout(monkeypatch):
+    """Молчащий собеседник прерывается по `read`-таймауту (tsk-671).
 
-    Разбор зависания на бою: предел первого куска покрывает уже открытый поток,
-    а висеть можно раньше — на ожидании заголовков, куда он не достаёт. Проверка
-    между моделями там тоже не помогает: она срабатывает МЕЖДУ попытками, а
-    попытка не кончается.
+    Тест намеренно идёт через НАСТОЯЩИЙ сокет, а не через `httpx.MockTransport`.
+    Прежняя версия этой проверки подменяла транспорт и спала 600 c — и потому
+    не падала, а ВИСЛА: таймауты httpx живут в настоящем транспорте, мок их не
+    производит и прервать спящий обработчик ему нечем. Тест требовал предела,
+    который сам же не мог создать, и блокировал прогон всему дереву.
 
-    Ученику в этот момент видно «Наставник думает…» с заблокированным полем и без
-    выхода. Поэтому проверяем не «взяли следующую модель», а «вызов кончился
-    вовремя»: любой сбой обязан превратиться в понятный отказ, а не в ожидание.
+    Проверяем то, ради чего предел существует: ученик, чей наставник замолчал,
+    получает отказ за секунды, а не остаётся в «Наставник думает…» без выхода.
     """
-    async def never_answers(request: httpx.Request) -> httpx.Response:
-        await asyncio.sleep(600)          # заголовки не приходят никогда
-        return httpx.Response(200)
+    async def stay_silent(reader, writer):
+        try:
+            await reader.read(65536)      # запрос приняли
+            await asyncio.sleep(300)      # и не отвечаем
+        except Exception:                 # noqa: BLE001 — заглушка
+            pass
 
-    _mount(monkeypatch, never_answers)
-    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a,model-b,model-c,model-d")
+    server = await asyncio.start_server(stay_silent, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setenv("CLOSEROUTER_BASE_URL", f"http://127.0.0.1:{port}/v1")
+    monkeypatch.setenv("CLOSEROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-silent")
 
     loop = asyncio.get_running_loop()
     started = loop.time()
-    with pytest.raises(llm_client.LLMError):
-        async for _ in llm_client.stream(MSGS, purpose="tutor",
-                                         budget=llm_client.Budget.INTERACTIVE):
-            pass
-    spent = loop.time() - started
+    try:
+        with pytest.raises(llm_client.LLMError):
+            async for _ in llm_client.stream(MSGS, purpose="tutor",
+                                             budget=llm_client.Budget.INTERACTIVE):
+                pass
+        spent = loop.time() - started
+    finally:
+        # `wait_closed()` НЕ зовём: он дожидается обработчиков, а наш обработчик
+        # намеренно спит — тест повис бы ровно на уборке.
+        server.close()
 
-    limit = llm_client.Budget.INTERACTIVE.total_timeout + 5
+    limit = llm_client.Budget.INTERACTIVE.first_token_timeout + 8
     assert spent < limit, (
-        f"ждали {spent:.0f} c при бюджете "
-        f"{llm_client.Budget.INTERACTIVE.total_timeout:.0f} c — ученик заперт"
+        f"молчащий собеседник держал вызов {spent:.0f} c при пределе "
+        f"{llm_client.Budget.INTERACTIVE.first_token_timeout:.0f} c — ученик заперт"
     )
 
 
