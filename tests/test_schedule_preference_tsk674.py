@@ -359,3 +359,121 @@ async def test_summary_forbidden_for_student(db, client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
+
+
+# ============================== Напоминания молчащим ==============================
+
+
+@pytest.mark.asyncio
+async def test_reminder_goes_only_to_silent_and_respects_cooldown(db):
+    """Напоминание уходит молчащим и не повторяется, пока не истекла отсрочка."""
+    from app.services import schedule_preference_reminder_service as reminder
+
+    silent_id = await _create_user(db, role="student", prefix="tsk674-rem-silent")
+    await _assign_plan(db, silent_id, "base_legacy")
+    answered_id = await _create_user(db, role="student", prefix="tsk674-rem-answered")
+    await _assign_plan(db, answered_id, "base_legacy")
+    alumni_id = await _create_user(db, role="student", prefix="tsk674-rem-alum")
+    await _assign_plan(db, alumni_id, "alumni")
+
+    await schedule_preference_service.save_preference(
+        db, answered_id, _body(), changed_by=answered_id
+    )
+
+    first = await reminder.enqueue_reminders(db)
+    assert silent_id in first["students"], "молчащему напоминание нужно"
+    assert answered_id not in first["students"], "ответившего не трогаем"
+    assert alumni_id not in first["students"], "выпускника опрос не касается"
+
+    # Уведомление действительно легло в inbox — тем же видом, что ждёт бот.
+    row = (
+        await db.execute(
+            text(
+                "SELECT kind, title, content, payload FROM notifications "
+                " WHERE user_id = :uid AND kind = :kind"
+            ),
+            {"uid": silent_id, "kind": reminder.REMINDER_KIND},
+        )
+    ).first()
+    assert row is not None
+    assert "12:00 до 19:00" in row[2], "в тексте названо новое время школы"
+    assert "10:00 и 11:00" in row[2], "и сказано, что утренние занятия переезжают"
+    assert row[3]["url"].endswith("/me/schedule")
+
+    second = await reminder.enqueue_reminders(db)
+    assert silent_id not in second["students"], "второй раз подряд не пишем"
+    assert silent_id in [] or second["skipped_cooldown"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_reminder_dry_run_writes_nothing(db):
+    from app.services import schedule_preference_reminder_service as reminder
+
+    student_id = await _create_user(db, role="student", prefix="tsk674-rem-dry")
+    await _assign_plan(db, student_id, "base_legacy")
+
+    result = await reminder.enqueue_reminders(db, dry_run=True)
+    assert student_id in result["students"]
+
+    left = (
+        await db.execute(
+            text(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = :uid AND kind = :kind"
+            ),
+            {"uid": student_id, "kind": reminder.REMINDER_KIND},
+        )
+    ).scalar_one()
+    assert left == 0, "пробный прогон ничего не пишет"
+
+
+@pytest.mark.asyncio
+async def test_bot_endpoint_returns_reminder_and_gates_strangers(db, client):
+    """Бот читает напоминание сервисным ключом; чужой ученик — 403."""
+    from app.services import schedule_preference_reminder_service as reminder
+
+    student_id = await _create_user(db, role="student", prefix="tsk674-rem-bot")
+    await _assign_plan(db, student_id, "base_legacy")
+    await reminder.enqueue_reminders(db)
+
+    token, _, _ = await create_session(db, user_id=student_id)
+    resp = await client.get(
+        f"/api/v1/students/{student_id}/schedule-preference-reminders/pending",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["count"] >= 1
+    assert body["items"][0]["kind"] == reminder.REMINDER_KIND
+    assert body["items"][0]["payload"]["url"].endswith("/me/schedule")
+
+    stranger_id = await _create_user(db, role="student", prefix="tsk674-rem-stranger")
+    stranger_token, _, _ = await create_session(db, user_id=stranger_id)
+    forbidden = await client.get(
+        f"/api/v1/students/{student_id}/schedule-preference-reminders/pending",
+        headers={"Authorization": f"Bearer {stranger_token}"},
+    )
+    assert forbidden.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_remind_endpoint_dry_run_for_methodist(db, client):
+    methodist_id = await _create_user(db, role="methodist", prefix="tsk674-rem-meth")
+    token, _, _ = await create_session(db, user_id=methodist_id)
+
+    resp = await client.post(
+        "/api/v1/methodist/schedule-preferences/remind?dry_run=true",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["dry_run"] is True
+    assert body["silent_total"] >= 0
+
+    student_id = await _create_user(db, role="student", prefix="tsk674-rem-gate")
+    await _assign_plan(db, student_id, "base_legacy")
+    student_token, _, _ = await create_session(db, user_id=student_id)
+    forbidden = await client.post(
+        "/api/v1/methodist/schedule-preferences/remind",
+        headers={"Authorization": f"Bearer {student_token}"},
+    )
+    assert forbidden.status_code == 403

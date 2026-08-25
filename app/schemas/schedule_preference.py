@@ -139,6 +139,35 @@ class SchedulePreferenceDemandCell(BaseModel):
     possible_count: int
 
 
+class SchedulePreferenceReminderItem(BaseModel):
+    """Одно напоминание из inbox — то, что заберёт student-бот TG_LMS."""
+
+    id: int
+    created_at: datetime
+    kind: str
+    title: str | None = None
+    content: str | None = None
+    payload: dict = Field(default_factory=dict)
+    read_at: datetime | None = None
+
+
+class SchedulePreferenceReminderPending(BaseModel):
+    """Ответ `/students/{id}/schedule-preference-reminders/pending`."""
+
+    items: list[SchedulePreferenceReminderItem]
+    count: int
+
+
+class SchedulePreferenceReminderRun(BaseModel):
+    """Итог прохода напоминаний: кому положили, кого пропустили."""
+
+    silent_total: int
+    queued: int
+    skipped_cooldown: int
+    students: list[int]
+    dry_run: bool = False
+
+
 class SchedulePreferenceSummary(BaseModel):
     """Сводка охвата опроса для методиста и оператора."""
 

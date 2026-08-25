@@ -37787,6 +37787,240 @@
         }
       }
     },
+    "/api/v1/methodist/schedule-preferences/remind": {
+      "post": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Remind Silent Students",
+        "description": "Напомнить молчащим — прямо сейчас, поверх суточного прохода.\n\nНужна 29 августа, когда молчащих осталось пятеро и ждать сутки нельзя.\nТем, кому напоминали меньше двух суток назад, повторно не пишет: отсрочка\nсчитается там же, где и у автоматического прохода.",
+        "operationId": "remind_silent_students_api_v1_methodist_schedule_preferences_remind_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "dry_run",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Только посчитать адресатов, ничего не отправляя",
+              "default": false,
+              "title": "Dry Run"
+            },
+            "description": "Только посчитать адресатов, ничего не отправляя"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 200,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Ограничить число адресатов за проход",
+              "title": "Limit"
+            },
+            "description": "Ограничить число адресатов за проход"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceReminderRun"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/students/{student_id}/schedule-preference-reminders/pending": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "List Pending Schedule Preference Reminders",
+        "description": "Напоминания о пожеланиях для одного ученика — для student-бота TG_LMS.\n\nОтдельный адрес, а не расширение `lesson-reminders/pending`: тот эндпоинт\nжёстко про напоминания о занятиях, у бота для них свой текст, и подмешивать\nтуда второй вид означало бы менять уже работающий контракт (tsk-431).\n\nГейт тот же: сервисный ключ бота ходит за разных учеников, поэтому\n`is_service` пропускается, а живой человек — только за себя.",
+        "operationId": "list_pending_schedule_preference_reminders_api_v1_students__student_id__schedule_preference_reminders_pending_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceReminderPending"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/methodist/schedule-preferences/{student_id}": {
       "get": {
         "tags": [
@@ -52493,6 +52727,129 @@
         ],
         "title": "SchedulePreferenceRead",
         "description": "Пожелания ученика + сетка, по которой они собраны."
+      },
+      "SchedulePreferenceReminderItem": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Payload"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "created_at",
+          "kind"
+        ],
+        "title": "SchedulePreferenceReminderItem",
+        "description": "Одно напоминание из inbox — то, что заберёт student-бот TG_LMS."
+      },
+      "SchedulePreferenceReminderPending": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceReminderItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "count"
+        ],
+        "title": "SchedulePreferenceReminderPending",
+        "description": "Ответ `/students/{id}/schedule-preference-reminders/pending`."
+      },
+      "SchedulePreferenceReminderRun": {
+        "properties": {
+          "silent_total": {
+            "type": "integer",
+            "title": "Silent Total"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "skipped_cooldown": {
+            "type": "integer",
+            "title": "Skipped Cooldown"
+          },
+          "students": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "silent_total",
+          "queued",
+          "skipped_cooldown",
+          "students"
+        ],
+        "title": "SchedulePreferenceReminderRun",
+        "description": "Итог прохода напоминаний: кому положили, кого пропустили."
       },
       "SchedulePreferenceRevisionRead": {
         "properties": {

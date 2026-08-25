@@ -509,6 +509,26 @@ app.include_router(topic_mastery_router, prefix=API_PREFIX)
 from app.api.v1.schedule_preferences import router as schedule_preferences_router
 app.include_router(schedule_preferences_router, prefix=API_PREFIX)
 
+# tsk-674 фаза 1: суточный проход напоминаний тем, кто пожеланий не оставил.
+# Кладёт строку в inbox — оттуда её видит и кабинет, и student-бот TG_LMS.
+from app.services import schedule_preference_reminder_service as _pref_reminder
+
+
+@app.on_event("startup")
+async def _start_schedule_preference_reminders() -> None:
+    try:
+        _pref_reminder.start_scheduler()
+    except Exception:
+        logger.exception("tsk-674: не удалось запустить напоминания о пожеланиях")
+
+
+@app.on_event("shutdown")
+async def _stop_schedule_preference_reminders() -> None:
+    try:
+        _pref_reminder.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-674: не удалось остановить напоминания о пожеланиях")
+
 
 # Phase Y-6: APScheduler для escalation cron (review-loop).
 # Multi-worker safe через PG advisory lock внутри tick'а.
