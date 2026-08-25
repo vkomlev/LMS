@@ -250,9 +250,11 @@ async def create_attempt(
     # в обход learning/start-or-get-attempt, поэтому гейт нужен и здесь.
     # tsk-617: по ученику из тела, а не по вызывающему — сервисный ключ бота
     # иначе оставлял бы должнику решение заданий в Telegram.
-    from app.services import payment_access_service
+    from app.services import graduation_service, payment_access_service
 
     await payment_access_service.assert_content_allowed(db, payload.user_id)
+    # tsk-673: тариф «Выпускник» закрывает работу в курсе — попытку не начать.
+    await graduation_service.assert_course_work_allowed(db, payload.user_id)
     """
     Создать новую попытку.
 
@@ -424,6 +426,14 @@ async def submit_attempt_answers(
 
     if not current_user.is_service and current_user.id != attempt.user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied")
+
+    # tsk-673: тариф «Выпускник» закрывает работу в курсе. Проверка по ВЛАДЕЛЬЦУ
+    # попытки, а не по вызывающему, — по той же причине, что и гейт оплаты
+    # (tsk-617): бот ходит по сервисному ключу, и освобождение сервисного вызова
+    # означало бы «через браузер закрыто, через Telegram открыто».
+    from app.services import graduation_service
+
+    await graduation_service.assert_course_work_allowed(db, attempt.user_id)
 
     # Валидация попытки: проверка, что попытка не завершена и не отменена
     if attempt.finished_at is not None:

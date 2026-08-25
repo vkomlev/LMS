@@ -30,13 +30,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
 from app.schemas.subscription import (
+    GraduationPreview,
+    GraduationResult,
     StudentSubscriptionState,
     SubscriptionChangeRequest,
     SubscriptionPlanRead,
     SubscriptionSummary,
     SubscriptionSummaryStudent,
 )
-from app.services import audit_service, subscription_service
+from app.services import audit_service, graduation_service, subscription_service
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +181,31 @@ async def read_student_subscription(
     return StudentSubscriptionState(**await subscription_service.student_state(db, student_id))
 
 
+@router.get(
+    "/students/{student_id}/graduation-preview",
+    response_model=GraduationPreview,
+    summary="Что произойдёт при переводе на «Выпускника»",
+    description=(
+        "Свод оплаты и след ученика в расписании — ДО нажатия и без единой "
+        "записи (tsk-673). Отдаёт то же самое, что перевод потом и сделает: "
+        "сколько привязок к слотам погаснет, сколько будущих занятий снимется, "
+        "начислено / оплачено / остаток по всем открытым месяцам.\n\n"
+        "Долгом считается остаток по всем открытым месяцам, а не просрочка: "
+        "человек уходит, следующего счёта ему никто не выставит. Приложенный "
+        "чек долг гасит."
+    ),
+)
+async def read_graduation_preview(
+    student_id: int = Path(..., description="ID ученика"),
+    db: AsyncSession = Depends(get_async_db),
+    _staff: CurrentUser = Depends(_staff_gate),
+) -> GraduationPreview:
+    """Предпросмотр выпуска: что снимется и сколько человек остался должен."""
+    await _require_user(db, student_id)
+    plan = await graduation_service.preview(db, student_id)
+    return GraduationPreview.model_validate(plan, from_attributes=True)
+
+
 @router.post(
     "/students/{student_id}",
     response_model=StudentSubscriptionState,
@@ -191,7 +218,14 @@ async def read_student_subscription(
         "бессрочная цена прежней группы перестаёт применяться, но из базы не "
         "исчезает. Что именно затронет перевод — в `manual_pricing` ответа "
         "`GET /subscriptions/students/{student_id}`; показать это ДО нажатия — "
-        "работа экрана."
+        "работа экрана.\n\n"
+        "**Перевод на «Выпускника» — не только смена тарифа** (tsk-673). Вместе "
+        "с ним ученик снимается со всех слотов расписания и из будущих занятий, "
+        "которые он не подтверждал сам; сводится оплата по всем открытым "
+        "месяцам; при остатке месяцы закрываются (чтобы долг не стёрся "
+        "пересчётом) и уходит эскалация маркетологу. Что именно произошло — в "
+        "поле `graduation` ответа. Предпросмотр до нажатия: "
+        "`GET /subscriptions/students/{student_id}/graduation-preview`."
     ),
     responses={
         404: {"description": "Нет такого ученика или тарифа"},
@@ -240,6 +274,16 @@ async def change_student_subscription(
             status.HTTP_409_CONFLICT, "Тариф сменили параллельно — обновите страницу"
         )
 
+    # tsk-673: выпуск — это событие целиком, а не смена строки подписки. Хук
+    # висит ЗДЕСЬ, а не внутри `change_plan`, потому что это единственный путь
+    # на «Выпускника»: продать его нельзя (нет тарифной группы), автоматика
+    # переводит только на `base`. Один путь — один хук, и тихого обхода нет.
+    graduation = None
+    if body.plan_code == graduation_service.ALUMNI_PLAN_CODE:
+        graduation = await graduation_service.apply(
+            db, student_id, changed_by=current_user.id
+        )
+
     await audit_service.log_event(
         db,
         audit_service.STAFF_SUBSCRIPTION_CHANGED,
@@ -258,4 +302,11 @@ async def change_student_subscription(
         current_user.id, student_id, current_code, body.plan_code,
     )
 
-    return StudentSubscriptionState(**await subscription_service.student_state(db, student_id))
+    state = StudentSubscriptionState(
+        **await subscription_service.student_state(db, student_id)
+    )
+    if graduation is not None:
+        state.graduation = GraduationResult.model_validate(
+            graduation, from_attributes=True
+        )
+    return state

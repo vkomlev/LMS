@@ -103,6 +103,15 @@ class SubscriptionPlan(Base):
     content: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=text("'full'"), comment="full | demo"
     )
+    course_work: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true"),
+        comment=(
+            "Можно ли работать в курсе: начинать попытку и отправлять ответы "
+            "(tsk-673). Материалы этим признаком НЕ закрываются — выпускник "
+            "перечитывает курс, но новых ответов у него не принимают. Не то же, "
+            "что `lessons`: у Self и AI занятий нет, а сдавать они могут"
+        ),
+    )
     pricing_group_id: Mapped[Optional[int]] = mapped_column(
         Integer,
         comment="Группа для расчёта месяца. NULL = начисления не создаются вовсе",

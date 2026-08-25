@@ -56,6 +56,8 @@ from app.services.help_requests_service import (
     rate_individual_review,
 )
 from app.services import payment_access_service
+# tsk-673: тариф «Выпускник» закрывает работу в курсе (сдачу), оставляя чтение.
+from app.services import graduation_service
 from app.services import lesson_attendance_service
 # tsk-301: единственная дверь прав подписки — своей проверки здесь быть не должно.
 from app.services import entitlements_service
@@ -76,6 +78,8 @@ logger = logging.getLogger("api.learning")
 _PAYMENT_403_DESCRIPTION = (
     "tsk-010: занятия закрыты за просроченную оплату — "
     "`payload.code = payment_overdue` (сумма, месяцы, `payments_url`); "
+    "tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` "
+    "(так устроен «Выпускник»: материалы читаются, ответы не принимаются); "
     "либо чужой `student_id`."
 )
 _PAYMENT_403 = {403: {"description": _PAYMENT_403_DESCRIPTION}}
@@ -417,6 +421,10 @@ async def start_or_get_attempt(
     # освобождал от проверки, блокировка снималась сменой клиента — в браузере
     # закрыто, в Telegram открыто (класс tsk-433).
     await payment_access_service.assert_content_allowed(db, body.student_id)
+    # tsk-673: тариф «Выпускник» закрывает работу в курсе — попытку не начать.
+    # Материалы и чтение самого задания при этом остаются открытыми: закрыта
+    # сдача, а не курс (решение оператора 2026-08-25).
+    await graduation_service.assert_course_work_allowed(db, body.student_id)
     task = await tasks_service.get_by_id(db, task_id)
     if task is None or not task.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Задание не найдено")

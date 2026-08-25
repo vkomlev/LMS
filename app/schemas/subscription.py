@@ -24,6 +24,14 @@ class SubscriptionPlanRead(BaseModel):
     teacher_escalation: bool = Field(..., description="Ручной запрос помощи преподавателю")
     lessons: bool = Field(..., description="Есть ли занятия с преподавателем")
     content: str = Field(..., description="full | demo — уровень доступа к материалам")
+    course_work: bool = Field(
+        ...,
+        description=(
+            "Можно ли работать в курсе: начинать попытку и отправлять ответы "
+            "(tsk-673). False только у «Выпускника»: материалы он читает, новых "
+            "ответов у него не принимают"
+        ),
+    )
     pricing_group_id: Optional[int] = Field(
         None, description="Группа расчёта месяца. NULL — начисления не создаются"
     )
@@ -101,6 +109,99 @@ class ManualPricingState(BaseModel):
         return not self.monthly_amounts and not self.group_prices
 
 
+class GraduationChargeLine(BaseModel):
+    """Один открытый месяц в своде оплаты выпускника (tsk-673)."""
+
+    period: date = Field(..., description="Первое число месяца")
+    group_id: int
+    group_name: str
+    charged_minor: int = Field(..., description="Итог месяца, в копейках")
+    paid_minor: int = Field(..., description="Подтверждено, в копейках")
+    pending_minor: int = Field(..., description="Чек ждёт разбора, в копейках")
+    due_minor: int = Field(
+        ...,
+        description=(
+            "Непокрытый остаток. Ноль, если приложенный чек его перекрывает — "
+            "человек своё сделал, дальше очередь наша"
+        ),
+    )
+
+
+class GraduationSettlement(BaseModel):
+    """Свод оплаты на момент выпуска: начислено, оплачено, остаток (tsk-673).
+
+    Считается по ВСЕМ открытым месяцам, а не по просроченным: выпускник уходит,
+    следующего счёта ему никто не выставит, поэтому незакрытый текущий месяц и
+    есть финальный счёт (решение оператора 2026-08-25).
+    """
+
+    lines: list[GraduationChargeLine] = Field(default_factory=list)
+    charged_minor: int = 0
+    paid_minor: int = 0
+    pending_minor: int = 0
+    due_minor: int = Field(
+        0, description="Итоговый долг. Только он включает эскалацию маркетологу"
+    )
+
+
+class GraduationSlot(BaseModel):
+    """Активная привязка к слоту, которую снимет перевод."""
+
+    slot_id: int
+    weekday: int = Field(..., description="0 — понедельник")
+    start_time: str = Field(..., description="Время начала, ЧЧ:ММ по Москве")
+    teacher_name: Optional[str] = None
+    label: str = Field(..., description="Читаемая подпись слота, например «Вт 17:00»")
+
+
+class GraduationSchedule(BaseModel):
+    """След ученика в расписании — что именно снимется."""
+
+    slots: list[GraduationSlot] = Field(default_factory=list)
+    future_lessons: int = Field(
+        0, description="Будущих занятий, которые снимутся (назначено, на перерыве)"
+    )
+    kept_lessons: int = Field(
+        0,
+        description=(
+            "Будущих занятий, которые останутся: ученик отметил их сам "
+            "(придёт, отказался, перенёс) — это его решение, а не автоматика"
+        ),
+    )
+
+
+class GraduationPreview(BaseModel):
+    """Что произойдёт при переводе на «Выпускника» — до нажатия."""
+
+    student_id: int
+    schedule: GraduationSchedule
+    settlement: GraduationSettlement
+
+
+class GraduationResult(BaseModel):
+    """Что произошло при переводе на «Выпускника» (tsk-673).
+
+    Свод едет в ответ, а не только в уведомления: маркетолог нажимает кнопку
+    сам, и момент нажатия — единственное место, где сигнал точно будет увиден
+    (урок tsk-591/652: механизм работал, а сигнал висел непрочитанным).
+    """
+
+    detached_slots: int = Field(..., description="Сколько привязок к слотам погашено")
+    detached_lessons: int = Field(..., description="Сколько будущих занятий снято")
+    frozen_charges: int = Field(
+        ...,
+        description=(
+            "Сколько открытых месяцев закрыто, чтобы долг не стёрся пересчётом. "
+            "Суммы при этом не меняются — переставляется только статус"
+        ),
+    )
+    settlement: GraduationSettlement
+    escalated_to: list[int] = Field(
+        default_factory=list,
+        description="Кому ушла эскалация о долге; пусто — долга нет",
+    )
+
+
 class StudentSubscriptionState(BaseModel):
     """Тариф ученика: действующий и вся история.
 
@@ -118,6 +219,14 @@ class StudentSubscriptionState(BaseModel):
         description=(
             "Ручные деньги ученика: их видно ДО смены тарифа, чтобы личная "
             "договорённость не менялась молча (tsk-634)"
+        ),
+    )
+    graduation: Optional[GraduationResult] = Field(
+        None,
+        description=(
+            "Заполняется ТОЛЬКО при переводе на «Выпускника» (tsk-673): что "
+            "снято с расписания, свод оплаты и кому ушла эскалация о долге. "
+            "При любой другой смене тарифа — NULL"
         ),
     )
 

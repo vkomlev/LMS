@@ -17320,7 +17320,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17433,7 +17433,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17546,7 +17546,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17659,7 +17659,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17772,7 +17772,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -17904,7 +17904,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -18017,7 +18017,7 @@
             }
           },
           "403": {
-            "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-301: разбор с преподавателем не входит в тариф. Тело содержит `payload.upgrade_hint` — что даёт апгрейд. Авто-заявка при исчерпании попыток этим гейтом не закрывается. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "422": {
             "description": "Validation Error",
@@ -18247,7 +18247,7 @@
             "description": "Заявка не найдена"
           },
           "403": {
-            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "409": {
             "description": "Заявка не закрыта или не того типа"
@@ -18357,7 +18357,7 @@
             "description": "Заявка не найдена"
           },
           "403": {
-            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "Чужая заявка. tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "409": {
             "description": "Заявка закрыта, не того типа или не возвращалась"
@@ -18593,7 +18593,7 @@
             }
           },
           "403": {
-            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); либо чужой `student_id`."
+            "description": "tsk-010: занятия закрыты за просроченную оплату — `payload.code = payment_overdue` (сумма, месяцы, `payments_url`); tsk-673: тариф закрывает работу в курсе — `payload.code = course_work_closed` (так устроен «Выпускник»: материалы читаются, ответы не принимаются); либо чужой `student_id`."
           },
           "404": {
             "description": "Задание / студент / попытка не найдены"
@@ -32563,7 +32563,7 @@
           "subscriptions"
         ],
         "summary": "Присвоить ученику тариф",
-        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.\n\nРучные деньги перевод не теряет (tsk-634): сумма месяца, поставленная руками, переезжает на строку нового тарифа при ближайшем пересчёте, а бессрочная цена прежней группы перестаёт применяться, но из базы не исчезает. Что именно затронет перевод — в `manual_pricing` ответа `GET /subscriptions/students/{student_id}`; показать это ДО нажатия — работа экрана.",
+        "description": "Права меняются сразу, сумма текущего месяца — нет (решение 14): деньги считаются по тарифу, действовавшему на первое число месяца.\n\nРучные деньги перевод не теряет (tsk-634): сумма месяца, поставленная руками, переезжает на строку нового тарифа при ближайшем пересчёте, а бессрочная цена прежней группы перестаёт применяться, но из базы не исчезает. Что именно затронет перевод — в `manual_pricing` ответа `GET /subscriptions/students/{student_id}`; показать это ДО нажатия — работа экрана.\n\n**Перевод на «Выпускника» — не только смена тарифа** (tsk-673). Вместе с ним ученик снимается со всех слотов расписания и из будущих занятий, которые он не подтверждал сам; сводится оплата по всем открытым месяцам; при остатке месяцы закрываются (чтобы долг не стёрся пересчётом) и уходит эскалация маркетологу. Что именно произошло — в поле `graduation` ответа. Предпросмотр до нажатия: `GET /subscriptions/students/{student_id}/graduation-preview`.",
         "operationId": "change_student_subscription_api_v1_subscriptions_students__student_id__post",
         "security": [
           {
@@ -32660,6 +32660,107 @@
           },
           "409": {
             "description": "Ученик уже на этом тарифе либо тариф сменили параллельно"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subscriptions/students/{student_id}/graduation-preview": {
+      "get": {
+        "tags": [
+          "subscriptions"
+        ],
+        "summary": "Что произойдёт при переводе на «Выпускника»",
+        "description": "Свод оплаты и след ученика в расписании — ДО нажатия и без единой записи (tsk-673). Отдаёт то же самое, что перевод потом и сделает: сколько привязок к слотам погаснет, сколько будущих занятий снимется, начислено / оплачено / остаток по всем открытым месяцам.\n\nДолгом считается остаток по всем открытым месяцам, а не просрочка: человек уходит, следующего счёта ему никто не выставит. Приложенный чек долг гасит.",
+        "operationId": "read_graduation_preview_api_v1_subscriptions_students__student_id__graduation_preview_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "description": "ID ученика",
+              "title": "Student Id"
+            },
+            "description": "ID ученика"
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraduationPreview"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -44154,6 +44255,221 @@
         "title": "GradingGapsResponse",
         "description": "Инвентарь пробелов: где методисту заполнять критерии (tsk-605)."
       },
+      "GraduationChargeLine": {
+        "properties": {
+          "period": {
+            "type": "string",
+            "format": "date",
+            "title": "Period",
+            "description": "Первое число месяца"
+          },
+          "group_id": {
+            "type": "integer",
+            "title": "Group Id"
+          },
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "charged_minor": {
+            "type": "integer",
+            "title": "Charged Minor",
+            "description": "Итог месяца, в копейках"
+          },
+          "paid_minor": {
+            "type": "integer",
+            "title": "Paid Minor",
+            "description": "Подтверждено, в копейках"
+          },
+          "pending_minor": {
+            "type": "integer",
+            "title": "Pending Minor",
+            "description": "Чек ждёт разбора, в копейках"
+          },
+          "due_minor": {
+            "type": "integer",
+            "title": "Due Minor",
+            "description": "Непокрытый остаток. Ноль, если приложенный чек его перекрывает — человек своё сделал, дальше очередь наша"
+          }
+        },
+        "type": "object",
+        "required": [
+          "period",
+          "group_id",
+          "group_name",
+          "charged_minor",
+          "paid_minor",
+          "pending_minor",
+          "due_minor"
+        ],
+        "title": "GraduationChargeLine",
+        "description": "Один открытый месяц в своде оплаты выпускника (tsk-673)."
+      },
+      "GraduationPreview": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/GraduationSchedule"
+          },
+          "settlement": {
+            "$ref": "#/components/schemas/GraduationSettlement"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "schedule",
+          "settlement"
+        ],
+        "title": "GraduationPreview",
+        "description": "Что произойдёт при переводе на «Выпускника» — до нажатия."
+      },
+      "GraduationResult": {
+        "properties": {
+          "detached_slots": {
+            "type": "integer",
+            "title": "Detached Slots",
+            "description": "Сколько привязок к слотам погашено"
+          },
+          "detached_lessons": {
+            "type": "integer",
+            "title": "Detached Lessons",
+            "description": "Сколько будущих занятий снято"
+          },
+          "frozen_charges": {
+            "type": "integer",
+            "title": "Frozen Charges",
+            "description": "Сколько открытых месяцев закрыто, чтобы долг не стёрся пересчётом. Суммы при этом не меняются — переставляется только статус"
+          },
+          "settlement": {
+            "$ref": "#/components/schemas/GraduationSettlement"
+          },
+          "escalated_to": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Escalated To",
+            "description": "Кому ушла эскалация о долге; пусто — долга нет"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detached_slots",
+          "detached_lessons",
+          "frozen_charges",
+          "settlement"
+        ],
+        "title": "GraduationResult",
+        "description": "Что произошло при переводе на «Выпускника» (tsk-673).\n\nСвод едет в ответ, а не только в уведомления: маркетолог нажимает кнопку\nсам, и момент нажатия — единственное место, где сигнал точно будет увиден\n(урок tsk-591/652: механизм работал, а сигнал висел непрочитанным)."
+      },
+      "GraduationSchedule": {
+        "properties": {
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/GraduationSlot"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "future_lessons": {
+            "type": "integer",
+            "title": "Future Lessons",
+            "description": "Будущих занятий, которые снимутся (назначено, на перерыве)",
+            "default": 0
+          },
+          "kept_lessons": {
+            "type": "integer",
+            "title": "Kept Lessons",
+            "description": "Будущих занятий, которые останутся: ученик отметил их сам (придёт, отказался, перенёс) — это его решение, а не автоматика",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "GraduationSchedule",
+        "description": "След ученика в расписании — что именно снимется."
+      },
+      "GraduationSettlement": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/GraduationChargeLine"
+            },
+            "type": "array",
+            "title": "Lines"
+          },
+          "charged_minor": {
+            "type": "integer",
+            "title": "Charged Minor",
+            "default": 0
+          },
+          "paid_minor": {
+            "type": "integer",
+            "title": "Paid Minor",
+            "default": 0
+          },
+          "pending_minor": {
+            "type": "integer",
+            "title": "Pending Minor",
+            "default": 0
+          },
+          "due_minor": {
+            "type": "integer",
+            "title": "Due Minor",
+            "description": "Итоговый долг. Только он включает эскалацию маркетологу",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "GraduationSettlement",
+        "description": "Свод оплаты на момент выпуска: начислено, оплачено, остаток (tsk-673).\n\nСчитается по ВСЕМ открытым месяцам, а не по просроченным: выпускник уходит,\nследующего счёта ему никто не выставит, поэтому незакрытый текущий месяц и\nесть финальный счёт (решение оператора 2026-08-25)."
+      },
+      "GraduationSlot": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday",
+            "description": "0 — понедельник"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time",
+            "description": "Время начала, ЧЧ:ММ по Москве"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label",
+            "description": "Читаемая подпись слота, например «Вт 17:00»"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "weekday",
+          "start_time",
+          "label"
+        ],
+        "title": "GraduationSlot",
+        "description": "Активная привязка к слоту, которую снимет перевод."
+      },
       "GuestAttemptCreateRequest": {
         "properties": {
           "task_id": {
@@ -55103,6 +55419,17 @@
           "manual_pricing": {
             "$ref": "#/components/schemas/ManualPricingState",
             "description": "Ручные деньги ученика: их видно ДО смены тарифа, чтобы личная договорённость не менялась молча (tsk-634)"
+          },
+          "graduation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraduationResult"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Заполняется ТОЛЬКО при переводе на «Выпускника» (tsk-673): что снято с расписания, свод оплаты и кому ушла эскалация о долге. При любой другой смене тарифа — NULL"
           }
         },
         "type": "object",
@@ -55279,6 +55606,11 @@
             "title": "Content",
             "description": "full | demo — уровень доступа к материалам"
           },
+          "course_work": {
+            "type": "boolean",
+            "title": "Course Work",
+            "description": "Можно ли работать в курсе: начинать попытку и отправлять ответы (tsk-673). False только у «Выпускника»: материалы он читает, новых ответов у него не принимают"
+          },
           "pricing_group_id": {
             "anyOf": [
               {
@@ -55329,6 +55661,7 @@
           "teacher_escalation",
           "lessons",
           "content",
+          "course_work",
           "sort_order"
         ],
         "title": "SubscriptionPlanRead",

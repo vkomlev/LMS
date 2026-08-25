@@ -501,7 +501,7 @@ async def list_plans(db: AsyncSession) -> list[dict]:
         await db.execute(
             text(
                 "SELECT p.code, p.name, p.ai_tutor_limit, p.code_review, "
-                "       p.teacher_escalation, p.lessons, p.content, "
+                "       p.teacher_escalation, p.lessons, p.content, p.course_work, "
                 "       p.pricing_group_id, g.name AS pricing_group_name, "
                 "       p.upgrade_hint, p.sort_order "
                 "  FROM subscription_plan p "
