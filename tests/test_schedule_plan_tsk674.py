@@ -439,3 +439,45 @@ def test_tighten_drops_hour_nobody_needs():
     )
 
     assert len(tightened) == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_warns_about_detaching_silent_students(db):
+    """Снятие того, кто не отвечал на опрос, — не переезд, а потеря места.
+
+    Нашлось на живой проверке 25.08: молчали 47 из 51, и отчёт применения
+    показывал «снимем 23» без единого слова о причине. Человек, читающий такой
+    отчёт, решит, что это переезд.
+    """
+    teacher_id = await _create_user(db, role="teacher")
+    silent_id = await _create_user(db, role="student")
+
+    await schedule_plan_service.apply_plan(
+        db,
+        SchedulePlanApplyRequest(
+            teacher_id=teacher_id,
+            slots=[
+                SchedulePlanApplySlot(
+                    weekday=1, start_time=time(hour=14), student_ids=[silent_id]
+                )
+            ],
+            dry_run=False,
+        ),
+        actor_id=None,
+    )
+    # Тот же час, но человека в плане больше нет: он молчит, и раскладка его
+    # не видит.
+    result = await schedule_plan_service.apply_plan(
+        db,
+        SchedulePlanApplyRequest(
+            teacher_id=teacher_id,
+            slots=[
+                SchedulePlanApplySlot(weekday=1, start_time=time(hour=14), student_ids=[])
+            ],
+            dry_run=True,
+        ),
+        actor_id=None,
+    )
+
+    assert silent_id in result.detached_silent
+    assert any("не заполнили" in w for w in result.warnings)

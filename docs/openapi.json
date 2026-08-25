@@ -53980,6 +53980,13 @@
             "type": "integer",
             "title": "Students Detached"
           },
+          "detached_silent": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Detached Silent"
+          },
           "outcomes": {
             "items": {
               "$ref": "#/components/schemas/ApplySlotOutcome"
@@ -54017,6 +54024,7 @@
           "slots_deactivated",
           "students_attached",
           "students_detached",
+          "detached_silent",
           "outcomes",
           "leftover_slots",
           "lesson_changes",

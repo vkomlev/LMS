@@ -753,6 +753,10 @@ async def apply_plan(
 
     warnings: list[str] = []
     outcomes: list[ApplySlotOutcome] = []
+    #: Кого снимаем со слотов. Нужен поимённо, а не числом: среди снимаемых
+    #: могут оказаться те, кто просто не ответил на опрос, — и это совсем
+    #: другой разговор, чем «человек переехал в новый час».
+    detached_ids: set[int] = set()
     attached_total = 0
     detached_total = 0
     created = reused = 0
@@ -837,12 +841,15 @@ async def apply_plan(
             reused += 1
         attached_total += len(to_attach)
         detached_total += len(to_detach)
+        detached_ids.update(to_detach)
         outcomes.append(outcome)
 
     deactivated: list[int] = []
     if body.deactivate_missing_slots:
         for slot in leftover:
             deactivated.append(slot.slot_id)
+            detached_ids.update(slot.student_ids)
+            detached_total += len(slot.student_ids)
             if not body.dry_run:
                 for sid in slot.student_ids:
                     await lesson_calendar_service.remove_slot_participant(
@@ -866,6 +873,21 @@ async def apply_plan(
 
     students, _ = await load_students(db)
     names = {s.student_id: s.full_name for s in students}
+
+    # Главная опасность вёрстки: раскладка видит только тех, кто ответил на
+    # опрос. Все остальные из слота просто выпадают — и на отчёте это выглядит
+    # как «снимем 23», без единого слова о том, что это НЕ переезд, а потеря
+    # места людьми, которых никто ни о чём не спросил. Нашлось на живой
+    # проверке 25.08, когда молчали 47 из 51.
+    silent_ids = {s.student_id for s in students if not s.is_filled}
+    detached_silent = sorted(detached_ids & silent_ids)
+    if detached_silent:
+        warnings.append(
+            f"Внимание: {len(detached_silent)} из снимаемых со слотов не заполнили "
+            "пожелания — раскладка их просто не видит. Это не переезд, а потеря "
+            "места. Сперва дождитесь их ответов или добавьте таких людей в слоты "
+            "руками."
+        )
     changes = [
         ApplyLessonChange(
             student_id=sid,
@@ -890,6 +912,7 @@ async def apply_plan(
         slots_deactivated=deactivated,
         students_attached=attached_total,
         students_detached=detached_total,
+        detached_silent=detached_silent,
         outcomes=outcomes,
         leftover_slots=leftover,
         lesson_changes=changes,

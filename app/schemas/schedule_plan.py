@@ -278,6 +278,10 @@ class SchedulePlanApplyResult(BaseModel):
     slots_deactivated: list[int]
     students_attached: int
     students_detached: int
+    #: Из снимаемых — те, кто не заполнил пожелания. Раскладка их не видит, и
+    #: для них это не переезд, а потеря места: отдельным полем, чтобы экран мог
+    #: сказать об этом словами, а не спрятать в общем числе.
+    detached_silent: list[int]
     outcomes: list[ApplySlotOutcome]
     #: Действующие слоты вне плана: их методист гасит сам, если не просил иначе.
     leftover_slots: list[PlanCurrentSlot]
