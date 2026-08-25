@@ -298,6 +298,8 @@ def report(path: Path) -> None:
 
     with path.open(encoding="utf-8") as fh:
         for line in fh:
+            if not line.strip():
+                continue
             record = json.loads(line)
             samples += 1
             slow_total += len(record.get("new_slow_requests", []))
@@ -311,6 +313,19 @@ def report(path: Path) -> None:
                 peak_active = len(active)
                 peak = record
                 query_at_peak = Counter(r["query"][:110] for r in active)
+
+    if samples == 0:
+        # Пустой файл — законный исход режима ловушки: событий не было, писать
+        # нечего. Раньше разбор печатал тут «пик активности: -1 соединений» —
+        # бессмыслицу, по которой инструмент перестают читать. И это ЕЩЁ и
+        # опасно: 25.08 пустой файл означал мёртвый прогон, а не тишину,
+        # поэтому два состояния обязаны различаться словами.
+        logger.info(
+            "Снимков в файле нет. В режиме ловушки это норма — событий не "
+            "случилось. В режиме окон пустой файл означает, что прогон умер: "
+            "сверьтесь с журналом запуска."
+        )
+        return
 
     logger.info("Снимков: %s, новых медленных запросов за прогон: %s", samples, slow_total)
     logger.info("Пик одновременной активности: %s соединений", peak_active)
