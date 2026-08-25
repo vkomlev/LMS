@@ -10,7 +10,7 @@ tsk-435 (rework на группы после встречи с реальным�
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -161,6 +161,7 @@ async def create_lesson_slot(
     timezone: str,
     created_by: Optional[int],
     student_ids: Optional[list[int]] = None,
+    active_until: Optional[date] = None,
 ) -> LessonSlot:
     """Создать групповой слот преподавателя, опционально сразу с участниками
     (удобно для разового импорта расписания)."""
@@ -192,6 +193,10 @@ async def create_lesson_slot(
         timezone=timezone,
         created_by=created_by,
     )
+    # tsk-679: слот можно завести сразу с датой окончания — так вёрстка
+    # осенней сетки может создать слоты «на семестр», не выключая их потом.
+    if active_until is not None:
+        row.active_until = active_until
     await db.flush()
 
     # tsk-443: teacher_id остаётся "создателем" на самой строке lesson_slot,
@@ -256,6 +261,8 @@ async def update_lesson_slot(
     timezone: Optional[str] = None,
     is_active: Optional[bool] = None,
     teacher_id: Optional[int] = None,
+    active_until: Optional[date] = None,
+    clear_active_until: bool = False,
 ) -> LessonSlot:
     row = await get_lesson_slot(db, slot_id)
 
@@ -291,6 +298,19 @@ async def update_lesson_slot(
         row.timezone = timezone
     if is_active is not None:
         row.is_active = is_active
+
+    # tsk-679: «слот действует по эту дату».
+    #
+    # Мало проставить дату: генератор занятий пишет календарь на две недели
+    # вперёд, поэтому занятия ЗА датой уже лежат в базе — ученик их видит и
+    # записывается. Оставить их значило бы сказать человеку «приходи» на
+    # занятие, которого не будет.
+    if clear_active_until:
+        row.active_until = None
+    elif active_until is not None:
+        row.active_until = active_until
+        await db.flush()
+        await _drop_occurrences_after(db, slot_id, active_until, timezone_name=row.timezone)
 
     # tsk-437: смена основного преподавателя слота.
     #
@@ -347,6 +367,144 @@ async def update_lesson_slot(
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def _drop_occurrences_after(
+    db: AsyncSession,
+    slot_id: int,
+    last_day: date,
+    *,
+    timezone_name: str,
+) -> int:
+    """Убрать БУДУЩИЕ занятия слота, попавшие за последний день его действия.
+
+    Прошедшее не трогаем ни при каких условиях — это история явки. Границей
+    служит конец последнего дня в поясе слота: занятие 31 августа остаётся,
+    1 сентября уходит.
+
+    Участники удаляются вместе с занятием (внешний ключ с каскадом), поэтому
+    отдельной чистки `lesson_occurrence_participant` здесь нет — но число
+    затронутых людей вызывающий обязан показать человеку ДО удаления
+    (см. `end_slots_on`).
+    """
+    result = await db.execute(
+        text(
+            """
+            DELETE FROM lesson_occurrence o
+             WHERE o.slot_id = :slot_id
+               AND o.scheduled_at > now()
+               AND (o.scheduled_at AT TIME ZONE :tz)::date > CAST(:last_day AS date)
+            """
+        ),
+        {"slot_id": slot_id, "tz": timezone_name, "last_day": last_day},
+    )
+    dropped = int(result.rowcount or 0)
+    if dropped:
+        logger.info(
+            "tsk-679: слот %s действует по %s — убрано будущих занятий: %s",
+            slot_id, last_day, dropped,
+        )
+    return dropped
+
+
+async def end_slots_on(
+    db: AsyncSession,
+    *,
+    last_day: date,
+    teacher_id: Optional[int] = None,
+    dry_run: bool = True,
+) -> dict:
+    """Завершить действующие слоты одним днём: «расписание работает по <дата>».
+
+    Ради этого случая всё и делалось: с 1 сентября действует новая сетка
+    (tsk-674), и старая должна закончиться сама, а не ждать, пока кто-то
+    вспомнит нажать «выключить» первого числа.
+
+    `dry_run=True` (умолчание) ничего не меняет и возвращает тот же отчёт:
+    сколько слотов затронуто, сколько будущих занятий уйдёт и скольких
+    учеников это касается. Календарь живых людей — не то место, где число
+    затронутых узнают постфактум.
+    """
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT ls.id,
+                       ls.teacher_id,
+                       ls.weekday,
+                       ls.start_time,
+                       ls.timezone,
+                       ls.active_until,
+                       COALESCE(cnt.n, 0) AS future_after,
+                       COALESCE(stud.ids, ARRAY[]::int[]) AS student_ids
+                  FROM lesson_slot ls
+                  LEFT JOIN LATERAL (
+                      SELECT count(*) AS n
+                        FROM lesson_occurrence o
+                       WHERE o.slot_id = ls.id
+                         AND o.scheduled_at > now()
+                         AND (o.scheduled_at AT TIME ZONE ls.timezone)::date
+                             > CAST(:last_day AS date)
+                  ) cnt ON TRUE
+                  LEFT JOIN LATERAL (
+                      -- Кого это коснётся — состав слота, а не участники уже
+                      -- созданных занятий: генератор мог до них не дойти, а
+                      -- ходить в этот час человек всё равно перестанет.
+                      SELECT array_agg(DISTINCT lss.student_id) AS ids
+                        FROM lesson_slot_student lss
+                       WHERE lss.slot_id = ls.id AND lss.is_active
+                  ) stud ON TRUE
+                 WHERE ls.is_active
+                   AND (ls.active_until IS NULL OR ls.active_until > CAST(:last_day AS date))
+                   AND (CAST(:teacher_id AS int) IS NULL OR ls.teacher_id = :teacher_id)
+                 ORDER BY ls.weekday, ls.start_time, ls.id
+                """
+            ),
+            {"last_day": last_day, "teacher_id": teacher_id},
+        )
+    ).fetchall()
+
+    slots = [
+        {
+            "slot_id": int(r[0]),
+            "teacher_id": int(r[1]),
+            "weekday": int(r[2]),
+            "start_time": r[3],
+            "timezone": str(r[4]),
+            "active_until": r[5],
+            "occurrences_removed": int(r[6]),
+            "student_ids": list(r[7] or []),
+        }
+        for r in rows
+    ]
+    affected_students = sorted({sid for s in slots for sid in s["student_ids"]})
+    removed_total = sum(s["occurrences_removed"] for s in slots)
+
+    if not dry_run and slots:
+        for slot in slots:
+            # Через ORM, а не сырым UPDATE: объект слота может быть уже загружен
+            # в эту сессию, и сырая правка оставила бы его со старой датой.
+            row = await get_lesson_slot(db, slot["slot_id"])
+            row.active_until = last_day
+            await db.flush()
+            await _drop_occurrences_after(
+                db, slot["slot_id"], last_day, timezone_name=slot["timezone"]
+            )
+        await db.commit()
+        logger.info(
+            "tsk-679: расписание завершено по %s — слотов %s, убрано занятий %s, "
+            "затронуто учеников %s",
+            last_day, len(slots), removed_total, len(affected_students),
+        )
+
+    return {
+        "dry_run": dry_run,
+        "last_day": last_day,
+        "slots": slots,
+        "slots_total": len(slots),
+        "occurrences_removed": removed_total,
+        "students_affected": affected_students,
+    }
 
 
 async def deactivate_lesson_slot(db: AsyncSession, slot_id: int) -> None:

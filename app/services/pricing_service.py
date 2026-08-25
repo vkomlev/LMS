@@ -434,7 +434,10 @@ async def list_student_pricing(
                           JOIN lesson_slot ls ON ls.id = lss.slot_id
                          WHERE lss.student_id = u.id
                            AND lss.is_active
-                           AND ls.is_active)  AS weekly_lessons
+                           AND ls.is_active
+                           -- tsk-679: закончившийся слот в частоту не входит
+                           AND (ls.active_until IS NULL
+                                OR ls.active_until >= CURRENT_DATE))  AS weekly_lessons
                   FROM users u
                   JOIN user_courses uc ON uc.user_id = u.id AND uc.is_active
                   JOIN course_pricing cp ON cp.course_id = uc.course_id
@@ -480,7 +483,10 @@ async def list_student_pricing(
                                       JOIN lesson_slot ls ON ls.id = lss.slot_id
                                      WHERE lss.student_id = u.id
                                        AND lss.is_active
-                                       AND ls.is_active) AS weekly_lessons
+                                       AND ls.is_active
+                                       AND (ls.active_until IS NULL
+                                            OR ls.active_until >= CURRENT_DATE))
+                                                       AS weekly_lessons
                               FROM unnest(CAST(:ids AS int[]), CAST(:gids AS int[]))
                                      AS m(student_id, group_id)
                               JOIN users u ON u.id = m.student_id AND u.is_active
@@ -718,12 +724,18 @@ async def resolve_attendance_frequency(
 
 
 async def _count_active_weekly_slots(db: AsyncSession, student_id: int) -> int:
+    """Сколько занятий в неделю у ученика по СЕГОДНЯШНЕМУ расписанию.
+
+    tsk-679: слот с истёкшим `active_until` больше не идёт, и считать его —
+    значит называть человеку частоту занятий, которой уже нет.
+    """
     row = (
         await db.execute(
             text(
                 "SELECT count(*) FROM lesson_slot_student lss "
                 "JOIN lesson_slot ls ON ls.id = lss.slot_id "
-                "WHERE lss.student_id = :s AND lss.is_active AND ls.is_active"
+                "WHERE lss.student_id = :s AND lss.is_active AND ls.is_active "
+                "  AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE)"
             ),
             {"s": student_id},
         )

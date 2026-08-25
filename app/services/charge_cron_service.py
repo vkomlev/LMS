@@ -120,6 +120,9 @@ active_slots AS (
       FROM lesson_slot_student lss
       JOIN lesson_slot ls ON ls.id = lss.slot_id
      WHERE lss.is_active AND ls.is_active
+       -- tsk-679: закончившийся слот («действует по 31 августа») уже не
+       -- расписание — иначе в сентябре человек числится ходящим без занятий.
+       AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE)
      GROUP BY 1
 ),
 future_lessons AS (

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKeyConstraint,
     Integer,
@@ -66,6 +67,15 @@ class LessonSlot(Base):
         nullable=False,
         server_default=text("true"),
         comment="Деактивация вместо удаления — сохраняет историю occurrence",
+    )
+    active_until: Mapped[Optional[date]] = mapped_column(
+        Date,
+        comment=(
+            "Последний день действия слота ВКЛЮЧИТЕЛЬНО; NULL — бессрочно. "
+            "Смена расписания (tsk-679): старая сетка доживает август, новая "
+            "начинается с сентября. Отличается от is_active=false тем, что "
+            "слот ещё работает — просто до названного дня."
+        ),
     )
     created_by: Mapped[Optional[int]] = mapped_column(
         Integer, comment="Admin/оператор, создавший слот"

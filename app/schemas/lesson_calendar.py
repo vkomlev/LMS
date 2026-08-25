@@ -8,7 +8,7 @@ tsk-435 (rework на группы после встречи с реальным�
 """
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -62,6 +62,10 @@ class LessonSlotCreate(BaseModel):
         default="Europe/Moscow",
         description="IANA timezone; MVP — одна зона на всю школу",
     )
+    active_until: Optional[date] = Field(
+        default=None,
+        description="Последний день действия слота включительно; пусто — бессрочно",
+    )
     student_ids: list[int] = Field(
         default_factory=list,
         description="Начальные участники слота (опционально, удобно для импорта)",
@@ -77,6 +81,13 @@ class LessonSlotUpdate(BaseModel):
     duration_minutes: Optional[int] = Field(default=None, gt=0, le=480)
     timezone: Optional[str] = None
     is_active: Optional[bool] = None
+    #: tsk-679: «действует по эту дату включительно». Установка даты убирает
+    #: уже созданные занятия слота за ней — иначе календарь ученика остаётся
+    #: полон занятий, которых не будет.
+    active_until: Optional[date] = None
+    #: Снять дату окончания (сделать слот снова бессрочным): отдельным флагом,
+    #: потому что `active_until: null` в частичной правке означает «не меняем».
+    clear_active_until: bool = False
     #: tsk-437: смена основного преподавателя слота. Поля не было вовсе —
     #: сменить ведущего можно было только пересозданием слота, а с ним
     #: терялись прикреплённые ученики. Будущие занятия переезжают на нового,
@@ -94,12 +105,58 @@ class LessonSlotRead(BaseModel):
     duration_minutes: int
     timezone: str
     is_active: bool
+    #: tsk-679: последний день действия слота включительно; `null` — бессрочно.
+    #: Не то же, что `is_active=false`: слот ещё работает, но до этого дня.
+    active_until: Optional[date] = None
     created_by: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     student_ids: list[int] = Field(
         default_factory=list, description="Активные участники слота (заполняется на уровне API)"
     )
+
+
+class EndSlotsRequest(BaseModel):
+    """Тело «расписание работает по эту дату» (tsk-679).
+
+    `dry_run=True` — посчитать и показать отчёт, ничего не меняя. Это календарь
+    живых людей: сколько занятий исчезнет и кого это коснётся, человек должен
+    увидеть ДО, а не ПОСЛЕ.
+    """
+
+    last_day: date = Field(
+        ..., description="Последний день действия слотов включительно"
+    )
+    teacher_id: Optional[int] = Field(
+        default=None, description="Ограничить одним преподавателем; пусто — все"
+    )
+    dry_run: bool = True
+
+
+class EndSlotsSlotOutcome(BaseModel):
+    """Что произойдёт с одним слотом."""
+
+    slot_id: int
+    teacher_id: int
+    weekday: int
+    start_time: time
+    #: Дата, которая у слота стояла до этого действия (обычно `null`).
+    active_until: Optional[date] = None
+    #: Сколько уже созданных будущих занятий уйдёт за датой.
+    occurrences_removed: int
+    #: Кого эти занятия касаются.
+    student_ids: list[int]
+
+
+class EndSlotsResult(BaseModel):
+    """Итог завершения расписания (или его предпросмотра)."""
+
+    dry_run: bool
+    last_day: date
+    slots_total: int
+    occurrences_removed: int
+    students_affected: list[int]
+    slots: list[EndSlotsSlotOutcome]
 
 
 class AddSlotParticipantRequest(BaseModel):

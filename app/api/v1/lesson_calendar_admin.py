@@ -20,6 +20,8 @@ from app.auth.current_user import CurrentUser
 from app.repos.lesson_calendar_repository import LessonSlotStudentRepository
 from app.schemas.lesson_calendar import (
     AddSlotParticipantRequest,
+    EndSlotsRequest,
+    EndSlotsResult,
     LessonSlotCreate,
     LessonSlotRead,
     LessonSlotUpdate,
@@ -138,6 +140,7 @@ async def create_lesson_slot(
         timezone=body.timezone,
         created_by=current_user.id if not current_user.is_service else None,
         student_ids=body.student_ids,
+        active_until=body.active_until,
     )
     return await _to_slot_read(db, row)
 
@@ -178,6 +181,8 @@ async def update_lesson_slot(
         timezone=body.timezone,
         is_active=body.is_active,
         teacher_id=body.teacher_id,
+        active_until=body.active_until,
+        clear_active_until=body.clear_active_until,
     )
     return await _to_slot_read(db, row)
 
@@ -192,6 +197,30 @@ async def deactivate_lesson_slot(
     историю уже сгенерированных occurrence."""
     await lesson_calendar_service.deactivate_lesson_slot(db, slot_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/lesson-slots/end-on", response_model=EndSlotsResult)
+async def end_slots_on(
+    body: EndSlotsRequest = Body(...),
+    db: AsyncSession = Depends(get_async_db),
+    _current_user: CurrentUser = Depends(_SCHEDULE_GATE),
+) -> EndSlotsResult:
+    """Завершить действующие слоты одним днём: «расписание работает по <дата>».
+
+    Ради смены расписания на осеннее (tsk-674): старая сетка доживает август и
+    исчезает сама, вместо того чтобы кто-то помнил про «выключить первого
+    сентября». Занятия за этой датой, которые генератор уже успел создать,
+    убираются — иначе ученик видит в календаре занятие, которого не будет.
+
+    `dry_run=true` (умолчание) ничего не меняет и отдаёт тот же отчёт.
+    """
+    result = await lesson_calendar_service.end_slots_on(
+        db,
+        last_day=body.last_day,
+        teacher_id=body.teacher_id,
+        dry_run=body.dry_run,
+    )
+    return EndSlotsResult(**result)
 
 
 @router.post(

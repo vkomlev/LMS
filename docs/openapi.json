@@ -26827,6 +26827,106 @@
         }
       }
     },
+    "/api/v1/lesson-slots/end-on": {
+      "post": {
+        "tags": [
+          "lesson_calendar_admin"
+        ],
+        "summary": "End Slots On",
+        "description": "Завершить действующие слоты одним днём: «расписание работает по <дата>».\n\nРади смены расписания на осеннее (tsk-674): старая сетка доживает август и\nисчезает сама, вместо того чтобы кто-то помнил про «выключить первого\nсентября». Занятия за этой датой, которые генератор уже успел создать,\nубираются — иначе ученик видит в календаре занятие, которого не будет.\n\n`dry_run=true` (умолчание) ничего не меняет и отдаёт тот же отчёт.",
+        "operationId": "end_slots_on_api_v1_lesson_slots_end_on_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndSlotsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndSlotsResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/lesson-slots/{slot_id}/participants": {
       "post": {
         "tags": [
@@ -43920,6 +44020,140 @@
         "title": "EmbedTaskResponse",
         "description": "Ответ GET /embed-api/courses/{course_uid}/task/{external_uid}.\n\nWhitelisted поля. SA_COM/TA не отдаются (404). correct_answer\n/ solution_rules / max_attempts отсутствуют."
       },
+      "EndSlotsRequest": {
+        "properties": {
+          "last_day": {
+            "type": "string",
+            "format": "date",
+            "title": "Last Day",
+            "description": "Последний день действия слотов включительно"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id",
+            "description": "Ограничить одним преподавателем; пусто — все"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "last_day"
+        ],
+        "title": "EndSlotsRequest",
+        "description": "Тело «расписание работает по эту дату» (tsk-679).\n\n`dry_run=True` — посчитать и показать отчёт, ничего не меняя. Это календарь\nживых людей: сколько занятий исчезнет и кого это коснётся, человек должен\nувидеть ДО, а не ПОСЛЕ."
+      },
+      "EndSlotsResult": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "last_day": {
+            "type": "string",
+            "format": "date",
+            "title": "Last Day"
+          },
+          "slots_total": {
+            "type": "integer",
+            "title": "Slots Total"
+          },
+          "occurrences_removed": {
+            "type": "integer",
+            "title": "Occurrences Removed"
+          },
+          "students_affected": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Students Affected"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/EndSlotsSlotOutcome"
+            },
+            "type": "array",
+            "title": "Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dry_run",
+          "last_day",
+          "slots_total",
+          "occurrences_removed",
+          "students_affected",
+          "slots"
+        ],
+        "title": "EndSlotsResult",
+        "description": "Итог завершения расписания (или его предпросмотра)."
+      },
+      "EndSlotsSlotOutcome": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "active_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Until"
+          },
+          "occurrences_removed": {
+            "type": "integer",
+            "title": "Occurrences Removed"
+          },
+          "student_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Student Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "teacher_id",
+          "weekday",
+          "start_time",
+          "occurrences_removed",
+          "student_ids"
+        ],
+        "title": "EndSlotsSlotOutcome",
+        "description": "Что произойдёт с одним слотом."
+      },
       "EscalationItem": {
         "properties": {
           "id": {
@@ -47258,6 +47492,19 @@
             "description": "IANA timezone; MVP — одна зона на всю школу",
             "default": "Europe/Moscow"
           },
+          "active_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Until",
+            "description": "Последний день действия слота включительно; пусто — бессрочно"
+          },
           "student_ids": {
             "items": {
               "type": "integer"
@@ -47306,6 +47553,18 @@
           "is_active": {
             "type": "boolean",
             "title": "Is Active"
+          },
+          "active_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Until"
           },
           "created_by": {
             "anyOf": [
@@ -47412,6 +47671,23 @@
               }
             ],
             "title": "Is Active"
+          },
+          "active_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Until"
+          },
+          "clear_active_until": {
+            "type": "boolean",
+            "title": "Clear Active Until",
+            "default": false
           },
           "teacher_id": {
             "anyOf": [

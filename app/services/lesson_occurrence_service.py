@@ -226,8 +226,16 @@ async def _active_slots_of(
 
 
 def _slot_starts_at(slot: LessonSlot, scheduled_at: datetime) -> bool:
-    """Слот начинается ровно в это время (день недели + время в зоне слота)."""
+    """Слот начинается ровно в это время (день недели + время в зоне слота).
+
+    tsk-679: слот с датой окончания в этот день может уже не действовать —
+    тогда он не «начинается» вовсе. Проверка здесь, а не только в выдаче
+    кандидатов: приём переноса обязан быть не мягче выдачи, иначе ученик
+    перенесётся на сентябрьское время старого расписания в обход списка.
+    """
     local = scheduled_at.astimezone(ZoneInfo(slot.timezone))
+    if slot.active_until is not None and local.date() > slot.active_until:
+        return False
     return local.weekday() == slot.weekday and local.time() == slot.start_time
 
 

@@ -152,6 +152,9 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
                 "SELECT 1 FROM lesson_slot_student lss "
                 "  JOIN lesson_slot ls ON ls.id = lss.slot_id "
                 " WHERE lss.student_id = :sid AND lss.is_active AND ls.is_active "
+                # tsk-679: слот с истёкшей датой — уже не признак «человек
+                # начал ходить», перевод с demo на base по нему делать нельзя.
+                "   AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE) "
                 " LIMIT 1"
             ),
             {"sid": student_id},
@@ -548,6 +551,9 @@ async def _staff_student_rows(db: AsyncSession) -> list[dict]:
                              JOIN lesson_slot ls ON ls.id = lss.slot_id
                             WHERE lss.student_id = u.id
                               AND lss.is_active AND ls.is_active
+                              -- tsk-679: закончившийся слот — не расписание
+                              AND (ls.active_until IS NULL
+                                   OR ls.active_until >= CURRENT_DATE)
                        )                     AS has_schedule
                   FROM users u
                   LEFT JOIN student_subscription s

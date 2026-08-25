@@ -152,7 +152,11 @@ async def lesson_counts_for_period(
                            ) AS d
                 ),
                 slots AS (
-                    SELECT ls.weekday
+                    -- tsk-679: `active_until` — последний день действия слота.
+                    -- Без него сентябрьский месяц считался бы по августовской
+                    -- сетке, то есть человеку выставили бы занятия, которых
+                    -- физически не будет.
+                    SELECT ls.weekday, ls.active_until
                       FROM lesson_slot_student lss
                       JOIN lesson_slot ls ON ls.id = lss.slot_id
                      WHERE lss.student_id = :student_id
@@ -185,6 +189,8 @@ async def lesson_counts_for_period(
                        ) AS on_break
                   FROM days
                   JOIN slots ON (EXTRACT(ISODOW FROM days.day)::int - 1) = slots.weekday
+                            AND (slots.active_until IS NULL
+                                 OR days.day <= slots.active_until)
                   CROSS JOIN joined
                 """
             ),

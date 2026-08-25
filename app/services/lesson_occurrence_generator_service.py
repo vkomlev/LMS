@@ -19,7 +19,7 @@ advisory-lock ключами проекта (Y-6 `0x59365453`, Фаза 2
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as dt_time, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -55,6 +55,10 @@ def iter_occurrence_datetimes(
     Уже прошедшее сегодня время слота не включается (следующее вхождение —
     через 7 дней).
 
+    tsk-679: у слота может стоять `active_until` — последний день действия
+    включительно. За него список не выходит, поэтому генератор просто перестаёт
+    создавать занятия, а не требует погасить слот в нужный день вручную.
+
     tsk-587: функция публичная, потому что этими же временами
     `lesson_occurrence_service` подбирает кандидатов для переноса. Общий
     расчёт — не удобство, а требование: занятие, к которому присоединяют
@@ -64,6 +68,17 @@ def iter_occurrence_datetimes(
     tz = ZoneInfo(slot.timezone)
     now_local = now_utc.astimezone(tz)
     horizon_end_local = now_local + timedelta(days=horizon_days)
+
+    # tsk-679: слот может действовать по дату («старая сетка доживает август»).
+    # Обрезаем горизонт по КОНЦУ последнего дня в поясе слота: `active_until`
+    # включительная, занятие 31 августа ещё есть, 1 сентября уже нет.
+    active_until = getattr(slot, "active_until", None)
+    if active_until is not None:
+        end_of_day_local = datetime.combine(
+            active_until, dt_time.max, tzinfo=tz
+        )
+        if end_of_day_local < horizon_end_local:
+            horizon_end_local = end_of_day_local
 
     days_ahead = (slot.weekday - now_local.weekday()) % 7
     current_date = now_local.date() + timedelta(days=days_ahead)
