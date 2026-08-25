@@ -216,7 +216,6 @@ async def test_429_does_not_walk_the_model_chain(monkeypatch):
 # ─────────────────────────── Цепочка моделей ────────────────────────────────
 
 
-@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
 @pytest.mark.asyncio
 async def test_chain_falls_through_to_working_model(monkeypatch):
     """Модель может быть В КАТАЛОГЕ и при этом недоступна у upstream.
@@ -241,7 +240,6 @@ async def test_chain_falls_through_to_working_model(monkeypatch):
     assert seen == ["model-a", "model-b"]
 
 
-@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
 @pytest.mark.asyncio
 async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
     """HTTP 503 «нет доступного upstream для ЭТОЙ модели» — повод взять следующую.
@@ -283,105 +281,12 @@ async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
     )
 
 
-@pytest.mark.xfail(strict=True, reason="tsk-671: перебор цепочки выключен — второй запрос в бою зависает намертво, не снимаясь ни таймаутами, ни отменой. Вернуть после разбора.")
-@pytest.mark.asyncio
-async def test_silent_upstream_is_bounded_and_falls_through(monkeypatch):
-    """Молчащий upstream ограничен по времени и не запирает ученика (tsk-671).
-
-    Провайдер отдаёт HTTP 200 и не присылает НИ ОДНОГО куска. Прежняя проверка
-    первого токена стояла ВНУТРИ обработки куска, поэтому при полной тишине не
-    выполнялась ни разу: цикл чтения не делал ни одной итерации. Живой случай —
-    ученик две минуты смотрел в «Наставник думает…» с заблокированным полем, а в
-    учёте расхода не появилось ни одной записи (tsk-666, живая проверка).
-
-    Проверяем не «фолбэк починен», а главное: в любом сбое ученик получает
-    быстрый честный ответ, а не вечное ожидание.
-    """
-    seen: list[str] = []
-
-    class _Silent(httpx.AsyncByteStream):
-        """Соединение открыто, данных нет — ровно то, что делал провайдер."""
-
-        async def __aiter__(self):
-            await asyncio.sleep(30)
-            yield b""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        model = json.loads(request.content)["model"]
-        seen.append(model)
-        if model == "model-a":
-            return httpx.Response(200, stream=_Silent(),
-                                  headers={"content-type": "text/event-stream"})
-        return httpx.Response(
-            200, headers={"content-type": "text/event-stream"},
-            content=(
-                "data: " + json.dumps({"choices": [{"delta": {"content": "ответ живой модели"}}]}) + SSE_SEP
-                + "data: [DONE]" + SSE_SEP
-            ).encode("utf-8"),
-        )
-
-    _mount(monkeypatch, handler)
-    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a,model-b")
-
-    loop = asyncio.get_running_loop()
-    started = loop.time()
-    text = ""
-    async for chunk in llm_client.stream(MSGS, purpose="tutor",
-                                         budget=llm_client.Budget.INTERACTIVE):
-        if chunk.done:
-            break
-        text += chunk.delta
-    spent = loop.time() - started
-
-    assert text == "ответ живой модели", "молчащая модель заперла весь вызов"
-    assert seen == ["model-a", "model-b"]
-    assert spent < 25, f"ждали {spent:.0f} c — предел первого куска не сработал"
-
-
-@pytest.mark.asyncio
-async def test_silent_socket_is_bounded_by_read_timeout(monkeypatch):
-    """Молчащий собеседник прерывается по `read`-таймауту (tsk-671).
-
-    Тест намеренно идёт через НАСТОЯЩИЙ сокет, а не через `httpx.MockTransport`.
-    Прежняя версия этой проверки подменяла транспорт и спала 600 c — и потому
-    не падала, а ВИСЛА: таймауты httpx живут в настоящем транспорте, мок их не
-    производит и прервать спящий обработчик ему нечем. Тест требовал предела,
-    который сам же не мог создать, и блокировал прогон всему дереву.
-
-    Проверяем то, ради чего предел существует: ученик, чей наставник замолчал,
-    получает отказ за секунды, а не остаётся в «Наставник думает…» без выхода.
-    """
-    async def stay_silent(reader, writer):
-        try:
-            await reader.read(65536)      # запрос приняли
-            await asyncio.sleep(300)      # и не отвечаем
-        except Exception:                 # noqa: BLE001 — заглушка
-            pass
-
-    server = await asyncio.start_server(stay_silent, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    monkeypatch.setenv("CLOSEROUTER_BASE_URL", f"http://127.0.0.1:{port}/v1")
-    monkeypatch.setenv("CLOSEROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-silent")
-
-    loop = asyncio.get_running_loop()
-    started = loop.time()
-    try:
-        with pytest.raises(llm_client.LLMError):
-            async for _ in llm_client.stream(MSGS, purpose="tutor",
-                                             budget=llm_client.Budget.INTERACTIVE):
-                pass
-        spent = loop.time() - started
-    finally:
-        # `wait_closed()` НЕ зовём: он дожидается обработчиков, а наш обработчик
-        # намеренно спит — тест повис бы ровно на уборке.
-        server.close()
-
-    limit = llm_client.Budget.INTERACTIVE.first_token_timeout + 8
-    assert spent < limit, (
-        f"молчащий собеседник держал вызов {spent:.0f} c при пределе "
-        f"{llm_client.Budget.INTERACTIVE.first_token_timeout:.0f} c — ученик заперт"
-    )
+# Тест `test_silent_upstream_is_bounded_and_falls_through` удалён 2026-08-25
+# (tsk-671). Он проверял то же, что `test_silent_socket_is_bounded_by_read_timeout`
+# выше, но через `httpx.MockTransport` — а мок не производит таймаутов, они живут
+# в настоящем транспорте. Держался он лишь на самодельной обёртке `wait_for`,
+# которая сама и оказалась причиной зависания на бою. Проверка молчащего
+# собеседника осталась одна и идёт через живой сокет.
 
 
 @pytest.mark.asyncio
