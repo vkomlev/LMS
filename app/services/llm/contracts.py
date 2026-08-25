@@ -156,7 +156,16 @@ class LLMUpstreamUnavailable(LLMUnavailable):
     """
 
     retryable = True
-    try_next_model = True
+    # Было True — см. примечание ниже.
+    try_next_model = False
+
+    # ВРЕМЕННО ВЫКЛЮЧЕНО (tsk-671, 2026-08-25). Перебор цепочки на бою зависает:
+    # вызов ко второй модели уходит и не возвращается — ни успеха, ни ошибки, ни
+    # записи в учёте расхода, ученик сидит в «Наставник думает…» с заблокированным
+    # полем. Пределы на чтение потока это не ловят: висит более ранняя фаза,
+    # установление запроса. Пока не найдено — быстрый честный отказ лучше вечного
+    # ожидания: ученик сразу видит, что сбой не в нём, и может позвать
+    # преподавателя. Вернуть вместе с пределом на вход в поток.
 
 
 class LLMConfigError(LLMError):
@@ -188,7 +197,8 @@ class LLMUpstreamError(LLMError):
     """
 
     retryable = False
-    try_next_model = True
+    # Было True (до tsk-666) — выключено по той же причине, см. LLMUpstreamUnavailable.
+    try_next_model = False
 
 
 class LLMQuotaExceeded(LLMUpstreamError):
