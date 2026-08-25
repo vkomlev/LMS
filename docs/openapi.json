@@ -54632,6 +54632,18 @@
             "type": "boolean",
             "title": "Is Audience"
           },
+          "schedule_ends_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Ends On"
+          },
           "grid": {
             "items": {
               "$ref": "#/components/schemas/ScheduleGridDay"

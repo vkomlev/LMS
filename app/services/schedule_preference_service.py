@@ -144,6 +144,38 @@ async def is_pending(db: AsyncSession, user_id: int) -> bool:
     return bool(row[0]) if row is not None else False
 
 
+async def schedule_ends_on(db: AsyncSession, student_id: int):
+    """Дата, когда у ученика заканчивается НЫНЕШНЕЕ расписание, или `None`.
+
+    Считается только когда у человека есть слоты и **все** они с датой
+    окончания (tsk-679): если хоть один бессрочный, расписание не кончается, и
+    говорить ученику «занятия заканчиваются» было бы неправдой.
+
+    Нужна кабинету ученика: после смены сетки его календарь пустеет, и пустой
+    список без объяснения читается как поломка. Дата берётся с сервера, а не
+    зашивается в экран, — иначе следующая смена расписания потребует релиза
+    клиента, а до тех пор экран уверенно врал бы прошлогодней датой.
+    """
+    row = (
+        await db.execute(
+            text(
+                """
+                SELECT count(*)                              AS total,
+                       count(*) FILTER (WHERE ls.active_until IS NULL) AS endless,
+                       max(ls.active_until)                  AS ends_on
+                  FROM lesson_slot_student lss
+                  JOIN lesson_slot ls ON ls.id = lss.slot_id
+                 WHERE lss.student_id = :sid AND lss.is_active AND ls.is_active
+                """
+            ),
+            {"sid": student_id},
+        )
+    ).first()
+    if row is None or int(row[0]) == 0 or int(row[1]) > 0:
+        return None
+    return row[2]
+
+
 async def get_preference(db: AsyncSession, student_id: int) -> dict[str, Any]:
     """Действующее пожелание ученика (или умолчания, если он его не оставлял)."""
     head = (
@@ -181,6 +213,9 @@ async def get_preference(db: AsyncSession, student_id: int) -> dict[str, Any]:
         "updated_at": head[3] if head is not None else None,
         "is_audience": await is_audience(db, student_id),
         "grid": grid_as_days(),
+        # tsk-679: когда заканчивается нынешнее расписание. Кабинет ученика по
+        # этой дате объясняет пустой календарь вместо того, чтобы молчать.
+        "schedule_ends_on": await schedule_ends_on(db, student_id),
     }
 
 

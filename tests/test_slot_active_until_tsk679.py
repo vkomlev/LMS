@@ -449,3 +449,49 @@ async def test_removing_lesson_takes_participants_with_it(db):
     ).scalar_one()
     assert left_occurrences == 0
     assert left_participants == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_ends_on_only_when_all_slots_end(db):
+    """Дата окончания расписания — только когда кончаются ВСЕ слоты ученика.
+
+    Иначе кабинет сказал бы «занятия заканчиваются 31 августа» человеку, у
+    которого половина расписания продолжается.
+    """
+    from app.services import schedule_preference_service
+
+    teacher_id = await _create_user(db, role="teacher")
+    student_id = await _create_user(db, role="student")
+    first = await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_id, weekday=0, start_time=time(hour=12),
+        duration_minutes=60, timezone=MOSCOW, created_by=None,
+        student_ids=[student_id],
+    )
+    second = await lesson_calendar_service.create_lesson_slot(
+        db, teacher_id=teacher_id, weekday=2, start_time=time(hour=12),
+        duration_minutes=60, timezone=MOSCOW, created_by=None,
+        student_ids=[student_id],
+    )
+
+    assert await schedule_preference_service.schedule_ends_on(db, student_id) is None
+
+    await lesson_calendar_service.update_lesson_slot(
+        db, first.id, active_until=date(2026, 8, 31)
+    )
+    # Второй слот ещё бессрочный — расписание не кончается.
+    assert await schedule_preference_service.schedule_ends_on(db, student_id) is None
+
+    await lesson_calendar_service.update_lesson_slot(
+        db, second.id, active_until=date(2026, 9, 30)
+    )
+    # Кончаются оба — берём последний день из них.
+    assert await schedule_preference_service.schedule_ends_on(db, student_id) == date(2026, 9, 30)
+
+
+@pytest.mark.asyncio
+async def test_schedule_ends_on_is_none_without_slots(db):
+    """У ученика без расписания заканчиваться нечему."""
+    from app.services import schedule_preference_service
+
+    student_id = await _create_user(db, role="student")
+    assert await schedule_preference_service.schedule_ends_on(db, student_id) is None

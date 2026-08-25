@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -79,6 +79,9 @@ class SchedulePreferenceRead(BaseModel):
     updated_at: datetime | None = None
     #: Показывать ли этому человеку опрос вообще (выпускники и демо — нет).
     is_audience: bool
+    #: tsk-679: последний день нынешнего расписания ученика, если оно
+    #: заканчивается (все его слоты с датой окончания). `None` — не кончается.
+    schedule_ends_on: date | None = None
     #: Сетка приезжает вместе с ответом — экран рисует её, а не свою копию.
     grid: list[ScheduleGridDay]
     grid_timezone: str = GRID_TIMEZONE
