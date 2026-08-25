@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import pathlib
 import re
 import sys
@@ -159,6 +160,168 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
     return res
 
 
+# ─────────────────────────── Судейская ось (tsk-678) ────────────────────────
+#
+# Наставницкая ось меряет НЕ ТО, что нужно судье. Там важны первый токен и слив
+# эталона, здесь — дисциплина формата (ответ обязан разобраться нашим же
+# `_parse_verdict`), ПОЛНОЕ время ответа и цена вызова. Судья не стримит и с
+# учеником не разговаривает: он ждёт весь JSON целиком и платит за каждую работу.
+#
+# Отдельная ось заведена потому, что выбор головы судейской цепочки по
+# наставницкому отчёту — это выбор по чужому критерию: `claude-haiku-4.5` там
+# помечен «СЛИЛ» и дисквалифицирован, а для судьи слив не критерий вовсе
+# (комментарий в `app/services/llm/providers.py`).
+
+# Бюджет одной попытки батча (`Budget.BATCH.total_timeout`). Стенд его не
+# навязывает — меряет ФАКТ и сравнивает с ним, иначе медленная модель выглядела
+# бы «уложившейся» просто потому, что стенд её оборвал.
+JUDGE_BUDGET_SEC = 60.0
+
+# Образец работы. Синтетический намеренно: настоящая сдача — данные ученика,
+# в репозитории им не место. Размер подобран по бою (замер 2026-08-25): вход
+# 1000-6000 токенов, и на длительность он влияет слабо — медиана 18.08 при 999
+# токенах входа 4.2 c, 19.08 при 5767 токенах 5.4 c.
+JUDGE_SAMPLE_STEM = (
+    "Черепашка должна нарисовать домик: квадрат со стороной 100 и треугольную "
+    "крышу над ним. Используй цикл для стен и отдельные команды для крыши. "
+    "Цвет стен — синий, цвет крыши — красный."
+)
+JUDGE_SAMPLE_CODE = """import turtle
+
+t = turtle.Turtle()
+t.speed(3)
+
+t.color("blue")
+for i in range(4):
+    t.forward(100)
+    t.left(90)
+
+t.color("red")
+t.forward(100)
+t.left(60)
+t.forward(100)
+t.left(120)
+t.forward(100)
+
+# risuem okno
+t.penup()
+t.goto(30, 30)
+t.pendown()
+t.color("blue")
+for i in range(4):
+    t.forward(40)
+    t.left(90)
+
+turtle.done()
+"""
+
+
+def _judge_prompt() -> tuple[str, str]:
+    """Взять БОЕВОЙ промпт судьи из сервиса, а не переписать его в стенд.
+
+    Копия промпта в стенде означала бы, что стенд меряет не то, что работает на
+    бою: рубрика правится задачами tsk-646/tsk-658, и разошлись бы они молча.
+    `.env` подгружается в окружение до импорта — сервис тянет `Settings`.
+    """
+    for k, v in dotenv_values(ROOT / ".env", encoding="utf-8-sig").items():
+        if v is not None:
+            os.environ.setdefault(k, v)
+    sys.path.insert(0, str(ROOT))
+    from app.services.code_review_service import _SYSTEM_PROMPT, _build_user_message
+
+    return _SYSTEM_PROMPT, _build_user_message(JUDGE_SAMPLE_CODE, task_stem=JUDGE_SAMPLE_STEM)
+
+
+def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: str) -> dict:
+    """Один судейский вызов: батч, `response_format=json`, время до полного ответа.
+
+    Таймаут запроса стенда (180 c) заведомо БОЛЬШЕ боевого бюджета: стенд обязан
+    увидеть, что модель отвечает за 90 c, а не записать её в «таймаут» своей же
+    меркой.
+    """
+    res: dict = {"model": model, "total": None, "tokens_in": 0, "tokens_out": 0,
+                 "format_ok": False, "text": "", "error": None}
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt},
+                     {"role": "user", "content": user_msg}],
+        "temperature": 0.0, "max_tokens": 1024, "stream": False,
+        "response_format": {"type": "json_object"},
+    }
+    t0 = time.monotonic()
+    try:
+        with _post(base, key, "/v1/chat/completions", payload, timeout=180) as r:
+            body = json.loads(r.read().decode("utf-8", "ignore"))
+        if (err := _sse_error(body)) is not None:
+            res["error"] = f"upstream_in_200: {err}"
+        else:
+            choices = body.get("choices") or []
+            res["text"] = ((choices[0].get("message") or {}).get("content") or "") if choices else ""
+            usage = body.get("usage") or {}
+            res["tokens_in"] = int(usage.get("prompt_tokens") or 0)
+            res["tokens_out"] = int(usage.get("completion_tokens") or 0)
+            if not res["text"]:
+                res["error"] = "пустой ответ без ошибки"
+    except urllib.error.HTTPError as e:
+        res["error"] = f"HTTP {e.code}: {e.read().decode('utf-8','ignore')[:160]}"
+    except Exception as e:  # noqa: BLE001
+        res["error"] = f"{type(e).__name__}: {e}"[:200]
+    res["total"] = time.monotonic() - t0
+
+    if res["text"]:
+        # Разбираем ТЕМ ЖЕ разборщиком, что и на бою: «формат годен» обязано
+        # значить «наш сервис это примет», а не «на глаз похоже на JSON».
+        try:
+            from app.services.code_review_service import _parse_verdict
+
+            parsed = _parse_verdict(res["text"])
+            res["format_ok"] = parsed["code_quality"]["score"] is not None
+            if not res["format_ok"]:
+                res["error"] = "JSON разобран, но балла чистоты в нём нет"
+        except Exception as e:  # noqa: BLE001
+            res["error"] = f"формат: {type(e).__name__}: {e}"[:200]
+    return res
+
+
+def judge_aggregate(runs: list[dict]) -> dict:
+    """Свод судейских прогонов. Латентность — медиана, формат — fail-safe."""
+    ok = [r for r in runs if not r["error"]]
+    totals = sorted(r["total"] for r in ok)
+    return {
+        "model": runs[0]["model"], "runs": len(runs), "ok_runs": len(ok),
+        "bad_format": sum(1 for r in runs if r["text"] and not r["format_ok"]),
+        "total": totals[len(totals) // 2] if totals else None,
+        "slowest": totals[-1] if totals else None,
+        "tokens_in": max((r["tokens_in"] for r in ok), default=0),
+        "tokens_out": max((r["tokens_out"] for r in ok), default=0),
+        "errors": [r["error"] for r in runs if r["error"]],
+        "sample": next((r["text"] for r in ok if r["text"]), ""),
+    }
+
+
+def judge_verdict(a: dict) -> tuple[str, str]:
+    if a["ok_runs"] == 0:
+        return "ОШИБКА", (a["errors"][0] if a["errors"] else "пустой ответ")
+    if a["bad_format"]:
+        return "ФОРМАТ", f"ответ не разобрался нашим разборщиком в {a['bad_format']} из {a['runs']}"
+    if a["ok_runs"] < a["runs"]:
+        return "НЕСТАБИЛЕН", f"успешных прогонов {a['ok_runs']} из {a['runs']}"
+    if a["slowest"] and a["slowest"] > JUDGE_BUDGET_SEC:
+        return "МЕДЛЕННО", f"худший прогон {a['slowest']:.1f} c > бюджета попытки {JUDGE_BUDGET_SEC:.0f} c"
+    return "ГОДЕН", f"медиана {a['total']:.1f} c, худший {a['slowest']:.1f} c"
+
+
+def judge_cost(a: dict, price: dict) -> float | None:
+    """Цена ОДНОГО разбора в долларах. Порядок разбора — деньги, а не только время."""
+    try:
+        pin, pout = float(price.get("prompt") or 0), float(price.get("completion") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not (pin or pout):
+        return None
+    return a["tokens_in"] / 1e6 * pin + a["tokens_out"] / 1e6 * pout
+
+
 def aggregate(runs: list[dict]) -> dict:
     """Свод по N прогонам одной модели.
 
@@ -235,6 +398,8 @@ def main() -> None:
     ap.add_argument("--catalog", action="store_true", help="только каталог с ценами")
     ap.add_argument("--health", action="store_true",
                     help="только доступность моделей боевых цепочек (дёшево, можно часто)")
+    ap.add_argument("--judge", action="store_true",
+                    help="судейская ось: формат, полное время ответа, цена вызова (tsk-678)")
     ap.add_argument("--runs", type=int, default=3,
                     help="прогонов на модель (слив вероятностен, 1 недостаточно)")
     ap.add_argument("--out", default="docs/qa", help="каталог для отчёта")
@@ -279,6 +444,72 @@ def main() -> None:
             print("эталона не проходится по доступности. Прогнать: --runs 3 --models ...")
         else:
             print("все модели боевых цепочек живы")
+        return
+
+    if args.judge:
+        models = [m.strip() for m in args.models.split(",")] if args.models else \
+            [m.strip() for m in (dotenv_values(ROOT / ".env", encoding="utf-8-sig")
+                                 .get("LLM_JUDGE_MODELS") or "").split(",") if m.strip()]
+        if not models:
+            sys.exit("нечего мерить: задай --models или LLM_JUDGE_MODELS в .env")
+        system_prompt, user_msg = _judge_prompt()
+        print(f"судейская ось: кандидатов {len(models)}, прогонов на каждого {args.runs}\n")
+
+        jobs = [(m, i) for m in models for i in range(args.runs)]
+        # Последовательно, а не пачкой: на бою судья ходит к провайдеру строго по
+        # одному (проверено на боевых данных — перекрытий вызовов ноль), и
+        # параллельный стенд мерил бы не ту нагрузку.
+        raw = [judge_probe(j[0], system_prompt, user_msg, base, key) for j in jobs]
+        by_model: dict[str, list[dict]] = {}
+        for r in raw:
+            by_model.setdefault(r["model"], []).append(r)
+        results = [judge_aggregate(by_model[m]) for m in models]
+
+        lines = [
+            f"# Стенд судейского разбора — {date.today():%Y-%m-%d}", "",
+            "Прогон: `scripts/llm_model_bakeoff.py --judge`. Ось отдельная от наставницкой:",
+            "судья не стримит и с учеником не разговаривает — там важны дисциплина формата,",
+            "ПОЛНОЕ время ответа и цена одного разбора.", "",
+            f"Промпт боевой (`code_review_service`), образец работы синтетический. Бюджет"
+            f" попытки на бою — {JUDGE_BUDGET_SEC:.0f} c.", "",
+            "| Модель | Вердикт | Формат | Время мед. | Худший | $/разбор | $/1000 разборов | Комментарий |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for a in results:
+            v, why = judge_verdict(a)
+            cost = judge_cost(a, prices.get(a["model"], {}))
+            t = f"{a['total']:.1f} c" if a["total"] else "—"
+            w = f"{a['slowest']:.1f} c" if a["slowest"] else "—"
+            c = f"{cost:.5f}" if cost is not None else "?"
+            c1k = f"{cost * 1000:.2f}" if cost is not None else "?"
+            fmt = f"{a['runs'] - a['bad_format']}/{a['runs']}"
+            lines.append(f"| `{a['model']}` | **{v}** | {fmt} | {t} | {w} | {c} | {c1k} | {why} |")
+
+        good = [a for a in results if judge_verdict(a)[0] == "ГОДЕН"]
+        lines += ["", "## Пригодны для судьи", ""]
+        lines += [f"- `{a['model']}` — медиана {a['total']:.1f} c, формат "
+                  f"{a['runs'] - a['bad_format']}/{a['runs']}" for a in good] or \
+                 ["- нет ни одного — проверить баланс/квоту ключа"]
+        lines += ["", "## Ответы кандидатов (читать глазами — метрики не всё)", ""]
+        for a in results:
+            lines += [f"### `{a['model']}`", "", "```",
+                      (a["sample"] or (a["errors"][0] if a["errors"] else ""))[:1200], "```", ""]
+
+        outdir = ROOT / args.out
+        outdir.mkdir(parents=True, exist_ok=True)
+        path = outdir / f"{date.today():%Y-%m-%d}-llm-judge-bakeoff.md"
+        path.write_text("\n".join(lines), encoding="utf-8")
+
+        print(f"{'модель':<40}{'вердикт':<13}{'формат':>8}{'мед.':>9}{'худший':>9}{'$/разбор':>11}")
+        print("-" * 90)
+        for a in results:
+            v, _ = judge_verdict(a)
+            cost = judge_cost(a, prices.get(a["model"], {}))
+            t = f"{a['total']:.1f}c" if a["total"] else "—"
+            w = f"{a['slowest']:.1f}c" if a["slowest"] else "—"
+            c = f"{cost:.5f}" if cost is not None else "?"
+            print(f"{a['model']:<40}{v:<13}{a['runs'] - a['bad_format']}/{a['runs']:<6}{t:>9}{w:>9}{c:>11}")
+        print(f"\nотчёт: {path}")
         return
 
     if not METHODOLOGY.exists():

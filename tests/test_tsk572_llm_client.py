@@ -28,6 +28,7 @@ from app.services.llm.contracts import (
     LLMMessage,
     LLMQuotaExceeded,
     LLMRateLimited,
+    LLMTimeout,
     LLMUpstreamError,
 )
 
@@ -518,10 +519,78 @@ async def test_usage_recorded_for_failures_too(monkeypatch, _isolate):
 
 
 @pytest.mark.asyncio
+async def test_batch_stops_walking_chain_at_call_ceiling(monkeypatch, _isolate):
+    """Батч обязан иметь потолок на ВЕСЬ вызов, а не только на каждую модель.
+
+    tsk-678. Пока таймаут не переходил к следующей модели, потолок был не нужен:
+    вызов обрывался на первой. С tsk-671 переход включён — и без потолка одна
+    работа стоит всей цепочки подряд. На бою это не абстракция: за такой проход
+    истекает срок пометки «работа взята», следующий тик берёт ту же работу, и
+    провайдеру платят за неё дважды.
+
+    Часы поддельные: тест про арифметику бюджета, а не про ожидание вживую.
+    """
+    clock = {"t": 0.0}
+    monkeypatch.setattr(llm_client.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "model-a,model-b,model-c,model-d")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        clock["t"] += Budget.BATCH.attempt_timeout
+        raise httpx.ReadTimeout("модель молчит", request=request)
+
+    _mount(monkeypatch, handler)
+
+    with pytest.raises(LLMTimeout):
+        await llm_client.complete(MSGS, purpose="code_review")
+
+    tried = [e.model for e in _isolate]
+    assert tried == ["model-a", "model-b", "model-c"], (
+        f"перебор обязан остановиться на потолке вызова, а прошёл {tried}"
+    )
+    assert "model-d" not in tried
+
+
+@pytest.mark.asyncio
+async def test_batch_usage_says_which_model_of_chain_answered(monkeypatch, _isolate):
+    """В учёте расхода видно, какая по счёту модель ответила и с какой попытки.
+
+    tsk-678: без этого запись «разбор занял 95 c» неразличима — одна медленная
+    попытка или таймаут плюс удачный повтор. Разбор замедления упёрся ровно
+    в это: по учёту ответить было нечем.
+    """
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "model-a,model-b")
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:  # первая модель молчит — отвечает вторая
+            raise httpx.ReadTimeout("модель молчит", request=request)
+        return httpx.Response(200, json=_ok_batch())
+
+    _mount(monkeypatch, handler)
+
+    await llm_client.complete(MSGS, purpose="code_review")
+
+    ok = [e for e in _isolate if e.outcome == "ok"]
+    assert ok and ok[-1].model == "model-b"
+    assert ok[-1].meta["chain_pos"] == 2, "позиция в цепочке не записана"
+    assert ok[-1].meta["chain_len"] == 2
+    assert ok[-1].meta["attempt"] == 1
+
+
+@pytest.mark.asyncio
 async def test_budgets_differ_by_profile():
-    """Интерактив не повторяет таймаут: ученик не ждёт второй круг."""
+    """Повтор той же модели после таймаута не делает ни один профиль.
+
+    У батча он был (60 c × 2 = 120 c в учёте расхода) и был единственным
+    спасением, пока таймаут не переходил к следующей модели. С tsk-671 переход
+    есть и он лучше по замеру: стенд `--judge` 25.08 дал у следующей модели
+    цепочки медиану 7,2 c при худшем 7,6 c — быстрее, чем первая доедет до
+    своего предела. Повтор же той же модели приносил второй такой же таймаут
+    за наши деньги: все три вызова «ровно 120,0 c» выглядели именно так.
+    """
     assert Budget.INTERACTIVE.timeout_retries == 0
-    assert Budget.BATCH.timeout_retries == 1
+    assert Budget.BATCH.timeout_retries == 0
     # 12 c, а не 5: стенд дал медиану первого токена 4.4-4.6 c, и бюджет,
     # равный медиане, обрывал бы примерно половину живых ответов. Проверено
     # регресс-прогоном — наставник отваливался посреди нормального разговора.
@@ -531,6 +600,14 @@ async def test_budgets_differ_by_profile():
     )
     assert Budget.BATCH.first_token_timeout is None
     assert Budget.INTERACTIVE.total_timeout < Budget.BATCH.total_timeout
+    # tsk-678: предел ОДНОЙ попытки батча — 30 c. Боевое распределение 1052
+    # удачных разборов: медиана 5,6 c, p90 22,2 c. За 30 c приходят 91,9%
+    # ответов, а прежние 60 c ждали уже не ответа, а чуда.
+    assert Budget.BATCH.attempt_timeout == 30.0
+    assert Budget.INTERACTIVE.attempt_timeout == Budget.INTERACTIVE.first_token_timeout
+    # Потолок вызова обязан вмещать больше одной попытки — иначе перебор
+    # цепочки, ради которого он и заведён, не состоится ни разу.
+    assert Budget.BATCH.total_timeout >= Budget.BATCH.attempt_timeout * 2
 
 
 def test_frame_split_across_network_chunks_is_not_lost():

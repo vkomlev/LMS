@@ -107,15 +107,17 @@ def _timeout(budget: Budget) -> httpx.Timeout:
     `read` — это предел ОДНОГО чтения, в том числе чтения заголовков ответа.
     Раньше здесь стоял общий бюджет (40 c у интерактива), и модель, которая не
     прислала даже заголовки, забирала его целиком: до следующей в цепочке ученик
-    не доживал (tsk-671). Берём предел первого куска — 12 c. Для потока это
-    безопасно: между кусками генерации проходят миллисекунды, а если пауза всё же
-    случится посреди ответа, уже написанное покажется как незавершённый ответ, а
-    не как ошибка. У батча предела первого куска нет — там остаётся общий.
+    не доживал (tsk-671). Берём предел ПОПЫТКИ — 12 c у интерактива (это его
+    предел первого куска), 30 c у батча. Для потока это безопасно: между кусками
+    генерации проходят миллисекунды, а если пауза всё же случится посреди ответа,
+    уже написанное покажется как незавершённый ответ, а не как ошибка.
+
+    `write` — общий потолок вызова: отправка запроса заведомо короче любой
+    попытки, и отдельного предела ей не нужно.
     """
-    read = budget.first_token_timeout or budget.total_timeout
     return httpx.Timeout(
         connect=budget.connect_timeout,
-        read=read,
+        read=budget.attempt_timeout,
         write=budget.total_timeout,
         pool=budget.connect_timeout,
     )
@@ -202,9 +204,23 @@ async def complete(
     cfg = _guard_cooldown()
     chain = _rotate_by_cooldown(_models_for(model, providers.judge_models()))
     last_error: Optional[LLMError] = None
+    # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-678) —
+    # тот же сторож, что уже стоит в потоковой ветке. До 25.08 он батчу был не
+    # нужен: таймаут не переходил к следующей модели, и вызов обрывался на
+    # первой. Теперь переход включён (tsk-671), и без потолка одна работа стоит
+    # до четырёх моделей подряд — а пачка из десяти переживает срок пометки
+    # «работа взята», после чего следующий тик берёт ту же работу и провайдеру
+    # платят за неё дважды.
+    deadline = time.monotonic() + budget.total_timeout
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
         for candidate in chain:
+            if last_error is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем "
+                    "(назначение=%s)", budget.total_timeout, purpose,
+                )
+                break
             attempts = 0
             started = time.monotonic()
             while True:
@@ -236,6 +252,13 @@ async def complete(
                         provider=cfg.name, tokens_in=int(usage_block.get("prompt_tokens") or 0),
                         tokens_out=int(usage_block.get("completion_tokens") or 0),
                         duration_ms=duration_ms, outcome="ok",
+                        # Позиция в цепочке и число попыток (tsk-678). Без них
+                        # запись «разбор занял 95 c» неразличима: это одна
+                        # медленная попытка или таймаут 60 c плюс удачный повтор?
+                        # Разбор замедления упёрся ровно в это — по учёту расхода
+                        # ответить было нечем.
+                        meta={"attempt": attempts, "chain_pos": chain.index(candidate) + 1,
+                              "chain_len": len(chain)},
                     )
                     return LLMResult(
                         text=text_out, model=candidate,
@@ -262,7 +285,8 @@ async def complete(
                     provider=cfg.name, tokens_in=0, tokens_out=0,
                     duration_ms=int((time.monotonic() - started) * 1000),
                     outcome=type(last_error).__name__,
-                    meta={"message": str(last_error)[:300]},
+                    meta={"message": str(last_error)[:300], "attempt": attempts,
+                          "chain_pos": chain.index(candidate) + 1, "chain_len": len(chain)},
                 )
                 break  # к следующей модели цепочки или к выходу
 
