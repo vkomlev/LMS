@@ -58,6 +58,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import Settings
 from app.services.llm import Budget, LLMError, LLMMessage, complete, cooldown, providers
+from app.services.llm.contracts import LLMCooldown
 
 # Разбор ответа берём ТОТ ЖЕ, что работает на бою. Своя копия проверки формата
 # означала бы, что проход одобряет модель, которую сервис потом не примет —
@@ -119,6 +120,11 @@ async def probe_judge_model(model: str) -> tuple[bool, str, float]:
             budget=Budget.BATCH,
             response_format={"type": "json_object"},
         )
+    except LLMCooldown:
+        # Остывание — это про ПРОВАЙДЕРА целиком после 429, а не про модель.
+        # Записать её в негодные значило бы задвинуть всю цепочку и поднять
+        # тревогу на ровном месте. Пусть проход отложится до следующего раза.
+        raise
     except LLMError as exc:
         return False, f"{type(exc).__name__}: {exc}"[:200], time.monotonic() - started
 
@@ -145,6 +151,8 @@ async def probe_model_alive(model: str) -> tuple[bool, str, float]:
             budget=Budget.BATCH,
             max_tokens=5,
         )
+    except LLMCooldown:
+        raise  # см. `probe_judge_model`: это про провайдера, а не про модель
     except LLMError as exc:
         return False, f"{type(exc).__name__}: {exc}"[:200], time.monotonic() - started
     return True, "жива", time.monotonic() - started
@@ -208,6 +216,12 @@ async def llm_chain_check_tick() -> dict:
         for alert in summary["alerts"]:
             logger.error("LLM_CHAIN_ALERT: %s", alert)
         logger.info("chain_check: проход завершён — %s", summary)
+    except LLMCooldown as exc:
+        # Провайдер остывает после 429 — сейчас не годна ни одна модель, и это
+        # ничего не говорит о самих моделях. Долбить его проверкой нельзя: повтор
+        # кормит именно тот брейкер, который уже срабатывал (2026-07-05).
+        summary["skipped"] = True
+        logger.info("chain_check: проход отложен — %s", exc)
     except Exception:
         logger.exception("chain_check: проход упал — состояние цепочек за этот прогон неизвестно")
 

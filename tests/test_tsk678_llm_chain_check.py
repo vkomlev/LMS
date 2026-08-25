@@ -189,3 +189,26 @@ async def test_slow_judge_is_demoted_even_when_answer_is_good(monkeypatch):
 
     assert summary["judge_bad"] == 3
     assert cooldown.is_cooling("model:judge-a")
+
+
+@pytest.mark.asyncio
+async def test_provider_cooldown_postpones_pass_instead_of_condemning_chain(monkeypatch):
+    """Остывание провайдера после 429 — не приговор моделям.
+
+    Оно про ПРОВАЙДЕРА целиком, и если считать его отказом модели, проход
+    задвинет всю цепочку и поднимет тревогу на ровном месте. Плюс повтор на 429
+    кормит брейкер, который у нас уже срабатывал (2026-07-05), — значит проход
+    обязан отложиться, а не долбить.
+    """
+    cooldown.start("closerouter", 120)
+
+    def handler(request: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("при остывании провайдера сеть трогать нельзя")
+
+    _mount(monkeypatch, handler)
+
+    summary = await chain_check.llm_chain_check_tick()
+
+    assert summary.get("skipped") is True
+    assert summary["alerts"] == []
+    assert not cooldown.is_cooling("model:judge-a"), "цепочку задвигать не за что"
