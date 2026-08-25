@@ -370,66 +370,49 @@ async def stream(
                         # («что ужеовал сделать» вместо «что уже попробовал»),
                         # и это не ловится ничем, кроме чтения глазами.
                         buffer = ""
-                        reader = resp.aiter_text().__aiter__()
-                        while True:
-                            # Ждать первый кусок бесконечно нельзя. Проверка ниже
-                            # (`first_at is None and ... > first_token_timeout`) стоит
-                            # ВНУТРИ обработки куска, поэтому при полностью молчащем
-                            # upstream не выполняется ни разу: цикл не делает ни одной
-                            # итерации, и ученик ждёт до общего таймаута соединения.
-                            # Живой случай tsk-671: «Наставник думает…» две минуты
-                            # подряд, в учёте расхода — ни одной записи (tsk-666).
-                            if first_at is None and budget.first_token_timeout is not None:
-                                left = budget.first_token_timeout - (time.monotonic() - started)
-                                if left <= 0:
-                                    raise LLMTimeout(
-                                        f"первый токен не пришёл за {budget.first_token_timeout} c"
-                                    )
-                                try:
-                                    raw = await asyncio.wait_for(reader.__anext__(), timeout=left)
-                                except asyncio.TimeoutError:
-                                    raise LLMTimeout(
-                                        f"первый токен не пришёл за {budget.first_token_timeout} c"
-                                    )
-                                except StopAsyncIteration:
-                                    break
-                            else:
-                                try:
-                                    raw = await reader.__anext__()
-                                except StopAsyncIteration:
-                                    break
-                            buffer += raw
-                            head, sep, tail = buffer.rpartition("\n\n")
-                            if not sep:
-                                continue
-                            buffer = tail
-                            for payload in _sse_lines_to_payloads(head + "\n\n"):
-                                # Ошибка внутри HTTP 200 — главная ловушка провайдера.
-                                _check_payload_error(payload)
+                    # Читаем ПРОСТЫМ `async for`. Оборачивать `__anext__` в
+                    # `asyncio.wait_for` нельзя: он уносит чтение в ОТДЕЛЬНУЮ
+                    # задачу, а httpx держит поток в anyio-области отмены,
+                    # привязанной к задаче, которая поток открыла. Нарушение
+                    # этой привязки и дало зависание, которое не снималось
+                    # ничем — ни таймаутами, ни отменой (tsk-671, мой же
+                    # дефект: до этой обёртки вызовы в приложении проходили).
+                    # Ожидание первого куска ограничивает `read`-таймаут httpx
+                    # (он же покрывает чтение заголовков) — это штатный
+                    # механизм, а не самодельный.
+                    async for raw in resp.aiter_text():
+                        buffer += raw
+                        head, sep, tail = buffer.rpartition("\n\n")
+                        if not sep:
+                            continue
+                        buffer = tail
+                        for payload in _sse_lines_to_payloads(head + "\n\n"):
+                            # Ошибка внутри HTTP 200 — главная ловушка провайдера.
+                            _check_payload_error(payload)
 
-                                block = payload.get("usage") or {}
-                                if block:
-                                    tokens_in = int(block.get("prompt_tokens") or tokens_in)
-                                    tokens_out = int(block.get("completion_tokens") or tokens_out)
+                            block = payload.get("usage") or {}
+                            if block:
+                                tokens_in = int(block.get("prompt_tokens") or tokens_in)
+                                tokens_out = int(block.get("completion_tokens") or tokens_out)
 
-                                for choice in payload.get("choices") or []:
-                                    delta = (choice.get("delta") or {}).get("content") or ""
-                                    if not delta:
-                                        continue
-                                    if first_at is None:
-                                        first_at = time.monotonic()
-                                    got_any = True
-                                    text_len += len(delta)
-                                    yield LLMChunk(delta=delta, model=candidate)
+                            for choice in payload.get("choices") or []:
+                                delta = (choice.get("delta") or {}).get("content") or ""
+                                if not delta:
+                                    continue
+                                if first_at is None:
+                                    first_at = time.monotonic()
+                                got_any = True
+                                text_len += len(delta)
+                                yield LLMChunk(delta=delta, model=candidate)
 
-                            if (
-                                first_at is None
-                                and budget.first_token_timeout is not None
-                                and time.monotonic() - started > budget.first_token_timeout
-                            ):
-                                raise LLMTimeout(
-                                    f"первый токен не пришёл за {budget.first_token_timeout} c"
-                                )
+                        if (
+                            first_at is None
+                            and budget.first_token_timeout is not None
+                            and time.monotonic() - started > budget.first_token_timeout
+                        ):
+                            raise LLMTimeout(
+                                f"первый токен не пришёл за {budget.first_token_timeout} c"
+                            )
 
                     duration_ms = int((time.monotonic() - started) * 1000)
                     await _usage_ok(
