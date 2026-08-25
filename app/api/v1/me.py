@@ -67,6 +67,7 @@ from app.services import (
     me_service,
     retention_service,
     roles_service,
+    schedule_preference_service,
     student_presence_service,
     task_history_service,
 )
@@ -111,10 +112,21 @@ async def get_me(
     teacher-зону портала.
     tsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся
     вместе с full_name одним запросом (`me_service.get_profile`).
+    tsk-674: `schedule_preference_pending` — ученик из аудитории опроса по
+    осеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание
+    попадает на все экраны кабинета сразу. Сервисному токену флаг не считается:
+    у него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый
+    внутренний вызов.
     """
     profile = await me_service.get_profile(db, current_user.id)
     roles = await roles_service.get_user_role_names(db, current_user.id)
+    schedule_pending = (
+        False
+        if current_user.is_service
+        else await schedule_preference_service.is_pending(db, current_user.id)
+    )
     return MeResponse(
+        schedule_preference_pending=schedule_pending,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
@@ -211,7 +223,16 @@ async def update_me(
 
     profile = await me_service.get_profile(db, current_user.id)
     roles = await roles_service.get_user_role_names(db, current_user.id)
+    # tsk-674: тот же флаг, что и в GET. Ответ PATCH кладётся клиентом прямо в
+    # кэш профиля — без него сохранение ФИО в онбординге гасило бы напоминание
+    # про пожелания, хотя ученик их не оставлял.
+    schedule_pending = (
+        False
+        if current_user.is_service
+        else await schedule_preference_service.is_pending(db, current_user.id)
+    )
     return MeResponse(
+        schedule_preference_pending=schedule_pending,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,

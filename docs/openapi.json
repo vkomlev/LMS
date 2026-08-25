@@ -22835,7 +22835,7 @@
           "me"
         ],
         "summary": "Get Me",
-        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).",
+        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).\ntsk-674: `schedule_preference_pending` — ученик из аудитории опроса по\nосеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание\nпопадает на все экраны кабинета сразу. Сервисному токену флаг не считается:\nу него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый\nвнутренний вызов.",
         "operationId": "get_me_api_v1_me_get",
         "security": [
           {
@@ -28833,7 +28833,7 @@
           "teacher_lesson_occurrences"
         ],
         "summary": "Get Teacher Lesson Summary",
-        "description": "Сводка по каждому участнику occurrence (tsk-022 «до занятия» /\ntsk-410 «после занятия» — общий источник, см.\n``teacher_lesson_summary_service``): последнее выполненное задание/\nматериал, метрики ДЗ между занятиями, заблокированные лимитом задания,\nоткрытые заявки помощи, серия пропусков подряд, % прогресса курса.",
+        "description": "Сводка по каждому участнику occurrence (tsk-022 «до занятия» /\ntsk-410 «после занятия» — общий источник, см.\n``teacher_lesson_summary_service``): последнее выполненное задание/\nматериал, метрики ДЗ между занятиями, заблокированные лимитом задания,\nоткрытые заявки помощи, серия пропусков подряд, % прогресса курса.\n\ntsk-665: панель преподавателя опрашивает сводку раз в минуту всё занятие.\nСписок строк обходится без прогресса (`include_progress=false`), а\nподробности одного ученика запрашиваются по клику (`student_id`).",
         "operationId": "get_teacher_lesson_summary_api_v1_teacher_lesson_occurrences__occurrence_id__summary_get",
         "security": [
           {
@@ -28863,6 +28863,36 @@
               "title": "Teacher Id"
             },
             "description": "ID преподавателя"
+          },
+          {
+            "name": "include_progress",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Считать ли прогресс по курсу и заблокированные задания (tsk-665). false — `course_progress` и `blocked_tasks` придут как null (null = не считалось, [] = посчитали и пусто). Это самая дорогая часть сводки: обход дерева курса и состояния всех заданий на каждого участника.",
+              "default": true,
+              "title": "Include Progress"
+            },
+            "description": "Считать ли прогресс по курсу и заблокированные задания (tsk-665). false — `course_progress` и `blocked_tasks` придут как null (null = не считалось, [] = посчитали и пусто). Это самая дорогая часть сводки: обход дерева курса и состояния всех заданий на каждого участника."
+          },
+          {
+            "name": "student_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Вернуть только этого участника (tsk-665: подробности по клику).",
+              "title": "Student Id"
+            },
+            "description": "Вернуть только этого участника (tsk-665: подробности по клику)."
           },
           {
             "name": "token",
@@ -37369,6 +37399,579 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Topic Detail Api V1 Topic Mastery Topics  Course Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/schedule-preference": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get My Schedule Preference",
+        "description": "Пожелания текущего ученика вместе с сеткой допустимых часов.\n\nОтвет отдаётся и тому, кто в аудиторию опроса не входит (выпускник, демо):\nполе `is_audience=false` — это ответ «опрос не для вас», а не отказ. Отказ\nпришлось бы объяснять на экране, а объяснять тут нечего.",
+        "operationId": "get_my_schedule_preference_api_v1_me_schedule_preference_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Save My Schedule Preference",
+        "description": "Сохранить пожелания. Правится в любой момент, каждая версия остаётся в истории.",
+        "operationId": "save_my_schedule_preference_api_v1_me_schedule_preference_put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePreferenceWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/schedule-preference/history": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get My Schedule Preference History",
+        "operationId": "get_my_schedule_preference_history_api_v1_me_schedule_preference_history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SchedulePreferenceRevisionRead"
+                  },
+                  "title": "Response Get My Schedule Preference History Api V1 Me Schedule Preference History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/schedule-preferences/summary": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get Schedule Preferences Summary",
+        "description": "Охват опроса: сколько заполнили, кто молчит, какой час сколько просят.",
+        "operationId": "get_schedule_preferences_summary_api_v1_methodist_schedule_preferences_summary_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/schedule-preferences/{student_id}": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get Student Schedule Preference",
+        "operationId": "get_student_schedule_preference_api_v1_methodist_schedule_preferences__student_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/schedule-preferences/{student_id}/history": {
+      "get": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Get Student Schedule Preference History",
+        "operationId": "get_student_schedule_preference_history_api_v1_methodist_schedule_preferences__student_id__history_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SchedulePreferenceRevisionRead"
+                  },
+                  "title": "Response Get Student Schedule Preference History Api V1 Methodist Schedule Preferences  Student Id  History Get"
                 }
               }
             }
@@ -47362,6 +47965,11 @@
             },
             "type": "array",
             "title": "Roles"
+          },
+          "schedule_preference_pending": {
+            "type": "boolean",
+            "title": "Schedule Preference Pending",
+            "default": false
           }
         },
         "type": "object",
@@ -51721,6 +52329,439 @@
         "type": "object",
         "title": "RubricReviewItem",
         "description": "Один пункт рубрики и что по нему видно в ответе ученика (tsk-658)."
+      },
+      "ScheduleGridDay": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "hours": {
+            "items": {
+              "type": "string",
+              "format": "time"
+            },
+            "type": "array",
+            "title": "Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "hours"
+        ],
+        "title": "ScheduleGridDay",
+        "description": "День сетки для клиента: какие часы вообще можно выбрать."
+      },
+      "SchedulePreferenceDemandCell": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "preferred_count": {
+            "type": "integer",
+            "title": "Preferred Count"
+          },
+          "possible_count": {
+            "type": "integer",
+            "title": "Possible Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "preferred_count",
+          "possible_count"
+        ],
+        "title": "SchedulePreferenceDemandCell",
+        "description": "Спрос на один час сетки: сколько человек его просят."
+      },
+      "SchedulePreferenceHour": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday",
+            "description": "0=понедельник .. 6=воскресенье"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time",
+            "description": "Начало часа по Москве, HH:MM"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "preferred",
+              "possible"
+            ],
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "kind"
+        ],
+        "title": "SchedulePreferenceHour",
+        "description": "Один выбранный час: день недели, время начала по Москве, вид."
+      },
+      "SchedulePreferenceRead": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "is_filled": {
+            "type": "boolean",
+            "title": "Is Filled"
+          },
+          "lessons_per_week": {
+            "type": "integer",
+            "title": "Lessons Per Week"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceHour"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "is_audience": {
+            "type": "boolean",
+            "title": "Is Audience"
+          },
+          "grid": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleGridDay"
+            },
+            "type": "array",
+            "title": "Grid"
+          },
+          "grid_timezone": {
+            "type": "string",
+            "title": "Grid Timezone",
+            "default": "Europe/Moscow"
+          },
+          "grid_slot_minutes": {
+            "type": "integer",
+            "title": "Grid Slot Minutes",
+            "default": 60
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "is_filled",
+          "lessons_per_week",
+          "hours",
+          "is_audience",
+          "grid"
+        ],
+        "title": "SchedulePreferenceRead",
+        "description": "Пожелания ученика + сетка, по которой они собраны."
+      },
+      "SchedulePreferenceRevisionRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "lessons_per_week": {
+            "type": "integer",
+            "title": "Lessons Per Week"
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceHour"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "changed_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed By"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "lessons_per_week",
+          "hours",
+          "source",
+          "created_at"
+        ],
+        "title": "SchedulePreferenceRevisionRead",
+        "description": "Строка истории правок."
+      },
+      "SchedulePreferenceStudentRow": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "plan_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Code"
+          },
+          "is_filled": {
+            "type": "boolean",
+            "title": "Is Filled"
+          },
+          "lessons_per_week": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessons Per Week"
+          },
+          "preferred_count": {
+            "type": "integer",
+            "title": "Preferred Count",
+            "default": 0
+          },
+          "possible_count": {
+            "type": "integer",
+            "title": "Possible Count",
+            "default": 0
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "current_slots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Current Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "email",
+          "timezone",
+          "plan_code",
+          "is_filled"
+        ],
+        "title": "SchedulePreferenceStudentRow",
+        "description": "Строка сводки охвата: один ученик из аудитории опроса."
+      },
+      "SchedulePreferenceSummary": {
+        "properties": {
+          "audience_total": {
+            "type": "integer",
+            "title": "Audience Total"
+          },
+          "filled_total": {
+            "type": "integer",
+            "title": "Filled Total"
+          },
+          "silent_total": {
+            "type": "integer",
+            "title": "Silent Total"
+          },
+          "lessons_demand": {
+            "type": "integer",
+            "title": "Lessons Demand"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceStudentRow"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "demand": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceDemandCell"
+            },
+            "type": "array",
+            "title": "Demand"
+          },
+          "grid": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleGridDay"
+            },
+            "type": "array",
+            "title": "Grid"
+          },
+          "grid_timezone": {
+            "type": "string",
+            "title": "Grid Timezone",
+            "default": "Europe/Moscow"
+          }
+        },
+        "type": "object",
+        "required": [
+          "audience_total",
+          "filled_total",
+          "silent_total",
+          "lessons_demand",
+          "students",
+          "demand",
+          "grid"
+        ],
+        "title": "SchedulePreferenceSummary",
+        "description": "Сводка охвата опроса для методиста и оператора."
+      },
+      "SchedulePreferenceWrite": {
+        "properties": {
+          "lessons_per_week": {
+            "type": "integer",
+            "maximum": 7.0,
+            "minimum": 1.0,
+            "title": "Lessons Per Week",
+            "description": "Занятий в неделю",
+            "default": 2
+          },
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePreferenceHour"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "student",
+              "onboarding",
+              "staff"
+            ],
+            "title": "Source",
+            "default": "student"
+          }
+        },
+        "type": "object",
+        "title": "SchedulePreferenceWrite",
+        "description": "Тело `PUT /me/schedule-preference`.\n\nПроверка «желательных часов не меньше, чем занятий в неделю» живёт в\nсервисе вместе с проверкой попадания в сетку: обе про одно и то же —\nможно ли по этому пожеланию вообще собрать человеку расписание."
       },
       "SenderStats": {
         "properties": {
@@ -58177,11 +59218,19 @@
             "$ref": "#/components/schemas/TeacherSummaryHomework"
           },
           "blocked_tasks": {
-            "items": {
-              "$ref": "#/components/schemas/TeacherSummaryBlockedTask"
-            },
-            "type": "array",
-            "title": "Blocked Tasks"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TeacherSummaryBlockedTask"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Tasks",
+            "description": "tsk-665: `null` — не считалось (запрос без `include_progress`), пустой список — посчитали, заблокированных нет. Спутать эти два смысла нельзя: первый требует запроса подробностей, второй нет."
           },
           "open_help_requests": {
             "items": {
@@ -58204,11 +59253,19 @@
             "description": "Пропущенных ПОДРЯД последних занятий (0 — пришёл на последнее/это первое)"
           },
           "course_progress": {
-            "items": {
-              "$ref": "#/components/schemas/TeacherSummaryCourseProgress"
-            },
-            "type": "array",
-            "title": "Course Progress"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TeacherSummaryCourseProgress"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Progress",
+            "description": "tsk-665: `null` — не считалось; пустой список — курсов нет."
           }
         },
         "type": "object",

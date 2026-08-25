@@ -505,6 +505,10 @@ app.include_router(learning_gaps_router, prefix=API_PREFIX)  # tsk-572: сигн
 from app.api.v1.topic_mastery import router as topic_mastery_router
 app.include_router(topic_mastery_router, prefix=API_PREFIX)
 
+# tsk-674 фаза 1: пожелания ученика по осеннему расписанию + охват опроса.
+from app.api.v1.schedule_preferences import router as schedule_preferences_router
+app.include_router(schedule_preferences_router, prefix=API_PREFIX)
+
 
 # Phase Y-6: APScheduler для escalation cron (review-loop).
 # Multi-worker safe через PG advisory lock внутри tick'а.
