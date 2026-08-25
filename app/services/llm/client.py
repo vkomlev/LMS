@@ -121,6 +121,25 @@ def _timeout(budget: Budget) -> httpx.Timeout:
     )
 
 
+def _rotate_by_cooldown(chain: list[str]) -> list[str]:
+    """Отказавшие недавно модели — в конец очереди (ротация, tsk-671).
+
+    Не выбрасываем, а откладываем: если остывают ВСЕ, порядок просто сохранится
+    и мы попробуем их снова — остаться без наставника хуже, чем сходить к
+    сомнительной модели. Состав цепочки при этом неизменен: он утверждён стендом.
+    """
+    if len(chain) < 2:
+        return chain
+    fresh = [m for m in chain if not cooldown.is_cooling("model:" + m)]
+    cooling = [m for m in chain if cooldown.is_cooling("model:" + m)]
+    if fresh and cooling:
+        logger.info(
+            "LLM: модели остывают после отказа, отложены в конец: %s",
+            ", ".join(cooling),
+        )
+    return fresh + cooling
+
+
 def _guard_cooldown() -> providers.ProviderConfig:
     cfg = providers.resolve_provider()
     if not cfg.usable:
@@ -181,7 +200,7 @@ async def complete(
     `model=None` — идти по цепочке `LLM_JUDGE_MODELS` до первой рабочей.
     """
     cfg = _guard_cooldown()
-    chain = _models_for(model, providers.judge_models())
+    chain = _rotate_by_cooldown(_models_for(model, providers.judge_models()))
     last_error: Optional[LLMError] = None
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
@@ -247,6 +266,9 @@ async def complete(
                 )
                 break  # к следующей модели цепочки или к выходу
 
+            if last_error is not None and last_error.try_next_model:
+                # Ротация (tsk-671), та же логика, что в потоковой ветке.
+                cooldown.start("model:" + candidate, providers.model_cooldown_seconds())
             if last_error is not None and not last_error.try_next_model:
                 raise last_error
 
@@ -315,7 +337,7 @@ async def stream(
     только пока не отдан ни один кусок: подменять модель на середине фразы нельзя.
     """
     cfg = _guard_cooldown()
-    chain = _models_for(model, providers.tutor_models())
+    chain = _rotate_by_cooldown(_models_for(model, providers.tutor_models()))
     last_error: Optional[LLMError] = None
     # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-671).
     # Ученик ждёт один раз: четыре модели по 40 c — это не «надёжность», это
@@ -465,6 +487,11 @@ async def stream(
                 )
                 return
 
+            if last_error is not None and last_error.try_next_model:
+                # Ротация (tsk-671): модель только что отказала — следующий
+                # ученик её какое-то время обходит, а не платит за тот же отказ.
+                cooldown.start("model:" + candidate,
+                               providers.model_cooldown_seconds())
             if not last_error.try_next_model:
                 raise last_error
             logger.warning(

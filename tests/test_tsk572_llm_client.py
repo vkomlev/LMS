@@ -290,6 +290,55 @@ async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_failed_model_is_rotated_to_the_end(monkeypatch):
+    """Отказавшая модель уходит в конец очереди — следующий ученик её обходит.
+
+    Ротация (tsk-671). Смысл не в наказании модели: первый ученик упёрся в
+    мёртвый маршрут и подождал, остальные не должны платить за тот же отказ
+    снова и снова. На бою это разница между «наставник отвечает за 3 секунды»
+    и «каждый ждёт 12 секунд таймаута».
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        if model == "model-dead":
+            return httpx.Response(503, json={"error": {"code": "no_available_provider"}})
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content=("data: " + json.dumps({"choices": [{"delta": {"content": "ок"}}]})
+                     + SSE_SEP + "data: [DONE]" + SSE_SEP).encode("utf-8"),
+        )
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-dead,model-live")
+    cooldown.reset()
+
+    async def ask() -> None:
+        async for chunk in llm_client.stream(MSGS, purpose="tutor",
+                                             budget=llm_client.Budget.INTERACTIVE):
+            if chunk.done:
+                break
+
+    await ask()
+    assert seen == ["model-dead", "model-live"], "первый проход идёт по порядку цепочки"
+
+    seen.clear()
+    await ask()
+    assert seen == ["model-live"], (
+        "второй ученик снова пошёл в мёртвую модель — ротации нет"
+    )
+
+    # Остывание кончилось — порядок возвращается: цепочка утверждена стендом,
+    # и «лучшая» модель не должна навсегда уступить место запасной.
+    cooldown.reset()
+    seen.clear()
+    await ask()
+    assert seen == ["model-dead", "model-live"], "после остывания порядок цепочки прежний"
+
+
+@pytest.mark.asyncio
 async def test_explicit_model_overrides_chain(monkeypatch):
     """Явная модель отменяет цепочку — вызывающий знает, что делает (стенд, калибровка)."""
     seen: list[str] = []

@@ -181,6 +181,39 @@ def aggregate(runs: list[dict]) -> dict:
     }
 
 
+def chain_health(base: str, key: str, catalog: list[dict]) -> list[tuple]:
+    """Живы ли модели, которые СЕЙЧАС стоят в боевых цепочках (tsk-671).
+
+    Отдельная ось от качества, и добавлена она не из любви к полноте. 25.08 обе
+    цепочки целиком состояли из моделей, которых у провайдера уже не было: из 75
+    моделей каталога отвечали около 45, а наши — нет. Наставник при этом молчал,
+    и понять почему можно было только вручную.
+
+    Проверка ДЕШЁВАЯ (один запрос на модель, 5 токенов) — её не жалко гонять
+    часто, в отличие от гейта на слив, где нужно три полных прогона на модель.
+    """
+    known = {m.get("id") for m in catalog}
+    aliases = {a for m in catalog for a in (m.get("aliases") or [])}
+    rows = []
+    for chain_name, env_name in (("наставник", "LLM_TUTOR_MODELS"),
+                                 ("судья", "LLM_JUDGE_MODELS")):
+        raw = dotenv_values(ROOT / ".env").get(env_name) or ""
+        for pos, model in enumerate([m.strip() for m in raw.split(",") if m.strip()], 1):
+            if model not in known and model not in aliases:
+                rows.append((chain_name, pos, model, "НЕТ В КАТАЛОГЕ", None))
+                continue
+            t0 = time.time()
+            # Тем же вызовом, что и полный стенд, но с крошечным промптом:
+            # нас интересует только «отвечает ли», а не что именно.
+            r = probe(model, 'Отвечай одним словом.', base, key)
+            dt = time.time() - t0
+            if r.get("error"):
+                rows.append((chain_name, pos, model, "НЕДОСТУПНА", dt))
+            else:
+                rows.append((chain_name, pos, model, "жива", dt))
+    return rows
+
+
 def verdict(a: dict) -> tuple[str, str]:
     if a["ok_runs"] == 0:
         return "ОШИБКА", (a["errors"][0] if a["errors"] else "пустой ответ без ошибки в потоке")
@@ -200,6 +233,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--models", help="список через запятую")
     ap.add_argument("--catalog", action="store_true", help="только каталог с ценами")
+    ap.add_argument("--health", action="store_true",
+                    help="только доступность моделей боевых цепочек (дёшево, можно часто)")
     ap.add_argument("--runs", type=int, default=3,
                     help="прогонов на модель (слив вероятностен, 1 недостаточно)")
     ap.add_argument("--out", default="docs/qa", help="каталог для отчёта")
@@ -221,6 +256,29 @@ def main() -> None:
             rows.append((m.get("id"), float(p.get("prompt") or 0), float(p.get("completion") or 0)))
         for mid, pin, pout in sorted(rows, key=lambda x: x[1] + x[2]):
             print(f"{mid:<45}{pin:>8.2f}{pout:>9.2f}")
+        return
+
+    if args.health:
+        rows = chain_health(base, key, catalog)
+        print(f"{'цепочка':<12}{'№':>3}  {'модель':<34}{'состояние':<16}{'ответ':>8}")
+        print("-" * 76)
+        broken = []
+        for chain_name, pos, model, state, dt in rows:
+            t = f"{dt:.1f} c" if dt else "—"
+            print(f"{chain_name:<12}{pos:>3}  {model:<34}{state:<16}{t:>8}")
+            if state != "жива":
+                broken.append((chain_name, pos, model, state))
+        print()
+        if broken:
+            print("ТРЕБУЕТ ВНИМАНИЯ:")
+            for chain_name, pos, model, state in broken:
+                head = " (ПЕРВАЯ в цепочке — ученик упирается в неё первым)" if pos == 1 else ""
+                print(f"  {chain_name}: {model} — {state}{head}")
+            print()
+            print("Замена берётся ТОЛЬКО из прошедших полный стенд: гейт на слив")
+            print("эталона не проходится по доступности. Прогнать: --runs 3 --models ...")
+        else:
+            print("все модели боевых цепочек живы")
         return
 
     if not METHODOLOGY.exists():

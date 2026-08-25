@@ -126,6 +126,27 @@ def judge_models() -> list[str]:
     return _chain("LLM_JUDGE_MODELS", _DEFAULT_JUDGE_MODELS)
 
 
+def model_cooldown_seconds() -> float:
+    """Сколько модель считается «только что отказавшей» и уходит в конец очереди.
+
+    Ротация (tsk-671). Смысл не в наказании модели, а в том, чтобы СЛЕДУЮЩИЙ
+    ученик не платил за уже известный отказ: первый упёрся в мёртвую или
+    молчащую модель, остальные её какое-то время обходят. Две минуты — компромисс:
+    достаточно, чтобы переждать типичную аварию маршрута, и мало, чтобы вернуться
+    к лучшей модели, когда она оживёт.
+
+    Состав цепочки ротация НЕ меняет: он утверждён стендом по гейту на слив
+    эталона, и подставлять туда «живую» модель мимо стенда нельзя (25.08:
+    claude-opus-4.8 и claude-haiku-4.5 отвечали быстро и слили ответ 3 раза из 3).
+    """
+    raw = _env_first("LLM_MODEL_COOLDOWN_SECONDS")
+    try:
+        return float(raw) if raw else 120.0
+    except ValueError:
+        logger.warning("LLM: LLM_MODEL_COOLDOWN_SECONDS=%r не число, беру 120", raw)
+        return 120.0
+
+
 def cooldown_seconds() -> float:
     raw = _env_first("LLM_COOLDOWN_SECONDS")
     try:
