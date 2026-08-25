@@ -23,6 +23,7 @@ from app.services.llm.contracts import (
     LLMResult,
     LLMTimeout,
     LLMUnavailable,
+    LLMUpstreamUnavailable,
     LLMUpstreamError,
     UsageRecord,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "LLMRateLimited",
     "LLMTimeout",
     "LLMUnavailable",
+    "LLMUpstreamUnavailable",
     "LLMConfigError",
     "LLMMalformed",
     "LLMCooldown",

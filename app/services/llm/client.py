@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -27,6 +28,7 @@ from app.services.llm.contracts import (
     LLMResult,
     LLMTimeout,
     LLMUnavailable,
+    LLMUpstreamUnavailable,
     LLMUpstreamError,
     UsageRecord,
 )
@@ -49,7 +51,9 @@ def _raise_for_status(status: int, body: str) -> None:
     if status == 404:
         raise LLMConfigError(f"404: модель или путь не найдены — {body[:200]}")
     if status >= 500:
-        raise LLMUnavailable(f"{status} от провайдера: {body[:200]}")
+        # Не голый LLMUnavailable: 5xx пришёл ОТ провайдера и относится к
+        # конкретной модели — цепочка обязана попробовать следующую (tsk-666).
+        raise LLMUpstreamUnavailable(f"{status} от провайдера: {body[:200]}")
     if status >= 400:
         raise LLMMalformed(f"{status}: неожиданный ответ — {body[:200]}")
 
@@ -302,9 +306,19 @@ async def stream(
     cfg = _guard_cooldown()
     chain = _models_for(model, providers.tutor_models())
     last_error: Optional[LLMError] = None
+    # Потолок на ВЕСЬ вызов, а не на каждую модель по отдельности (tsk-671).
+    # Ученик ждёт один раз: четыре модели по 40 c — это не «надёжность», это
+    # три минуты в «Наставник думает…» с заблокированным полем ввода.
+    deadline = time.monotonic() + budget.total_timeout
 
     async with httpx.AsyncClient(timeout=_timeout(budget)) as http:
         for candidate in chain:
+            if last_error is not None and time.monotonic() >= deadline:
+                logger.warning(
+                    "LLM: бюджет %.0f c исчерпан, цепочку дальше не перебираем",
+                    budget.total_timeout,
+                )
+                break
             started = time.monotonic()
             first_at: Optional[float] = None
             got_any = False
@@ -329,7 +343,34 @@ async def stream(
                     # («что ужеовал сделать» вместо «что уже попробовал»),
                     # и это не ловится ничем, кроме чтения глазами.
                     buffer = ""
-                    async for raw in resp.aiter_text():
+                    reader = resp.aiter_text().__aiter__()
+                    while True:
+                        # Ждать первый кусок бесконечно нельзя. Проверка ниже
+                        # (`first_at is None and ... > first_token_timeout`) стоит
+                        # ВНУТРИ обработки куска, поэтому при полностью молчащем
+                        # upstream не выполняется ни разу: цикл не делает ни одной
+                        # итерации, и ученик ждёт до общего таймаута соединения.
+                        # Живой случай tsk-671: «Наставник думает…» две минуты
+                        # подряд, в учёте расхода — ни одной записи (tsk-666).
+                        if first_at is None and budget.first_token_timeout is not None:
+                            left = budget.first_token_timeout - (time.monotonic() - started)
+                            if left <= 0:
+                                raise LLMTimeout(
+                                    f"первый токен не пришёл за {budget.first_token_timeout} c"
+                                )
+                            try:
+                                raw = await asyncio.wait_for(reader.__anext__(), timeout=left)
+                            except asyncio.TimeoutError:
+                                raise LLMTimeout(
+                                    f"первый токен не пришёл за {budget.first_token_timeout} c"
+                                )
+                            except StopAsyncIteration:
+                                break
+                        else:
+                            try:
+                                raw = await reader.__anext__()
+                            except StopAsyncIteration:
+                                break
                         buffer += raw
                         head, sep, tail = buffer.rpartition("\n\n")
                         if not sep:

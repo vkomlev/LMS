@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -29,6 +30,8 @@ from app.services.llm.contracts import (
     LLMRateLimited,
     LLMUpstreamError,
 )
+
+SSE_SEP = chr(10) * 2
 
 MSGS = [LLMMessage(role="user", content="Как работает range?")]
 
@@ -235,6 +238,101 @@ async def test_chain_falls_through_to_working_model(monkeypatch):
     res = await llm_client.complete(MSGS, purpose="code_review")
     assert res.text == "ответ второй модели"
     assert seen == ["model-a", "model-b"]
+
+
+@pytest.mark.asyncio
+async def test_http_503_about_one_model_walks_the_chain(monkeypatch):
+    """HTTP 503 «нет доступного upstream для ЭТОЙ модели» — повод взять следующую.
+
+    tsk-666, боевой случай. Провайдер отдаёт именно так:
+    `{"error":{"code":"no_available_provider","status":503,
+      "metadata":{"requested_models":["x-ai/grok-4.1-fast"]}}}`.
+    Ошибка про КОНКРЕТНУЮ модель, остальные три в цепочке живы — но
+    `LLMUnavailable` не разрешала переход, и наставник замолкал целиком.
+
+    Так оборвались оба последних живых разговора контура (22.08 и 24.08) и
+    разговор Шестаева 12.08: ученик писал реплику и получал «сбой на нашей
+    стороне» при трёх работающих запасных моделях.
+
+    429 при этом по-прежнему цепочку НЕ перебирает — там остывает провайдер
+    целиком (`test_429_does_not_walk_the_model_chain`).
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        if model == "model-a":
+            return httpx.Response(503, json={"error": {
+                "code": "no_available_provider",
+                "message": "No available upstream endpoint for requested model(s)",
+                "status": 503,
+                "metadata": {"endpoint_type": "chat", "requested_models": [model]},
+            }})
+        return httpx.Response(200, json=_ok_batch("ответ запасной модели"))
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_JUDGE_MODELS", "model-a,model-b")
+
+    res = await llm_client.complete(MSGS, purpose="code_review")
+    assert res.text == "ответ запасной модели"
+    assert seen == ["model-a", "model-b"], (
+        "503 про одну модель положил весь вызов, хотя запасные в цепочке живы"
+    )
+
+
+@pytest.mark.asyncio
+async def test_silent_upstream_is_bounded_and_falls_through(monkeypatch):
+    """Молчащий upstream ограничен по времени и не запирает ученика (tsk-671).
+
+    Провайдер отдаёт HTTP 200 и не присылает НИ ОДНОГО куска. Прежняя проверка
+    первого токена стояла ВНУТРИ обработки куска, поэтому при полной тишине не
+    выполнялась ни разу: цикл чтения не делал ни одной итерации. Живой случай —
+    ученик две минуты смотрел в «Наставник думает…» с заблокированным полем, а в
+    учёте расхода не появилось ни одной записи (tsk-666, живая проверка).
+
+    Проверяем не «фолбэк починен», а главное: в любом сбое ученик получает
+    быстрый честный ответ, а не вечное ожидание.
+    """
+    seen: list[str] = []
+
+    class _Silent(httpx.AsyncByteStream):
+        """Соединение открыто, данных нет — ровно то, что делал провайдер."""
+
+        async def __aiter__(self):
+            await asyncio.sleep(30)
+            yield b""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        model = json.loads(request.content)["model"]
+        seen.append(model)
+        if model == "model-a":
+            return httpx.Response(200, stream=_Silent(),
+                                  headers={"content-type": "text/event-stream"})
+        return httpx.Response(
+            200, headers={"content-type": "text/event-stream"},
+            content=(
+                "data: " + json.dumps({"choices": [{"delta": {"content": "ответ живой модели"}}]}) + SSE_SEP
+                + "data: [DONE]" + SSE_SEP
+            ).encode("utf-8"),
+        )
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-a,model-b")
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    text = ""
+    async for chunk in llm_client.stream(MSGS, purpose="tutor",
+                                         budget=llm_client.Budget.INTERACTIVE):
+        if chunk.done:
+            break
+        text += chunk.delta
+    spent = loop.time() - started
+
+    assert text == "ответ живой модели", "молчащая модель заперла весь вызов"
+    assert seen == ["model-a", "model-b"]
+    assert spent < 25, f"ждали {spent:.0f} c — предел первого куска не сработал"
 
 
 @pytest.mark.asyncio
