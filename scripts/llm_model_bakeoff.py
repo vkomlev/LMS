@@ -172,49 +172,17 @@ def probe(model: str, system_prompt: str, base: str, key: str) -> dict:
 # помечен «СЛИЛ» и дисквалифицирован, а для судьи слив не критерий вовсе
 # (комментарий в `app/services/llm/providers.py`).
 
-# Бюджет одной попытки батча (`Budget.BATCH.total_timeout`). Стенд его не
-# навязывает — меряет ФАКТ и сравнивает с ним, иначе медленная модель выглядела
-# бы «уложившейся» просто потому, что стенд её оборвал.
-JUDGE_BUDGET_SEC = 60.0
+# Бюджет одной попытки батча. Число НЕ зашивается: оно живёт в контракте
+# клиента и уже менялось по замеру (60 -> 30 c, tsk-678). Зашитая копия молча
+# разошлась бы с продом, и стенд начал бы льстить медленной модели. Стенд бюджет
+# не навязывает — меряет ФАКТ и сравнивает с ним, поэтому его собственный таймаут
+# запроса (180 c) заведомо больше.
+JUDGE_BUDGET_SEC = 60.0  # значение по умолчанию, перечитывается из контракта
 
-# Образец работы. Синтетический намеренно: настоящая сдача — данные ученика,
-# в репозитории им не место. Размер подобран по бою (замер 2026-08-25): вход
-# 1000-6000 токенов, и на длительность он влияет слабо — медиана 18.08 при 999
-# токенах входа 4.2 c, 19.08 при 5767 токенах 5.4 c.
-JUDGE_SAMPLE_STEM = (
-    "Черепашка должна нарисовать домик: квадрат со стороной 100 и треугольную "
-    "крышу над ним. Используй цикл для стен и отдельные команды для крыши. "
-    "Цвет стен — синий, цвет крыши — красный."
-)
-JUDGE_SAMPLE_CODE = """import turtle
-
-t = turtle.Turtle()
-t.speed(3)
-
-t.color("blue")
-for i in range(4):
-    t.forward(100)
-    t.left(90)
-
-t.color("red")
-t.forward(100)
-t.left(60)
-t.forward(100)
-t.left(120)
-t.forward(100)
-
-# risuem okno
-t.penup()
-t.goto(30, 30)
-t.pendown()
-t.color("blue")
-for i in range(4):
-    t.forward(40)
-    t.left(90)
-
-turtle.done()
-"""
-
+# Образец работы берётся ИЗ СЕРВИСА еженедельной проверки, а не пишется здесь
+# заново (tsk-678). Стенд и еженедельный проход обязаны мерить ОДНУ И ТУ ЖЕ
+# работу — иначе их числа не сравнить, а сравнивать их придётся: проход находит
+# «что-то испортилось», стенд отвечает «на что менять».
 
 def _judge_prompt() -> tuple[str, str]:
     """Взять БОЕВОЙ промпт судьи из сервиса, а не переписать его в стенд.
@@ -229,7 +197,13 @@ def _judge_prompt() -> tuple[str, str]:
     sys.path.insert(0, str(ROOT))
     from app.services.code_review_service import _SYSTEM_PROMPT, _build_user_message
 
-    return _SYSTEM_PROMPT, _build_user_message(JUDGE_SAMPLE_CODE, task_stem=JUDGE_SAMPLE_STEM)
+    from app.services.llm.contracts import Budget
+    from app.services.llm_chain_check_cron_service import PROBE_CODE, PROBE_STEM
+
+    global JUDGE_BUDGET_SEC
+    JUDGE_BUDGET_SEC = float(Budget.BATCH.attempt_timeout)
+
+    return _SYSTEM_PROMPT, _build_user_message(PROBE_CODE, task_stem=PROBE_STEM)
 
 
 def judge_probe(model: str, system_prompt: str, user_msg: str, base: str, key: str) -> dict:

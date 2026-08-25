@@ -746,6 +746,30 @@ async def _stop_code_review_scheduler() -> None:
         logger.exception("tsk-302: failed to stop code_review scheduler")
 
 
+# tsk-678: еженедельная проверка боевых цепочек моделей. Стенд сравнения моделей
+# назывался периодическим с самого начала, но запускать его было некому — обе
+# аварии 25.08 (мёртвая цепочка наставника, запасные судьи, которых нет) нашёл
+# человек, полезший разбираться по другому поводу. Замок между воркерами здесь
+# НЕ берётся намеренно: порядок очереди живёт в памяти процесса, см. модуль.
+from app.services import llm_chain_check_cron_service as _llm_chain_check
+
+
+@app.on_event("startup")
+async def _start_llm_chain_check_scheduler() -> None:
+    try:
+        _llm_chain_check.start_scheduler()
+    except Exception:
+        logger.exception("tsk-678: failed to start llm_chain_check scheduler")
+
+
+@app.on_event("shutdown")
+async def _stop_llm_chain_check_scheduler() -> None:
+    try:
+        _llm_chain_check.stop_scheduler()
+    except Exception:
+        logger.exception("tsk-678: failed to stop llm_chain_check scheduler")
+
+
 # tsk-596: суточный пересчёт текущего месяца начислений + страж «ходит, но не
 # выставлен». До него строка месяца появлялась только при правке расписания
 # или по кнопке в кабинете маркетолога, то есть первого числа не появлялась.

@@ -308,6 +308,25 @@ class Settings:
             os.getenv("CODE_REVIEW_CLAIM_TTL_MIN", "30")
         )
 
+        # tsk-678: еженедельная проверка боевых цепочек моделей. Каталог
+        # провайдера меняется сам по себе — модели умирают и перестают держать
+        # формат без предупреждения, и узнавали мы об этом только когда человек
+        # лез разбираться по другому поводу. Проход стоит порядка полуцента в
+        # неделю и задвигает отказавшую модель в конец очереди до следующего раза.
+        self.llm_chain_check_enabled: bool = os.getenv(
+            "LLM_CHAIN_CHECK_ENABLED", "true"
+        ).lower() in ("true", "1", "yes")
+        # Неделя — не осторожность, а соответствие природе сигнала: состав
+        # цепочки утверждает стенд с участием оператора, и чаще, чем раз в
+        # неделю, это решение всё равно не принимается. Живые отказы между
+        # проходами ловит ротация рантайма, у неё свой, минутный масштаб.
+        self.llm_chain_check_interval_hours: int = int(
+            os.getenv("LLM_CHAIN_CHECK_INTERVAL_HOURS", "168")
+        )
+        self.llm_chain_check_startup_delay_min: int = int(
+            os.getenv("LLM_CHAIN_CHECK_STARTUP_DELAY_MIN", "5")
+        )
+
         self.max_attachment_size_bytes: int = int(
             os.getenv("MAX_ATTACHMENT_SIZE_BYTES", str(10 * 1024 * 1024))  # 10 MB
         )
