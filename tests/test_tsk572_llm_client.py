@@ -339,6 +339,44 @@ async def test_failed_model_is_rotated_to_the_end(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dribbling_stream_without_frames_is_bounded(monkeypatch):
+    """Поток сыплет байты, но не закрывает кадр — предел всё равно срабатывает.
+
+    tsk-671, живой случай. Провайдер отдаёт заголовки за 0,2 c и начинает
+    «думать вслух»: байты идут, а конец кадра не приходит. Тогда таймаут httpx
+    не срабатывает (каждое чтение укладывается в свой предел), а наша проверка
+    первого куска стояла ПОСЛЕ `continue` и не выполнялась ни разу. Ученик
+    смотрел в «Наставник думает…», и ротация не включалась: формально отказа нет.
+    """
+    class _Dribble(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for _ in range(60):          # минута по кусочку, кадр не закрываем
+                yield b": ping"
+                await asyncio.sleep(1)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=_Dribble(),
+                              headers={"content-type": "text/event-stream"})
+
+    _mount(monkeypatch, handler)
+    monkeypatch.setenv("LLM_TUTOR_MODELS", "model-dribble")
+    cooldown.reset()
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    with pytest.raises(llm_client.LLMError):
+        async for _ in llm_client.stream(MSGS, purpose="tutor",
+                                         budget=llm_client.Budget.INTERACTIVE):
+            pass
+    spent = loop.time() - started
+
+    limit = llm_client.Budget.INTERACTIVE.first_token_timeout + 5
+    assert spent < limit, (
+        f"ждали {spent:.0f} c — предел первого куска снова не сработал"
+    )
+
+
+@pytest.mark.asyncio
 async def test_explicit_model_overrides_chain(monkeypatch):
     """Явная модель отменяет цепочку — вызывающий знает, что делает (стенд, калибровка)."""
     seen: list[str] = []

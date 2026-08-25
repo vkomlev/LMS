@@ -383,7 +383,7 @@ async def stream(
                                   max_tokens=max_tokens, stream=True, seed=seed,
                                   response_format=None),
                 ) as resp:
-                    logger.info("LLM[trace]: заголовки от %s за %.1f c, статус %s",
+                    logger.info("LLM: заголовки от %s за %.1f c, статус %s",
                                 candidate, time.monotonic() - started, resp.status_code)
                     if resp.status_code != 200:
                         body = (await resp.aread()).decode("utf-8", "ignore")
@@ -408,6 +408,22 @@ async def stream(
                     # механизм, а не самодельный.
                     async for raw in resp.aiter_text():
                         buffer += raw
+                        # Предел первого куска проверяем ДО разбора кадров и до `continue`
+                        # (tsk-671). Раньше он стоял ниже, и его пропускал любой поток,
+                        # который сыплет байты, не закрывая кадр: провайдер «думает» вслух,
+                        # конец кадра не приходит, `continue` уводит на следующую итерацию —
+                        # и проверка не выполняется НИ РАЗУ. Таймаут httpx тут тоже не
+                        # спасает: байты идут, каждое чтение укладывается в свой предел.
+                        # Ученик в это время смотрит в «Наставник думает…», а ротация не
+                        # срабатывает, потому что формально отказа нет.
+                        if (
+                            first_at is None
+                            and budget.first_token_timeout is not None
+                            and time.monotonic() - started > budget.first_token_timeout
+                        ):
+                            raise LLMTimeout(
+                                f"первый токен не пришёл за {budget.first_token_timeout} c"
+                            )
                         head, sep, tail = buffer.rpartition("\n\n")
                         if not sep:
                             continue
@@ -426,21 +442,13 @@ async def stream(
                                 if not delta:
                                     continue
                                 if first_at is None:
-                                    logger.info("LLM[trace]: первый кусок от %s за %.1f c",
+                                    logger.info("LLM: первый кусок от %s за %.1f c",
                                                 candidate, time.monotonic() - started)
                                     first_at = time.monotonic()
                                 got_any = True
                                 text_len += len(delta)
                                 yield LLMChunk(delta=delta, model=candidate)
 
-                        if (
-                            first_at is None
-                            and budget.first_token_timeout is not None
-                            and time.monotonic() - started > budget.first_token_timeout
-                        ):
-                            raise LLMTimeout(
-                                f"первый токен не пришёл за {budget.first_token_timeout} c"
-                            )
 
                 duration_ms = int((time.monotonic() - started) * 1000)
                 await _usage_ok(
