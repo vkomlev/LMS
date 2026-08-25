@@ -23,6 +23,19 @@
 
 `no_tx_isolation` обязателен: на одном общем соединении блокировок строк не
 бывает вовсе, и проверка обнулилась бы (см. докстринг `db_conn` в conftest).
+
+Про стенные часы. Две проверки из трёх считают ОПЕРАТОРЫ, а не секунды, и от
+загрузки машины не зависят вовсе. Третьей часы нужны по существу вопроса, но
+она сравнивает с базовой линией, измеренной в том же прогоне, и по РАЗНИЦЕ, а
+не по отношению: накладные расходы стенда входят в обе величины и в разности
+сокращаются. Замер под намеренной параллельной нагрузкой: разница 1,94 с
+против 2,05 с на спокойной машине, а отношение просело с 3,4 до 2,8 — то есть
+порог по отношению был бы уже на грани.
+
+Известное и НЕ объяснённое: один раз из восьми прогонов набор упал двумя
+тестами, воспроизвести не удалось ни разу, в том числе под нагрузкой. Причина
+неизвестна; ближайший знакомый класс — соседняя сессия на той же dev-базе.
+Если увидите повтор — не списывайте на «мигает», зафиксируйте вывод.
 """
 from __future__ import annotations
 
@@ -115,90 +128,119 @@ async def _one_request(session_factory, token: str) -> float:
     return time.perf_counter() - started
 
 
-@pytest.mark.asyncio
-async def test_burst_of_one_user_all_write_and_serialize(
-    db_engine, db_session_factory, student_session
-):
-    """Залп одного ученика: пишут все шестеро и стоят друг за другом.
-
-    Это и есть механизм, который объясняет заторы: время запросов складывается,
-    хотя работы в них нет — они ждут строку сессии.
-    """
-    counter = _UpdateCounter()
-    counter.attach(db_engine.sync_engine)
-    try:
-        started = time.perf_counter()
-        durations = await asyncio.gather(
-            *(_one_request(db_session_factory, student_session["token"]) for _ in range(_BURST))
-        )
-        wall = time.perf_counter() - started
-    finally:
-        counter.detach(db_engine.sync_engine)
-
-    alone = _HOLD_SECONDS
-    serialized = _HOLD_SECONDS * _BURST
-    print(
-        f"[tsk-621] устаревшая отметка: залп {_BURST} запросов за {wall:.2f} с "
-        f"(удержание {alone:.2f} с на запрос), записей UPDATE user_session: "
-        f"{counter.count}, худший запрос {max(durations):.2f} с"
+async def _burst(session_factory, token: str) -> tuple[float, list[float]]:
+    """Залп из `_BURST` параллельных запросов. Возвращает (общее время, времена)."""
+    started = time.perf_counter()
+    durations = await asyncio.gather(
+        *(_one_request(session_factory, token) for _ in range(_BURST))
     )
-
-    assert counter.count == _BURST, (
-        f"порог троттлинга открыт для всех сразу: ожидали {_BURST} записей "
-        f"`UPDATE user_session`, получили {counter.count}. Меньше — значит "
-        f"дедупликация появилась и версия требует пересмотра"
-    )
-    assert wall > serialized * 0.7, (
-        f"залп прошёл за {wall:.2f} с при удержании {alone:.2f} с на запрос — "
-        f"сериализации НЕТ, версия про строку сессии не подтверждается"
-    )
-    # Последний в очереди ждёт почти всё время залпа — именно так выглядит
-    # «лёгкий запрос простоял 44 секунды» в журнале медленных.
-    assert max(durations) > alone * (_BURST - 1), (
-        f"худший запрос {max(durations):.2f} с при удержании {alone:.2f} с — "
-        f"очереди за строкой сессии не видно"
-    )
+    return time.perf_counter() - started, list(durations)
 
 
-@pytest.mark.asyncio
-async def test_burst_is_free_when_mark_is_fresh(
-    db_engine, db_session_factory, student_session, db
-):
-    """Свежая отметка — записи нет вовсе, залп идёт параллельно.
-
-    Контроль к тесту выше: он доказывает, что сложение времени даёт именно
-    `UPDATE`, а не что-нибудь другое в `validate_session` или в стенде.
-    Заодно видно цену вопроса — тот же залп без записи проходит за время
-    ОДНОГО запроса.
-    """
+async def _set_mark_age(db, session_id, *, stale: bool) -> None:
+    """Состарить отметку сессии за порог троттлинга или, наоборот, освежить."""
     await db.execute(
-        text("UPDATE user_session SET last_used_at = now() WHERE id = :sid"),
-        {"sid": student_session["session_id"]},
+        text(
+            "UPDATE user_session "
+            "SET last_used_at = now() - CAST(:gap AS interval) WHERE id = :sid"
+        ),
+        {"gap": _LAST_USED_MIN_INTERVAL * 5 if stale else _LAST_USED_MIN_INTERVAL * 0,
+         "sid": session_id},
     )
     await db.commit()
 
+
+@pytest.mark.asyncio
+async def test_stale_mark_makes_every_request_in_burst_write(
+    db_engine, db_session_factory, student_session
+):
+    """Троттлинг в минуту залп НЕ спасает: пишут все шестеро.
+
+    Главная проверка механизма, и намеренно БЕЗ стенных часов: она считает
+    операторы, а счётчик не зависит ни от загрузки машины, ни от соседних
+    чипов в дереве. Проверка «пора ли писать» — это чтение, потом запись без
+    блокировки между ними, поэтому в открытое окно порога проходят все
+    параллельные запросы разом.
+    """
     counter = _UpdateCounter()
     counter.attach(db_engine.sync_engine)
     try:
-        started = time.perf_counter()
-        await asyncio.gather(
-            *(_one_request(db_session_factory, student_session["token"]) for _ in range(_BURST))
-        )
-        wall = time.perf_counter() - started
+        _, durations = await _burst(db_session_factory, student_session["token"])
     finally:
         counter.detach(db_engine.sync_engine)
 
     print(
-        f"[tsk-621] свежая отметка: залп {_BURST} запросов за {wall:.2f} с, "
-        f"записей UPDATE user_session: {counter.count}"
+        f"[tsk-621] устаревшая отметка: записей UPDATE user_session "
+        f"{counter.count} на {_BURST} запросов, худший запрос {max(durations):.2f} с"
     )
+    assert counter.count == _BURST, (
+        f"ожидали {_BURST} записей `UPDATE user_session`, получили "
+        f"{counter.count}. Стало меньше — значит дедупликация появилась "
+        f"(этого и добивается tsk-675), и тест пора переписывать под неё"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fresh_mark_makes_burst_write_nothing(
+    db_engine, db_session_factory, student_session, db
+):
+    """Свежая отметка — записи нет вовсе. Тоже только счётчик, без часов."""
+    await _set_mark_age(db, student_session["session_id"], stale=False)
+
+    counter = _UpdateCounter()
+    counter.attach(db_engine.sync_engine)
+    try:
+        await _burst(db_session_factory, student_session["token"])
+    finally:
+        counter.detach(db_engine.sync_engine)
+
+    print(f"[tsk-621] свежая отметка: записей UPDATE user_session {counter.count}")
     assert counter.count == 0, "свежую отметку переписывать незачем"
-    # Порог берём от СЕРИАЛИЗОВАННОГО случая, а не от одного удержания: залп
-    # из шести запросов поднимает шесть новых соединений, и накладные расходы
-    # стенда (~0,4 с) к делу не относятся. Важно, что без записи время НЕ
-    # складывается: 0,9 с против 2,5 с с записью.
-    assert wall < _HOLD_SECONDS * _BURST * 0.5, (
-        f"без записи залп занял {wall:.2f} с — при отсутствии сериализации "
-        f"ожидали заметно меньше {_HOLD_SECONDS * _BURST:.2f} с; "
-        f"значит сериализует что-то ещё, и версия про строку сессии неполна"
+
+
+@pytest.mark.asyncio
+async def test_burst_serializes_only_when_it_writes(
+    db_session_factory, student_session, db
+):
+    """Сложение времени даёт именно запись: сравниваем залп с ней и без неё.
+
+    Здесь стенные часы нужны — вопрос как раз про время. Но сравнение идёт с
+    базовой линией, ИЗМЕРЕННОЙ В ЭТОМ ЖЕ ПРОГОНЕ, а не с константой: обе
+    величины одинаково растут от посторонней нагрузки, и отношение между ними
+    устойчиво. Абсолютный порог тут уже краснел от соседних чипов в дереве —
+    тест, который краснеет от чужой работы, перестают читать, и это ровно тот
+    класс, за который в этом же контуре ругали висящий тест tsk-671.
+
+    Замер на спокойной машине: 0,93 с без записи против 2,99 с с записью.
+    """
+    # Базовая линия: тот же код, тот же залп, только писать нечего.
+    await _set_mark_age(db, student_session["session_id"], stale=False)
+    free_wall, _ = await _burst(db_session_factory, student_session["token"])
+
+    # Тот же залп, но отметка устарела — появляется запись и очередь за строкой.
+    await _set_mark_age(db, student_session["session_id"], stale=True)
+    writing_wall, durations = await _burst(db_session_factory, student_session["token"])
+
+    print(
+        f"[tsk-621] залп без записи {free_wall:.2f} с против {writing_wall:.2f} с "
+        f"с записью (отношение {writing_wall / free_wall:.1f}), "
+        f"худший запрос {max(durations):.2f} с"
+    )
+    # Сравниваем РАЗНИЦУ, а не отношение: накладные расходы стенда (поднять
+    # шесть соединений) входят в обе величины одинаково и в разности
+    # сокращаются, а в отношении — нет. Под сильной нагрузкой отношение
+    # ползёт к единице даже при живой сериализации, и тест снова начал бы
+    # краснеть от чужой работы.
+    expected_gap = _HOLD_SECONDS * (_BURST - 2)
+    assert writing_wall - free_wall > expected_gap, (
+        f"с записью залп занял {writing_wall:.2f} с против {free_wall:.2f} с без "
+        f"неё — разница {writing_wall - free_wall:.2f} с, ожидали больше "
+        f"{expected_gap:.2f} с. Сложения времени НЕТ, версия про очередь за "
+        f"строкой сессии не подтверждается"
+    )
+    # Последний в очереди ждёт почти весь залп — именно так выглядит
+    # «лёгкий by-course простоял 44 секунды» в журнале медленных.
+    assert max(durations) > writing_wall * 0.8, (
+        f"худший запрос {max(durations):.2f} с при залпе {writing_wall:.2f} с — "
+        f"очереди за строкой сессии не видно, запросы шли независимо"
     )
