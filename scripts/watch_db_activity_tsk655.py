@@ -40,7 +40,7 @@ import json
 import logging
 import sys
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -156,8 +156,14 @@ async def _plan_windows(
     return windows
 
 
-async def _sample(conn: Any, out, last_slow_id: int, window: dict[str, Any]) -> int:
-    """Один снимок: активность базы + новые строки журнала медленных запросов."""
+async def _take_sample(
+    conn: Any, last_slow_id: int, window: dict[str, Any]
+) -> tuple[dict[str, Any], int]:
+    """Снять один снимок, НЕ записывая его. Возвращает (запись, новый last_slow_id).
+
+    Отделено от записи ради режима ловушки (tsk-655): там снимки сперва
+    копятся в памяти и попадают в файл только вокруг события.
+    """
     now = datetime.now(timezone.utc)
     activity = [dict(r) for r in await conn.fetch(_ACTIVITY_SQL)]
     slow_rows = [dict(r) for r in await conn.fetch(_SLOW_SQL, last_slow_id)]
@@ -175,8 +181,23 @@ async def _sample(conn: Any, out, last_slow_id: int, window: dict[str, Any]) -> 
             for row in slow_rows
         ],
     }
+    if slow_rows:
+        last_slow_id = max(int(r["id"]) for r in slow_rows)
+    return record, last_slow_id
+
+
+def _write(out, record: dict[str, Any]) -> None:
+    """Записать снимок в файл."""
     out.write(json.dumps(record, ensure_ascii=False) + "\n")
     out.flush()
+
+
+async def _sample(conn: Any, out, last_slow_id: int, window: dict[str, Any]) -> int:
+    """Один снимок: активность базы + новые строки журнала медленных запросов."""
+    record, last_slow_id = await _take_sample(conn, last_slow_id, window)
+    _write(out, record)
+    activity = record["activity"]
+    slow_rows = record["new_slow_requests"]
 
     active = [r for r in activity if r["state"] == "active" and r["backend_type"] == "client backend"]
     idle_in_tx = [r for r in activity if r["state"] == "idle in transaction"]
@@ -201,9 +222,69 @@ async def _sample(conn: Any, out, last_slow_id: int, window: dict[str, Any]) -> 
                     row["wait_event_type"], row["wait_event"], float(row["query_age_s"] or 0), row["query"][:110],
                 )
 
-    if slow_rows:
-        last_slow_id = max(int(r["id"]) for r in slow_rows)
     return last_slow_id
+
+
+#: Подпись веера дерева курса в `pg_stat_activity` (tsk-655, замер 25.08).
+#: Страница дерева выпускает пачку запросов `tasks/by-course/{id}?limit=500`
+#: и `courses/{id}/materials?limit=500`; в базе это выборки по `course_id`.
+#: Список — не догадка: снят с боевого лога 09:52:34, где один клиент за
+#: полторы секунды запросил 11 курсов подряд.
+_FAN_PATTERNS = ("FROM TASKS WHERE TASKS.COURSE_ID", "FROM MATERIALS WHERE MATERIALS.COURSE_ID")
+
+
+def _detect_triggers(
+    record: dict[str, Any],
+    *,
+    fan_size: int,
+    busy_backends: int,
+    busy_age: float,
+) -> list[str]:
+    """Что в этом снимке стоит внимания. Пустой список — обычная минута.
+
+    Четыре ловушки, все сняты с боевых заторов 24-25.08, а не придуманы:
+
+    * `веер` — залп страницы дерева курса. Это СПУСКОВОЙ КРЮЧОК: 25.08 оба
+      затора начинались с него, и оба раза он сработал ВНЕ границы занятия
+      (в 08:06 — через 6 минут после конца, в 09:52 — через 52). Караул по
+      границам такое не ловит никаким хвостом.
+    * `затор` — несколько запросов разом висят дольше порога. Это само
+      событие, пока оно идёт.
+    * `замок` — очередь за строкой (25.08: семеро на `UPDATE user_session`).
+    * `медленный` — новая строка журнала. Самая надёжная ловушка и самая
+      поздняя: журнал пишется ПОСЛЕ запроса, поэтому одной её мало —
+      интересные секунды к этому моменту уже прошли, и их спасает только
+      буфер «до события».
+    """
+    active = [
+        r for r in record["activity"]
+        if r["state"] == "active" and r["backend_type"] == "client backend"
+    ]
+    reasons: list[str] = []
+
+    fan = sum(
+        1 for r in active
+        if any(p in " ".join((r["query"] or "").split()).upper() for p in _FAN_PATTERNS)
+    )
+    if fan >= fan_size:
+        reasons.append(f"веер дерева курса ({fan} запросов разом)")
+
+    slow_now = [r for r in active if float(r["query_age_s"] or 0) >= busy_age]
+    if len(slow_now) >= busy_backends:
+        oldest = max(float(r["query_age_s"] or 0) for r in slow_now)
+        reasons.append(f"затор ({len(slow_now)} запросов дольше {busy_age:.0f} с, старейший {oldest:.1f} с)")
+
+    locked = [r for r in active if r["wait_event_type"] == "Lock"]
+    if len(locked) >= 2:
+        reasons.append(f"очередь за замком ({len(locked)} соединений)")
+
+    if record["new_slow_requests"]:
+        paths = ", ".join(
+            f"{r['path']} {r['duration_ms'] / 1000:.1f} с" for r in record["new_slow_requests"][:3]
+        )
+        reasons.append(f"журнал медленных: {paths}")
+
+    return reasons
 
 
 def report(path: Path) -> None:
@@ -240,6 +321,123 @@ def report(path: Path) -> None:
     logger.info("На чём стояли соединения (все снимки, вид ожидания × раз):")
     for wait, times in waits.most_common(12):
         logger.info("    %5d × %s", times, wait)
+
+
+async def _watch_with_trigger(conn: Any, dsn: str, out, last_slow_id: int, args: Any) -> Any:
+    """Непрерывный караул с ловушкой: пишем в файл только вокруг событий.
+
+    tsk-655, переделка после разбора 25.08. Прежний караул сторожил ГРАНИЦЫ
+    занятий — и промахнулся дважды подряд, потому что сторожил не то: оба
+    затора дня начались с веера страницы дерева курса, и второй случился в
+    52 минутах от ближайшей границы. Крючок — не время, а действие ученика,
+    и ловить надо его.
+
+    Устройство. Снимки идут непрерывно, но в файл попадают не все: последние
+    `--buffer-seconds` держатся в памяти кольцом. Сработала ловушка — кольцо
+    выгружается целиком (это и есть секунды ДО события, ради которых всё) и
+    дальше пишется всё подряд, пока не пройдёт `--after-seconds` без новых
+    срабатываний. Так за восьмичасовой караул на диск ложатся минуты вокруг
+    событий, а не восемь часов тишины.
+
+    Возвращает обновлённый `conn`: соединение могло смениться после обрыва.
+    """
+    import asyncpg  # noqa: PLC0415 — как и в `main_async`, импорт поздний
+    from asyncpg.exceptions import InterfaceError  # noqa: PLC0415
+
+    ends_at = datetime.now(timezone.utc) + timedelta(hours=args.hours)
+    buffer_len = max(1, int(args.buffer_seconds / max(args.interval, 0.1)))
+    ring: deque = deque(maxlen=buffer_len)
+    recording_until: Optional[datetime] = None
+    events = 0
+    written = 0
+    next_heartbeat = datetime.now(timezone.utc) + timedelta(minutes=args.heartbeat_minutes)
+
+    logger.info(
+        "Ловушка: караулю %.1f ч, снимок раз в %.1f с, буфер до события %.0f с, "
+        "запись после события %.0f с.",
+        args.hours, args.interval, args.buffer_seconds, args.after_seconds,
+    )
+    logger.info("Пишу в файл ТОЛЬКО вокруг событий; тишина на диск не идёт.")
+
+    while datetime.now(timezone.utc) < ends_at:
+        tick = time.perf_counter()
+        try:
+            record, last_slow_id = await _take_sample(
+                conn, last_slow_id, {"mode": "trigger", "phase": "idle"}
+            )
+        except (OSError, asyncpg.PostgresConnectionError, InterfaceError) as exc:
+            logger.warning("Соединение оборвалось (%s) — открываю заново.", exc)
+            try:
+                await conn.close()
+            except Exception:  # noqa: BLE001 — уже мёртвое соединение
+                pass
+            conn = await asyncpg.connect(dsn, server_settings={"default_transaction_read_only": "on"})
+            continue
+
+        reasons = _detect_triggers(
+            record,
+            fan_size=args.fan_size,
+            busy_backends=args.busy_backends,
+            busy_age=args.busy_age,
+        )
+        now = datetime.now(timezone.utc)
+
+        if reasons:
+            events += 1
+            recording_until = now + timedelta(seconds=args.after_seconds)
+            logger.info("=== СОБЫТИЕ %s: %s ===", events, "; ".join(reasons))
+            if ring:
+                # Кольцо выгружается ЦЕЛИКОМ и помечается `pre`: это секунды
+                # до события, которых у прежнего караула не было вовсе.
+                for buffered in ring:
+                    buffered["window"] = {"mode": "trigger", "phase": "pre", "event": events}
+                    _write(out, buffered)
+                written += len(ring)
+                logger.info("    выгружено %s снимков ДО события", len(ring))
+                ring.clear()
+
+        if recording_until is not None and now <= recording_until:
+            record["window"] = {
+                "mode": "trigger", "phase": "live", "event": events,
+                "reasons": reasons or None,
+            }
+            _write(out, record)
+            written += 1
+            active = [
+                r for r in record["activity"]
+                if r["state"] == "active" and r["backend_type"] == "client backend"
+            ]
+            if active:
+                oldest = max(float(r["query_age_s"] or 0) for r in active)
+                waiting = [r for r in active if r["wait_event_type"] not in (None, "Timeout")]
+                logger.info(
+                    "    активных %2d | в очереди %2d | старейший %5.1f с",
+                    len(active), len(waiting), oldest,
+                )
+        else:
+            if recording_until is not None:
+                logger.info("    событие %s закрыто, возвращаюсь в тишину", events)
+                recording_until = None
+            ring.append(record)
+
+        if now >= next_heartbeat:
+            # Своя же наука 25.08: молчащий караул неотличим от мёртвого.
+            logger.info(
+                "жив: событий %s, снимков на диске %s, в буфере %s, до конца %.1f ч",
+                events, written, len(ring), (ends_at - now).total_seconds() / 3600,
+            )
+            next_heartbeat = now + timedelta(minutes=args.heartbeat_minutes)
+
+        await asyncio.sleep(max(0.0, args.interval - (time.perf_counter() - tick)))
+
+    logger.info("Караул окончен: событий %s, снимков на диске %s.", events, written)
+    if events == 0:
+        logger.info(
+            "Ни одна ловушка не сработала. Это значит «спусковой крючок не "
+            "случался», а НЕ «стало хорошо»: без веера дерева курса заторов "
+            "не бывает и на старом коде."
+        )
+    return conn
 
 
 #: Насколько широкую полосу вокруг окна проверять на «событие рядом, а не внутри».
@@ -314,6 +512,15 @@ async def main_async(args: argparse.Namespace) -> None:
 
         last_slow_id = int(await conn.fetchval("SELECT COALESCE(max(id), 0) FROM slow_request"))
         logger.info("Журнал медленных запросов: последняя строка id=%s", last_slow_id)
+
+        if args.trigger:
+            # Режим ловушки: караулим не время, а действие (tsk-655, 25.08).
+            with out_path.open("w", encoding="utf-8") as out:
+                conn = await _watch_with_trigger(conn, dsn, out, last_slow_id, args)
+            logger.info("Снимки сохранены: %s", out_path)
+            logger.info("")
+            report(out_path)
+            return
 
         if args.auto:
             windows = await _plan_windows(conn, args.horizon_hours, args.min_participants)
@@ -404,6 +611,39 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument("--interval", type=float, default=2.0, help="секунд между снимками")
     parser.add_argument("--out", default=None, help="куда писать снимки (.jsonl)")
     parser.add_argument("--report", default=None, help="только разобрать уже снятый файл")
+    parser.add_argument(
+        "--trigger",
+        action="store_true",
+        help=(
+            "караулить не границу занятия, а СОБЫТИЕ: веер дерева курса, "
+            "затор, очередь за замком, новую строку журнала (tsk-655)"
+        ),
+    )
+    parser.add_argument("--hours", type=float, default=8.0, help="сколько часов караулить в режиме ловушки")
+    parser.add_argument(
+        "--buffer-seconds", type=float, default=120.0,
+        help="сколько секунд ДО события держать в памяти и выгрузить при срабатывании",
+    )
+    parser.add_argument(
+        "--after-seconds", type=float, default=180.0,
+        help="сколько секунд писать после события, если ловушки молчат",
+    )
+    parser.add_argument(
+        "--fan-size", type=int, default=4,
+        help="сколько одновременных запросов по course_id считать веером дерева курса",
+    )
+    parser.add_argument(
+        "--busy-backends", type=int, default=3,
+        help="сколько одновременно висящих запросов считать затором",
+    )
+    parser.add_argument(
+        "--busy-age", type=float, default=2.0,
+        help="с какого возраста запрос считается висящим (секунды)",
+    )
+    parser.add_argument(
+        "--heartbeat-minutes", type=float, default=5.0,
+        help="как часто говорить, что караул жив (молчащий караул неотличим от мёртвого)",
+    )
     return parser.parse_args(argv)
 
 
