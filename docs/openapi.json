@@ -38323,6 +38323,295 @@
           }
         }
       }
+    },
+    "/api/v1/methodist/schedule-plan": {
+      "get": {
+        "tags": [
+          "schedule_plan"
+        ],
+        "summary": "Get Schedule Plan",
+        "description": "Спрос по часам, пожелания учеников и нынешние слоты — основа вёрстки.",
+        "operationId": "get_schedule_plan_api_v1_methodist_schedule_plan_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePlanSnapshot"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/schedule-plan/preview": {
+      "post": {
+        "tags": [
+          "schedule_plan"
+        ],
+        "summary": "Preview Schedule Plan",
+        "description": "Что получится по этому набору часов и чего это стоит.\n\n`hours=null` — попросить сервер подобрать набор самому. Это предложение:\nметодист правит его руками и зовёт расчёт снова.",
+        "operationId": "preview_schedule_plan_api_v1_methodist_schedule_plan_preview_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePlanPreviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePlanPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/methodist/schedule-plan/apply": {
+      "post": {
+        "tags": [
+          "schedule_plan"
+        ],
+        "summary": "Apply Schedule Plan",
+        "description": "Применить сетку: создать слоты и разложить по ним учеников.\n\nС `dry_run=true` (умолчание) ничего не меняется — возвращается тот же отчёт.\nЭкран показывает его человеку и только после подтверждения зовёт применение.",
+        "operationId": "apply_schedule_plan_api_v1_methodist_schedule_plan_apply_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulePlanApplyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePlanApplyResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -38889,6 +39178,107 @@
         ],
         "title": "AddStudentRequest",
         "description": "Преподаватель добавляет ученика на занятие вручную (создаёт ad-hoc occurrence)."
+      },
+      "ApplyLessonChange": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "before": {
+            "type": "integer",
+            "title": "Before"
+          },
+          "after": {
+            "type": "integer",
+            "title": "After"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "before",
+          "after"
+        ],
+        "title": "ApplyLessonChange",
+        "description": "У кого меняется число занятий в неделю — там же меняется и сумма месяца."
+      },
+      "ApplySlotOutcome": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "slot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slot Id"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "reuse"
+            ],
+            "title": "Action"
+          },
+          "attached": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Attached"
+          },
+          "detached": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Detached"
+          },
+          "kept": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Kept"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "slot_id",
+          "action",
+          "attached",
+          "detached",
+          "kept"
+        ],
+        "title": "ApplySlotOutcome",
+        "description": "Что произошло с одним часом плана."
       },
       "AssignmentRuleUpsertItem": {
         "properties": {
@@ -50874,6 +51264,633 @@
         "title": "PendingReviewListResponse",
         "description": "Ответ списка очереди проверки преподавателя."
       },
+      "PlanCapacity": {
+        "properties": {
+          "hours_total": {
+            "type": "integer",
+            "title": "Hours Total"
+          },
+          "lessons_demand": {
+            "type": "integer",
+            "title": "Lessons Demand"
+          },
+          "slots_needed_min": {
+            "type": "integer",
+            "title": "Slots Needed Min"
+          },
+          "slots_needed_max": {
+            "type": "integer",
+            "title": "Slots Needed Max"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hours_total",
+          "lessons_demand",
+          "slots_needed_min",
+          "slots_needed_max"
+        ],
+        "title": "PlanCapacity",
+        "description": "Ёмкость школы: сколько часов есть и сколько нужно."
+      },
+      "PlanCurrentSlot": {
+        "properties": {
+          "slot_id": {
+            "type": "integer",
+            "title": "Slot Id"
+          },
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "teacher_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Name"
+          },
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "duration_minutes": {
+            "type": "integer",
+            "title": "Duration Minutes"
+          },
+          "student_count": {
+            "type": "integer",
+            "title": "Student Count"
+          },
+          "in_grid": {
+            "type": "boolean",
+            "title": "In Grid"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "light",
+              "ok",
+              "crowded",
+              "over"
+            ],
+            "title": "Level"
+          },
+          "student_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Student Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slot_id",
+          "teacher_id",
+          "teacher_name",
+          "weekday",
+          "start_time",
+          "duration_minutes",
+          "student_count",
+          "in_grid",
+          "level",
+          "student_ids"
+        ],
+        "title": "PlanCurrentSlot",
+        "description": "Действующий слот расписания — то, что верстка будет менять."
+      },
+      "PlanDayGap": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "hours": {
+            "items": {
+              "type": "string",
+              "format": "time"
+            },
+            "type": "array",
+            "title": "Hours"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "hours"
+        ],
+        "title": "PlanDayGap",
+        "description": "Разрыв в дне: час без занятия между двумя занятыми."
+      },
+      "PlanDemandCell": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "preferred_count": {
+            "type": "integer",
+            "title": "Preferred Count"
+          },
+          "possible_count": {
+            "type": "integer",
+            "title": "Possible Count"
+          },
+          "existing_slot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Slot Id"
+          },
+          "existing_student_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Student Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "preferred_count",
+          "possible_count",
+          "existing_slot_id",
+          "existing_student_count"
+        ],
+        "title": "PlanDemandCell",
+        "description": "Спрос на один час сетки плюс то, что в этом часе стоит сегодня."
+      },
+      "PlanHour": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time"
+        ],
+        "title": "PlanHour",
+        "description": "Час сетки: день недели + начало по Москве."
+      },
+      "PlanMetrics": {
+        "properties": {
+          "slots_total": {
+            "type": "integer",
+            "title": "Slots Total"
+          },
+          "hours_total": {
+            "type": "integer",
+            "title": "Hours Total"
+          },
+          "students_placed": {
+            "type": "integer",
+            "title": "Students Placed"
+          },
+          "students_total": {
+            "type": "integer",
+            "title": "Students Total"
+          },
+          "lessons_planned": {
+            "type": "integer",
+            "title": "Lessons Planned"
+          },
+          "lessons_demand": {
+            "type": "integer",
+            "title": "Lessons Demand"
+          },
+          "fully_preferred": {
+            "type": "integer",
+            "title": "Fully Preferred"
+          },
+          "partial": {
+            "type": "integer",
+            "title": "Partial"
+          },
+          "without_preferred": {
+            "type": "integer",
+            "title": "Without Preferred"
+          },
+          "unplaced": {
+            "type": "integer",
+            "title": "Unplaced"
+          },
+          "slots_light": {
+            "type": "integer",
+            "title": "Slots Light"
+          },
+          "slots_ok": {
+            "type": "integer",
+            "title": "Slots Ok"
+          },
+          "slots_crowded": {
+            "type": "integer",
+            "title": "Slots Crowded"
+          },
+          "slots_over": {
+            "type": "integer",
+            "title": "Slots Over"
+          },
+          "gap_count": {
+            "type": "integer",
+            "title": "Gap Count"
+          },
+          "moving_students": {
+            "type": "integer",
+            "title": "Moving Students"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slots_total",
+          "hours_total",
+          "students_placed",
+          "students_total",
+          "lessons_planned",
+          "lessons_demand",
+          "fully_preferred",
+          "partial",
+          "without_preferred",
+          "unplaced",
+          "slots_light",
+          "slots_ok",
+          "slots_crowded",
+          "slots_over",
+          "gap_count",
+          "moving_students"
+        ],
+        "title": "PlanMetrics",
+        "description": "Цена решения — то, по чему методист сравнивает варианты."
+      },
+      "PlanSlot": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStudentRef"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "light",
+              "ok",
+              "crowded",
+              "over"
+            ],
+            "title": "Level"
+          },
+          "existing_slot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Slot Id"
+          },
+          "existing_student_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Student Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time",
+          "students",
+          "count",
+          "level",
+          "existing_slot_id",
+          "existing_student_count"
+        ],
+        "title": "PlanSlot",
+        "description": "Один слот предлагаемой сетки."
+      },
+      "PlanStudentRef": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "preferred",
+              "possible"
+            ],
+            "title": "Match"
+          },
+          "lessons_per_week": {
+            "type": "integer",
+            "title": "Lessons Per Week"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "timezone",
+          "match",
+          "lessons_per_week"
+        ],
+        "title": "PlanStudentRef",
+        "description": "Ученик в составе слота — с пометкой, желательный ему этот час или нет."
+      },
+      "PlanStudentRow": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "is_filled": {
+            "type": "boolean",
+            "title": "Is Filled"
+          },
+          "lessons_per_week": {
+            "type": "integer",
+            "title": "Lessons Per Week"
+          },
+          "preferred": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Preferred"
+          },
+          "possible": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Possible"
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "current_hours": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Current Hours"
+          },
+          "needs_move": {
+            "type": "boolean",
+            "title": "Needs Move"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "email",
+          "timezone",
+          "is_filled",
+          "lessons_per_week",
+          "preferred",
+          "possible",
+          "comment",
+          "current_hours",
+          "needs_move"
+        ],
+        "title": "PlanStudentRow",
+        "description": "Ученик глазами вёрстки: что просил и где занимается сейчас."
+      },
+      "PlanTeacher": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "active_slots": {
+            "type": "integer",
+            "title": "Active Slots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id",
+          "full_name",
+          "active_slots"
+        ],
+        "title": "PlanTeacher",
+        "description": "Преподаватель, на которого можно верстать."
+      },
+      "PlanUnmatchedStudent": {
+        "properties": {
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "lessons_per_week": {
+            "type": "integer",
+            "title": "Lessons Per Week"
+          },
+          "placed": {
+            "type": "integer",
+            "title": "Placed"
+          },
+          "preferred_placed": {
+            "type": "integer",
+            "title": "Preferred Placed"
+          },
+          "preferred": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Preferred"
+          },
+          "possible": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Possible"
+          },
+          "current_hours": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Current Hours"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          }
+        },
+        "type": "object",
+        "required": [
+          "student_id",
+          "full_name",
+          "timezone",
+          "lessons_per_week",
+          "placed",
+          "preferred_placed",
+          "preferred",
+          "possible",
+          "current_hours",
+          "reason"
+        ],
+        "title": "PlanUnmatchedStudent",
+        "description": "Кому вёрстка не дала того, что он просил, — список для личного разговора."
+      },
       "PresenceRequest": {
         "properties": {
           "interacted": {
@@ -52902,6 +53919,323 @@
         ],
         "title": "ScheduleGridDay",
         "description": "День сетки для клиента: какие часы вообще можно выбрать."
+      },
+      "SchedulePlanApplyRequest": {
+        "properties": {
+          "teacher_id": {
+            "type": "integer",
+            "title": "Teacher Id"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/SchedulePlanApplySlot"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "deactivate_missing_slots": {
+            "type": "boolean",
+            "title": "Deactivate Missing Slots",
+            "default": false
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "teacher_id"
+        ],
+        "title": "SchedulePlanApplyRequest",
+        "description": "Тело применения сетки.\n\n`dry_run=True` — посчитать и показать отчёт, ничего не меняя. Экран всегда\nсначала зовёт его: применение меняет расписание живым людям, и число\nзатронутых человек надо увидеть ДО, а не ПОСЛЕ."
+      },
+      "SchedulePlanApplyResult": {
+        "properties": {
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run"
+          },
+          "slots_created": {
+            "type": "integer",
+            "title": "Slots Created"
+          },
+          "slots_reused": {
+            "type": "integer",
+            "title": "Slots Reused"
+          },
+          "slots_deactivated": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Slots Deactivated"
+          },
+          "students_attached": {
+            "type": "integer",
+            "title": "Students Attached"
+          },
+          "students_detached": {
+            "type": "integer",
+            "title": "Students Detached"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/ApplySlotOutcome"
+            },
+            "type": "array",
+            "title": "Outcomes"
+          },
+          "leftover_slots": {
+            "items": {
+              "$ref": "#/components/schemas/PlanCurrentSlot"
+            },
+            "type": "array",
+            "title": "Leftover Slots"
+          },
+          "lesson_changes": {
+            "items": {
+              "$ref": "#/components/schemas/ApplyLessonChange"
+            },
+            "type": "array",
+            "title": "Lesson Changes"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "dry_run",
+          "slots_created",
+          "slots_reused",
+          "slots_deactivated",
+          "students_attached",
+          "students_detached",
+          "outcomes",
+          "leftover_slots",
+          "lesson_changes",
+          "warnings"
+        ],
+        "title": "SchedulePlanApplyResult",
+        "description": "Итог применения (или его предпросмотра)."
+      },
+      "SchedulePlanApplySlot": {
+        "properties": {
+          "weekday": {
+            "type": "integer",
+            "maximum": 6.0,
+            "minimum": 0.0,
+            "title": "Weekday"
+          },
+          "start_time": {
+            "type": "string",
+            "format": "time",
+            "title": "Start Time"
+          },
+          "student_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Student Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "weekday",
+          "start_time"
+        ],
+        "title": "SchedulePlanApplySlot",
+        "description": "Слот, который методист утвердил."
+      },
+      "SchedulePlanPreview": {
+        "properties": {
+          "hours": {
+            "items": {
+              "$ref": "#/components/schemas/PlanHour"
+            },
+            "type": "array",
+            "title": "Hours"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/PlanSlot"
+            },
+            "type": "array",
+            "title": "Slots"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/PlanMetrics"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/PlanDayGap"
+            },
+            "type": "array",
+            "title": "Gaps"
+          },
+          "without_preferred": {
+            "items": {
+              "$ref": "#/components/schemas/PlanUnmatchedStudent"
+            },
+            "type": "array",
+            "title": "Without Preferred"
+          },
+          "unplaced": {
+            "items": {
+              "$ref": "#/components/schemas/PlanUnmatchedStudent"
+            },
+            "type": "array",
+            "title": "Unplaced"
+          },
+          "grid_timezone": {
+            "type": "string",
+            "title": "Grid Timezone",
+            "default": "Europe/Moscow"
+          },
+          "slot_minutes": {
+            "type": "integer",
+            "title": "Slot Minutes",
+            "default": 60
+          }
+        },
+        "type": "object",
+        "required": [
+          "hours",
+          "slots",
+          "metrics",
+          "gaps",
+          "without_preferred",
+          "unplaced"
+        ],
+        "title": "SchedulePlanPreview",
+        "description": "Расчёт по набору часов: что получится и чего это стоит."
+      },
+      "SchedulePlanPreviewRequest": {
+        "properties": {
+          "hours": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PlanHour"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hours"
+          },
+          "teacher_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teacher Id"
+          },
+          "keep_existing": {
+            "type": "boolean",
+            "title": "Keep Existing",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "SchedulePlanPreviewRequest",
+        "description": "Тело расчёта. `hours=null` — попросить сервер подобрать набор самому."
+      },
+      "SchedulePlanSnapshot": {
+        "properties": {
+          "grid": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleGridDay"
+            },
+            "type": "array",
+            "title": "Grid"
+          },
+          "grid_timezone": {
+            "type": "string",
+            "title": "Grid Timezone",
+            "default": "Europe/Moscow"
+          },
+          "slot_minutes": {
+            "type": "integer",
+            "title": "Slot Minutes",
+            "default": 60
+          },
+          "audience_total": {
+            "type": "integer",
+            "title": "Audience Total"
+          },
+          "filled_total": {
+            "type": "integer",
+            "title": "Filled Total"
+          },
+          "silent_total": {
+            "type": "integer",
+            "title": "Silent Total"
+          },
+          "lessons_demand": {
+            "type": "integer",
+            "title": "Lessons Demand"
+          },
+          "demand": {
+            "items": {
+              "$ref": "#/components/schemas/PlanDemandCell"
+            },
+            "type": "array",
+            "title": "Demand"
+          },
+          "students": {
+            "items": {
+              "$ref": "#/components/schemas/PlanStudentRow"
+            },
+            "type": "array",
+            "title": "Students"
+          },
+          "current_slots": {
+            "items": {
+              "$ref": "#/components/schemas/PlanCurrentSlot"
+            },
+            "type": "array",
+            "title": "Current Slots"
+          },
+          "teachers": {
+            "items": {
+              "$ref": "#/components/schemas/PlanTeacher"
+            },
+            "type": "array",
+            "title": "Teachers"
+          },
+          "capacity": {
+            "$ref": "#/components/schemas/PlanCapacity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "grid",
+          "audience_total",
+          "filled_total",
+          "silent_total",
+          "lessons_demand",
+          "demand",
+          "students",
+          "current_slots",
+          "teachers",
+          "capacity"
+        ],
+        "title": "SchedulePlanSnapshot",
+        "description": "Всё, что нужно экрану вёрстки до первого расчёта."
       },
       "SchedulePreferenceDemandCell": {
         "properties": {

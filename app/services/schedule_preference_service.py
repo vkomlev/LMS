@@ -39,9 +39,10 @@ logger = logging.getLogger(__name__)
 EXCLUDED_PLAN_CODES = ("alumni", "demo")
 
 #: Кусок SQL: аудитория опроса. Держится одной строкой, потому что по нему
-#: считаются И флаг в `/me`, И сводка охвата — разъехавшись, они начали бы
-#: спорить друг с другом на глазах у методиста.
-_AUDIENCE_FROM = """
+#: считаются И флаг в `/me`, И сводка охвата, И вёрстка расписания (tsk-674
+#: фаза 2) — разъехавшись, они начали бы спорить друг с другом на глазах у
+#: методиста. Имя без подчёркивания: константу переиспользует `schedule_plan_service`.
+AUDIENCE_FROM = """
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id
     JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
@@ -112,7 +113,7 @@ async def is_audience(db: AsyncSession, user_id: int) -> bool:
     """Показывать ли этому человеку опрос."""
     row = (
         await db.execute(
-            text(f"SELECT 1 {_AUDIENCE_FROM} AND u.id = :uid LIMIT 1"),
+            text(f"SELECT 1 {AUDIENCE_FROM} AND u.id = :uid LIMIT 1"),
             {"uid": user_id},
         )
     ).first()
@@ -133,7 +134,7 @@ async def is_pending(db: AsyncSession, user_id: int) -> bool:
                     SELECT 1 FROM student_schedule_preference p
                      WHERE p.student_id = u.id
                 ) IS NULL AS pending
-                {_AUDIENCE_FROM} AND u.id = :uid
+                {AUDIENCE_FROM} AND u.id = :uid
                 LIMIT 1
                 """
             ),
