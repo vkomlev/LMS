@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import AsyncIterator, Optional
@@ -256,21 +257,49 @@ async def ask(
     await session_service.bump_turn(db, session.id)
     await db.commit()
 
+    # Сторож на границе, где ожидание чувствует ученик (tsk-671). Пределы внутри
+    # клиента моделей ограничивают попытку и чтение, но в связке со стриминговым
+    # ответом до них дело доходит не всегда: на бою наблюдалось, как вызов ко
+    # второй модели уходит и не возвращается — ни ответа, ни ошибки, ни записи в
+    # учёте расхода. Ученик при этом сидит в «Наставник думает…» с заблокированным
+    # полем и без выхода, а это хуже честного отказа за секунду.
+    #
+    # Здесь нас не интересует, ГДЕ именно застряло: сторож накрывает весь путь до
+    # модели целиком и гарантирует, что ученик получит либо ответ, либо понятную
+    # деградацию с выходом на преподавателя.
+    _WAIT_CEILING = Budget.INTERACTIVE.total_timeout + 5
+
     async def _generate() -> AsyncIterator[str]:
         collected: list[str] = []
         model_used = ""
         truncated = False
         try:
-            async for chunk in stream(
-                messages, purpose="tutor", student_id=owner,
-                budget=Budget.INTERACTIVE, max_tokens=900,
-            ):
-                if chunk.done:
-                    model_used = chunk.model
-                    truncated = chunk.truncated
-                    break
-                collected.append(chunk.delta)
-                yield _sse("delta", {"text": chunk.delta})
+            async with asyncio.timeout(_WAIT_CEILING):
+                async for chunk in stream(
+                    messages, purpose="tutor", student_id=owner,
+                    budget=Budget.INTERACTIVE, max_tokens=900,
+                ):
+                    if chunk.done:
+                        model_used = chunk.model
+                        truncated = chunk.truncated
+                        break
+                    collected.append(chunk.delta)
+                    yield _sse("delta", {"text": chunk.delta})
+        except TimeoutError:
+            logger.warning(
+                "ai_tutor: наставник молчит дольше %.0f c session=%s student=%s — "
+                "отдаём деградацию, чтобы ученик не ждал впустую",
+                _WAIT_CEILING, session.id, owner,
+            )
+            await entitlements_service.release(db, gate, student_id=owner)
+            await db.commit()
+            if collected:
+                # Что-то уже написано — не стираем, помечаем незавершённым.
+                yield _sse("done", {"truncated": True, "offer_teacher": True})
+            else:
+                yield _sse("delta", {"text": _DEGRADED_TEXT})
+                yield _sse("done", {"offer_teacher": True, "degraded": True})
+            return
         except LLMError as exc:
             # Деградация: наставник молчит, но ученик не в тупике.
             logger.warning(
