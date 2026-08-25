@@ -223,10 +223,25 @@ class TaskResultsService(BaseService[TaskResults]):
         task_ids: List[int] | None = None,
     ) -> List[Tuple[int, int, int, int]]:
         """
-        Последняя завершённая попытка по каждой паре (user_id, task_id).
+        Последний результат по каждой паре (user_id, task_id).
         Возвращает список (user_id, task_id, score, max_score). max_score может быть 0.
+
+        tsk-670: раньше здесь стояло `a.finished_at IS NOT NULL` — «последняя
+        ЗАВЕРШЁННАЯ попытка». В модели LMS попытка курсового уровня: одна на пару
+        (ученик, курс), она копит результаты многих заданий и закрывается только
+        когда курс пройден до конца (кабинет зовёт `POST /attempts/{id}/finish`
+        лишь при `next-item = none`). Ручной зачёт (tsk-297) своей служебной
+        попытке `finished_at` не ставит вовсе. На проде признак завершения стоял
+        у 91 попытки из 12 611 (0.7 %), поэтому `progress_percent`,
+        пройдено/не пройдено и `last_*` почти у всех отдавали нули: у ученика
+        с 291 решённым заданием на экране было «прогресс 0 %».
+
+        Правило «пройдено» здесь теперь ТО ЖЕ, что в
+        `learning_engine.compute_task_state` и в `me_service` (tsk-261): последний
+        результат по заданию, попытка не аннулирована. Тот же дефект в тех же
+        словах уже чинили в `me_service`; здесь он дожил до сегодня.
         """
-        conditions = ["a.finished_at IS NOT NULL", "a.cancelled_at IS NULL"]
+        conditions = ["a.cancelled_at IS NULL"]
         params: Dict[str, Any] = {}
         if user_id is not None:
             conditions.append("tr.user_id = :user_id")
@@ -244,7 +259,7 @@ class TaskResultsService(BaseService[TaskResults]):
                     COALESCE(tr.max_score, 0) AS max_score,
                     ROW_NUMBER() OVER (
                         PARTITION BY tr.user_id, tr.task_id
-                        ORDER BY a.finished_at DESC, a.id DESC
+                        ORDER BY tr.submitted_at DESC, tr.id DESC
                     ) AS rn
                 FROM task_results tr
                 INNER JOIN attempts a ON a.id = tr.attempt_id
