@@ -24,19 +24,19 @@
 разделена по виду: один и тот же час не может быть одновременно «желательным» и
 «возможным», и запретить это на уровне БД дешевле, чем ловить в сервисе.
 
-Rollback: `alembic downgrade tsk673_alumni_course_work` — все три таблицы
+Rollback: `alembic downgrade tsk653_gap_signal_reason` — все три таблицы
 удаляются вместе с собранными пожеланиями. Перед откатом после старта опроса
 данные надо выгрузить: восстанавливать их будет неоткуда.
 
-Порядок в цепочке. Изначально ревизия стояла на `tsk653_gap_signal_reason`, но
-на ту же основу параллельно встала `tsk673_alumni_course_work` — получались две
-головы, и `alembic upgrade head` в `deploy/vps/deploy.sh` упал бы на проде
-(«Multiple head revisions are present»), уронив выкат обеим задачам. Цепочка
-выпрямлена сдвигом ЭТОЙ ревизии, потому что она была применена только на dev и
-откатывается без потери данных (таблицы пустые).
+Порядок в цепочке. На ту же основу параллельно встала `tsk673_alumni_course_work`
+(соседняя задача) — получались две головы, и `alembic upgrade head` в
+`deploy/vps/deploy.sh` упал бы на проде («Multiple head revisions are present»),
+уронив выкат обеим задачам. Договорённость: цепочка отражает порядок попадания в
+ветку, а не порядок написания. Эта ревизия ушла в `main` первой и потому стоит
+сразу за `tsk653`; `tsk673_alumni_course_work` цепляется за неё.
 
 Revision ID: tsk674_schedule_preference
-Revises: tsk673_alumni_course_work
+Revises: tsk653_gap_signal_reason
 Create Date: 2026-08-25
 """
 from typing import Sequence, Union
@@ -46,7 +46,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "tsk674_schedule_preference"
-down_revision: Union[str, None] = "tsk673_alumni_course_work"
+down_revision: Union[str, None] = "tsk653_gap_signal_reason"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
