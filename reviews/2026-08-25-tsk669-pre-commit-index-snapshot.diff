@@ -1,0 +1,234 @@
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..61502bc
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,4 @@
++# Скрипты для shell обязаны выкладываться с LF: с CRLF ломается shebang
++# (bad interpreter: /usr/bin/env bash^M), и git-хуки просто не запускаются.
++.githooks/** text eol=lf
++*.sh text eol=lf
+diff --git a/.githooks/pre-commit b/.githooks/pre-commit
+new file mode 100755
+index 0000000..51dc923
+--- /dev/null
++++ b/.githooks/pre-commit
+@@ -0,0 +1,146 @@
++#!/usr/bin/env bash
++# pre-commit LMS — пересборка docs/openapi.json.
++#
++# Задача tsk-669 (рецидив tsk-495/tsk-461). Три правила, ради которых хук переписан:
++#   1. Коммит не трогает app/*.py  -> схема не пересобирается вовсе.
++#   2. Схема собирается из СНИМКА ИНДЕКСА, а не из рабочего дерева: незакоммиченный
++#      код соседней сессии (ADR-0008) в чужой коммит больше не попадает.
++#   3. Снимок невозможен и в дереве есть чужие незастейдженные правки под app/ ->
++#      коммит БЛОКИРУЕТСЯ. Молчаливый проход был причиной рецидива.
++#
++# Результат кладётся в индекс. Рабочее дерево docs/openapi.json переписывается
++# только тогда, когда оно совпадает с индексом (то есть чужой регенерации там нет).
++#
++# git stash / reset --hard / clean здесь запрещены (ADR-0008): дерево общее.
++
++set -uo pipefail
++
++REPO_ROOT="$(git rev-parse --show-toplevel)"
++SCHEMA_REL="docs/openapi.json"
++SCHEMA_ABS="$REPO_ROOT/$SCHEMA_REL"
++
++# --- 1. Нужна ли пересборка вообще -------------------------------------------------
++STAGED_APP="$(git diff --cached --name-only --diff-filter=ACMRD -- app | grep -E '\.py$' || true)"
++if [ -z "$STAGED_APP" ]; then
++    echo "[pre-commit] В коммите нет изменений под app/*.py — docs/openapi.json не трогаем."
++    exit 0
++fi
++
++# --- 2. Интерпретатор --------------------------------------------------------------
++if [ -x "$REPO_ROOT/.venv/Scripts/python.exe" ]; then
++    PYTHON="$REPO_ROOT/.venv/Scripts/python.exe"
++elif [ -f "$REPO_ROOT/.venv/Scripts/python" ]; then
++    PYTHON="$REPO_ROOT/.venv/Scripts/python"
++elif [ -f "$REPO_ROOT/.venv/bin/python" ]; then
++    PYTHON="$REPO_ROOT/.venv/bin/python"
++elif [ -f "$REPO_ROOT/venv/Scripts/python" ]; then
++    PYTHON="$REPO_ROOT/venv/Scripts/python"
++else
++    PYTHON="python"
++fi
++
++# --- 3. Чужие незастейдженные правки под app/ (для диагностики и блокировки) --------
++unstaged_app_files() {
++    git diff --name-only --diff-filter=ACMRD -- app | grep -E '\.py$' || true
++}
++
++# Аварийный выход: снимок собрать не удалось.
++# Есть незастейдженные правки под app/ -> блокируем, иначе дерево == индекс и
++# старый путь (сборка из дерева) безопасен.
++bail_or_fallback() {
++    local reason="$1"
++    local risky
++    risky="$(unstaged_app_files)"
++
++    if [ -n "$risky" ]; then
++        echo "[pre-commit] ОСТАНОВКА: не удалось собрать схему из снимка индекса." >&2
++        echo "[pre-commit] Причина: $reason" >&2
++        echo "[pre-commit] В рабочем дереве есть незастейдженные правки под app/ —" >&2
++        echo "[pre-commit] сборка из дерева утащила бы их в этот коммит:" >&2
++        echo "$risky" | sed 's/^/[pre-commit]   /' >&2
++        echo "[pre-commit]" >&2
++        echo "[pre-commit] Что делать (любой из двух выходов):" >&2
++        echo "[pre-commit]   1) правки соседа схему не меняют или файл уже актуален —" >&2
++        echo "[pre-commit]      повторить коммит с флагом --no-verify;" >&2
++        echo "[pre-commit]   2) дождаться, пока соседняя сессия закоммитит своё, и повторить." >&2
++        exit 1
++    fi
++
++    echo "[pre-commit] Снимок индекса недоступен ($reason), но незастейдженных правок"
++    echo "[pre-commit] под app/ нет — собираю схему из рабочего дерева (оно равно индексу)."
++    if ! "$PYTHON" -B "$REPO_ROOT/scripts/export_openapi.py"; then
++        echo "[pre-commit] ОСТАНОВКА: экспорт схемы завершился ошибкой." >&2
++        exit 1
++    fi
++    git add -- "$SCHEMA_ABS"
++    echo "[pre-commit] docs/openapi.json добавлен в коммит."
++    exit 0
++}
++
++# --- 4. Снимок индекса -------------------------------------------------------------
++SNAP="$(mktemp -d 2>/dev/null || true)"
++if [ -z "$SNAP" ] || [ ! -d "$SNAP" ]; then
++    bail_or_fallback "не удалось создать временный каталог"
++fi
++cleanup() { rm -rf "$SNAP" 2>/dev/null || true; }
++trap cleanup EXIT
++
++# Тяжёлые каталоги, не участвующие в сборке схемы, в снимок не берём.
++if ! git ls-files -z -- . ':!:skills/**' ':!:docs/**' ':!:reviews/**' \
++        | git checkout-index --prefix="$SNAP/" -z --stdin; then
++    bail_or_fallback "git checkout-index не смог развернуть индекс"
++fi
++
++mkdir -p "$SNAP/docs"
++# .env не трекается, но нужен экспортёру для загрузки настроек.
++if [ -f "$REPO_ROOT/.env" ]; then
++    cp "$REPO_ROOT/.env" "$SNAP/.env"
++fi
++
++if [ ! -f "$SNAP/scripts/export_openapi.py" ]; then
++    bail_or_fallback "в снимке нет scripts/export_openapi.py"
++fi
++
++echo "[pre-commit] Сборка docs/openapi.json из снимка индекса..."
++if ! "$PYTHON" -B "$SNAP/scripts/export_openapi.py" >/dev/null; then
++    bail_or_fallback "экспортёр упал на снимке индекса"
++fi
++if [ ! -f "$SNAP/docs/openapi.json" ]; then
++    bail_or_fallback "экспортёр не создал файл схемы в снимке"
++fi
++
++# --- 5. Результат в индекс, дерево — только если оно не занято чужой версией --------
++# --path обязателен: файл лежит вне репозитория, и без него git не знает, какие
++# атрибуты/фильтры (eol, autocrlf) применять — blob мог бы разойтись с тем, что
++# дал бы обычный `git add`.
++NEW_BLOB="$(git hash-object -w --path "$SCHEMA_REL" -- "$SNAP/docs/openapi.json")"
++if [ -z "$NEW_BLOB" ]; then
++    bail_or_fallback "не удалось записать объект схемы"
++fi
++
++INDEX_BLOB="$(git ls-files -s -- "$SCHEMA_REL" | awk '{print $2}')"
++WORKTREE_BLOB=""
++if [ -f "$SCHEMA_ABS" ]; then
++    WORKTREE_BLOB="$(git hash-object -- "$SCHEMA_ABS")"
++fi
++
++if [ "$NEW_BLOB" = "$INDEX_BLOB" ]; then
++    echo "[pre-commit] Схема не изменилась — индекс уже актуален."
++    exit 0
++fi
++
++if ! git update-index --add --cacheinfo "100644,$NEW_BLOB,$SCHEMA_REL"; then
++    echo "[pre-commit] ОСТАНОВКА: не удалось положить схему в индекс." >&2
++    exit 1
++fi
++echo "[pre-commit] docs/openapi.json обновлён в индексе (источник — снимок индекса)."
++
++if [ -z "$WORKTREE_BLOB" ] || [ "$WORKTREE_BLOB" = "$INDEX_BLOB" ]; then
++    cp "$SNAP/docs/openapi.json" "$SCHEMA_ABS"
++    echo "[pre-commit] Рабочая копия docs/openapi.json синхронизирована с коммитом."
++else
++    echo "[pre-commit] В рабочем дереве лежит своя версия docs/openapi.json —"
++    echo "[pre-commit] она НЕ перезаписана. В коммит уходит версия, собранная из индекса."
++fi
++
++exit 0
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 5dd1cdc..750426a 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -61,6 +61,25 @@
+ 
+ ---
+ 
++## Git-хуки репозитория
++
++Хуки лежат в `.githooks/` и ставятся один раз на рабочую копию (в том числе в свежем клоне):
++
++```bash
++bash scripts/install_git_hooks.sh
++```
++
++Скрипт выставляет `core.hooksPath = .githooks`. Что делает `pre-commit`:
++
++- пересобирает `docs/openapi.json` **только** если в коммите есть изменения под `app/*.py`;
++- собирает схему из **снимка индекса**, а не из рабочего дерева, — незакоммиченный код
++  параллельной сессии в чужой коммит не попадает;
++- рабочую копию `docs/openapi.json` не перезаписывает, если там уже лежит своя версия;
++- если снимок собрать не удалось, а в дереве есть незастейдженные правки под `app/` —
++  **останавливает коммит** и предлагает `--no-verify` либо дождаться соседа.
++
++---
++
+ ## Процесс разработки
+ 
+ 1. Создайте ветку от `main`
+diff --git a/docs/ai/ERRORS.md b/docs/ai/ERRORS.md
+index f6fb3bc..87815df 100644
+--- a/docs/ai/ERRORS.md
++++ b/docs/ai/ERRORS.md
+@@ -41,3 +41,4 @@
+ | 2026-08-08 | LMS | tsk-586 — TG-боты не могли писать в LMS: legacy-дверь `get_api_key` принимала только `?api_key=` | TG_LMS с `8ceed6f` (tsk-497, 2026-08-03) перевёл клиент на заголовок `X-API-Key`, а `app/api/deps.py::get_api_key` читал ТОЛЬКО `APIKeyQuery`. С выката ботов 2026-08-07 12:53 UTC весь класс эндпоинтов на `Depends(get_db)` (~116 пар метод+путь) отвечал ботам 403, бот показывал «Недостаточно прав». Живёт бок о бок второй дефект: `hasattr` на незагруженной связи ORM в `repos/base.py::paginate` читал её и падал `MissingGreenlet` → 500 на `GET /courses/` и `GET /meta/tasks` | Транспорт авторизации поменяли на ОДНОЙ стороне (клиент), вторая осталась на старом контракте. Тесты TG_LMS мокают HTTP-клиент (329/329 зелёные при полностью сломанной авторизации), тесты LMS на этих путях ходили с query-ключом — ни один слой не проверял связку «транспорт клиента ↔ дверь сервера» | INTEGRATION | S1 | Жалоба оператора («в боте методиста невозможно привязать курс ученику») → curl с прод-сервера: те же пути заголовком 403, query 200 → обход всех маршрутов за `get_api_key` реальным ASGI-клиентом | `get_api_key` принимает заголовок И query (заголовок первым); `paginate`/`update` определяют тип через `isinstance`, а не `hasattr` | (a) **Смена транспорта авторизации — всегда двусторонняя правка**: правишь клиента — в том же охвате проверь дверь сервера, и наоборот. (b) Класс «отвалилась общая дверь» точечным тестом не ловится — нужен обход ВСЕХ маршрутов за этой дверью реальным ASGI-клиентом (`tests/test_service_key_header_gate_tsk586.py`), мок HTTP-клиента здесь бесполезен по определению. (c) `hasattr` на атрибуте-связи SQLAlchemy — не проверка наличия поля, а чтение: в async-сессии это lazy-load и `MissingGreenlet`; проверять тип через `isinstance` | FIXED |
+ | 2026-08-08 | LMS / TG_LMS / ContentBackbone | tsk-595 — ротация сервисных ключей после находки §6.4 в ревью tsk-586 | Считали, что утёк один ключ (27 строк в `app.log`). На деле открытым текстом лежали ВСЕ четыре ключа `VALID_API_KEYS`: 25 163 строки в `app.log` и ~83 000 в логах nginx, включая 77 431 строку с ключом ТГ-ботов, который по `app.log` выглядел чистым. Тем же разбором нашлись 12 строк `sudo … /usr/bin/env DATABASE_URL=… VALID_API_KEYS=… python …` в `auth.log` и журнале systemd — весь набор секретов LMS (пароль БД, ЮKassa, Resend, magic-link, ключ подписи сессий, Fernet, VK, S3, Redis, CloseRouter) | Маскировка tsk-496 — фильтр питоновского логгера LMS; access-лог nginx она не покрывает вовсе, а nginx пишет строку запроса целиком. Отдельно: секреты, переданные аргументами команды под `sudo`, попадают в аудит sudo и в `ps` | SECURITY | S1 | пересчёт по всем ключам при разборе §6.4 (проверяли только один) | Три новых ключа окном двойных ключей, старые четыре отозваны; клиенты CB и QSMImport переведены на `X-API-Key`; маскировка `api_key` добавлена в `log_format` nginx; 108 564 вхождения затёрты в файлах логов; журнал systemd обрезан до суток | Утечку секрета считать по ВСЕМ значениям переменной и по ВСЕМ приёмникам логов (приложение + nginx + auth.log + journal), а не по одному файлу; не передавать секреты аргументами команды (`sudo -u app bash -c 'set -a; . .env; set +a; …'`); ротация логов LMS подключена (`/etc/logrotate.d/lms`, `copytruncate`) | done |
+ | 2026-08-14 (tsk-611) | LMS | Локальная разработка: чистый прогон `pytest tests/` на машине оператора | 1 упавший + 25 ошибок. Выглядит как регрессия кода: 19 ошибок в `test_y5_guest_endpoints.py` и 6 в `test_tsk423_demo_task_limit.py` падают внутренностями драйвера (`OSError: Connect call failed ('127.0.0.1', 6379)`), а `test_session_refresh_http_race_tsk235.py` — несовпадением ожидания (`[200, 401, 401, 401, 401]` вместо пяти 200), то есть ровно как «сломали tsk-235». На доказательство обратного (изоляция файла → изоляция теста → чтение кода grace-окна) ушло полчаса | На локальной машине не был поднят Redis, а ни один из тестов об этом не сообщал. Глубже: Redis-совместимый сервер (Memurai) установлен и служба стоит на «Автоматически», но бесплатная Developer-редакция **сама себя выключает** после нескольких суток непрерывной работы (`Memurai Developer Edition automatic shutdown` в `memurai-log.txt`, 12.08) и обратно уже не поднимается. Симптом у третьего теста другой, потому что окно благодати на ротацию refresh пишется в Redis best-effort и fail-open: без Redis окна просто нет | TEST + PROCESS | S3 (только локальная разработка; прод здоров — там Redis внешний, соединение есть) | Независимая проверка круга 14.08 | Маркер `requires_redis` + однократная проверка PING на этапе сборки тестов (`tests/conftest.py`) — помеченные тесты **пропускаются с причиной**, а не падают драйвером. Скрипты `scripts/dev/`: `ensure-redis.ps1` (идемпотентно поднимает Redis: сперва служба, потом процесс пользователя без прав администратора), `run-tests.ps1` (проверка + прогон), `install-redis-autostart.ps1` (задача планировщика: вход в систему + перепроверка раз в 15 минут). Проверено обоими способами: с Redis — 2262 passed / 11 skipped / 0 failed / 0 errors; без Redis — 2234 passed / 39 skipped / 0 failed / 0 errors (26 бывших непрозрачных падений стали явными пропусками) | (a) **Тест, которому нужна внешняя служба, обязан проверять её сам и пропускаться с причиной.** Падение внутренностями драйвера читается как регрессия кода и стоит следующему человеку тех же получаса. (b) **Пропуск обязан быть виден в итоговой строке** — зелёный прогон, где четверть сотни тестов не выполнялась, вводит в заблуждение сильнее, чем красный. (c) **«Служба стоит на автозапуске» ≠ «служба работает»**: у Memurai Developer есть самовыключение по времени работы, поэтому нужна периодическая перепроверка, а не только автозапуск. (d) Симптом «тест ждал 200, получил 401» при fail-open зависимости — сигнал искать отсутствующую внешнюю службу, а не сломанную логику | FIXED |
++| 2026-08-25 (tsk-669) | LMS | Общее рабочее дерево, несколько сессий (ADR-0008). pre-commit пересобирал `docs/openapi.json` из всего рабочего дерева и сам делал `git add` | Ночь на 25.08: три эпизода за час. Коммит одной сессии уносил незакоммиченную схему другой (tsk-655 утащил `RubricReview` у tsk-658; ad56b33 унёс схему tsk-665). Откат присвоенного файла `git checkout HEAD -- docs/openapi.json` дополнительно стёр регенерацию у пострадавшего | Источником схемы было рабочее дерево, а не то, что коммитится. **Рецидив tsk-495/tsk-461**: прошлая правка выбрала не блокирующее предупреждение и явно отклонила чистый снимок как избыточный. Предупреждение работало — и не помогало: текст проматывался, коммит проходил. Плюс хук жил только в `.git/hooks/` одной рабочей копии: его не было видно в ревью и он не приезжал в свежий клон | PROCESS | S2 (история коммитов, чужая работа; данные не пострадали) | Разбор состава трёх коммитов оператором | Хук переписан: пропуск, если в коммите нет `app/*.py`; сборка из снимка индекса (`git checkout-index --prefix`), результат кладётся в индекс через `hash-object --path` + `update-index`; рабочая копия не перезаписывается, если там своя версия; невозможность снимка при незастейдженных правках под `app/` **блокирует** коммит. Хук перенесён в репозиторий (`.githooks/` + `scripts/install_git_hooks.sh`, `core.hooksPath`), `.gitattributes` держит LF | (a) **Предупреждение, которое не останавливает, не считается защитой** — если правило важно, гейт обязан блокировать. (b) **Инструмент, влияющий на состав коммита, обязан жить в репозитории**, иначе починка не видна в ревью и живёт на одной машине. (c) Всё, что генерируется в pre-commit, собирается из индекса, а не из рабочего дерева — дерево общее | FIXED |
+diff --git a/scripts/install_git_hooks.sh b/scripts/install_git_hooks.sh
+new file mode 100755
+index 0000000..590aadb
+--- /dev/null
++++ b/scripts/install_git_hooks.sh
+@@ -0,0 +1,27 @@
++#!/usr/bin/env bash
++# Ставит хуки репозитория из .githooks/ (tsk-669).
++#
++# Запуск один раз на рабочую копию (в том числе в свежем клоне):
++#   bash scripts/install_git_hooks.sh
++#
++# Что делает:
++#   1. core.hooksPath = .githooks — git берёт хуки из репозитория, а не из .git/hooks;
++#   2. старый локальный .git/hooks/pre-commit переименовывает в *.disabled-tsk669,
++#      чтобы он не сбивал с толку (сам git его после смены hooksPath уже не вызывает).
++
++set -euo pipefail
++
++REPO_ROOT="$(git rev-parse --show-toplevel)"
++cd "$REPO_ROOT"
++
++git config core.hooksPath .githooks
++echo "core.hooksPath = $(git config core.hooksPath)"
++
++LEGACY=".git/hooks/pre-commit"
++if [ -f "$LEGACY" ]; then
++    mv "$LEGACY" "$LEGACY.disabled-tsk669"
++    echo "Старый $LEGACY отключён (переименован в pre-commit.disabled-tsk669)."
++fi
++
++chmod +x .githooks/* 2>/dev/null || true
++echo "Готово. Хуки берутся из .githooks/."

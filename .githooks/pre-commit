@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# pre-commit LMS — пересборка docs/openapi.json.
+#
+# Задача tsk-669 (рецидив tsk-495/tsk-461). Три правила, ради которых хук переписан:
+#   1. Коммит не трогает app/*.py  -> схема не пересобирается вовсе.
+#   2. Схема собирается из СНИМКА ИНДЕКСА, а не из рабочего дерева: незакоммиченный
+#      код соседней сессии (ADR-0008) в чужой коммит больше не попадает.
+#   3. Снимок невозможен и в дереве есть чужие незастейдженные правки под app/ ->
+#      коммит БЛОКИРУЕТСЯ. Молчаливый проход был причиной рецидива.
+#
+# Результат кладётся в индекс. Рабочее дерево docs/openapi.json переписывается
+# только тогда, когда оно совпадает с индексом (то есть чужой регенерации там нет).
+#
+# git stash / reset --hard / clean здесь запрещены (ADR-0008): дерево общее.
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCHEMA_REL="docs/openapi.json"
+SCHEMA_ABS="$REPO_ROOT/$SCHEMA_REL"
+
+# --- 1. Нужна ли пересборка вообще -------------------------------------------------
+STAGED_APP="$(git diff --cached --name-only --diff-filter=ACMRD -- app | grep -E '\.py$' || true)"
+if [ -z "$STAGED_APP" ]; then
+    echo "[pre-commit] В коммите нет изменений под app/*.py — docs/openapi.json не трогаем."
+    exit 0
+fi
+
+# --- 2. Интерпретатор --------------------------------------------------------------
+if [ -x "$REPO_ROOT/.venv/Scripts/python.exe" ]; then
+    PYTHON="$REPO_ROOT/.venv/Scripts/python.exe"
+elif [ -f "$REPO_ROOT/.venv/Scripts/python" ]; then
+    PYTHON="$REPO_ROOT/.venv/Scripts/python"
+elif [ -f "$REPO_ROOT/.venv/bin/python" ]; then
+    PYTHON="$REPO_ROOT/.venv/bin/python"
+elif [ -f "$REPO_ROOT/venv/Scripts/python" ]; then
+    PYTHON="$REPO_ROOT/venv/Scripts/python"
+else
+    PYTHON="python"
+fi
+
+# --- 3. Чужие незастейдженные правки под app/ (для диагностики и блокировки) --------
+unstaged_app_files() {
+    git diff --name-only --diff-filter=ACMRD -- app | grep -E '\.py$' || true
+}
+
+# Аварийный выход: снимок собрать не удалось.
+# Есть незастейдженные правки под app/ -> блокируем, иначе дерево == индекс и
+# старый путь (сборка из дерева) безопасен.
+bail_or_fallback() {
+    local reason="$1"
+    local risky
+    risky="$(unstaged_app_files)"
+
+    if [ -n "$risky" ]; then
+        echo "[pre-commit] ОСТАНОВКА: не удалось собрать схему из снимка индекса." >&2
+        echo "[pre-commit] Причина: $reason" >&2
+        echo "[pre-commit] В рабочем дереве есть незастейдженные правки под app/ —" >&2
+        echo "[pre-commit] сборка из дерева утащила бы их в этот коммит:" >&2
+        echo "$risky" | sed 's/^/[pre-commit]   /' >&2
+        echo "[pre-commit]" >&2
+        echo "[pre-commit] Что делать (любой из двух выходов):" >&2
+        echo "[pre-commit]   1) правки соседа схему не меняют или файл уже актуален —" >&2
+        echo "[pre-commit]      повторить коммит с флагом --no-verify;" >&2
+        echo "[pre-commit]   2) дождаться, пока соседняя сессия закоммитит своё, и повторить." >&2
+        exit 1
+    fi
+
+    echo "[pre-commit] Снимок индекса недоступен ($reason), но незастейдженных правок"
+    echo "[pre-commit] под app/ нет — собираю схему из рабочего дерева (оно равно индексу)."
+    if ! "$PYTHON" -B "$REPO_ROOT/scripts/export_openapi.py"; then
+        echo "[pre-commit] ОСТАНОВКА: экспорт схемы завершился ошибкой." >&2
+        exit 1
+    fi
+    git add -- "$SCHEMA_ABS"
+    echo "[pre-commit] docs/openapi.json добавлен в коммит."
+    exit 0
+}
+
+# --- 4. Снимок индекса -------------------------------------------------------------
+SNAP="$(mktemp -d 2>/dev/null || true)"
+if [ -z "$SNAP" ] || [ ! -d "$SNAP" ]; then
+    bail_or_fallback "не удалось создать временный каталог"
+fi
+cleanup() { rm -rf "$SNAP" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# Тяжёлые каталоги, не участвующие в сборке схемы, в снимок не берём.
+if ! git ls-files -z -- . ':!:skills/**' ':!:docs/**' ':!:reviews/**' \
+        | git checkout-index --prefix="$SNAP/" -z --stdin; then
+    bail_or_fallback "git checkout-index не смог развернуть индекс"
+fi
+
+mkdir -p "$SNAP/docs"
+# .env не трекается, но нужен экспортёру для загрузки настроек.
+if [ -f "$REPO_ROOT/.env" ]; then
+    cp "$REPO_ROOT/.env" "$SNAP/.env"
+fi
+
+if [ ! -f "$SNAP/scripts/export_openapi.py" ]; then
+    bail_or_fallback "в снимке нет scripts/export_openapi.py"
+fi
+
+echo "[pre-commit] Сборка docs/openapi.json из снимка индекса..."
+if ! "$PYTHON" -B "$SNAP/scripts/export_openapi.py" >/dev/null; then
+    bail_or_fallback "экспортёр упал на снимке индекса"
+fi
+if [ ! -f "$SNAP/docs/openapi.json" ]; then
+    bail_or_fallback "экспортёр не создал файл схемы в снимке"
+fi
+
+# --- 5. Результат в индекс, дерево — только если оно не занято чужой версией --------
+# --path обязателен: файл лежит вне репозитория, и без него git не знает, какие
+# атрибуты/фильтры (eol, autocrlf) применять — blob мог бы разойтись с тем, что
+# дал бы обычный `git add`.
+NEW_BLOB="$(git hash-object -w --path "$SCHEMA_REL" -- "$SNAP/docs/openapi.json")"
+if [ -z "$NEW_BLOB" ]; then
+    bail_or_fallback "не удалось записать объект схемы"
+fi
+
+INDEX_BLOB="$(git ls-files -s -- "$SCHEMA_REL" | awk '{print $2}')"
+WORKTREE_BLOB=""
+if [ -f "$SCHEMA_ABS" ]; then
+    WORKTREE_BLOB="$(git hash-object -- "$SCHEMA_ABS")"
+fi
+
+if [ "$NEW_BLOB" = "$INDEX_BLOB" ]; then
+    echo "[pre-commit] Схема не изменилась — индекс уже актуален."
+    exit 0
+fi
+
+if ! git update-index --add --cacheinfo "100644,$NEW_BLOB,$SCHEMA_REL"; then
+    echo "[pre-commit] ОСТАНОВКА: не удалось положить схему в индекс." >&2
+    exit 1
+fi
+echo "[pre-commit] docs/openapi.json обновлён в индексе (источник — снимок индекса)."
+
+if [ -z "$WORKTREE_BLOB" ] || [ "$WORKTREE_BLOB" = "$INDEX_BLOB" ]; then
+    cp "$SNAP/docs/openapi.json" "$SCHEMA_ABS"
+    echo "[pre-commit] Рабочая копия docs/openapi.json синхронизирована с коммитом."
+else
+    echo "[pre-commit] В рабочем дереве лежит своя версия docs/openapi.json —"
+    echo "[pre-commit] она НЕ перезаписана. В коммит уходит версия, собранная из индекса."
+fi
+
+exit 0

@@ -1,0 +1,4 @@
+# Скрипты для shell обязаны выкладываться с LF: с CRLF ломается shebang
+# (bad interpreter: /usr/bin/env bash^M), и git-хуки просто не запускаются.
+.githooks/** text eol=lf
+*.sh text eol=lf
