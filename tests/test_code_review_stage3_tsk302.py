@@ -363,6 +363,64 @@ def test_parse_verdict_survives_model_quirks() -> None:
     assert out_of_range["code_quality"]["score"] == 10
 
 
+@pytest.mark.parametrize(
+    "broken", ['[{"code_quality": {"score": 7}}]', '"просто строка"', "не json вовсе"],
+)
+async def test_broken_model_answer_does_not_crash_the_tick(
+    broken: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Кривой ответ модели становится записью об ошибке, а не исключением.
+
+    Важно именно про массив: `data.get` на списке бросает `AttributeError`, а
+    он не входит в перехват `review_student_code` (там `JSONDecodeError`,
+    `ValueError`, `TypeError`) — один такой ответ уронил бы весь фоновый тик
+    вместе с работами, которые в пачке ещё не разобраны. Третий случай того же
+    дефекта: rubric_review_service (tsk-658), text_authorship_service (tsk-664),
+    здесь — ветка кода.
+    """
+    from app.services import code_review_service as svc
+
+    async def _fake_complete(messages, **kwargs):
+        return type("R", (), {"text": broken, "model": "test-model"})()
+
+    monkeypatch.setattr(svc, "complete", _fake_complete)
+
+    review = await svc.review_student_code("x = 1")
+    assert review["error"] == "unparsable_verdict"
+    assert review["retryable"] is True
+
+
+async def test_non_object_sections_degrade_to_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Объект пришёл, а секции внутри него — не объекты: это «сигнала нет».
+
+    Отчёт мы тут не теряем и на повтор работу не отправляем: балл становится
+    пустым, вердикт — `ambiguous`. Обвинение из мусора не выдумываем, но и
+    вторую ось из-за первой не роняем.
+    """
+    from app.services import code_review_service as svc
+
+    async def _fake_complete(messages, **kwargs):
+        return type("R", (), {
+            "text": json.dumps({
+                "language": "Python",
+                "code_quality": ["чисто"],
+                "ai_authorship": "student_likely",
+            }),
+            "model": "test-model",
+        })()
+
+    monkeypatch.setattr(svc, "complete", _fake_complete)
+
+    review = await svc.review_student_code("x = 1")
+    assert "error" not in review
+    assert review["code_quality"]["score"] is None
+    assert review["code_quality"]["notes"] == []
+    assert review["ai_authorship"]["verdict"] == "ambiguous"
+    assert review["language"] == "Python"
+
+
 # ---------- Инвариант видимости ----------
 
 def test_stage3_report_still_hidden_from_student() -> None:

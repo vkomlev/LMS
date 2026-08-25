@@ -505,9 +505,24 @@ def _parse_verdict(raw: str) -> Dict[str, Any]:
         text = text.strip()
 
     data = json.loads(text)
+    if not isinstance(data, dict):
+        # Модель вернула массив или строку вместо объекта. Проверка явная, а не
+        # «наверное придёт словарь»: `data.get` на списке бросает AttributeError,
+        # а он не входит в перехват вызывающего — то есть один кривой ответ
+        # модели уронил бы весь фоновый тик вместе с ещё не разобранными
+        # работами пачки. Тот же дефект закрыт у обоих близнецов:
+        # rubric_review_service (tsk-658) и text_authorship_service (tsk-664).
+        raise ValueError(f"ожидался объект, пришло {type(data).__name__}")
 
-    quality = data.get("code_quality") or {}
-    authorship = data.get("ai_authorship") or {}
+    quality = data.get("code_quality")
+    authorship = data.get("ai_authorship")
+    # Секция есть, но не объект — трактуем как «сигнала нет» по этой оси, ровно
+    # как мусор вместо самого вердикта или балла ниже. Вторую ось при этом не
+    # теряем: отчёт по одной оси лучше, чем отсутствие отчёта.
+    if not isinstance(quality, dict):
+        quality = {}
+    if not isinstance(authorship, dict):
+        authorship = {}
 
     score = quality.get("score")
     if isinstance(score, (int, float)):
