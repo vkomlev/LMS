@@ -383,8 +383,6 @@ async def stream(
                                   max_tokens=max_tokens, stream=True, seed=seed,
                                   response_format=None),
                 ) as resp:
-                    logger.info("LLM: заголовки от %s за %.1f c, статус %s",
-                                candidate, time.monotonic() - started, resp.status_code)
                     if resp.status_code != 200:
                         body = (await resp.aread()).decode("utf-8", "ignore")
                         _raise_for_status(resp.status_code, body)
@@ -442,8 +440,6 @@ async def stream(
                                 if not delta:
                                     continue
                                 if first_at is None:
-                                    logger.info("LLM: первый кусок от %s за %.1f c",
-                                                candidate, time.monotonic() - started)
                                     first_at = time.monotonic()
                                 got_any = True
                                 text_len += len(delta)
