@@ -235,6 +235,7 @@ def report(path: Path) -> None:
 
 async def main_async(args: argparse.Namespace) -> None:
     import asyncpg  # noqa: PLC0415
+    from asyncpg.exceptions import InterfaceError  # noqa: PLC0415
 
     dsn = _dsn_from_mcp("learn_prod_db") if args.prod else args.dsn
     if not dsn:
@@ -283,11 +284,37 @@ async def main_async(args: argparse.Namespace) -> None:
                     logger.info(
                         "Жду начала окна занятия %s — %.0f мин.", meta["occurrence_id"], wait_seconds / 60,
                     )
-                    await asyncio.sleep(wait_seconds)
+                    # tsk-662: на время ожидания соединение ЗАКРЫВАЕМ и открываем
+                    # заново перед окном. Прогон 25.08 пропал целиком именно на
+                    # этом: программа ждала окна 55 минут с открытым праздным
+                    # соединением, его закрыла та сторона, и первый же снимок
+                    # упал с `connection is closed` — ноль снимков за прогон,
+                    # окно занятия потеряно безвозвратно.
+                    if wait_seconds > 120:
+                        await conn.close()
+                        await asyncio.sleep(wait_seconds)
+                        conn = await asyncpg.connect(
+                            dsn, server_settings={"default_transaction_read_only": "on"}
+                        )
+                        logger.info("Соединение открыто заново перед окном.")
+                    else:
+                        await asyncio.sleep(wait_seconds)
                 logger.info("=== Караулю занятие %s до %s UTC ===", meta["occurrence_id"], stop.strftime("%H:%M"))
                 while datetime.now(timezone.utc) < stop:
                     tick = time.perf_counter()
-                    last_slow_id = await _sample(conn, out, last_slow_id, meta)
+                    try:
+                        last_slow_id = await _sample(conn, out, last_slow_id, meta)
+                    except (OSError, asyncpg.PostgresConnectionError, InterfaceError) as exc:
+                        # Обрыв ПОСРЕДИ окна не должен стоить остатка окна:
+                        # переоткрываем и продолжаем со следующего снимка.
+                        logger.warning("Соединение оборвалось (%s) — открываю заново.", exc)
+                        try:
+                            await conn.close()
+                        except Exception:  # noqa: BLE001 — уже мёртвое соединение
+                            pass
+                        conn = await asyncpg.connect(
+                            dsn, server_settings={"default_transaction_read_only": "on"}
+                        )
                     await asyncio.sleep(max(0.0, args.interval - (time.perf_counter() - tick)))
     finally:
         await conn.close()
