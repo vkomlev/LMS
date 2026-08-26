@@ -9706,7 +9706,7 @@
           "tasks"
         ],
         "summary": "Получить задачи курса",
-        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\ntsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —\nиначе один запрос списка выдавал верные ответы по всему курсу сразу.\n\ntsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    is_active: Опциональный фильтр по активности.\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
+        "description": "Получить список задач курса с пагинацией.\n\nY-5.2: переключен с legacy `Depends(get_db)` (X-API-Key only) на cookie+ACL\nчерез `assert_course_access`. Service-key bypass сохранён через\n`current_user.is_service`. Параллель Y-4 post-S5 / Y-5.1 hotfixes.\n\ntsk-460: ученику `solution_rules` каждой задачи отдаётся как `null` —\nиначе один запрос списка выдавал верные ответы по всему курсу сразу.\n\ntsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.\n\ntsk-699: ученику фильтр принудительно `is_active=true` — до этого один\nзапрос отдавал ему стемы и варианты всех выключенных заданий курса\n(см. `_active_filter_for`).\n\nArgs:\n    course_id: ID курса.\n    difficulty_id: Опциональный фильтр по уровню сложности.\n    is_active: Опциональный фильтр по активности (только для\n        привилегированного вызывающего).\n    limit: Максимум записей на странице (1-1000).\n    offset: Смещение для пагинации.\n\nReturns:\n    Список задач курса.",
         "operationId": "get_tasks_by_course_api_v1_tasks_by_course__course_id__get",
         "security": [
           {
@@ -9757,10 +9757,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные).",
+              "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные). Действует только для привилегированного вызывающего (сервисный ключ, teacher / methodist / admin); ученику список всегда ограничен активными заданиями.",
               "title": "Is Active"
             },
-            "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные)."
+            "description": "Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные). Действует только для привилегированного вызывающего (сервисный ключ, teacher / methodist / admin); ученику список всегда ограничен активными заданиями."
           },
           {
             "name": "limit",

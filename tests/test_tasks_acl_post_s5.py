@@ -457,6 +457,144 @@ async def test_student_history_survives_inactive_task(db, client):
         await _cleanup(db, user_ids=[uid], task_ids=[tid])
 
 
+# ─── tsk-699: список заданий курса не отдаёт ученику выключенные ───────────
+
+
+@pytest.mark.asyncio
+async def test_student_course_list_hides_inactive_tasks(db, client):
+    """Хвост tsk-697, но оптом: `GET /tasks/by-course/{id}` по умолчанию
+    (`is_active` не передан) отдавал ученику стемы ВСЕХ заданий курса, включая
+    снятые с публикации. На проде 26.08.2026 — 1220 выключенных из 7629.
+    """
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    active_id, _ea = await _create_task(db, course_id=gid, is_active=True)
+    inactive_id, _ei = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {t["id"] for t in resp.json()}
+        assert active_id in ids, "активное задание курса ученику по-прежнему видно"
+        assert inactive_id not in ids
+    finally:
+        await _cleanup(db, user_ids=[uid], task_ids=[active_id, inactive_id])
+
+
+@pytest.mark.asyncio
+async def test_student_cannot_request_inactive_tasks_explicitly(db, client):
+    """`?is_active=false` не должен быть дверью в обход: ученику фильтр
+    принудительно `true`, поэтому в срезе выключенных для него пусто."""
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    active_id, _ea = await _create_task(db, course_id=gid, is_active=True)
+    inactive_id, _ei = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?is_active=false&limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {t["id"] for t in resp.json()}
+        assert inactive_id not in ids
+        assert active_id in ids, (
+            "фильтр подменён на is_active=true, поэтому отдаются активные"
+        )
+    finally:
+        await _cleanup(db, user_ids=[uid], task_ids=[active_id, inactive_id])
+
+
+@pytest.mark.asyncio
+async def test_methodist_course_list_still_shows_inactive_tasks(db, client):
+    """Кабинет методиста стоит на прежнем поведении: без параметра — оба
+    задания, `is_active=false` — срез выключенных (tsk-559)."""
+    _root, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="methodist")
+    active_id, _ea = await _create_task(db, course_id=gid, is_active=True)
+    inactive_id, _ei = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {t["id"] for t in resp.json()}
+        assert {active_id, inactive_id} <= ids
+
+        resp2 = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?is_active=false&limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp2.status_code == 200, resp2.text
+        ids2 = {t["id"] for t in resp2.json()}
+        assert inactive_id in ids2
+        assert active_id not in ids2
+    finally:
+        await _cleanup(db, user_ids=[uid], task_ids=[active_id, inactive_id])
+
+
+@pytest.mark.asyncio
+async def test_service_key_course_list_still_shows_inactive_tasks(db, client):
+    """Сервисный ключ: переиздание ContentBackbone и ТГ-боты обходят курс
+    через `by-course` и рассчитывают увидеть выключенные задания тоже."""
+    _root, _child, gid = await _pick_root_with_grandchild(db)
+    active_id, _ea = await _create_task(db, course_id=gid, is_active=True)
+    inactive_id, _ei = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?limit=1000",
+            headers={"X-API-Key": _service_api_key()},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {t["id"] for t in resp.json()}
+        assert {active_id, inactive_id} <= ids
+    finally:
+        await _cleanup(db, user_ids=[], task_ids=[active_id, inactive_id])
+
+
+@pytest.mark.asyncio
+async def test_teacher_course_list_still_shows_inactive_tasks(db, client):
+    """Преподаватель разбирает сдачи по снятым заданиям — список курса ему
+    отдаётся как раньше."""
+    _root, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="teacher")
+    active_id, _ea = await _create_task(db, course_id=gid, is_active=True)
+    inactive_id, _ei = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {t["id"] for t in resp.json()}
+        assert {active_id, inactive_id} <= ids
+    finally:
+        await _cleanup(db, user_ids=[uid], task_ids=[active_id, inactive_id])
+
+
+@pytest.mark.asyncio
+async def test_student_course_list_stem_not_leaked(db, client):
+    """Прямая проверка утечки: стем выключенного задания не должен попасть в
+    тело ответа ученику ни в каком виде."""
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    inactive_id, ext = await _create_task(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/tasks/by-course/{gid}?limit=1000",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert ext not in resp.text, "external_uid выключенного задания утёк"
+    finally:
+        await _cleanup(db, user_ids=[uid], task_ids=[inactive_id])
+
+
 # ─── 404 ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

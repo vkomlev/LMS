@@ -104,6 +104,45 @@ def _deny_if_inactive_for_student(
     raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
 
 
+def _active_filter_for(
+    requested: Optional[bool],
+    *,
+    privileged: bool,
+    current_user: CurrentUser,
+    course_id: int,
+) -> Optional[bool]:
+    """Заставить список заданий курса отдавать ученику только активные (tsk-699).
+
+    tsk-697 закрыл выключенное задание в ручках чтения ОДНОГО задания, но
+    список курса остался открыт — и оптом: `is_active` по умолчанию (`None`)
+    означает «все задания, и активные, и выключенные» (tsk-559, параметр
+    задумывался для кабинета методиста). Ученику, у которого есть доступ к
+    курсу, один запрос отдавал стемы и варианты ВСЕХ заданий курса, включая
+    снятые с публикации. На проде 26.08.2026 — 1220 выключенных заданий из
+    7629, в курсе 138 это 28 из 61.
+
+    Непривилегированному вызывающему фильтр принудительно `True` — в том
+    числе когда он явно попросил `is_active=false` (иначе параметр стал бы
+    прямой дверью к выключенным). Привилегированный (сервисный ключ,
+    teacher / methodist / admin) получает срез как просил: на этом стоят
+    кабинет методиста, переиздание из ContentBackbone и ТГ-боты.
+
+    Экран программы курса в SPW правка не меняет: список item'ов ученику
+    строит `GET /me/courses/{id}/syllabus-states`, который фильтрует
+    `t.is_active = true` сам, а `by-course` служит справочником названий по
+    `task_id` — у выключенных заданий совпадений в нём и так нет.
+    """
+    if privileged:
+        return requested
+    if requested is not True:
+        logger.info(
+            "tsk-699: force is_active=true for student user_id=%s course_id=%s "
+            "(requested=%s)",
+            current_user.id, course_id, requested,
+        )
+    return True
+
+
 @router.get(
     "/tasks/by-external/{external_uid}",
     response_model=TaskRead,
@@ -854,7 +893,13 @@ async def get_tasks_by_course(
     difficulty_id: Optional[int] = Query(None, description="Фильтр по уровню сложности"),
     is_active: Optional[bool] = Query(
         None,
-        description="Фильтр по активности. По умолчанию (null) — все задания (и активные, и неактивные).",
+        description=(
+            "Фильтр по активности. По умолчанию (null) — все задания "
+            "(и активные, и неактивные). Действует только для "
+            "привилегированного вызывающего (сервисный ключ, "
+            "teacher / methodist / admin); ученику список всегда "
+            "ограничен активными заданиями."
+        ),
     ),
     limit: int = Query(100, ge=1, le=1000, description="Максимум записей на странице"),
     offset: int = Query(0, ge=0, description="Смещение"),
@@ -871,10 +916,15 @@ async def get_tasks_by_course(
 
     tsk-559: `is_active` по образцу `GET /courses/{course_id}/materials`.
 
+    tsk-699: ученику фильтр принудительно `is_active=true` — до этого один
+    запрос отдавал ему стемы и варианты всех выключенных заданий курса
+    (см. `_active_filter_for`).
+
     Args:
         course_id: ID курса.
         difficulty_id: Опциональный фильтр по уровню сложности.
-        is_active: Опциональный фильтр по активности.
+        is_active: Опциональный фильтр по активности (только для
+            привилегированного вызывающего).
         limit: Максимум записей на странице (1-1000).
         offset: Смещение для пагинации.
 
@@ -888,7 +938,12 @@ async def get_tasks_by_course(
         db,
         course_id=course_id,
         difficulty_id=difficulty_id,
-        is_active=is_active,
+        is_active=_active_filter_for(
+            is_active,
+            privileged=privileged,
+            current_user=current_user,
+            course_id=course_id,
+        ),
         limit=limit,
         offset=offset,
     )
