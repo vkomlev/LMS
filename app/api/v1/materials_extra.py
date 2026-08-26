@@ -137,6 +137,48 @@ async def materials_bulk_upsert(
     return result
 
 
+def _active_filter_for(
+    requested: Optional[bool],
+    *,
+    privileged: bool,
+    current_user: CurrentUser,
+    course_id: int,
+) -> Optional[bool]:
+    """Заставить список материалов курса отдавать ученику только активные (tsk-703).
+
+    tsk-695 закрыл выключенный материал в ручке чтения ОДНОГО материала, но
+    список курса остался открыт — и оптом: `is_active` по умолчанию (`None`)
+    означает «все материалы, и активные, и выключенные» (параметр заводился
+    под кабинет методиста, tsk-559). Ученику, имеющему доступ к курсу, один
+    запрос отдавал материалы ВМЕСТЕ С ТЕЛОМ (`MaterialRead.content`), включая
+    снятые с публикации. На проде 26.08.2026 — 458 выключенных материалов из
+    3551; в курсе 1064 это 64 из 65.
+
+    Близнец `_active_filter_for` в `tasks_extra.py` (tsk-699) — там то же
+    самое для `GET /tasks/by-course/{course_id}`.
+
+    Непривилегированному вызывающему фильтр принудительно `True` — в том
+    числе когда он явно попросил `is_active=false` (иначе параметр стал бы
+    прямой дверью к выключенным). Привилегированный (сервисный ключ,
+    teacher / methodist / admin) получает срез как просил: на этом стоят
+    кабинет методиста, переиздание из ContentBackbone (`get_materials_by_course`,
+    в т.ч. prune-логика `lesson_publisher`) и ТГ-боты методиста и преподавателя.
+
+    Экран программы курса в SPW правка не меняет: `use-course-syllabus`
+    запрашивает `?is_active=true` сам, ученический экран ТГ-бота
+    (`student_courses_base`) — тоже.
+    """
+    if privileged:
+        return requested
+    if requested is not True:
+        logger.info(
+            "tsk-703: force is_active=true for student user_id=%s course_id=%s "
+            "(requested=%s)",
+            current_user.id, course_id, requested,
+        )
+    return True
+
+
 @router.get(
     "/courses/{course_id}/materials",
     response_model=MaterialsListResponse,
@@ -145,7 +187,7 @@ async def materials_bulk_upsert(
 async def list_course_materials(
     course_id: int,
     q: str | None = Query(None, description="Поиск по заголовку и external_uid (в рамках курса)"),
-    is_active: bool | None = Query(None, description="Фильтр по активности. По умолчанию (null) — все материалы (и активные, и неактивные)."),
+    is_active: bool | None = Query(None, description="Фильтр по активности. По умолчанию (null) — все материалы (и активные, и неактивные). Только для привилегированного вызывающего: ученику список всегда фильтруется по is_active=true (tsk-703)."),
     type: str | None = Query(None, alias="type", description="Фильтр по типу материала"),
     order_by: str = Query("order_position", description="Сортировка: order_position, title, created_at"),
     skip: int = Query(0, ge=0),
@@ -156,13 +198,25 @@ async def list_course_materials(
     """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).
     total — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски).
 
-    Y-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён."""
-    await assert_course_access(db, current_user=current_user, course_id=course_id)
+    Y-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён.
+
+    tsk-703: ученику список принудительно фильтруется по `is_active=true`
+    (см. `_active_filter_for`). Раньше возвращаемое значение
+    `assert_course_access` здесь не использовалось вовсе — признак
+    привилегированности отбрасывался, и фильтр применялся как попросили."""
+    privileged = await assert_course_access(
+        db, current_user=current_user, course_id=course_id,
+    )
     items, total = await materials_service.list_by_course(
         db,
         course_id,
         q=q,
-        is_active=is_active,
+        is_active=_active_filter_for(
+            is_active,
+            privileged=privileged,
+            current_user=current_user,
+            course_id=course_id,
+        ),
         type_filter=type,
         order_by=order_by,
         skip=skip,

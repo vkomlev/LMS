@@ -1,0 +1,219 @@
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index 458e815..c563796 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -137,6 +137,48 @@ async def materials_bulk_upsert(
+     return result
+ 
+ 
++def _active_filter_for(
++    requested: Optional[bool],
++    *,
++    privileged: bool,
++    current_user: CurrentUser,
++    course_id: int,
++) -> Optional[bool]:
++    """Заставить список материалов курса отдавать ученику только активные (tsk-703).
++
++    tsk-695 закрыл выключенный материал в ручке чтения ОДНОГО материала, но
++    список курса остался открыт — и оптом: `is_active` по умолчанию (`None`)
++    означает «все материалы, и активные, и выключенные» (параметр заводился
++    под кабинет методиста, tsk-559). Ученику, имеющему доступ к курсу, один
++    запрос отдавал материалы ВМЕСТЕ С ТЕЛОМ (`MaterialRead.content`), включая
++    снятые с публикации. На проде 26.08.2026 — 458 выключенных материалов из
++    3551; в курсе 1064 это 64 из 65.
++
++    Близнец `_active_filter_for` в `tasks_extra.py` (tsk-699) — там то же
++    самое для `GET /tasks/by-course/{course_id}`.
++
++    Непривилегированному вызывающему фильтр принудительно `True` — в том
++    числе когда он явно попросил `is_active=false` (иначе параметр стал бы
++    прямой дверью к выключенным). Привилегированный (сервисный ключ,
++    teacher / methodist / admin) получает срез как просил: на этом стоят
++    кабинет методиста, переиздание из ContentBackbone (`get_materials_by_course`,
++    в т.ч. prune-логика `lesson_publisher`) и ТГ-боты методиста и преподавателя.
++
++    Экран программы курса в SPW правка не меняет: `use-course-syllabus`
++    запрашивает `?is_active=true` сам, ученический экран ТГ-бота
++    (`student_courses_base`) — тоже.
++    """
++    if privileged:
++        return requested
++    if requested is not True:
++        logger.info(
++            "tsk-703: force is_active=true for student user_id=%s course_id=%s "
++            "(requested=%s)",
++            current_user.id, course_id, requested,
++        )
++    return True
++
++
+ @router.get(
+     "/courses/{course_id}/materials",
+     response_model=MaterialsListResponse,
+@@ -145,7 +187,7 @@ async def materials_bulk_upsert(
+ async def list_course_materials(
+     course_id: int,
+     q: str | None = Query(None, description="Поиск по заголовку и external_uid (в рамках курса)"),
+-    is_active: bool | None = Query(None, description="Фильтр по активности. По умолчанию (null) — все материалы (и активные, и неактивные)."),
++    is_active: bool | None = Query(None, description="Фильтр по активности. По умолчанию (null) — все материалы (и активные, и неактивные). Только для привилегированного вызывающего: ученику список всегда фильтруется по is_active=true (tsk-703)."),
+     type: str | None = Query(None, alias="type", description="Фильтр по типу материала"),
+     order_by: str = Query("order_position", description="Сортировка: order_position, title, created_at"),
+     skip: int = Query(0, ge=0),
+@@ -156,13 +198,25 @@ async def list_course_materials(
+     """Возвращает материалы курса с фильтрацией и пагинацией. Параметр q — поиск по title и external_uid (ILIKE).
+     total — число материалов, удовлетворяющих фильтрам (не путать с max order_position: позиции могут иметь пропуски).
+ 
+-    Y-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён."""
+-    await assert_course_access(db, current_user=current_user, course_id=course_id)
++    Y-5.2: cookie+ACL через assert_course_access. Service-key bypass сохранён.
++
++    tsk-703: ученику список принудительно фильтруется по `is_active=true`
++    (см. `_active_filter_for`). Раньше возвращаемое значение
++    `assert_course_access` здесь не использовалось вовсе — признак
++    привилегированности отбрасывался, и фильтр применялся как попросили."""
++    privileged = await assert_course_access(
++        db, current_user=current_user, course_id=course_id,
++    )
+     items, total = await materials_service.list_by_course(
+         db,
+         course_id,
+         q=q,
+-        is_active=is_active,
++        is_active=_active_filter_for(
++            is_active,
++            privileged=privileged,
++            current_user=current_user,
++            course_id=course_id,
++        ),
+         type_filter=type,
+         order_by=order_by,
+         skip=skip,
+diff --git a/tests/test_materials_acl_y51.py b/tests/test_materials_acl_y51.py
+index a478211..47b289f 100644
+--- a/tests/test_materials_acl_y51.py
++++ b/tests/test_materials_acl_y51.py
+@@ -384,3 +384,123 @@ async def test_get_material_404_for_missing(db, client):
+         assert resp.status_code == 404, resp.text
+     finally:
+         await _cleanup(db, user_ids=[uid], material_ids=[])
++
++
++# ─── tsk-703: список материалов курса не отдаёт ученику выключенные ────────
++#
++# Оптовая версия tsk-695: там ученик открывал ОДИН выключенный материал по
++# прямой ссылке, здесь — получал весь курс списком, вместе с телом
++# (`MaterialRead.content`). Близнец tsk-699 для `GET /tasks/by-course/{id}`.
++
++
++async def _list_course_materials(client, course_id: int, *, headers, params: str = "") -> dict:
++    resp = await client.get(
++        f"/api/v1/courses/{course_id}/materials?limit=500{params}",
++        headers=headers,
++    )
++    assert resp.status_code == 200, resp.text
++    return resp.json()
++
++
++@pytest.mark.asyncio
++async def test_student_course_materials_list_hides_inactive(db, client):
++    """Ученик видит в списке курса только активные материалы."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    active_id = await _create_material(db, course_id=gid, is_active=True)
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid, headers={"Authorization": f"Bearer {token}"},
++        )
++        ids = {item["id"] for item in data["items"]}
++        assert active_id in ids
++        assert inactive_id not in ids
++        assert all(item["is_active"] is True for item in data["items"])
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[active_id, inactive_id])
++
++
++@pytest.mark.asyncio
++async def test_student_cannot_request_inactive_materials_explicitly(db, client):
++    """Явный `?is_active=false` ученику не открывает дверь — тот же активный срез."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    active_id = await _create_material(db, course_id=gid, is_active=True)
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid,
++            headers={"Authorization": f"Bearer {token}"},
++            params="&is_active=false",
++        )
++        ids = {item["id"] for item in data["items"]}
++        assert inactive_id not in ids
++        assert active_id in ids
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[active_id, inactive_id])
++
++
++@pytest.mark.asyncio
++async def test_student_course_materials_total_matches_visible(db, client):
++    """`total` считается по тому же срезу — иначе пагинация врёт ученику."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    active_id = await _create_material(db, course_id=gid, is_active=True)
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid, headers={"Authorization": f"Bearer {token}"},
++        )
++        assert data["total"] == len(data["items"])
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[active_id, inactive_id])
++
++
++@pytest.mark.asyncio
++async def test_methodist_still_sees_inactive_in_course_list(db, client):
++    """Кабинет методиста стоит на прежнем поведении: по умолчанию — все материалы."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="methodist")
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid, headers={"Authorization": f"Bearer {token}"},
++        )
++        assert inactive_id in {item["id"] for item in data["items"]}
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[inactive_id])
++
++
++@pytest.mark.asyncio
++async def test_teacher_still_sees_inactive_in_course_list(db, client):
++    """Преподаватель разбирает с учеником снятый материал — срез не сужаем."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="teacher")
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid, headers={"Authorization": f"Bearer {token}"},
++        )
++        assert inactive_id in {item["id"] for item in data["items"]}
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[inactive_id])
++
++
++@pytest.mark.asyncio
++async def test_service_key_still_sees_inactive_in_course_list(db, client):
++    """ContentBackbone и ТГ-боты ходят сервисным ключом: prune-логика
++    `lesson_publisher` рассчитывает увидеть выключенные материалы."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    api_key = _service_api_key()
++    inactive_id = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        data = await _list_course_materials(
++            client, gid, headers={"X-API-Key": api_key},
++        )
++        assert inactive_id in {item["id"] for item in data["items"]}
++    finally:
++        await _cleanup(db, user_ids=[], material_ids=[inactive_id])
