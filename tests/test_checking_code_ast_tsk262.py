@@ -126,9 +126,17 @@ def test_known_limit_missing_colon_still_passes():
 # ---------- Без флага поведение не меняется ----------
 
 def test_without_flag_ast_path_is_off():
-    """Тот же ложный незачёт остаётся, пока задание не объявило code_ast —
-    режим не включается сам по себе."""
-    assert _matches("print(slovo .lower())", "print(slovo.lower())", TEXT_STEPS) is False
+    """
+    Режим не включается сам по себе: без флага работает только текстовая ветка,
+    и то, что умеет один разбор кода, остаётся незачётом.
+
+    tsk-694: прежний пример (`print(slovo .lower())`) текст теперь тоже засчитывает —
+    знак препинания стал пробелом, и лишний пробел перед точкой перестал быть значимым.
+    Взят случай, который текстом не спасти в принципе: комментарий AST отбрасывает,
+    а текстовая нормализация видит в нём обычные слова.
+    """
+    assert _matches("x = 1  # считаем", "x = 1", TEXT_STEPS) is False
+    assert _matches("x = 1  # считаем", "x = 1", CODE_STEPS) is True
 
 
 def test_without_flag_text_comparison_unchanged():

@@ -21,6 +21,15 @@ from app.utils.exceptions import DomainError
 logger = logging.getLogger(__name__)
 
 _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
+# Есть ли в куске текста буква (любого алфавита). Цифры и '_' буквами не считаются.
+_LETTER_RE = re.compile(r"[^\W\d_]", flags=re.UNICODE)
+# Знак ВНУТРИ числа: разделитель дробной части, даты, IP, версии — «2.5», «25/12/2024»,
+# «192.168.1.0». Внутри чисто числового куска такой знак не разделяет части ответа,
+# а склеивает их, поэтому он удаляется (поведение до tsk-694).
+_BETWEEN_DIGITS_RE = re.compile(r"(?<=\d)[^\w\s](?=\d)")
+# Дефис и апостроф внутри слова: «кто-то», «don't». Тоже не разделитель — удаляются,
+# иначе «кто то» стало бы засчитываться за «кто-то».
+_INWORD_RE = re.compile(r"(?<=[^\W\d_])['’\-](?=[^\W\d_])", flags=re.UNICODE)
 
 
 class CheckingService:
@@ -1183,6 +1192,51 @@ class CheckingService:
             return None
 
     @staticmethod
+    def _strip_punctuation(value: str) -> str:
+        """
+        Шаг `strip_punctuation`: знак препинания становится ПРОБЕЛОМ, а не исчезает.
+
+        Почему пробел, а не удаление (tsk-694). Удаление делало пробел вокруг знака
+        значимым — ровно наоборот назначению шага. Ответ `urovenj=map(syroe,0,50);`
+        давал `urovenjmapsyroe0050`, а эталон `urovenj = map(syroe, 0, 50);` —
+        `urovenj mapsyroe 0 50`: строки расходились, и верный ответ заворачивался.
+        Больнее всего это било по заданиям с кодом, где `code_ast` не спасает
+        (разбирается только Python, на C-подобном коде он откатывается к тексту).
+
+        Два исключения, где знак НЕ разделитель, а часть значения:
+
+        1. Знак внутри чисто числового куска (нет ни одной буквы): `2.5`, `2,5`,
+           `25/12/2024`, `192.168.1.0`. Там знак склеивает число, и превращение его
+           в пробел засчитало бы «2 5» за «2.5».
+        2. Дефис и апостроф внутри слова: `кто-то`, `don't`. Иначе «кто то» стало бы
+           засчитываться за «кто-то».
+
+        Кусок берётся по пробелам: `map(syroe,0,50)` — с буквами, значит знаки внутри
+        разделители; соседний `0,50` без букв — значит одно число.
+
+        Шаг сам схлопывает пробелы и обрезает края: без этого задание, не объявившее
+        `collapse_spaces`, получило бы рваные двойные пробелы на месте знаков.
+
+        Args:
+            value: Текст после trim/lower.
+
+        Returns:
+            Текст без знаков препинания, с пробелами на их месте.
+        """
+        pieces: List[str] = []
+        for piece in value.split():
+            if _LETTER_RE.search(piece):
+                piece = _INWORD_RE.sub("", piece)
+            else:
+                # Соседние совпадения перекрываются («1.2.3»), поэтому до стабилизации.
+                previous: Optional[str] = None
+                while previous != piece:
+                    previous = piece
+                    piece = _BETWEEN_DIGITS_RE.sub("", piece)
+            pieces.append(_PUNCT_RE.sub(" ", piece))
+        return " ".join(" ".join(pieces).split())
+
+    @staticmethod
     def _normalize_text(value: str, steps: List[str]) -> str:
         """
         Простейшая нормализация строки по списку шагов из ShortAnswerRules.normalization.
@@ -1191,8 +1245,8 @@ class CheckingService:
         от порядка в steps):
         - 'trim'              → обрезка пробелов по краям;
         - 'lower'             → приведение к нижнему регистру;
-        - 'strip_punctuation' → удаление всех символов, кроме букв, цифр, '_'
-                                и пробельных (Unicode-aware);
+        - 'strip_punctuation' → знаки препинания становятся ПРОБЕЛОМ, кроме знаков
+                                внутри числа и внутри слова (см. `_strip_punctuation`);
         - 'collapse_spaces'   → схлопывание подряд идущих пробелов в один.
 
         Порядок: trim → lower → strip_punctuation → collapse_spaces.
@@ -1208,7 +1262,7 @@ class CheckingService:
         if "lower" in steps:
             result = result.lower()
         if "strip_punctuation" in steps:
-            result = _PUNCT_RE.sub("", result)
+            result = CheckingService._strip_punctuation(result)
         if "collapse_spaces" in steps:
             result = " ".join(result.split())
         return result
