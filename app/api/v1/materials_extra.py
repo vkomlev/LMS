@@ -589,7 +589,7 @@ async def import_materials_from_google_sheets(
         200: {"description": "Материал найден и доступен"},
         401: {"description": "Не аутентифицирован"},
         403: {"description": "Student не зачислен в курс материала"},
-        404: {"description": "Материал не существует"},
+        404: {"description": "Материал не существует либо выключен (для ученика)"},
     },
 )
 async def get_material_by_id(
@@ -605,6 +605,18 @@ async def get_material_by_id(
     через `app.include_router(materials_extra,...)`. FastAPI matching first
     wins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +
     ACL по дереву user_courses + course_parents).
+
+    tsk-695: выключенный материал (`is_active = false`) ученику не отдаётся.
+    Программа курса и учебный движок фильтруют по `is_active` давно, а эта
+    ручка — нет: старая закладка или сохранённая ссылка открывала снятый с
+    публикации материал целиком, с меткой «Обязательно» (проверено живьём
+    на проде 26.08.2026, материал 356; на тот момент таких материалов 458).
+    Привилегированные (сервисный ключ, teacher / methodist / admin) выключенный
+    материал видят по-прежнему — на нём стоит кабинет методиста и предпросмотр.
+
+    404, а не 403: ученику выключенный материал неотличим от удалённого, и
+    SPW уже рисует на 404 «Материал недоступен» со ссылкой на следующий шаг.
+    Разница между 403 и 404 сама по себе выдавала бы факт существования.
     """
     from app.models.materials import Materials  # noqa: PLC0415 — circular avoid
 
@@ -612,9 +624,15 @@ async def get_material_by_id(
     material = result.scalar_one_or_none()
     if material is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
-    await assert_material_access(
+    privileged = await assert_material_access(
         db, current_user=current_user, material_course_id=material.course_id,
     )
+    if not privileged and not material.is_active:
+        logger.info(
+            "tsk-695: deny student user_id=%s material_id=%s (is_active=false)",
+            current_user.id, material_id,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
     return material
 
 

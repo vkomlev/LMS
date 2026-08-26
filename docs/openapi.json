@@ -5682,7 +5682,7 @@
           "materials"
         ],
         "summary": "Получить материал по id (Y-5.1: cookie auth + ACL)",
-        "description": "Вернуть материал по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nПараллель к Y-4 post-S5 fix /api/v1/tasks/{id}: переключает endpoint с\nlegacy `Depends(get_db)` (X-API-Key only) на cookie+ACL. Регистрируется\nв `materials_extra_router`, который подключен в `main.py` ДО CRUD-роутера\nчерез `app.include_router(materials_extra,...)`. FastAPI matching first\nwins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +\nACL по дереву user_courses + course_parents).",
+        "description": "Вернуть материал по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nПараллель к Y-4 post-S5 fix /api/v1/tasks/{id}: переключает endpoint с\nlegacy `Depends(get_db)` (X-API-Key only) на cookie+ACL. Регистрируется\nв `materials_extra_router`, который подключен в `main.py` ДО CRUD-роутера\nчерез `app.include_router(materials_extra,...)`. FastAPI matching first\nwins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +\nACL по дереву user_courses + course_parents).\n\ntsk-695: выключенный материал (`is_active = false`) ученику не отдаётся.\nПрограмма курса и учебный движок фильтруют по `is_active` давно, а эта\nручка — нет: старая закладка или сохранённая ссылка открывала снятый с\nпубликации материал целиком, с меткой «Обязательно» (проверено живьём\nна проде 26.08.2026, материал 356; на тот момент таких материалов 458).\nПривилегированные (сервисный ключ, teacher / methodist / admin) выключенный\nматериал видят по-прежнему — на нём стоит кабинет методиста и предпросмотр.\n\n404, а не 403: ученику выключенный материал неотличим от удалённого, и\nSPW уже рисует на 404 «Материал недоступен» со ссылкой на следующий шаг.\nРазница между 403 и 404 сама по себе выдавала бы факт существования.",
         "operationId": "get_material_by_id_api_v1_materials__material_id__get",
         "security": [
           {
@@ -5769,7 +5769,7 @@
             "description": "Student не зачислен в курс материала"
           },
           "404": {
-            "description": "Материал не существует"
+            "description": "Материал не существует либо выключен (для ученика)"
           },
           "422": {
             "description": "Validation Error",

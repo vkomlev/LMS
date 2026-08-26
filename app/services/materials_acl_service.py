@@ -74,20 +74,28 @@ async def assert_material_access(
     *,
     current_user: CurrentUser,
     material_course_id: int | None,
-) -> None:
+) -> bool:
     """Проверить доступ к material (Y-5.1 fix).
 
     Raises HTTPException 403 если current_user не имеет права видеть material.
     is_service / extended-role bypass'ит проверку.
     student имеет доступ если material.course_id лежит в дереве user_courses.
+
+    Returns:
+        True — вызывающий привилегирован (сервисный ключ либо роль
+        admin / methodist / teacher); False — доступ дан ученику по дереву
+        его курсов. Признак нужен вызывающему, чтобы решить, отдавать ли
+        выключенный материал: методисту он нужен для правки и предпросмотра,
+        ученику — нет (tsk-695). Тот же контракт, что у
+        `tasks_acl_service.assert_task_access`.
     """
     # Service-key (X-API-Key) — bypass для backward compat (TG_LMS, CB CLI).
     if current_user.is_service:
-        return
+        return True
 
     has_extended = await _user_has_extended_role(db, current_user.id)
     if has_extended:
-        return
+        return True
 
     # Student-level: material должен иметь course_id и попадать в дерево user_courses.
     if material_course_id is None:
@@ -118,6 +126,8 @@ async def assert_material_access(
     # ПОСЛЕ bypass'ов роли: долг ученика не должен закрывать материал
     # преподавателю или методисту.
     await payment_access_service.assert_content_allowed(db, current_user.id)
+
+    return False
 
 
 # Префикс url'а, который `POST /materials/upload` кладёт в `content` материала.

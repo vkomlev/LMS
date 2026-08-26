@@ -254,7 +254,12 @@ async def material_complete(
     # закрыто, в Telegram открыто (класс tsk-433).
     await payment_access_service.assert_content_allowed(db, body.student_id)
     material = await materials_service.get_by_id(db, material_id)
-    if material is None:
+    # tsk-695: выключенный материал не отмечается пройденным. Соседний `/skip`
+    # проверял `is_active` с самого начала, а `complete` — нет: прямая ссылка
+    # на снятый с публикации материал не только открывалась, но и позволяла
+    # закрыть его кнопкой «Прошёл материал». Отметка преподавателя идёт другим
+    # путём (`/teacher/students/{id}/progress/materials/{id}`) и не затронута.
+    if material is None or not material.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
     user = await users_service.get_by_id(db, body.student_id)
     if user is None:

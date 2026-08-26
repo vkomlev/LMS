@@ -60,17 +60,18 @@ async def _create_user_with_session(
     return u.id, token
 
 
-async def _create_material(db, *, course_id: int) -> int:
+async def _create_material(db, *, course_id: int, is_active: bool = True) -> int:
     """INSERT material (минимально валидный type=text + content)."""
     res = await db.execute(
         text(
             "INSERT INTO materials (title, type, content, course_id, is_active) "
-            "VALUES (:t, 'text', CAST(:c AS jsonb), :cid, true) RETURNING id"
+            "VALUES (:t, 'text', CAST(:c AS jsonb), :cid, :act) RETURNING id"
         ),
         {
             "t": f"y51m-mat-{random.randint(10**8, 10**10)}",
             "c": json.dumps({"text": "test material"}),
             "cid": course_id,
+            "act": is_active,
         },
     )
     mid = res.scalar_one()
@@ -236,6 +237,138 @@ async def test_service_key_bypass(db, client):
         assert resp.status_code == 200, resp.text
     finally:
         await _cleanup(db, user_ids=[], material_ids=[mid])
+
+
+# ─── tsk-695: выключенный материал закрыт для ученика ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_student_denied_inactive_material_by_direct_link(db, client):
+    """Ученик зачислен в курс, но материал выключен → 404, а не содержимое.
+
+    Регресс-тест на дефект, найденный живьём 26.08.2026: из программы курса и
+    из зачёта выключенный материал уходил корректно, а прямая ссылка (старая
+    закладка) отдавала его целиком.
+    """
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    mid = await _create_material(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/materials/{mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404, resp.text
+    finally:
+        await _cleanup(db, user_ids=[uid], material_ids=[mid])
+
+
+@pytest.mark.asyncio
+async def test_methodist_still_sees_inactive_material(db, client):
+    """Методисту выключенный материал нужен: кабинет и предпросмотр стоят на нём."""
+    _root, _c, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="methodist")
+    mid = await _create_material(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/materials/{mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_active"] is False
+    finally:
+        await _cleanup(db, user_ids=[uid], material_ids=[mid])
+
+
+@pytest.mark.asyncio
+async def test_teacher_still_sees_inactive_material(db, client):
+    """Преподаватель разбирает с учеником снятый материал — доступ сохраняется."""
+    _root, _c, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="teacher")
+    mid = await _create_material(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/materials/{mid}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+    finally:
+        await _cleanup(db, user_ids=[uid], material_ids=[mid])
+
+
+@pytest.mark.asyncio
+async def test_service_key_still_sees_inactive_material(db, client):
+    """Сервисный ключ (TG_LMS, ContentBackbone CLI) читает материал независимо
+    от активности: переиздание и правка контента идут по нему."""
+    _root, _c, gid = await _pick_root_with_grandchild(db)
+    api_key = _service_api_key()
+    mid = await _create_material(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.get(
+            f"/api/v1/materials/{mid}",
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 200, resp.text
+    finally:
+        await _cleanup(db, user_ids=[], material_ids=[mid])
+
+
+@pytest.mark.asyncio
+async def test_student_cannot_complete_inactive_material(db, client):
+    """Выключенный материал нельзя отметить пройденным (симметрия со `/skip`)."""
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    mid = await _create_material(db, course_id=gid, is_active=False)
+    try:
+        resp = await client.post(
+            f"/api/v1/learning/materials/{mid}/complete",
+            json={"student_id": uid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 404, resp.text
+        rows = (
+            await db.execute(
+                text(
+                    "SELECT count(*) FROM student_material_progress "
+                    "WHERE student_id = :u AND material_id = :m"
+                ),
+                {"u": uid, "m": mid},
+            )
+        ).scalar_one()
+        assert rows == 0, "отметка о прохождении не должна была записаться"
+    finally:
+        await db.execute(
+            text("DELETE FROM student_material_progress WHERE student_id = :u"),
+            {"u": uid},
+        )
+        await db.commit()
+        await _cleanup(db, user_ids=[uid], material_ids=[mid])
+
+
+@pytest.mark.asyncio
+async def test_student_can_still_complete_active_material(db, client):
+    """Контроль: активный материал по-прежнему отмечается пройденным."""
+    root_id, _child, gid = await _pick_root_with_grandchild(db)
+    uid, token = await _create_user_with_session(db, role_name="student")
+    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
+    mid = await _create_material(db, course_id=gid, is_active=True)
+    try:
+        resp = await client.post(
+            f"/api/v1/learning/materials/{mid}/complete",
+            json={"student_id": uid},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "completed"
+    finally:
+        await db.execute(
+            text("DELETE FROM student_material_progress WHERE student_id = :u"),
+            {"u": uid},
+        )
+        await db.commit()
+        await _cleanup(db, user_ids=[uid], material_ids=[mid])
 
 
 # ─── 404 для несуществующего ───────────────────────────────────────────────

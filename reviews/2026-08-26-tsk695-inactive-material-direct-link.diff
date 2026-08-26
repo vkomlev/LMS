@@ -1,0 +1,276 @@
+diff --git a/app/api/v1/learning.py b/app/api/v1/learning.py
+index 452534d..1c243ee 100644
+--- a/app/api/v1/learning.py
++++ b/app/api/v1/learning.py
+@@ -254,7 +254,12 @@ async def material_complete(
+     # закрыто, в Telegram открыто (класс tsk-433).
+     await payment_access_service.assert_content_allowed(db, body.student_id)
+     material = await materials_service.get_by_id(db, material_id)
+-    if material is None:
++    # tsk-695: выключенный материал не отмечается пройденным. Соседний `/skip`
++    # проверял `is_active` с самого начала, а `complete` — нет: прямая ссылка
++    # на снятый с публикации материал не только открывалась, но и позволяла
++    # закрыть его кнопкой «Прошёл материал». Отметка преподавателя идёт другим
++    # путём (`/teacher/students/{id}/progress/materials/{id}`) и не затронута.
++    if material is None or not material.is_active:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Материал не найден")
+     user = await users_service.get_by_id(db, body.student_id)
+     if user is None:
+diff --git a/app/api/v1/materials_extra.py b/app/api/v1/materials_extra.py
+index f582bf0..458e815 100644
+--- a/app/api/v1/materials_extra.py
++++ b/app/api/v1/materials_extra.py
+@@ -589,7 +589,7 @@ async def import_materials_from_google_sheets(
+         200: {"description": "Материал найден и доступен"},
+         401: {"description": "Не аутентифицирован"},
+         403: {"description": "Student не зачислен в курс материала"},
+-        404: {"description": "Материал не существует"},
++        404: {"description": "Материал не существует либо выключен (для ученика)"},
+     },
+ )
+ async def get_material_by_id(
+@@ -605,6 +605,18 @@ async def get_material_by_id(
+     через `app.include_router(materials_extra,...)`. FastAPI matching first
+     wins → этот handler перекрывает CRUD GET /materials/{id} (cookie auth +
+     ACL по дереву user_courses + course_parents).
++
++    tsk-695: выключенный материал (`is_active = false`) ученику не отдаётся.
++    Программа курса и учебный движок фильтруют по `is_active` давно, а эта
++    ручка — нет: старая закладка или сохранённая ссылка открывала снятый с
++    публикации материал целиком, с меткой «Обязательно» (проверено живьём
++    на проде 26.08.2026, материал 356; на тот момент таких материалов 458).
++    Привилегированные (сервисный ключ, teacher / methodist / admin) выключенный
++    материал видят по-прежнему — на нём стоит кабинет методиста и предпросмотр.
++
++    404, а не 403: ученику выключенный материал неотличим от удалённого, и
++    SPW уже рисует на 404 «Материал недоступен» со ссылкой на следующий шаг.
++    Разница между 403 и 404 сама по себе выдавала бы факт существования.
+     """
+     from app.models.materials import Materials  # noqa: PLC0415 — circular avoid
+ 
+@@ -612,9 +624,15 @@ async def get_material_by_id(
+     material = result.scalar_one_or_none()
+     if material is None:
+         raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+-    await assert_material_access(
++    privileged = await assert_material_access(
+         db, current_user=current_user, material_course_id=material.course_id,
+     )
++    if not privileged and not material.is_active:
++        logger.info(
++            "tsk-695: deny student user_id=%s material_id=%s (is_active=false)",
++            current_user.id, material_id,
++        )
++        raise HTTPException(status.HTTP_404_NOT_FOUND, "Материал не найден")
+     return material
+ 
+ 
+diff --git a/app/services/materials_acl_service.py b/app/services/materials_acl_service.py
+index 18fbf5f..019dcd0 100644
+--- a/app/services/materials_acl_service.py
++++ b/app/services/materials_acl_service.py
+@@ -74,20 +74,28 @@ async def assert_material_access(
+     *,
+     current_user: CurrentUser,
+     material_course_id: int | None,
+-) -> None:
++) -> bool:
+     """Проверить доступ к material (Y-5.1 fix).
+ 
+     Raises HTTPException 403 если current_user не имеет права видеть material.
+     is_service / extended-role bypass'ит проверку.
+     student имеет доступ если material.course_id лежит в дереве user_courses.
++
++    Returns:
++        True — вызывающий привилегирован (сервисный ключ либо роль
++        admin / methodist / teacher); False — доступ дан ученику по дереву
++        его курсов. Признак нужен вызывающему, чтобы решить, отдавать ли
++        выключенный материал: методисту он нужен для правки и предпросмотра,
++        ученику — нет (tsk-695). Тот же контракт, что у
++        `tasks_acl_service.assert_task_access`.
+     """
+     # Service-key (X-API-Key) — bypass для backward compat (TG_LMS, CB CLI).
+     if current_user.is_service:
+-        return
++        return True
+ 
+     has_extended = await _user_has_extended_role(db, current_user.id)
+     if has_extended:
+-        return
++        return True
+ 
+     # Student-level: material должен иметь course_id и попадать в дерево user_courses.
+     if material_course_id is None:
+@@ -119,6 +127,8 @@ async def assert_material_access(
+     # преподавателю или методисту.
+     await payment_access_service.assert_content_allowed(db, current_user.id)
+ 
++    return False
++
+ 
+ # Префикс url'а, который `POST /materials/upload` кладёт в `content` материала.
+ # Единственная нить, связывающая файл на диске с курсом: имени файла
+diff --git a/tests/test_materials_acl_y51.py b/tests/test_materials_acl_y51.py
+index 3de8bb0..a478211 100644
+--- a/tests/test_materials_acl_y51.py
++++ b/tests/test_materials_acl_y51.py
+@@ -60,17 +60,18 @@ async def _create_user_with_session(
+     return u.id, token
+ 
+ 
+-async def _create_material(db, *, course_id: int) -> int:
++async def _create_material(db, *, course_id: int, is_active: bool = True) -> int:
+     """INSERT material (минимально валидный type=text + content)."""
+     res = await db.execute(
+         text(
+             "INSERT INTO materials (title, type, content, course_id, is_active) "
+-            "VALUES (:t, 'text', CAST(:c AS jsonb), :cid, true) RETURNING id"
++            "VALUES (:t, 'text', CAST(:c AS jsonb), :cid, :act) RETURNING id"
+         ),
+         {
+             "t": f"y51m-mat-{random.randint(10**8, 10**10)}",
+             "c": json.dumps({"text": "test material"}),
+             "cid": course_id,
++            "act": is_active,
+         },
+     )
+     mid = res.scalar_one()
+@@ -238,6 +239,138 @@ async def test_service_key_bypass(db, client):
+         await _cleanup(db, user_ids=[], material_ids=[mid])
+ 
+ 
++# ─── tsk-695: выключенный материал закрыт для ученика ──────────────────────
++
++
++@pytest.mark.asyncio
++async def test_student_denied_inactive_material_by_direct_link(db, client):
++    """Ученик зачислен в курс, но материал выключен → 404, а не содержимое.
++
++    Регресс-тест на дефект, найденный живьём 26.08.2026: из программы курса и
++    из зачёта выключенный материал уходил корректно, а прямая ссылка (старая
++    закладка) отдавала его целиком.
++    """
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    mid = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/materials/{mid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 404, resp.text
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[mid])
++
++
++@pytest.mark.asyncio
++async def test_methodist_still_sees_inactive_material(db, client):
++    """Методисту выключенный материал нужен: кабинет и предпросмотр стоят на нём."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="methodist")
++    mid = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/materials/{mid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["is_active"] is False
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[mid])
++
++
++@pytest.mark.asyncio
++async def test_teacher_still_sees_inactive_material(db, client):
++    """Преподаватель разбирает с учеником снятый материал — доступ сохраняется."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="teacher")
++    mid = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/materials/{mid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[uid], material_ids=[mid])
++
++
++@pytest.mark.asyncio
++async def test_service_key_still_sees_inactive_material(db, client):
++    """Сервисный ключ (TG_LMS, ContentBackbone CLI) читает материал независимо
++    от активности: переиздание и правка контента идут по нему."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    api_key = _service_api_key()
++    mid = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/materials/{mid}",
++            headers={"X-API-Key": api_key},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[], material_ids=[mid])
++
++
++@pytest.mark.asyncio
++async def test_student_cannot_complete_inactive_material(db, client):
++    """Выключенный материал нельзя отметить пройденным (симметрия со `/skip`)."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    mid = await _create_material(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/materials/{mid}/complete",
++            json={"student_id": uid},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 404, resp.text
++        rows = (
++            await db.execute(
++                text(
++                    "SELECT count(*) FROM student_material_progress "
++                    "WHERE student_id = :u AND material_id = :m"
++                ),
++                {"u": uid, "m": mid},
++            )
++        ).scalar_one()
++        assert rows == 0, "отметка о прохождении не должна была записаться"
++    finally:
++        await db.execute(
++            text("DELETE FROM student_material_progress WHERE student_id = :u"),
++            {"u": uid},
++        )
++        await db.commit()
++        await _cleanup(db, user_ids=[uid], material_ids=[mid])
++
++
++@pytest.mark.asyncio
++async def test_student_can_still_complete_active_material(db, client):
++    """Контроль: активный материал по-прежнему отмечается пройденным."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    mid = await _create_material(db, course_id=gid, is_active=True)
++    try:
++        resp = await client.post(
++            f"/api/v1/learning/materials/{mid}/complete",
++            json={"student_id": uid},
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["status"] == "completed"
++    finally:
++        await db.execute(
++            text("DELETE FROM student_material_progress WHERE student_id = :u"),
++            {"u": uid},
++        )
++        await db.commit()
++        await _cleanup(db, user_ids=[uid], material_ids=[mid])
++
++
+ # ─── 404 для несуществующего ───────────────────────────────────────────────
+ 
+ @pytest.mark.asyncio

@@ -1,0 +1,92 @@
+# tsk-695 — выключенный материал открывался ученику по прямой ссылке
+
+Дата: 2026-08-26
+Скилл: `/fastapi-api-developer`
+Файлы: `app/api/v1/materials_extra.py`, `app/api/v1/learning.py`,
+`app/services/materials_acl_service.py`, `tests/test_materials_acl_y51.py`
+
+## Что было
+
+`materials.is_active = false` убирал материал из программы курса и из зачёта
+(`me_service`, `learning_engine_service` фильтруют по `is_active` давно), но
+ручка чтения одного материала по id этого флага не смотрела. Старая закладка
+или сохранённая ссылка `/courses/<uid>/material/<id>` отдавала ученику снятый
+с публикации материал целиком — с меткой «Обязательно».
+
+Рядом нашлась вторая точка того же класса: `POST /learning/materials/{id}/complete`
+не проверял `is_active`, хотя соседний `/skip` проверял с самого начала
+(`learning.py:311` против `learning.py:257`). То есть выключенный материал
+можно было не только открыть, но и закрыть кнопкой «Прошёл материал».
+
+## Доказательства (до правки)
+
+Живой прогон на проде под учеником 142 (чистая роль `student`, без расширенных
+ролей — проверено по `user_roles`), вход через штатный magic-link:
+
+```
+https://learn.victor-komlev.ru/courses/id-139/material/356 → HTTP 200
+```
+
+Экран отдал полный текст материала «Вопросы» (курс 139, `is_active = false`,
+выключен 26.08 в рамках tsk-690) вместе с бейджем «Обязательно».
+Артефакт: `SPW/.qa-artifacts/live-2026-08-26T14-44-44-...`
+
+Масштаб на проде (MCP read-only):
+
+| Проверка | Значение |
+|---|---|
+| Выключенных материалов | 458 из 3551 |
+| Строк прогресса по выключенным материалам | 14 |
+| Из них с `source = 'student'` | 0 (только `manual_teacher` и `system`) |
+
+То есть дыра `/complete` существовала, но массово не использовалась — все 14
+отметок поставлены преподавателем вручную или системой до выключения материала.
+
+## Что сделано
+
+1. `assert_material_access` теперь возвращает `bool` — признак привилегированного
+   вызывающего, по тому же контракту, что и `tasks_acl_service.assert_task_access`.
+   Единственный call-site (`materials_extra.py:615`) обновлён.
+2. `GET /materials/{id}`: непривилегированный вызывающий на выключенном материале
+   получает **404** (не 403 — разница между кодами сама по себе выдавала бы факт
+   существования; SPW уже рисует на 404 «Материал недоступен» со ссылкой на
+   следующий шаг, `UnavailableFallback`, поэтому правок во фронтенде не нужно).
+3. `POST /learning/materials/{id}/complete`: `is_active` проверяется так же, как
+   в `/skip`.
+
+Кто по-прежнему видит выключенный материал: сервисный ключ (TG_LMS, ContentBackbone
+CLI — на нём стоит переиздание) и роли `teacher` / `methodist` / `admin` — на них
+стоит кабинет методиста (`/methodist/materials/[id]`) и разбор с учеником.
+Отдельного «предпросмотра глазами ученика» в SPW нет — проверено.
+
+Отметка материала преподавателем идёт другим маршрутом
+(`POST /teacher/students/{id}/progress/materials/{id}`) и не затронута.
+
+## Проверки
+
+```
+.venv/Scripts/python.exe -m pytest tests/test_materials_acl_y51.py -q        → 13 passed
+.venv/Scripts/python.exe -m pytest tests/ -q -k "material or learning"       → 105 passed
+.venv/Scripts/python.exe -m mypy app/services/materials_acl_service.py \
+    app/api/v1/materials_extra.py app/api/v1/learning.py                     → Success
+```
+
+Новые тесты (`tests/test_materials_acl_y51.py`): ученик на выключенном → 404;
+методист → 200; преподаватель → 200; сервисный ключ → 200; `complete` на
+выключенном → 404 и строка прогресса не появилась; контроль — активный материал
+по-прежнему отмечается.
+
+## Хвосты
+
+- **TG_LMS, студенческий бот.** `student_course_materials_getter`
+  (`src/bots/common/dialogs/student_courses_base.py:275`) зовёт
+  `list_course_materials(course_id, limit=50, skip=0)` без `is_active=True`, а
+  `GET /courses/{id}/materials` по умолчанию отдаёт **все** материалы. Значит в
+  списке «📎 Материалы курса» ученик видит и выключенные. Другой проект, вынесено
+  отдельно.
+- **Задания того же класса.** `GET /tasks/{id}` и `GET /tasks/by-external/{uid}`
+  тоже отдают выключенное задание — проверено живьём: `by-external` вернул 200 на
+  задании 2133 (`is_active = false`). На экране это не проявляется, потому что
+  соседний запрос `GET /learning/tasks/{id}/state` возвращает 404 и SPW рисует
+  «Задача недоступна». То есть содержимое утекает по API, но не через интерфейс.
+  Выключенных заданий на проде 1220. В охват этой задачи не входило.
