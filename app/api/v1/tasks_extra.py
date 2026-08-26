@@ -48,6 +48,8 @@ import logging
 
 router = APIRouter(tags=["tasks"])
 
+logger = logging.getLogger("api.tasks_extra")
+
 tasks_service = TasksService()
 
 
@@ -70,6 +72,36 @@ def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
     if privileged:
         return data
     return data.model_copy(update={"solution_rules": None})
+
+
+def _deny_if_inactive_for_student(
+    task: Any, *, privileged: bool, current_user: CurrentUser,
+) -> None:
+    """Закрыть ученику выключенное задание (`is_active = false`, tsk-697).
+
+    Учебный движок (`/learning/tasks/{id}/state`, `/skip`, `start-or-get-attempt`)
+    фильтрует по `is_active` давно, а ручки чтения одного задания — нет: старая
+    закладка или прямая ссылка отдавала снятое с публикации задание целиком, со
+    стемом и вариантами. На экране SPW это не проявлялось (соседний `state`
+    отвечал 404, и страница рисовала «Задача недоступна») — утечка шла мимо
+    интерфейса, по API. Проверено живьём на проде 26.08.2026 под учеником
+    (задание 2133, курс 138); на тот момент выключенных заданий 1220 из 7629.
+
+    404, а не 403: разница между кодами сама по себе выдавала бы факт
+    существования, а SPW уже обрабатывает 404 на экране задания (tsk-447).
+
+    Привилегированные (сервисный ключ, teacher / methodist / admin) выключенное
+    задание видят по-прежнему — на них стоят кабинет методиста, превью «как
+    ученик» в ТГ-ботах и разбор сдачи с учеником. Своя история сдач ученика идёт
+    другой ручкой (`/me/tasks/{id}/history`) и не затронута.
+    """
+    if privileged or task.is_active:
+        return
+    logger.info(
+        "tsk-697: deny student user_id=%s task_id=%s (is_active=false)",
+        current_user.id, task.id,
+    )
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
 
 
 @router.get(
@@ -105,7 +137,10 @@ def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
             }
         },
         404: {
-            "description": "Задача с указанным external_uid не найдена",
+            "description": (
+                "Задача с указанным external_uid не найдена "
+                "либо выключена (для ученика)"
+            ),
             "content": {
                 "application/json": {
                     "example": {
@@ -134,15 +169,21 @@ async def get_task_by_external_uid(
     tsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный
     ответ виден во вкладке «Сеть» до отправки своего.
 
+    tsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —
+    см. `_deny_if_inactive_for_student`.
+
     Статусы:
     - 200 — если задача найдена и доступ разрешён;
     - 401 — auth required;
     - 403 — student не зачислен в курс задачи (или ancestor);
-    - 404 — задача не найдена.
+    - 404 — задача не найдена либо выключена (для ученика).
     """
     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
     privileged = await assert_task_access(
         db, current_user=current_user, task_course_id=task.course_id,
+    )
+    _deny_if_inactive_for_student(
+        task, privileged=privileged, current_user=current_user,
     )
     return _task_read_for(task, privileged=privileged)
 
@@ -467,7 +508,7 @@ async def search_tasks(
         200: {"description": "Задача найдена и доступна"},
         401: {"description": "Не аутентифицирован"},
         403: {"description": "Student не зачислен в курс задачи"},
-        404: {"description": "Задача не существует"},
+        404: {"description": "Задача не существует либо выключена (для ученика)"},
     },
 )
 async def get_task_by_id(
@@ -482,6 +523,9 @@ async def get_task_by_id(
     FastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.
 
     tsk-460: ученику `solution_rules` отдаётся как `null`.
+
+    tsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —
+    см. `_deny_if_inactive_for_student`.
     """
     from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
     result = await db.execute(select(Tasks).where(Tasks.id == task_id))
@@ -490,6 +534,9 @@ async def get_task_by_id(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
     privileged = await assert_task_access(
         db, current_user=current_user, task_course_id=task.course_id,
+    )
+    _deny_if_inactive_for_student(
+        task, privileged=privileged, current_user=current_user,
     )
     return _task_read_for(task, privileged=privileged)
 

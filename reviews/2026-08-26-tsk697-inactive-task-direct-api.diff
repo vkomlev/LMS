@@ -1,0 +1,300 @@
+diff --git a/app/api/v1/tasks_extra.py b/app/api/v1/tasks_extra.py
+index 5ee5d22..388a53c 100644
+--- a/app/api/v1/tasks_extra.py
++++ b/app/api/v1/tasks_extra.py
+@@ -48,6 +48,8 @@ import logging
+ 
+ router = APIRouter(tags=["tasks"])
+ 
++logger = logging.getLogger("api.tasks_extra")
++
+ tasks_service = TasksService()
+ 
+ 
+@@ -72,6 +74,36 @@ def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
+     return data.model_copy(update={"solution_rules": None})
+ 
+ 
++def _deny_if_inactive_for_student(
++    task: Any, *, privileged: bool, current_user: CurrentUser,
++) -> None:
++    """Закрыть ученику выключенное задание (`is_active = false`, tsk-697).
++
++    Учебный движок (`/learning/tasks/{id}/state`, `/skip`, `start-or-get-attempt`)
++    фильтрует по `is_active` давно, а ручки чтения одного задания — нет: старая
++    закладка или прямая ссылка отдавала снятое с публикации задание целиком, со
++    стемом и вариантами. На экране SPW это не проявлялось (соседний `state`
++    отвечал 404, и страница рисовала «Задача недоступна») — утечка шла мимо
++    интерфейса, по API. Проверено живьём на проде 26.08.2026 под учеником
++    (задание 2133, курс 138); на тот момент выключенных заданий 1220 из 7629.
++
++    404, а не 403: разница между кодами сама по себе выдавала бы факт
++    существования, а SPW уже обрабатывает 404 на экране задания (tsk-447).
++
++    Привилегированные (сервисный ключ, teacher / methodist / admin) выключенное
++    задание видят по-прежнему — на них стоят кабинет методиста, превью «как
++    ученик» в ТГ-ботах и разбор сдачи с учеником. Своя история сдач ученика идёт
++    другой ручкой (`/me/tasks/{id}/history`) и не затронута.
++    """
++    if privileged or task.is_active:
++        return
++    logger.info(
++        "tsk-697: deny student user_id=%s task_id=%s (is_active=false)",
++        current_user.id, task.id,
++    )
++    raise HTTPException(status.HTTP_404_NOT_FOUND, "Задача не найдена")
++
++
+ @router.get(
+     "/tasks/by-external/{external_uid}",
+     response_model=TaskRead,
+@@ -105,7 +137,10 @@ def _task_read_for(task: Any, *, privileged: bool) -> TaskRead:
+             }
+         },
+         404: {
+-            "description": "Задача с указанным external_uid не найдена",
++            "description": (
++                "Задача с указанным external_uid не найдена "
++                "либо выключена (для ученика)"
++            ),
+             "content": {
+                 "application/json": {
+                     "example": {
+@@ -134,16 +169,22 @@ async def get_task_by_external_uid(
+     tsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный
+     ответ виден во вкладке «Сеть» до отправки своего.
+ 
++    tsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —
++    см. `_deny_if_inactive_for_student`.
++
+     Статусы:
+     - 200 — если задача найдена и доступ разрешён;
+     - 401 — auth required;
+     - 403 — student не зачислен в курс задачи (или ancestor);
+-    - 404 — задача не найдена.
++    - 404 — задача не найдена либо выключена (для ученика).
+     """
+     task = await tasks_service.get_by_external_uid(db, external_uid=external_uid)
+     privileged = await assert_task_access(
+         db, current_user=current_user, task_course_id=task.course_id,
+     )
++    _deny_if_inactive_for_student(
++        task, privileged=privileged, current_user=current_user,
++    )
+     return _task_read_for(task, privileged=privileged)
+ 
+ 
+@@ -467,7 +508,7 @@ async def search_tasks(
+         200: {"description": "Задача найдена и доступна"},
+         401: {"description": "Не аутентифицирован"},
+         403: {"description": "Student не зачислен в курс задачи"},
+-        404: {"description": "Задача не существует"},
++        404: {"description": "Задача не существует либо выключена (для ученика)"},
+     },
+ )
+ async def get_task_by_id(
+@@ -482,6 +523,9 @@ async def get_task_by_id(
+     FastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.
+ 
+     tsk-460: ученику `solution_rules` отдаётся как `null`.
++
++    tsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —
++    см. `_deny_if_inactive_for_student`.
+     """
+     from app.models.tasks import Tasks  # noqa: PLC0415 — circular avoid
+     result = await db.execute(select(Tasks).where(Tasks.id == task_id))
+@@ -491,6 +535,9 @@ async def get_task_by_id(
+     privileged = await assert_task_access(
+         db, current_user=current_user, task_course_id=task.course_id,
+     )
++    _deny_if_inactive_for_student(
++        task, privileged=privileged, current_user=current_user,
++    )
+     return _task_read_for(task, privileged=privileged)
+ 
+ @router.post(
+diff --git a/tests/test_tasks_acl_post_s5.py b/tests/test_tasks_acl_post_s5.py
+index c7f0f61..c73b756 100644
+--- a/tests/test_tasks_acl_post_s5.py
++++ b/tests/test_tasks_acl_post_s5.py
+@@ -61,17 +61,21 @@ async def _create_user_with_session(
+     return u.id, token
+ 
+ 
+-async def _create_task(db, *, course_id: int, type_: str = "SC") -> tuple[int, str]:
++async def _create_task(
++    db, *, course_id: int, type_: str = "SC", is_active: bool = True,
++) -> tuple[int, str]:
+     ext = f"y4ps5-task-{random.randint(10**8, 10**10)}"
+     res = await db.execute(
+         text(
+-            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, difficulty_id) "
+-            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1) RETURNING id"
++            "INSERT INTO tasks (external_uid, max_score, task_content, course_id, "
++            "difficulty_id, is_active) "
++            "VALUES (:ext, 10, CAST(:content AS jsonb), :cid, 1, :act) RETURNING id"
+         ),
+         {
+             "ext": ext,
+             "content": json.dumps({"type": type_, "stem": "y4ps5-test"}),
+             "cid": course_id,
++            "act": is_active,
+         },
+     )
+     tid = res.scalar_one()
+@@ -304,6 +308,155 @@ async def test_legacy_query_api_key_bypasses(db, client):
+         await _cleanup(db, user_ids=[], task_ids=[tid])
+ 
+ 
++# ─── tsk-697: выключенное задание закрыто для ученика ──────────────────────
++
++
++@pytest.mark.asyncio
++async def test_student_denied_inactive_task_by_id(db, client):
++    """Ученик зачислен в курс, но задание выключено → 404, а не содержимое.
++
++    Регресс-тест на дефект, найденный живьём 26.08.2026: движок отдавал по
++    выключенному заданию 404 (`/learning/tasks/{id}/state`), а прямая ссылка на
++    карточку возвращала стем и варианты целиком.
++    """
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    tid, _ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/{tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 404, resp.text
++        assert "y4ps5-test" not in resp.text, "стем не должен утечь в тело 404"
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_student_denied_inactive_task_by_external(db, client):
++    """Вторая дверь к тому же заданию — по внешнему идентификатору."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    tid, ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/by-external/{ext}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 404, resp.text
++        assert "y4ps5-test" not in resp.text, "стем не должен утечь в тело 404"
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_student_denied_inactive_task_before_acl_check(db, client):
++    """Чужое выключенное задание тоже 404 — ACL срабатывает первым (403 →
++    отличать «нет доступа» от «выключено» ученику не даём в обе стороны)."""
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    other_root = await _pick_other_root(db, exclude_root_id=root_id)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=other_root)
++    tid, _ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/{tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code in (403, 404), resp.text
++        assert "y4ps5-test" not in resp.text
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_methodist_still_sees_inactive_task(db, client):
++    """Методисту выключенное задание нужно: на нём стоит карточка кабинета
++    (`/methodist/tasks/{id}`) и переключатель активности."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="methodist")
++    tid, ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/{tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++        assert resp.json()["is_active"] is False
++
++        resp2 = await client.get(
++            f"/api/v1/tasks/by-external/{ext}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp2.status_code == 200, resp2.text
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_teacher_still_sees_inactive_task(db, client):
++    """Преподаватель разбирает сдачу по снятому заданию — экран проверки
++    ответа тянет карточку задания и без неё оценивает вслепую."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="teacher")
++    tid, _ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/{tid}",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_service_key_still_sees_inactive_task(db, client):
++    """Сервисный ключ (ТГ-боты, ContentBackbone CLI) читает задание независимо
++    от активности: превью «как ученик» и переиздание идут по нему."""
++    _root, _c, gid = await _pick_root_with_grandchild(db)
++    tid, ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/tasks/{tid}",
++            headers={"X-API-Key": _service_api_key()},
++        )
++        assert resp.status_code == 200, resp.text
++
++        resp2 = await client.get(
++            f"/api/v1/tasks/by-external/{ext}",
++            headers={"X-API-Key": _service_api_key()},
++        )
++        assert resp2.status_code == 200, resp2.text
++    finally:
++        await _cleanup(db, user_ids=[], task_ids=[tid])
++
++
++@pytest.mark.asyncio
++async def test_student_history_survives_inactive_task(db, client):
++    """Своя история сдач не завязана на карточку задания: `/me/tasks/{id}/history`
++    отвечает по выключенному заданию как прежде.
++
++    На проде 443 выключенных задания имеют сдачи (7 учеников, 1552 записи) —
++    404 на карточке не должен закрывать ученику просмотр собственных ответов.
++    """
++    root_id, _child, gid = await _pick_root_with_grandchild(db)
++    uid, token = await _create_user_with_session(db, role_name="student")
++    await _enroll_user_in_course(db, user_id=uid, course_id=root_id)
++    tid, _ext = await _create_task(db, course_id=gid, is_active=False)
++    try:
++        resp = await client.get(
++            f"/api/v1/me/tasks/{tid}/history",
++            headers={"Authorization": f"Bearer {token}"},
++        )
++        assert resp.status_code == 200, resp.text
++    finally:
++        await _cleanup(db, user_ids=[uid], task_ids=[tid])
++
++
+ # ─── 404 ────────────────────────────────────────────────────────────────────
+ 
+ @pytest.mark.asyncio

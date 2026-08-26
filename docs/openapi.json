@@ -8658,7 +8658,7 @@
           "tasks"
         ],
         "summary": "Получить задачу по внешнему идентификатору",
-        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nY-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)\n+ ACL по дереву `user_courses` + `course_parents`. Service-key и\nteacher / methodist / admin — bypass; student — только если задача в его\nкурсе или потомке.\n\ntsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный\nответ виден во вкладке «Сеть» до отправки своего.\n\nСтатусы:\n- 200 — если задача найдена и доступ разрешён;\n- 401 — auth required;\n- 403 — student не зачислен в курс задачи (или ancestor);\n- 404 — задача не найдена.",
+        "description": "Вернуть задачу по внешнему устойчивому идентификатору.\n\nY-4 post-S5: auth через cookie / Bearer / X-API-Key (см. `get_current_user`)\n+ ACL по дереву `user_courses` + `course_parents`. Service-key и\nteacher / methodist / admin — bypass; student — только если задача в его\nкурсе или потомке.\n\ntsk-460: ученику `solution_rules` отдаётся как `null` — иначе верный\nответ виден во вкладке «Сеть» до отправки своего.\n\ntsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —\nсм. `_deny_if_inactive_for_student`.\n\nСтатусы:\n- 200 — если задача найдена и доступ разрешён;\n- 401 — auth required;\n- 403 — student не зачислен в курс задачи (или ancestor);\n- 404 — задача не найдена либо выключена (для ученика).",
         "operationId": "get_task_by_external_uid_api_v1_tasks_by_external__external_uid__get",
         "security": [
           {
@@ -8773,7 +8773,7 @@
             }
           },
           "404": {
-            "description": "Задача с указанным external_uid не найдена",
+            "description": "Задача с указанным external_uid не найдена либо выключена (для ученика)",
             "content": {
               "application/json": {
                 "example": {
@@ -9129,7 +9129,7 @@
           "tasks"
         ],
         "summary": "Получить задачу по id (Y-4 post-S5: cookie auth + ACL)",
-        "description": "Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nЭтот endpoint регистрируется в `tasks_extra_router`, который подключен\nв `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.\nFastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.\n\ntsk-460: ученику `solution_rules` отдаётся как `null`.",
+        "description": "Вернуть задачу по id с поддержкой cookie/Bearer/X-API-Key auth.\n\nЭтот endpoint регистрируется в `tasks_extra_router`, который подключен\nв `main.py` ДО CRUD-роутера через `app.include_router(tasks_extra,...)`.\nFastAPI matching first wins → этот handler перекрывает CRUD GET /tasks/{id}.\n\ntsk-460: ученику `solution_rules` отдаётся как `null`.\n\ntsk-697: выключенное задание (`is_active = false`) ученику не отдаётся —\nсм. `_deny_if_inactive_for_student`.",
         "operationId": "get_task_by_id_api_v1_tasks__task_id__get",
         "security": [
           {
@@ -9216,7 +9216,7 @@
             "description": "Student не зачислен в курс задачи"
           },
           "404": {
-            "description": "Задача не существует"
+            "description": "Задача не существует либо выключена (для ученика)"
           },
           "422": {
             "description": "Validation Error",
