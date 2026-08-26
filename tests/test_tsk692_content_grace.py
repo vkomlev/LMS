@@ -254,6 +254,42 @@ async def test_unfinished_old_item_cancels_grace(db, passed_topic):
 
 
 @pytest.mark.asyncio
+async def test_migration_left_existing_tasks_without_date(db):
+    """Сторож: заданиям, заведённым до колонки, миграция обязана оставить NULL.
+
+    Первая редакция миграции задавала `server_default now()` прямо в
+    `add_column` — а `ALTER TABLE ... ADD COLUMN ... DEFAULT <expr>` в
+    PostgreSQL **заполняет умолчанием все существующие строки**. На проде 26.08
+    все 7629 заданий разом получили дату накатки, и правило начало снимать
+    обязательность с 622 элементов у 36 учеников вместо 13 у 13. Данные
+    восстановлены, порядок в миграции исправлен (add_column без умолчания →
+    alter_column SET DEFAULT).
+
+    Тест ловит возврат к прежнему порядку по следу, который тот оставляет:
+    множество заданий с ОДНОЙ И ТОЙ ЖЕ отметкой времени. Настоящие задания
+    заводятся по одному и такой отметки не дают; исключение — импорт пачкой,
+    поэтому порог намеренно высокий.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT created_at, count(*) AS cnt FROM tasks "
+                "WHERE created_at IS NOT NULL "
+                "GROUP BY created_at ORDER BY cnt DESC LIMIT 1"
+            )
+        )
+    ).fetchone()
+    if row is None:
+        return  # ни у одного задания даты нет — как и должно быть после миграции
+    assert row[1] < 500, (
+        f"{row[1]} заданий имеют одну и ту же отметку {row[0]} — похоже, "
+        "`ADD COLUMN ... DEFAULT` снова проставил дату накатки существующим "
+        "строкам. Такие задания правило считает только что добавленными и "
+        "снимает с них обязательность у всех, кто до них не дошёл"
+    )
+
+
+@pytest.mark.asyncio
 async def test_task_without_created_at_is_never_graced(db):
     """Сценарий 4: задание без даты появления считается существовавшим всегда.
 
