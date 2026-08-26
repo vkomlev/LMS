@@ -236,6 +236,7 @@ SELF_MANAGED_CONNECTION_MODULES: frozenset[str] = frozenset(
     {
         "test_attempt_cancel_stage35.py",
         "test_attempts_enrollment_hole_tsk272.py",
+        "test_attempts_inactive_task_tsk701.py",
         "test_attempts_integration_stage4.py",
         "test_attempts_limit_enforced_tsk269.py",
         "test_attempts_limit_race_tsk273.py",

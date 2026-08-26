@@ -62,7 +62,10 @@ from app.services.attempt_attachments import (
     safe_upload_filename,
 )
 from app.services.learning_engine_service import LearningEngineService
-from app.services.tasks_acl_service import assert_task_access
+from app.services.tasks_acl_service import (
+    assert_task_access,
+    assert_task_active_for_student,
+)
 from app.services import (
     assignment_rules_service,
     help_requests_service,
@@ -322,7 +325,8 @@ async def create_attempt(
         400: {
             "description": (
                 "Попытка уже завершена, истекло время, задание вне дерева корня "
-                "попытки либо путь к заданию неоднозначен при исчерпанном лимите "
+                "попытки, задание снято с публикации (`is_active = false`, "
+                "tsk-701) либо путь к заданию неоднозначен при исчерпанном лимите "
                 "(нужен root_course_id, tsk-269)"
             ),
             "content": {
@@ -338,6 +342,12 @@ async def create_attempt(
                             "summary": "Истекло время",
                             "value": {
                                 "detail": "Время на выполнение истекло"
+                            }
+                        },
+                        "inactive_task": {
+                            "summary": "Задание снято с публикации",
+                            "value": {
+                                "detail": "Задание снято с публикации и больше не принимает ответы."
                             }
                         },
                         "root_required": {
@@ -509,6 +519,23 @@ async def submit_attempt_answers(
         # чтобы отказ по одному заданию не оставлял частичный результат.
         await assert_task_access(
             db, current_user=current_user, task_course_id=task.course_id
+        )
+
+        # 2.1.0c tsk-701: выключенное задание (`is_active = false`) не принимает
+        # ответ от ученика. Хвост линии tsk-695 (материал) → tsk-697 (одна ручка
+        # задания) → tsk-699 (список заданий курса): чтение снятого с публикации
+        # задания ученику закрыли, а запись оставалась открытой — ответ
+        # проверялся и ложился в `task_results`, то есть в прогресс, статистику
+        # и расход лимита по контенту, которого для ученика больше нет.
+        #
+        # Отсечка по ВЛАДЕЛЬЦУ попытки, а не по вызывающему (см. docstring
+        # helper'а): боты ходят по сервисному ключу, и bypass по транспорту
+        # означал бы «через браузер нельзя, через Telegram можно».
+        await assert_task_active_for_student(
+            db,
+            student_id=attempt.user_id,
+            task_id=task.id,
+            is_active=task.is_active,
         )
 
         # 2.1.1 tsk-264: результат обязан лечь в тот же контекст, в котором потом

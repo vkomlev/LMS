@@ -145,3 +145,59 @@ async def assert_task_access(
     await payment_access_service.assert_content_allowed(db, current_user.id)
 
     return False
+
+
+async def assert_task_active_for_student(
+    db: AsyncSession,
+    *,
+    student_id: int,
+    task_id: int,
+    is_active: bool,
+) -> None:
+    """Закрыть ученику ОТПРАВКУ ответа на выключенное задание (tsk-701).
+
+    Хвост линии tsk-695 → tsk-697 → tsk-699: чтение выключенного задания ученику
+    закрыли (одна ручка, список курса, клиенты ТГ), а запись — нет. Приём ответа
+    `POST /attempts/{id}/answers` смотрел на запись ученика в курс
+    (`assert_task_access`, tsk-272) и на дерево корня попытки
+    (`root_contains_course`, tsk-264), но не на активность: ответ по снятому с
+    публикации заданию проверялся и ложился в `task_results` — то есть попадал в
+    прогресс, статистику и расход лимита по контенту, которого для ученика
+    больше нет.
+
+    **Проверяется УЧЕНИК (владелец попытки), а не вызывающий** — по той же
+    причине, что в `payment_access_service.assert_content_allowed` (tsk-617) и
+    `graduation_service.assert_course_work_allowed` (tsk-673): ВСЕ боты TG_LMS
+    ходят по сервисному ключу, и освобождение сервисного вызова означало бы
+    «через браузер нельзя, через Telegram можно». Ровно эта дыра в чтении
+    потребовала клиентской фильтрации в ботах (tsk-696, tsk-700) — повторять её
+    на записи нельзя. Владелец с расширенной ролью (teacher / methodist / admin)
+    проходит: у него своя причина открыть снятое задание — превью «как ученик» и
+    разбор старой сдачи.
+
+    400, а не 404 как на чтении: существование задания вызывающему уже открыто
+    (`assert_task_access` выше прошёл — ученик зачислен на курс), скрывать нечего,
+    а 404 на этой ручке означает «попытка не найдена». 400 — это и есть код
+    остальных поштучных отказов цикла (задание не найдено, задание вне дерева
+    корня).
+
+    :param student_id: владелец попытки (`attempts.user_id`), а не вызывающий.
+    :param task_id: id задания — только для журнала.
+    :param is_active: `tasks.is_active` (NOT NULL, default true).
+    :raises HTTPException: 400, если задание выключено, а владелец попытки —
+        обычный ученик.
+    """
+    if is_active:
+        return
+
+    if await _user_has_extended_role(db, student_id):
+        return
+
+    logger.info(
+        "tsk-701: deny answer student_id=%s task_id=%s (is_active=false)",
+        student_id, task_id,
+    )
+    raise HTTPException(
+        status.HTTP_400_BAD_REQUEST,
+        "Задание снято с публикации и больше не принимает ответы.",
+    )
