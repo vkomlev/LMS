@@ -16,6 +16,14 @@
 оценка кода — она сама зовёт модель, но работа попадает к ней только через уже
 прогейченный вход в `attempts.py`. Ссылка на этот вход обязательна, иначе
 формулировка «где-то выше проверяют» стала бы способом обойти сам страж.
+
+Третий вид записи — СИСТЕМНЫЙ расход, который порождает не ученик, а сама
+служба (tsk-678: еженедельная проверка боевых цепочек моделей). Двери прав тут
+нет по существу: гейтить нечего и некого, — но и расход не должен оставаться
+без выключателя. Такая точка называет свой рубильник, и страж проверяет, что он
+действительно есть в конфиге, в `.env.example` и читается в самом файле.
+Рубильник намеренно НЕ разрешён точке с возможностью ученика: иначе он стал бы
+дешёвым способом обойти дверь прав.
 """
 from __future__ import annotations
 
@@ -52,19 +60,38 @@ _ENQUEUE_RX = re.compile(r"""["']status["']\s*:\s*["']pending["']""")
 class SpendPoint:
     """Точка расхода и то, чем она гейтится."""
 
-    capability: str
+    #: Возможность ученика из `GATED_CAPABILITIES`. `None` — расход СИСТЕМНЫЙ:
+    #: его порождает не ученик, а сама служба, и дверь прав тут не при чём.
+    capability: Optional[str] = None
     #: Гейт стоит в этом же файле.
     gated_here: bool = False
     #: Гейт стоит выше по потоку — путь до места, где он реально вызывается.
     gated_upstream: Optional[str] = None
+    #: Гейт — рубильник оператора: имя переменной окружения, которой расход
+    #: включается и выключается. Только для системного расхода (tsk-678).
+    gated_by_toggle: Optional[str] = None
     #: Проводка выполнена (Фаза 3). Пока False, содержательной проверки гейта
     #: в файле нет — но сам факт существования точки уже под надзором.
     wired: bool = False
 
     def __post_init__(self) -> None:
-        if not self.gated_here and not self.gated_upstream:
+        if not self.gated_here and not self.gated_upstream and not self.gated_by_toggle:
             raise AssertionError(
                 "точка расхода обязана указать, где стоит её гейт"
+            )
+        # Рубильник закрывает ТОЛЬКО системный расход. Иначе он стал бы вторым,
+        # более дешёвым способом «загейтить» ученическую возможность мимо двери
+        # прав: тариф её перечисляет, а на деле она у всех, пока переменная
+        # включена. Это ровно та дыра, ради которой страж и написан.
+        if self.gated_by_toggle and self.capability:
+            raise AssertionError(
+                "рубильник не заменяет дверь прав: у точки с возможностью "
+                f"{self.capability!r} гейт обязан стоять здесь или выше по потоку"
+            )
+        if not self.capability and not self.gated_by_toggle:
+            raise AssertionError(
+                "точка без возможности ученика обязана быть системной и назвать "
+                "свой рубильник"
             )
 
 
@@ -104,6 +131,23 @@ AI_SPEND_POINTS: dict[str, SpendPoint] = {
     # короче `MIN_TEXT_CHARS` и задания без критериев к модели не идут вовсе.
     "app/services/rubric_review_service.py": SpendPoint(
         capability="code_review", gated_upstream="app/api/v1/attempts.py", wired=True
+    ),
+    # tsk-678: еженедельная проверка боевых цепочек моделей. ПЕРВЫЙ системный
+    # расход в реестре, и потому единственный с рубильником вместо двери прав.
+    #
+    # Возможности намеренно нет, и это не пропуск. Расход порождает не ученик, а
+    # планировщик: работа не приходит сюда ни из `attempts.py`, ни откуда-либо
+    # ещё — образцы синтетические, лежат в самом файле (`PROBE_WORKS`). Записать
+    # сюда `gated_upstream="app/api/v1/attempts.py"` по образцу соседей было бы
+    # неправдой в реестре — а «где-то выше проверяют» без реальной ссылки и есть
+    # тот обход, от которого страж заведён.
+    #
+    # Гейт настоящий: `LLM_CHAIN_CHECK_ENABLED` читается в `start_scheduler()`,
+    # выключенный — планировщик не поднимается вовсе. Умолчание `true`, и это
+    # осознанно: расход ограничен сверху самой природой прохода — восемь вызовов
+    # в неделю на процесс, порядка полуцента, без зависимости от числа учеников.
+    "app/services/llm_chain_check_cron_service.py": SpendPoint(
+        gated_by_toggle="LLM_CHAIN_CHECK_ENABLED", wired=True
     ),
 }
 
@@ -213,6 +257,37 @@ def test_gate_goes_through_should_block(rel_path: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "rel_path",
+    sorted(p for p, point in AI_SPEND_POINTS.items() if point.gated_by_toggle),
+)
+def test_toggle_gate_is_really_a_gate(rel_path: str) -> None:
+    """Рубильник назван в реестре — значит, он существует и его правда читают.
+
+    Иначе слово «рубильник» стало бы декларацией: точку внесли, тест позеленел,
+    а выключить расход нечем. Проверяем три вещи разом — что настройка объявлена
+    в конфиге, что оператор может её найти (`.env.example`) и что сам файл
+    расхода к ней обращается. Настройка, до которой оператор не догадается, —
+    это половина гейта.
+    """
+    toggle = AI_SPEND_POINTS[rel_path].gated_by_toggle
+    assert toggle is not None
+    repo_root = APP_ROOT.parent
+
+    config = (APP_ROOT / "core" / "config.py").read_text(encoding="utf-8")
+    assert f'"{toggle}"' in config, f"{rel_path}: {toggle} не объявлен в config.py"
+
+    env_example = (repo_root / ".env.example").read_text(encoding="utf-8")
+    assert f"{toggle}=" in env_example, (
+        f"{rel_path}: {toggle} не описан в .env.example — оператор о нём не узнает"
+    )
+
+    source = (repo_root / rel_path).read_text(encoding="utf-8")
+    assert toggle.lower() in source, (
+        f"{rel_path}: настройка {toggle} не читается — расход не выключить"
+    )
+
+
 @pytest.mark.parametrize("rel_path", sorted(AI_SPEND_POINTS))
 def test_every_point_is_wired(rel_path: str) -> None:
     """Все точки проведены. Приёмочный критерий Фазы 3.
@@ -277,7 +352,9 @@ def test_capabilities_are_known() -> None:
     """Возможности в реестре совпадают с теми, что умеет дверь."""
     from app.services.entitlements_service import GATED_CAPABILITIES
 
-    declared = {p.capability for p in AI_SPEND_POINTS.values()} | set(
+    # Системные точки возможности не объявляют — у них рубильник, и его честность
+    # проверяет `test_toggle_gate_is_really_a_gate`.
+    declared = {p.capability for p in AI_SPEND_POINTS.values() if p.capability} | set(
         ENFORCEMENT_POINTS.values()
     )
     unknown = declared - set(GATED_CAPABILITIES)
@@ -292,7 +369,7 @@ def test_all_gated_capabilities_have_a_point() -> None:
     """
     from app.services.entitlements_service import GATED_CAPABILITIES
 
-    covered = {p.capability for p in AI_SPEND_POINTS.values()} | set(
+    covered = {p.capability for p in AI_SPEND_POINTS.values() if p.capability} | set(
         ENFORCEMENT_POINTS.values()
     )
     missing = set(GATED_CAPABILITIES) - covered
