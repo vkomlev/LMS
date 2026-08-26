@@ -280,6 +280,28 @@ class SyllabusTaskItem(BaseModel):
     last_score: int | None
     last_max_score: int | None
     last_submitted_at: datetime | None
+    # tsk-684: поля для отрисовки пункта оглавления. До них кабинет добирал
+    # название и ссылку отдельным `GET /tasks/by-course/{id}` НА КАЖДЫЙ
+    # подкурс — 110 запросов и 7,5 МБ за одно открытие флагмана (замер 26.08,
+    # docs/qa/2026-08-26-tsk684-zamer-do.md). Аддитивно: прежние поля на месте,
+    # клиент со старым контрактом их просто не читает.
+    external_uid: str | None = Field(
+        None, description="Технический слаг задания — по нему клиент строит ссылку на страницу задания"
+    )
+    title: str | None = Field(
+        None, description="Curated-название из task_content.title; пусто у 45 из 6409 активных заданий"
+    )
+    task_type: str | None = Field(
+        None, description="task_content.type (SC/MC/SA/SA_COM/TA/квизы) — клиент рисует по нему значок"
+    )
+    stem_preview: str | None = Field(
+        None,
+        description=(
+            "Начало условия без разметки, до 200 символов — запасная подпись для задания "
+            "без своего названия. Заполняется ТОЛЬКО когда title пуст: иначе NULL, чтобы не "
+            "возить условие задачи впустую. Готовую подпись из этих двух полей собирает клиент"
+        ),
+    )
 
 
 class SyllabusMaterialItem(BaseModel):
@@ -292,6 +314,10 @@ class SyllabusMaterialItem(BaseModel):
     requirement_level: RequirementLevel
     is_active: bool = True
     completed_at: datetime | None
+    # tsk-684, та же причина, что у SyllabusTaskItem: без этих двух полей
+    # кабинет звал `GET /courses/{id}/materials` на каждый подкурс.
+    title: str | None = Field(None, description="Название материала (materials.title)")
+    material_type: str | None = Field(None, description="Тип материала: text | video")
 
 
 SyllabusItem = Union[SyllabusTaskItem, SyllabusMaterialItem]

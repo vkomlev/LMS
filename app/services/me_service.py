@@ -22,7 +22,7 @@ from app.services.learning_gaps_service import (
     real_student_material_filter,
     real_student_results_filter,
 )
-from app.utils.task_title import humanize_task_title
+from app.utils.task_title import clean_stem_text, humanize_task_title
 
 logger = logging.getLogger(__name__)
 
@@ -864,6 +864,21 @@ SELECT
     t.is_active,
     t.requirement_level,
     t.task_content->>'type' AS task_type,
+    -- tsk-684: название, тип и uid отдаются прямо здесь. Раньше кабинет
+    -- добирал их запросом `GET /tasks/by-course/{id}` НА КАЖДЫЙ подкурс: у
+    -- флагмана это 55 запросов и 6,7 МБ полного содержимого заданий ради
+    -- шести коротких полей (замер 26.08). Все поля лежат в строках, которые
+    -- этот SELECT уже читает, — новых обращений к базе ноль.
+    t.external_uid,
+    t.task_content->>'title' AS curated_title,
+    -- Запасная подпись нужна только заданию без своего названия: таких 45 из
+    -- 6409 активных (бой, 26.08). Кому название не нужно — NULL, чтобы не
+    -- возить условие задачи впустую. LEFT(600) — предел выборки из базы: stem
+    -- бывает до 47 КБ, а подписи хватает первых строк.
+    CASE
+        WHEN COALESCE(BTRIM(t.task_content->>'title'), '') = ''
+        THEN LEFT(t.task_content->>'stem', 600)
+    END AS stem_head,
     COALESCE((t.solution_rules->>'manual_review_required')::boolean, false) AS manual_review_required,
     stp.status AS progress_status,
     stp.skipped_at,
@@ -900,6 +915,11 @@ SELECT
     m.is_active,
     m.requirement_level,
     m.order_position,
+    -- tsk-684: см. комментарий в _SYLLABUS_TASKS_SQL. Для материалов кабинет
+    -- ходил в `GET /courses/{id}/materials` на каждый подкурс ради названия
+    -- и типа — обе колонки уже здесь, в этой же строке.
+    m.title,
+    m.type AS material_type,
     smp.status AS progress_status,
     smp.completed_at,
     smp.skipped_at
@@ -954,6 +974,33 @@ WHERE cd.course_id = ANY(:tree_ids)
         AND scs.state = 'COMPLETED'
   )
 """
+
+
+# Длина запасной подписи задания в syllabus-states. Клиент режет её до своей
+# ширины сам (SPW `makeTaskFallbackTitle`, 72 символа) — здесь запас, чтобы
+# после чистки разметки было из чего резать, и потолок, чтобы условие задачи
+# целиком не уехало в оглавление.
+_SYLLABUS_STEM_PREVIEW_MAX_LEN = 200
+
+
+def _syllabus_stem_preview(stem_head: str | None) -> str | None:
+    """Кусок очищенного условия задачи — запасная подпись, когда своей нет.
+
+    :param stem_head: начало `task_content->>'stem'` (уже обрезано в SQL) или
+        None, если у задания есть curated title.
+    :returns: однострочный текст без разметки и HTML-сущностей, не длиннее
+        `_SYLLABUS_STEM_PREVIEW_MAX_LEN`; None, если подписи из stem не вышло.
+
+    Чистка та же, что у `humanize_task_title` (общий `clean_stem_text`), но
+    готовую подпись здесь не собираем: её формат — дело клиента, и он у
+    оглавления курса свой («Задание: …»), не такой, как в истории попыток.
+    """
+    if not stem_head:
+        return None
+    cleaned = clean_stem_text(stem_head)
+    if not cleaned:
+        return None
+    return cleaned[:_SYLLABUS_STEM_PREVIEW_MAX_LEN]
 
 
 def _compute_syllabus_task_status(row: dict) -> str:
@@ -1215,6 +1262,8 @@ async def get_syllabus_states(
                     "requirement_level": m["requirement_level"],
                     "is_active": bool(m["is_active"]),
                     "completed_at": m["completed_at"],
+                    "title": m["title"],
+                    "material_type": m["material_type"],
                 }
             )
         for t in tasks_by_course.get(cid, []):
@@ -1233,6 +1282,12 @@ async def get_syllabus_states(
                         int(t["last_max_score"]) if t["last_max_score"] is not None else None
                     ),
                     "last_submitted_at": t["last_submitted_at"],
+                    "external_uid": t["external_uid"],
+                    # Пустая строка и NULL для клиента — одно и то же «названия
+                    # нет»; отдаём одну форму, чтобы он не проверял обе.
+                    "title": (t["curated_title"] or "").strip() or None,
+                    "task_type": t["task_type"],
+                    "stem_preview": _syllabus_stem_preview(t["stem_head"]),
                 }
             )
 

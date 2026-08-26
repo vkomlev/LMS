@@ -47,6 +47,19 @@ def _clean_stem(stem: Optional[str]) -> str:
     return _WS_RE.sub(" ", unescaped).strip()
 
 
+def clean_stem_text(stem: Optional[str]) -> str:
+    """Очистить stem до однострочного текста — публичная обёртка над `_clean_stem`.
+
+    Нужна потребителям вне модуля, которым не подходит готовая подпись из
+    `humanize_task_title`: например, `syllabus-states` отдаёт клиенту кусок
+    очищенного условия, а собственную подпись клиент строит сам (tsk-684).
+
+    :param stem: `task_content->>'stem'` или None.
+    :returns: текст без тегов и HTML-сущностей, пробелы схлопнуты; «» если пусто.
+    """
+    return _clean_stem(stem)
+
+
 def humanize_task_title(
     task_id: int,
     title: Optional[str],

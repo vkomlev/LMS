@@ -57556,6 +57556,30 @@
               }
             ],
             "title": "Completed At"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Название материала (materials.title)"
+          },
+          "material_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Type",
+            "description": "Тип материала: text | video"
           }
         },
         "type": "object",
@@ -57756,6 +57780,54 @@
               }
             ],
             "title": "Last Submitted At"
+          },
+          "external_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Uid",
+            "description": "Технический слаг задания — по нему клиент строит ссылку на страницу задания"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title",
+            "description": "Curated-название из task_content.title; пусто у 45 из 6409 активных заданий"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type",
+            "description": "task_content.type (SC/MC/SA/SA_COM/TA/квизы) — клиент рисует по нему значок"
+          },
+          "stem_preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stem Preview",
+            "description": "Начало условия без разметки, до 200 символов — запасная подпись для задания без своего названия. Заполняется ТОЛЬКО когда title пуст: иначе NULL, чтобы не возить условие задачи впустую. Готовую подпись из этих двух полей собирает клиент"
           }
         },
         "type": "object",
