@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.identity_link import IdentityLink
 from app.models.users import Users
 from app.schemas.task_content import QUIZ_TASK_TYPES
+# tsk-692: правило «добавленное после прохождения темы приходит рекомендуемым»
+# — общая функция для движка и кабинета, чтобы карточка курса, программа курса
+# и «следующий шаг» считали долг одинаково.
+from app.services.content_grace_service import compute_graced_items
 # Y-3.2 (S3-A4): единая точка правды — учебный движок.
 from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
 # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
@@ -419,8 +423,15 @@ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict
     rows = result.mappings().all()
     items: list[dict] = []
     for row in rows:
-        tasks_total = row["tasks_total"]
-        materials_total = row["materials_total"]
+        # tsk-692: содержимое, добавленное после того, как ученик прошёл тему,
+        # в знаменатель не идёт — иначе процент прохождения у него падал бы от
+        # каждой правки курса, а «пройдено» никогда не становилось бы 100%.
+        # Считаем ровно тем же правилом, что и учебный движок (общая функция,
+        # не копия условия), иначе цифра на карточке курса разошлась бы с тем,
+        # что движок предлагает делать дальше.
+        graced = await compute_graced_items(db, user_id, int(row["course_id"]))
+        tasks_total = max(0, row["tasks_total"] - len(graced.tasks))
+        materials_total = max(0, row["materials_total"] - len(graced.materials))
         tasks_done = row["tasks_done"]
         materials_done = row["materials_done"]
         denominator = tasks_total + materials_total
@@ -1238,6 +1249,14 @@ async def get_syllabus_states(
         for r in blocked_dep_rows
     ]
 
+    # tsk-692: элементы, добавленные после того, как ученик прошёл тему,
+    # показываются ему рекомендуемыми, а не обязательными. Правило считается от
+    # КОРНЯ зачисления (`attempts_root_id`), а не от узла, на который открыт
+    # экран: оно смотрит и на предков, и от середины дерева часть из них была
+    # бы не видна — тогда программа курса и учебный движок разошлись бы в том,
+    # что считать долгом.
+    graced = await compute_graced_items(db, user_id, attempts_root_id)
+
     # Группировка по course_id для depth-first emit
     materials_by_course: dict[int, list[dict]] = {}
     for r in material_rows:
@@ -1259,7 +1278,11 @@ async def get_syllabus_states(
                         if m["progress_status"] == "skipped"
                         else "completed" if m["completed_at"] is not None else "not_started"
                     ),
-                    "requirement_level": m["requirement_level"],
+                    "requirement_level": (
+                        "recommended"
+                        if int(m["material_id"]) in graced.materials
+                        else m["requirement_level"]
+                    ),
                     "is_active": bool(m["is_active"]),
                     "completed_at": m["completed_at"],
                     "title": m["title"],
@@ -1273,7 +1296,11 @@ async def get_syllabus_states(
                     "task_id": int(t["task_id"]),
                     "course_id": int(t["course_id"]),
                     "status": _compute_syllabus_task_status(t),
-                    "requirement_level": t["requirement_level"],
+                    "requirement_level": (
+                        "recommended"
+                        if int(t["task_id"]) in graced.tasks
+                        else t["requirement_level"]
+                    ),
                     "is_active": bool(t["is_active"]),
                     "attempts_used": int(t["attempts_used"] or 0),
                     "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),

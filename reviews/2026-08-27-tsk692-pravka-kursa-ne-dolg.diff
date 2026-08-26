@@ -1,0 +1,464 @@
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index d00385a..19b3de9 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -415,6 +415,14 @@ async def get_course_syllabus_states(
+     teacher / methodist / admin — bypass; student — только дерево
+     `user_courses + course_parents`.
+ 
++    `requirement_level` в ответе — уровень ДЛЯ ЭТОГО УЧЕНИКА, а не свойство
++    элемента (tsk-692). Обязательный элемент, добавленный в курс после того, как
++    ученик закрыл тему, отдаётся ему как `recommended`, хотя в базе стоит
++    `required`; тому, кто тему не проходил, отдаётся `required`. Поэтому ответ
++    нельзя переиспользовать между учениками и бессмысленно сверять с
++    методистскими ручками (`GET /tasks/by-course/…`, `GET /courses/{id}/materials`)
++    — там отдаётся уровень из базы.
++
+     Cache: `no-store` (tsk-214б). Раньше стоял `private, max-age=15` в расчёте на
+     то, что SPW invalidate'ит queryKey после submit — но HTTP-кэш браузера и кэш
+     TanStack Query это РАЗНЫЕ слои: `invalidateQueries` заново вызывает `fetch()`,
+diff --git a/app/models/tasks.py b/app/models/tasks.py
+index 8109001..32eede7 100644
+--- a/app/models/tasks.py
++++ b/app/models/tasks.py
+@@ -2,8 +2,11 @@ from __future__ import annotations
+ 
+ from typing import TYPE_CHECKING, Optional, List
+ 
++from datetime import datetime
++
+ from sqlalchemy import (
+     Boolean,
++    DateTime,
+     Integer,
+     ForeignKeyConstraint,
+     PrimaryKeyConstraint,
+@@ -136,6 +139,17 @@ class Tasks(Base):
+             "NULL — правок руками не было. Не путать с difficulty_provenance."
+         ),
+     )
++    created_at: Mapped[Optional[datetime]] = mapped_column(
++        DateTime(timezone=True),
++        server_default=text("now()"),
++        nullable=True,
++        comment=(
++            "Когда задание заведено (tsk-692). NULL — заведено до появления "
++            "колонки: такое задание считается существовавшим всегда, и правило "
++            "«добавленное после прохождения приходит рекомендуемым» на него не "
++            "срабатывает"
++        ),
++    )
+ 
+     course: Mapped["Courses"] = relationship(
+         "Courses",
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index a87e50d..4d0482d 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -273,7 +273,14 @@ class SyllabusTaskItem(BaseModel):
+     task_id: int
+     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
+     status: SyllabusTaskStatus
+-    requirement_level: RequirementLevel
++    requirement_level: RequirementLevel = Field(
++        ...,
++        description=(
++            "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство задания "
++            "(tsk-692): обязательное задание, добавленное в курс после того, как "
++            "ученик закрыл тему, отдаётся ему как recommended"
++        ),
++    )
+     is_active: bool = True
+     attempts_used: int
+     attempts_limit_effective: int
+@@ -311,7 +318,14 @@ class SyllabusMaterialItem(BaseModel):
+     material_id: int
+     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
+     status: SyllabusMaterialStatus
+-    requirement_level: RequirementLevel
++    requirement_level: RequirementLevel = Field(
++        ...,
++        description=(
++            "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство материала "
++            "(tsk-692): обязательный материал, добавленный в курс после того, как "
++            "ученик закрыл тему, отдаётся ему как recommended"
++        ),
++    )
+     is_active: bool = True
+     completed_at: datetime | None
+     # tsk-684, та же причина, что у SyllabusTaskItem: без этих двух полей
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index c27012b..71e456a 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -38,6 +38,11 @@ from app.services.attempt_attachments import (
+     mark_missing_one,
+ )
+ from app.services.task_sampling import sample_task_ids
++# tsk-692: содержимое, добавленное в курс после того, как ученик прошёл тему,
++# приходит ему рекомендуемым, а не долгом. Правило живёт отдельным модулем и
++# зовётся функцией, а не повторяется условием в каждой точке (иначе копии
++# разъезжаются — tsk-598).
++from app.services.content_grace_service import EMPTY_GRACE, compute_graced_items
+ # tsk-598: единый предикат обязательной очереди (tsk-247). Импортируется, а не
+ # копируется словами: копия здесь уже разъехалась с очередью и дала 823 ложных
+ # «курса с неоценёнными работами» из 824. Цикла нет — `teacher_queue_service`
+@@ -751,16 +756,22 @@ class LearningEngineService:
+         # Числитель (tasks_with_last_pass ниже) правки не требует: у
+         # вырезанного выборкой задания по определению нет task_result этого
+         # студента, оно и так не попадает в счёт пройденных.
++        # tsk-692: содержимое, добавленное после того, как ученик прошёл тему,
++        # обязательным для него не считается — иначе правка курса откатывала бы
++        # его COMPLETED назад в IN_PROGRESS и включала бы, через
++        # `course_dependencies`, замок на курсах, которые он уже прошёл.
++        # Объединяем с выборкой (tsk-314) МНОЖЕСТВОМ, а не суммой счётчиков:
++        # одно и то же задание может быть и вырезано выборкой, и прощено
++        # правилом — сумма вычла бы его дважды и занизила знаменатель.
++        graced = await compute_graced_items(db, student_id, course_id)
++
++        excluded_tasks: set[int] = set(graced.tasks)
+         sampling_map = await self._sampling_enabled_courses(db, tree_ids)
+-        if sampling_map:
+-            sampled_out = 0
+-            for sampled_course_id, cfg in sampling_map.items():
+-                sampled_out += len(
+-                    await self._sampled_out_task_ids(
+-                        db, sampled_course_id, student_id, cfg
+-                    )
+-                )
+-            total_tasks = max(0, total_tasks - sampled_out)
++        for sampled_course_id, cfg in sampling_map.items():
++            excluded_tasks |= await self._sampled_out_task_ids(
++                db, sampled_course_id, student_id, cfg
++            )
++        total_tasks = max(0, total_tasks - len(excluded_tasks))
+ 
+         materials_count_stmt = select(func.count(Materials.id)).where(
+             Materials.course_id.in_(tree_ids),
+@@ -768,7 +779,7 @@ class LearningEngineService:
+             Materials.requirement_level.in_(("required", "skippable")),
+         )
+         r = await db.execute(materials_count_stmt)
+-        total_materials = r.scalar() or 0
++        total_materials = max(0, (r.scalar() or 0) - len(graced.materials))
+ 
+         # Число заданий в дереве, по которым последний task_result — PASS.
+         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
+@@ -1128,7 +1139,13 @@ class LearningEngineService:
+                     if kind == "material":
+                         material_ids = [
+                             i
+-                            for i, op in await self._ordered_material_rows(db, cid)
++                            # tsk-692: тот же список, что и в обходе ниже
++                            # (_first_incomplete_material) — иначе позиция могла
++                            # бы указывать на материал, которому правило уже
++                            # сняло обязательность.
++                            for i, op in await self._effective_material_rows(
++                                db, cid, student_id, root_course_id=current_root_id
++                            )
+                             if self._order_key(op, i) > pos_key
+                         ]
+                     else:
+@@ -1140,13 +1157,16 @@ class LearningEngineService:
+                             # tsk-314: тот же список, что видит студент в обходе
+                             # ниже (_first_incomplete_task) — иначе позиция
+                             # могла бы указывать на задание, вырезанное выборкой.
+-                            for i, op in await self._effective_task_rows(db, cid, student_id)
++                            for i, op in await self._effective_task_rows(
++                                db, cid, student_id, root_course_id=current_root_id
++                            )
+                             if self._order_key(op, i) > pos_key
+                         ]
+ 
+                 # Первый незавершённый материал
+                 mat = await self._first_incomplete_material(
+-                    db, student_id, cid, material_ids=material_ids
++                    db, student_id, cid, material_ids=material_ids,
++                    root_course_id=current_root_id,
+                 )
+                 if mat is not None:
+                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
+@@ -1371,7 +1391,11 @@ class LearningEngineService:
+         return (set(easy_ids) | set(normal_ids)) - kept
+ 
+     async def _effective_task_rows(
+-        self, db: AsyncSession, course_id: int, student_id: int
++        self,
++        db: AsyncSession,
++        course_id: int,
++        student_id: int,
++        root_course_id: Optional[int] = None,
+     ) -> List[Tuple[int, Optional[int]]]:
+         """(id, order_position) заданий курса, которые студент реально видит.
+ 
+@@ -1379,6 +1403,12 @@ class LearningEngineService:
+         выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
+         сложность вне EASY/NORMAL (HARD/PROJECT) выборке не подлежат —
+         остаются в списке всегда. Без выборки — то же, что `_ordered_task_rows`.
++
++        tsk-692: и без заданий, добавленных в курс уже после того, как ученик
++        прошёл тему, — им обязательность снята, они ведут себя как
++        `recommended`. `root_course_id` — корень, от которого считать правило
++        (оно смотрит и на предков узла); без него правило видит только сам
++        курс и потому прощает меньше, а не больше.
+         """
+         rows = await self._ordered_task_rows(db, course_id)
+         if not rows:
+@@ -1386,13 +1416,37 @@ class LearningEngineService:
+ 
+         cfg_map = await self._sampling_enabled_courses(db, [course_id])
+         config = cfg_map.get(course_id)
+-        if not config:
++        dropped: set[int] = set()
++        if config:
++            dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
++
++        graced = await compute_graced_items(db, student_id, root_course_id or course_id)
++        if not dropped and not graced.tasks:
+             return rows
++        return [
++            (i, op) for i, op in rows if i not in dropped and i not in graced.tasks
++        ]
++
++    async def _effective_material_rows(
++        self,
++        db: AsyncSession,
++        course_id: int,
++        student_id: int,
++        root_course_id: Optional[int] = None,
++    ) -> List[Tuple[int, Optional[int]]]:
++        """(id, order_position) материалов курса, которые студент реально видит.
+ 
+-        dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
+-        if not dropped:
++        tsk-692: без материалов, добавленных после того, как ученик прошёл
++        тему. Парный к `_effective_task_rows`; выборки по сложности у
++        материалов нет, поэтому здесь только это правило.
++        """
++        rows = await self._ordered_material_rows(db, course_id)
++        if not rows:
+             return rows
+-        return [(i, op) for i, op in rows if i not in dropped]
++        graced = await compute_graced_items(db, student_id, root_course_id or course_id)
++        if not graced.materials:
++            return rows
++        return [(i, op) for i, op in rows if i not in graced.materials]
+ 
+     async def _first_incomplete_material(
+         self,
+@@ -1400,14 +1454,23 @@ class LearningEngineService:
+         student_id: int,
+         course_id: int,
+         material_ids: Optional[List[int]] = None,
++        root_course_id: Optional[int] = None,
+     ) -> Optional[int]:
+         """ID первого материала курса, не отмеченного как completed для студента.
+ 
+         `material_ids` — необязательный заранее суженный список (tsk-261: обход от
+         текущей позиции передаёт сюда только материалы ПОСЛЕ неё).
++
++        `root_course_id` (tsk-692) — корень, от которого считается правило
++        «добавленное после прохождения не долг».
+         """
+         if material_ids is None:
+-            material_ids = await self._ordered_material_ids(db, course_id)
++            material_ids = [
++                i
++                for i, _ in await self._effective_material_rows(
++                    db, course_id, student_id, root_course_id=root_course_id
++                )
++            ]
+ 
+         if not material_ids:
+             return None
+@@ -1454,7 +1517,10 @@ class LearningEngineService:
+             # в resolve_next_item (иначе следующим предлагалось бы задание,
+             # которое сама выборка исключила).
+             task_ids = [
+-                i for i, _ in await self._effective_task_rows(db, course_id, student_id)
++                i
++                for i, _ in await self._effective_task_rows(
++                    db, course_id, student_id, root_course_id=root_course_id
++                )
+             ]
+         if task_ids:
+             skipped_rows = await db.execute(
+diff --git a/app/services/me_service.py b/app/services/me_service.py
+index 0da4fc8..8588459 100644
+--- a/app/services/me_service.py
++++ b/app/services/me_service.py
+@@ -14,6 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
+ from app.models.identity_link import IdentityLink
+ from app.models.users import Users
+ from app.schemas.task_content import QUIZ_TASK_TYPES
++# tsk-692: правило «добавленное после прохождения темы приходит рекомендуемым»
++# — общая функция для движка и кабинета, чтобы карточка курса, программа курса
++# и «следующий шаг» считали долг одинаково.
++from app.services.content_grace_service import compute_graced_items
+ # Y-3.2 (S3-A4): единая точка правды — учебный движок.
+ from app.services.learning_engine_service import PASS_THRESHOLD_RATIO
+ # tsk-656: единственное место, где живёт правило «это реальная сдача ученика»,
+@@ -419,8 +423,15 @@ async def get_courses_with_progress(db: AsyncSession, user_id: int) -> list[dict
+     rows = result.mappings().all()
+     items: list[dict] = []
+     for row in rows:
+-        tasks_total = row["tasks_total"]
+-        materials_total = row["materials_total"]
++        # tsk-692: содержимое, добавленное после того, как ученик прошёл тему,
++        # в знаменатель не идёт — иначе процент прохождения у него падал бы от
++        # каждой правки курса, а «пройдено» никогда не становилось бы 100%.
++        # Считаем ровно тем же правилом, что и учебный движок (общая функция,
++        # не копия условия), иначе цифра на карточке курса разошлась бы с тем,
++        # что движок предлагает делать дальше.
++        graced = await compute_graced_items(db, user_id, int(row["course_id"]))
++        tasks_total = max(0, row["tasks_total"] - len(graced.tasks))
++        materials_total = max(0, row["materials_total"] - len(graced.materials))
+         tasks_done = row["tasks_done"]
+         materials_done = row["materials_done"]
+         denominator = tasks_total + materials_total
+@@ -1238,6 +1249,14 @@ async def get_syllabus_states(
+         for r in blocked_dep_rows
+     ]
+ 
++    # tsk-692: элементы, добавленные после того, как ученик прошёл тему,
++    # показываются ему рекомендуемыми, а не обязательными. Правило считается от
++    # КОРНЯ зачисления (`attempts_root_id`), а не от узла, на который открыт
++    # экран: оно смотрит и на предков, и от середины дерева часть из них была
++    # бы не видна — тогда программа курса и учебный движок разошлись бы в том,
++    # что считать долгом.
++    graced = await compute_graced_items(db, user_id, attempts_root_id)
++
+     # Группировка по course_id для depth-first emit
+     materials_by_course: dict[int, list[dict]] = {}
+     for r in material_rows:
+@@ -1259,7 +1278,11 @@ async def get_syllabus_states(
+                         if m["progress_status"] == "skipped"
+                         else "completed" if m["completed_at"] is not None else "not_started"
+                     ),
+-                    "requirement_level": m["requirement_level"],
++                    "requirement_level": (
++                        "recommended"
++                        if int(m["material_id"]) in graced.materials
++                        else m["requirement_level"]
++                    ),
+                     "is_active": bool(m["is_active"]),
+                     "completed_at": m["completed_at"],
+                     "title": m["title"],
+@@ -1273,7 +1296,11 @@ async def get_syllabus_states(
+                     "task_id": int(t["task_id"]),
+                     "course_id": int(t["course_id"]),
+                     "status": _compute_syllabus_task_status(t),
+-                    "requirement_level": t["requirement_level"],
++                    "requirement_level": (
++                        "recommended"
++                        if int(t["task_id"]) in graced.tasks
++                        else t["requirement_level"]
++                    ),
+                     "is_active": bool(t["is_active"]),
+                     "attempts_used": int(t["attempts_used"] or 0),
+                     "attempts_limit_effective": int(t["attempts_limit_effective"] or 0),
+diff --git a/docs/learning-engine-next-item.md b/docs/learning-engine-next-item.md
+index da2f1f0..3a5bf99 100644
+--- a/docs/learning-engine-next-item.md
++++ b/docs/learning-engine-next-item.md
+@@ -16,6 +16,43 @@
+   4. В каждом курсе: сначала первый незавершённый материал (`student_material_progress.status != 'completed'`, порядок по `materials.order_position`), затем первое задание не в состоянии PASSED и не BLOCKED_LIMIT (состояния всех заданий узла считаются ПАКЕТОМ через `compute_task_states_batch` с границей корня, tsk-662).
+ - **Типы результата:** `material` | `task` | `none` | `blocked_dependency` | `blocked_limit`.
+ 
++## Содержимое, добавленное после прохождения темы (tsk-692)
++
++Правило: обязательный элемент, появившийся в курсе ПОСЛЕ того, как ученик
++закрыл тему, приходит ему **рекомендуемым**, а не долгом; тому, кто тему не
++проходил, он остаётся обязательным. Живёт в `content_grace_service`
++(`compute_graced_items(db, student_id, root_course_id)`), зовётся функцией из
++всех точек — движок, `/me/courses`, синтабус — чтобы «следующий шаг», процент на
++карточке и программа курса считали долг одинаково.
++
++- **Что значит «прошёл»:** узел дерева курсов (плюс его предки — для случая,
++  когда добавили целый новый подкурс). Для узла берётся `T` — время последнего
++  засчитанного элемента поддерева; узел считается пройденным, если ВСЕ сейчас
++  незакрытые обязательные элементы появились позже `T`. Один незакрытый элемент
++  старше `T` — узел не пройден, правило молчит.
++- **Дата появления:** `materials.created_at` и `tasks.created_at` (колонка
++  заведена этой же задачей). `tasks.created_at IS NULL` — «существовало всегда»:
++  такие задания не прощаются никогда и отменяют прощение узла. Поэтому у выката
++  нулевая цена по заданиям; накопленные долги чинились разово (tsk-690).
++- **Правило только снимает обязательность.** Оно ничего не пересчитывает задним
++  числом и ничего не закрывает за ученика.
++- **Цена:** три запроса на дерево (узлы, рёбра, элементы), результат кешируется
++  на сессию БД по паре (ученик, корень). Ни один запрос не растёт по числу
++  элементов или подкурсов. Сторож — `tests/test_tsk684_syllabus_item_titles.py`.
++- **Не покрыто намеренно:** экран ручной простановки прогресса
++  (`manual_progress_service`) показывает преподавателю ВСЕ обязательные элементы,
++  включая прощённые, — иначе он не смог бы проставить зачёт по прощённому.
++- **Известное ограничение:** `compute_course_state` зовётся и для отдельных
++  подкурсов (проверка `course_dependencies`) — там правило видит только
++  поддерево подкурса, без предков. Элемент, прощённый благодаря предку (а это
++  ровно случай «добавили целый новый подкурс»), состояние такого подкурса до
++  COMPLETED не доведёт, и зависимость на него останется запертой. Не хуже, чем
++  было; всё, что ученик видит сам, считается от корня. Случаев на проде нет
++  (27.08).
++- **Зачёт без отметки времени** («закрыл, но неизвестно когда») отменяет
++  прощение узла, а не сдвигает его границу в прошлое: иначе `T` упало бы в 1970
++  и правило сняло бы обязательность со всего узла разом.
++
+ ## Критичные по производительности запросы
+ 
+ - **resolve_next_item:** несколько запросов на один вызов: список активных `user_courses`, для каждого root — зависимости, для каждого курса в дереве — материалы и задания, на каждый курс дерева — ТРИ запроса на состояния всех его заданий сразу (`compute_task_states_batch`).
+diff --git a/tests/test_tsk684_syllabus_item_titles.py b/tests/test_tsk684_syllabus_item_titles.py
+index 0c5d229..4fa2b67 100644
+--- a/tests/test_tsk684_syllabus_item_titles.py
++++ b/tests/test_tsk684_syllabus_item_titles.py
+@@ -284,13 +284,25 @@ async def test_no_extra_db_roundtrips_per_item(db, db_engine, client):
+         await _drop(db, tree, user_id)
+ 
+     task_reads = [s for s in statements if "attempts_per_task" in s]
++    # tsk-692: у правила «добавленное после прохождения — не долг» своя выборка
++    # по дереву, и она тоже читает материалы вместе с прогрессом ученика.
++    # Сторож здесь про ДРУГОЕ — про возврат к поштучному дозапросу, — поэтому
++    # выборки различаются по псевдониму синтабуса, а число обращений правила
++    # проверяется отдельной строкой ниже: одно на дерево, не на элемент.
+     material_reads = [
+-        s for s in statements if "student_material_progress" in s and "FROM materials" in s
++        s
++        for s in statements
++        if "student_material_progress" in s and "m.id AS material_id" in s
+     ]
++    grace_reads = [s for s in statements if "tsk692-grace-items" in s]
+     assert len(task_reads) == 1, f"выборка заданий должна быть одна, стало {len(task_reads)}"
+     assert len(material_reads) == 1, (
+         f"выборка материалов должна быть одна, стало {len(material_reads)}"
+     )
++    assert len(grace_reads) <= 1, (
++        "правило tsk-692 обязано читать дерево один раз за запрос (кеш на сессию), "
++        f"стало {len(grace_reads)}"
++    )
+ 
+     # Ни одной выборки задания или материала ПО ОДНОМУ ID: так выглядел бы
+     # возврат к поштучному дозапросу названий.
+@@ -301,13 +313,19 @@ async def test_no_extra_db_roundtrips_per_item(db, db_engine, client):
+     ]
+     assert not per_item, f"поштучный опрос вернулся: {per_item[:2]}"
+ 
+-    # Шире поштучного: к заданиям и материалам за весь вызов вообще НЕ должно
+-    # быть второго обращения — ни по одному id, ни пачкой на подкурс. Замер на
+-    # этом же дереве (root + подкурс) даёт ровно по одному.
++    # Шире поштучного: к заданиям и материалам за весь вызов не должно быть
++    # обращений сверх двух — выборка самого синтабуса плюс одна выборка правила
++    # tsk-692 (она читает дерево целиком одним запросом и кешируется на сессию).
++    # Оба числа не зависят от количества элементов и подкурсов, а именно рост по
++    # элементам и был первопричиной заторов.
+     touch_tasks = [s for s in statements if "FROM tasks" in s]
+     touch_materials = [s for s in statements if "FROM materials" in s]
+-    assert len(touch_tasks) == 1, f"обращений к tasks должно быть 1, стало {len(touch_tasks)}"
+-    assert len(touch_materials) == 1, (
+-        f"обращений к materials должно быть 1, стало {len(touch_materials)}"
++    assert len(touch_tasks) - len(grace_reads) == 1, (
++        f"обращений к tasks сверх правила tsk-692 должно быть 1, стало "
++        f"{len(touch_tasks) - len(grace_reads)}"
++    )
++    assert len(touch_materials) - len(grace_reads) == 1, (
++        f"обращений к materials сверх правила tsk-692 должно быть 1, стало "
++        f"{len(touch_materials) - len(grace_reads)}"
+     )
+ 

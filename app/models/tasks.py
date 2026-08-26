@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, List
 
+from datetime import datetime
+
 from sqlalchemy import (
     Boolean,
+    DateTime,
     Integer,
     ForeignKeyConstraint,
     PrimaryKeyConstraint,
@@ -134,6 +137,17 @@ class Tasks(Base):
             "{source, edited_at, edited_by, fields}. source=manual_web → "
             "перечисленные поля не перезаписываются импортом. "
             "NULL — правок руками не было. Не путать с difficulty_provenance."
+        ),
+    )
+    created_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        server_default=text("now()"),
+        nullable=True,
+        comment=(
+            "Когда задание заведено (tsk-692). NULL — заведено до появления "
+            "колонки: такое задание считается существовавшим всегда, и правило "
+            "«добавленное после прохождения приходит рекомендуемым» на него не "
+            "срабатывает"
         ),
     )
 

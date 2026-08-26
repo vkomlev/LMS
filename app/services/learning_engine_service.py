@@ -38,6 +38,11 @@ from app.services.attempt_attachments import (
     mark_missing_one,
 )
 from app.services.task_sampling import sample_task_ids
+# tsk-692: содержимое, добавленное в курс после того, как ученик прошёл тему,
+# приходит ему рекомендуемым, а не долгом. Правило живёт отдельным модулем и
+# зовётся функцией, а не повторяется условием в каждой точке (иначе копии
+# разъезжаются — tsk-598).
+from app.services.content_grace_service import EMPTY_GRACE, compute_graced_items
 # tsk-598: единый предикат обязательной очереди (tsk-247). Импортируется, а не
 # копируется словами: копия здесь уже разъехалась с очередью и дала 823 ложных
 # «курса с неоценёнными работами» из 824. Цикла нет — `teacher_queue_service`
@@ -751,16 +756,22 @@ class LearningEngineService:
         # Числитель (tasks_with_last_pass ниже) правки не требует: у
         # вырезанного выборкой задания по определению нет task_result этого
         # студента, оно и так не попадает в счёт пройденных.
+        # tsk-692: содержимое, добавленное после того, как ученик прошёл тему,
+        # обязательным для него не считается — иначе правка курса откатывала бы
+        # его COMPLETED назад в IN_PROGRESS и включала бы, через
+        # `course_dependencies`, замок на курсах, которые он уже прошёл.
+        # Объединяем с выборкой (tsk-314) МНОЖЕСТВОМ, а не суммой счётчиков:
+        # одно и то же задание может быть и вырезано выборкой, и прощено
+        # правилом — сумма вычла бы его дважды и занизила знаменатель.
+        graced = await compute_graced_items(db, student_id, course_id)
+
+        excluded_tasks: set[int] = set(graced.tasks)
         sampling_map = await self._sampling_enabled_courses(db, tree_ids)
-        if sampling_map:
-            sampled_out = 0
-            for sampled_course_id, cfg in sampling_map.items():
-                sampled_out += len(
-                    await self._sampled_out_task_ids(
-                        db, sampled_course_id, student_id, cfg
-                    )
-                )
-            total_tasks = max(0, total_tasks - sampled_out)
+        for sampled_course_id, cfg in sampling_map.items():
+            excluded_tasks |= await self._sampled_out_task_ids(
+                db, sampled_course_id, student_id, cfg
+            )
+        total_tasks = max(0, total_tasks - len(excluded_tasks))
 
         materials_count_stmt = select(func.count(Materials.id)).where(
             Materials.course_id.in_(tree_ids),
@@ -768,7 +779,7 @@ class LearningEngineService:
             Materials.requirement_level.in_(("required", "skippable")),
         )
         r = await db.execute(materials_count_stmt)
-        total_materials = r.scalar() or 0
+        total_materials = max(0, (r.scalar() or 0) - len(graced.materials))
 
         # Число заданий в дереве, по которым последний task_result — PASS.
         # Парность compute_task_state: учитываем все task_results из не-cancelled attempts
@@ -1128,7 +1139,13 @@ class LearningEngineService:
                     if kind == "material":
                         material_ids = [
                             i
-                            for i, op in await self._ordered_material_rows(db, cid)
+                            # tsk-692: тот же список, что и в обходе ниже
+                            # (_first_incomplete_material) — иначе позиция могла
+                            # бы указывать на материал, которому правило уже
+                            # сняло обязательность.
+                            for i, op in await self._effective_material_rows(
+                                db, cid, student_id, root_course_id=current_root_id
+                            )
                             if self._order_key(op, i) > pos_key
                         ]
                     else:
@@ -1140,13 +1157,16 @@ class LearningEngineService:
                             # tsk-314: тот же список, что видит студент в обходе
                             # ниже (_first_incomplete_task) — иначе позиция
                             # могла бы указывать на задание, вырезанное выборкой.
-                            for i, op in await self._effective_task_rows(db, cid, student_id)
+                            for i, op in await self._effective_task_rows(
+                                db, cid, student_id, root_course_id=current_root_id
+                            )
                             if self._order_key(op, i) > pos_key
                         ]
 
                 # Первый незавершённый материал
                 mat = await self._first_incomplete_material(
-                    db, student_id, cid, material_ids=material_ids
+                    db, student_id, cid, material_ids=material_ids,
+                    root_course_id=current_root_id,
                 )
                 if mat is not None:
                     logger.info("resolve_next_item: student_id=%s next=material course_id=%s material_id=%s", student_id, cid, mat)
@@ -1371,7 +1391,11 @@ class LearningEngineService:
         return (set(easy_ids) | set(normal_ids)) - kept
 
     async def _effective_task_rows(
-        self, db: AsyncSession, course_id: int, student_id: int
+        self,
+        db: AsyncSession,
+        course_id: int,
+        student_id: int,
+        root_course_id: Optional[int] = None,
     ) -> List[Tuple[int, Optional[int]]]:
         """(id, order_position) заданий курса, которые студент реально видит.
 
@@ -1379,6 +1403,12 @@ class LearningEngineService:
         выборка, исключает НЕ отобранные EASY/NORMAL задания. THEORY и любая
         сложность вне EASY/NORMAL (HARD/PROJECT) выборке не подлежат —
         остаются в списке всегда. Без выборки — то же, что `_ordered_task_rows`.
+
+        tsk-692: и без заданий, добавленных в курс уже после того, как ученик
+        прошёл тему, — им обязательность снята, они ведут себя как
+        `recommended`. `root_course_id` — корень, от которого считать правило
+        (оно смотрит и на предков узла); без него правило видит только сам
+        курс и потому прощает меньше, а не больше.
         """
         rows = await self._ordered_task_rows(db, course_id)
         if not rows:
@@ -1386,13 +1416,37 @@ class LearningEngineService:
 
         cfg_map = await self._sampling_enabled_courses(db, [course_id])
         config = cfg_map.get(course_id)
-        if not config:
-            return rows
+        dropped: set[int] = set()
+        if config:
+            dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
 
-        dropped = await self._sampled_out_task_ids(db, course_id, student_id, config)
-        if not dropped:
+        graced = await compute_graced_items(db, student_id, root_course_id or course_id)
+        if not dropped and not graced.tasks:
             return rows
-        return [(i, op) for i, op in rows if i not in dropped]
+        return [
+            (i, op) for i, op in rows if i not in dropped and i not in graced.tasks
+        ]
+
+    async def _effective_material_rows(
+        self,
+        db: AsyncSession,
+        course_id: int,
+        student_id: int,
+        root_course_id: Optional[int] = None,
+    ) -> List[Tuple[int, Optional[int]]]:
+        """(id, order_position) материалов курса, которые студент реально видит.
+
+        tsk-692: без материалов, добавленных после того, как ученик прошёл
+        тему. Парный к `_effective_task_rows`; выборки по сложности у
+        материалов нет, поэтому здесь только это правило.
+        """
+        rows = await self._ordered_material_rows(db, course_id)
+        if not rows:
+            return rows
+        graced = await compute_graced_items(db, student_id, root_course_id or course_id)
+        if not graced.materials:
+            return rows
+        return [(i, op) for i, op in rows if i not in graced.materials]
 
     async def _first_incomplete_material(
         self,
@@ -1400,14 +1454,23 @@ class LearningEngineService:
         student_id: int,
         course_id: int,
         material_ids: Optional[List[int]] = None,
+        root_course_id: Optional[int] = None,
     ) -> Optional[int]:
         """ID первого материала курса, не отмеченного как completed для студента.
 
         `material_ids` — необязательный заранее суженный список (tsk-261: обход от
         текущей позиции передаёт сюда только материалы ПОСЛЕ неё).
+
+        `root_course_id` (tsk-692) — корень, от которого считается правило
+        «добавленное после прохождения не долг».
         """
         if material_ids is None:
-            material_ids = await self._ordered_material_ids(db, course_id)
+            material_ids = [
+                i
+                for i, _ in await self._effective_material_rows(
+                    db, course_id, student_id, root_course_id=root_course_id
+                )
+            ]
 
         if not material_ids:
             return None
@@ -1454,7 +1517,10 @@ class LearningEngineService:
             # в resolve_next_item (иначе следующим предлагалось бы задание,
             # которое сама выборка исключила).
             task_ids = [
-                i for i, _ in await self._effective_task_rows(db, course_id, student_id)
+                i
+                for i, _ in await self._effective_task_rows(
+                    db, course_id, student_id, root_course_id=root_course_id
+                )
             ]
         if task_ids:
             skipped_rows = await db.execute(

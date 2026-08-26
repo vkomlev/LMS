@@ -415,6 +415,14 @@ async def get_course_syllabus_states(
     teacher / methodist / admin — bypass; student — только дерево
     `user_courses + course_parents`.
 
+    `requirement_level` в ответе — уровень ДЛЯ ЭТОГО УЧЕНИКА, а не свойство
+    элемента (tsk-692). Обязательный элемент, добавленный в курс после того, как
+    ученик закрыл тему, отдаётся ему как `recommended`, хотя в базе стоит
+    `required`; тому, кто тему не проходил, отдаётся `required`. Поэтому ответ
+    нельзя переиспользовать между учениками и бессмысленно сверять с
+    методистскими ручками (`GET /tasks/by-course/…`, `GET /courses/{id}/materials`)
+    — там отдаётся уровень из базы.
+
     Cache: `no-store` (tsk-214б). Раньше стоял `private, max-age=15` в расчёте на
     то, что SPW invalidate'ит queryKey после submit — но HTTP-кэш браузера и кэш
     TanStack Query это РАЗНЫЕ слои: `invalidateQueries` заново вызывает `fetch()`,

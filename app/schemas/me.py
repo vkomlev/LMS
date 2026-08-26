@@ -273,7 +273,14 @@ class SyllabusTaskItem(BaseModel):
     task_id: int
     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
     status: SyllabusTaskStatus
-    requirement_level: RequirementLevel
+    requirement_level: RequirementLevel = Field(
+        ...,
+        description=(
+            "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство задания "
+            "(tsk-692): обязательное задание, добавленное в курс после того, как "
+            "ученик закрыл тему, отдаётся ему как recommended"
+        ),
+    )
     is_active: bool = True
     attempts_used: int
     attempts_limit_effective: int
@@ -311,7 +318,14 @@ class SyllabusMaterialItem(BaseModel):
     material_id: int
     course_id: int = Field(..., description="ID owner-курса (subcourse, не root)")
     status: SyllabusMaterialStatus
-    requirement_level: RequirementLevel
+    requirement_level: RequirementLevel = Field(
+        ...,
+        description=(
+            "Уровень обязательности ДЛЯ ЭТОГО УЧЕНИКА, а не свойство материала "
+            "(tsk-692): обязательный материал, добавленный в курс после того, как "
+            "ученик закрыл тему, отдаётся ему как recommended"
+        ),
+    )
     is_active: bool = True
     completed_at: datetime | None
     # tsk-684, та же причина, что у SyllabusTaskItem: без этих двух полей

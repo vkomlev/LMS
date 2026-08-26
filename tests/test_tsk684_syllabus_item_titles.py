@@ -284,12 +284,24 @@ async def test_no_extra_db_roundtrips_per_item(db, db_engine, client):
         await _drop(db, tree, user_id)
 
     task_reads = [s for s in statements if "attempts_per_task" in s]
+    # tsk-692: у правила «добавленное после прохождения — не долг» своя выборка
+    # по дереву, и она тоже читает материалы вместе с прогрессом ученика.
+    # Сторож здесь про ДРУГОЕ — про возврат к поштучному дозапросу, — поэтому
+    # выборки различаются по псевдониму синтабуса, а число обращений правила
+    # проверяется отдельной строкой ниже: одно на дерево, не на элемент.
     material_reads = [
-        s for s in statements if "student_material_progress" in s and "FROM materials" in s
+        s
+        for s in statements
+        if "student_material_progress" in s and "m.id AS material_id" in s
     ]
+    grace_reads = [s for s in statements if "tsk692-grace-items" in s]
     assert len(task_reads) == 1, f"выборка заданий должна быть одна, стало {len(task_reads)}"
     assert len(material_reads) == 1, (
         f"выборка материалов должна быть одна, стало {len(material_reads)}"
+    )
+    assert len(grace_reads) <= 1, (
+        "правило tsk-692 обязано читать дерево один раз за запрос (кеш на сессию), "
+        f"стало {len(grace_reads)}"
     )
 
     # Ни одной выборки задания или материала ПО ОДНОМУ ID: так выглядел бы
@@ -301,13 +313,19 @@ async def test_no_extra_db_roundtrips_per_item(db, db_engine, client):
     ]
     assert not per_item, f"поштучный опрос вернулся: {per_item[:2]}"
 
-    # Шире поштучного: к заданиям и материалам за весь вызов вообще НЕ должно
-    # быть второго обращения — ни по одному id, ни пачкой на подкурс. Замер на
-    # этом же дереве (root + подкурс) даёт ровно по одному.
+    # Шире поштучного: к заданиям и материалам за весь вызов не должно быть
+    # обращений сверх двух — выборка самого синтабуса плюс одна выборка правила
+    # tsk-692 (она читает дерево целиком одним запросом и кешируется на сессию).
+    # Оба числа не зависят от количества элементов и подкурсов, а именно рост по
+    # элементам и был первопричиной заторов.
     touch_tasks = [s for s in statements if "FROM tasks" in s]
     touch_materials = [s for s in statements if "FROM materials" in s]
-    assert len(touch_tasks) == 1, f"обращений к tasks должно быть 1, стало {len(touch_tasks)}"
-    assert len(touch_materials) == 1, (
-        f"обращений к materials должно быть 1, стало {len(touch_materials)}"
+    assert len(touch_tasks) - len(grace_reads) == 1, (
+        f"обращений к tasks сверх правила tsk-692 должно быть 1, стало "
+        f"{len(touch_tasks) - len(grace_reads)}"
+    )
+    assert len(touch_materials) - len(grace_reads) == 1, (
+        f"обращений к materials сверх правила tsk-692 должно быть 1, стало "
+        f"{len(touch_materials) - len(grace_reads)}"
     )
 
