@@ -56,6 +56,14 @@ async def list_pending_escalations(
         None,
         description="Если указано — только эскалации с created_at >= since (ISO8601)",
     ),
+    user_id: Optional[int] = Query(
+        None,
+        ge=1,
+        description=(
+            "За какого методиста спрашиваем. Обязателен для сервисного ключа "
+            "(бот ходит за разных людей); живой человек читает только своё."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=500),
     current_user: CurrentUser = Depends(require_role("methodist")),
     db: AsyncSession = Depends(get_async_db),
@@ -77,7 +85,16 @@ async def list_pending_escalations(
     `require_role("methodist")` (service-token — bypass, как и раньше);
     поведение эндпоинта не изменилось.
     """
-    params: dict = {"uid": current_user.id, "limit": int(limit)}
+    # tsk-674 фаза 3. Сервисный ключ — это `CurrentUser(id=0)`, а уведомления
+    # адресованы живым методистам, поэтому запрос без `user_id` возвращал боту
+    # пустой список ВСЕГДА: с Y-6 ни одна эскалация до Telegram не доходила —
+    # ни зависшая проверка, ни битые ссылки. Найдено живой проверкой на проде
+    # 27.08 (уведомления в базе есть, бот их не видит). Человек по-прежнему
+    # читает только своё: чужой `user_id` от него не принимается.
+    target_id = (
+        int(user_id) if (current_user.is_service and user_id is not None) else current_user.id
+    )
+    params: dict = {"uid": target_id, "limit": int(limit)}
     since_clause = ""
     if since is not None:
         since_clause = "AND n.modified_at >= :since "

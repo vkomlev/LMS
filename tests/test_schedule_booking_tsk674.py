@@ -404,3 +404,38 @@ async def test_requests_queue_is_closed_for_students(client, db):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_bot_gets_escalations_for_named_methodist(client, db):
+    """Заявка доходит до бота методиста — по имени методиста, а не «вообще».
+
+    Найдено живой проверкой на проде 27.08: бот ходит сервисным ключом, а это
+    для LMS «пользователь с id 0». Эндпоинт фильтровал уведомления по этому
+    самому id, поэтому боту всегда приходил пустой список — с Y-6 ни одна
+    эскалация методисту в Telegram не доходила, ни зависшая проверка, ни эта
+    заявка. Тест закрывает оба конца: без `user_id` пусто, с `user_id` — есть.
+    """
+    from app.core.config import Settings
+
+    methodist_id = await _create_user(db, role="methodist")
+    student_id = await _create_user(db, role="student")
+    await _fill_preference(db, student_id, hours=[(0, 12, "preferred")])
+    await schedule_booking_service.create_request(db, student_id, "нужен вечер")
+
+    api_key = next(iter(Settings().valid_api_keys))
+    headers = {"X-API-Key": api_key}
+
+    named = await client.get(
+        f"/api/v1/methodist/escalations/pending?limit=100&user_id={methodist_id}",
+        headers=headers,
+    )
+    assert named.status_code == 200
+    kinds = [item["kind"] for item in named.json()["items"]]
+    assert schedule_booking_service.REQUEST_KIND in kinds
+
+    anonymous = await client.get(
+        "/api/v1/methodist/escalations/pending?limit=100", headers=headers
+    )
+    assert anonymous.status_code == 200
+    assert anonymous.json()["items"] == [], "сервисный ключ без имени — не чужая почта"
