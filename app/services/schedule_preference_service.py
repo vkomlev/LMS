@@ -314,6 +314,65 @@ async def save_preference(
     return await get_preference(db, student_id)
 
 
+async def clear_preference(
+    db: AsyncSession, student_id: int, *, changed_by: Optional[int] = None
+) -> dict[str, Any]:
+    """Снять анкету ученика: он снова считается не ответившим (tsk-714).
+
+    Зачем это отдельное действие. Анкету можно переписать, но нельзя сохранить
+    пустой: проверка требует желательных часов не меньше, чем занятий в неделю.
+    А отменить ответ иногда нужно — ученик нажал за брата, сотрудник заполнил
+    под своей учётной записью, человек просит «забудьте, что я выбирал». Пока
+    строка есть, он числится ответившим, его часы идут в спрос и в раскладку
+    слотов, то есть влияют на расписание живых людей.
+
+    **История остаётся.** Снятие пишет в `..._revision` свой снимок с пустыми
+    часами и `source='staff'`: методисту потом важно видеть и то, что человек
+    просил в августе, и то, что анкету сняли. Стереть историю значило бы
+    отменить сам смысл, ради которого её завели.
+    """
+    head = (
+        await db.execute(
+            text(
+                "SELECT id, lessons_per_week FROM student_schedule_preference "
+                " WHERE student_id = :sid"
+            ),
+            {"sid": student_id},
+        )
+    ).first()
+    if head is None:
+        raise SchedulePreferenceError(
+            "У этого ученика анкеты нет — снимать нечего."
+        )
+
+    # Часы уходят каскадом вместе со строкой анкеты (FK `ON DELETE CASCADE`),
+    # отдельного удаления не нужно.
+    await db.execute(
+        text("DELETE FROM student_schedule_preference WHERE id = :pid"),
+        {"pid": head[0]},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO student_schedule_preference_revision "
+            "       (student_id, lessons_per_week, hours, comment, source, changed_by) "
+            "VALUES (:sid, :lpw, '[]'::jsonb, :comment, 'staff', :by)"
+        ),
+        {
+            "sid": student_id,
+            "lpw": head[1],
+            "comment": "Анкета снята сотрудником",
+            "by": changed_by,
+        },
+    )
+    await db.commit()
+
+    logger.info(
+        "tsk-714: анкета ученика %s снята сотрудником %s — он снова в молчащих",
+        student_id, changed_by,
+    )
+    return await get_preference(db, student_id)
+
+
 async def list_history(
     db: AsyncSession, student_id: int, *, limit: int = 50
 ) -> list[dict[str, Any]]:

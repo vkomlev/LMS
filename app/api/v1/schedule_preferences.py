@@ -191,6 +191,35 @@ async def get_student_schedule_preference(
     return SchedulePreferenceRead(**data)
 
 
+@router.delete(
+    "/methodist/schedule-preferences/{student_id}",
+    response_model=SchedulePreferenceRead,
+)
+async def clear_student_schedule_preference(
+    student_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_SUMMARY_GATE),
+) -> SchedulePreferenceRead:
+    """Снять анкету ученика — он снова считается не ответившим (tsk-714).
+
+    Нужно, когда анкету заполнили по ошибке: за брата, под чужой учётной
+    записью, «забудьте, что я выбирал». Переписать анкету можно и так, а вот
+    отменить ответ до этой ручки было нечем — пустую анкету проверка не
+    принимает.
+
+    История правок остаётся: снятие само пишется в неё отдельной записью.
+    """
+    try:
+        data = await schedule_preference_service.clear_preference(
+            db,
+            student_id,
+            changed_by=None if current_user.is_service else current_user.id,
+        )
+    except SchedulePreferenceError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    return SchedulePreferenceRead(**data)
+
+
 @router.get(
     "/methodist/schedule-preferences/{student_id}/history",
     response_model=list[SchedulePreferenceRevisionRead],

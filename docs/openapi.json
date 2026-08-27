@@ -38344,6 +38344,104 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "schedule_preferences"
+        ],
+        "summary": "Clear Student Schedule Preference",
+        "description": "Снять анкету ученика — он снова считается не ответившим (tsk-714).\n\nНужно, когда анкету заполнили по ошибке: за брата, под чужой учётной\nзаписью, «забудьте, что я выбирал». Переписать анкету можно и так, а вот\nотменить ответ до этой ручки было нечем — пустую анкету проверка не\nпринимает.\n\nИстория правок остаётся: снятие само пишется в неё отдельной записью.",
+        "operationId": "clear_student_schedule_preference_api_v1_methodist_schedule_preferences__student_id__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulePreferenceRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/methodist/schedule-preferences/{student_id}/history": {

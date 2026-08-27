@@ -477,3 +477,62 @@ async def test_remind_endpoint_dry_run_for_methodist(db, client):
         headers={"Authorization": f"Bearer {student_token}"},
     )
     assert forbidden.status_code == 403
+
+
+# ─────────────── снятие анкеты сотрудником (tsk-714) ───────────────
+
+
+@pytest.mark.asyncio
+async def test_staff_can_clear_preference(db):
+    """Снятая анкета возвращает ученика в молчащие, история при этом остаётся.
+
+    Анкету можно переписать, но нельзя сохранить пустой — проверка требует
+    желательных часов. Отменить ответ было нечем, а нужно: заполняют за брата,
+    под чужой учётной записью, просят «забудьте, что я выбирал».
+    """
+    from app.services.schedule_preference_service import SchedulePreferenceError
+
+    student_id = await _create_user(db, role="student")
+    staff_id = await _create_user(db, role="methodist")
+    await schedule_preference_service.save_preference(
+        db,
+        student_id,
+        SchedulePreferenceWrite(
+            lessons_per_week=1,
+            hours=[{"weekday": 0, "start_time": "17:00", "kind": "preferred"}],
+        ),
+        changed_by=student_id,
+    )
+    assert await schedule_preference_service.is_pending(db, student_id) is False
+
+    after = await schedule_preference_service.clear_preference(
+        db, student_id, changed_by=staff_id
+    )
+
+    assert after["is_filled"] is False
+    assert after["hours"] == []
+    # Снова в молчащих: полоса напоминания у ученика должна вернуться.
+    assert await schedule_preference_service.is_pending(db, student_id) is True
+
+    history = await schedule_preference_service.list_history(db, student_id)
+    assert len(history) == 2, "и что просил, и что анкету сняли"
+    assert history[0]["source"] == "staff"
+    assert history[0]["hours"] == []
+    assert history[1]["hours"], "прежний выбор из истории не пропал"
+
+    # Повторное снятие — понятный отказ, а не молчание.
+    with pytest.raises(SchedulePreferenceError):
+        await schedule_preference_service.clear_preference(db, student_id)
+
+
+@pytest.mark.asyncio
+async def test_clear_preference_is_closed_for_students(client, db):
+    """Снять анкету может только методист: это чужой ответ, а не свой."""
+    student_id = await _create_user(db, role="student")
+    token, _, _ = await create_session(db, user_id=student_id)
+
+    resp = await client.delete(
+        f"/api/v1/methodist/schedule-preferences/{student_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 403
