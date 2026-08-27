@@ -41,16 +41,23 @@ class GapSignalRead(BaseModel):
         "error_rate",
         description=(
             "Повод сигнала: `error_rate` — ученик много ошибается; "
-            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646). У второго "
-            "повода `wrong_rate` честно нулевая и показывать её нельзя — числа "
-            "лежат в `meta` (`reviewed`, `flagged`)"
+            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646); "
+            "`dropout_risk` — ученик затих: занятия идут мимо него и сам он в "
+            "кабинете не работает (tsk-647). У двух последних поводов "
+            "`wrong_rate` честно нулевая и показывать её нельзя — числа лежат "
+            "в `meta`"
         ),
-        examples=["error_rate", "ai_authorship"],
+        examples=["error_rate", "ai_authorship", "dropout_risk"],
     )
     meta: Optional[dict] = Field(
         None,
         description="Числа повода. Состав зависит от `reason`",
-        examples=[None, {"reason": "ai_authorship", "reviewed": 12, "flagged": 11}],
+        examples=[
+            None,
+            {"reason": "ai_authorship", "reviewed": 12, "flagged": 11},
+            {"reason": "dropout_risk", "window_days": 14, "lessons_missed": 2,
+             "silence_days": 37, "last_attended": None},
+        ],
     )
 
     @property

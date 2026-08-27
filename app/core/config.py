@@ -391,6 +391,13 @@ class Settings:
         self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
         self.learning_gaps_cron_interval_hours: int = int(os.getenv("LEARNING_GAPS_CRON_INTERVAL_HOURS", "24"))
 
+        # tsk-647: окно признака «ученик затих» в днях. 14 — по замеру на
+        # боевых данных (docs/qa/2026-08-28-tsk647-dropout-signal.md): 10 дней
+        # дают половину ложных тревог, 21 — сигнал на неделю позже. Порог здесь,
+        # а не константой в коде, потому что размен «раньше узнать» против
+        # «реже ошибаться» — решение оператора, и менять его нужно без выката.
+        self.dropout_risk_window_days: int = int(os.getenv("DROPOUT_RISK_WINDOW_DAYS", "14"))
+
         # tsk-596: суточный пересчёт текущего месяца начислений + страж
         # «ходит, но не выставлен». Без него строка месяца появлялась только
         # при правке расписания или по кнопке в кабинете маркетолога — то есть

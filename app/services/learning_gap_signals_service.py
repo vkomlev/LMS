@@ -23,6 +23,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.services.learning_gaps_service import (
     find_topic_gaps,
     real_student_results_filter,
@@ -38,6 +39,21 @@ STUDENT_ERROR_RATE_THRESHOLD = 0.5
 #: Поводы сигнала (tsk-653). Раньше повод был один и потому безымянный.
 REASON_ERROR_RATE = "error_rate"
 REASON_AI_AUTHORSHIP = "ai_authorship"
+REASON_DROPOUT_RISK = "dropout_risk"
+
+# Окно признака «затих» (tsk-647). Две недели — не круглое число, а результат
+# замера на боевой базе за август (docs/qa/2026-08-28-tsk647-dropout-signal.md):
+#
+#   10 дней — 6 помеченных, 3 ухода: половина тревог ложная;
+#   14 дней — 3 помеченных, 2 ухода, третий вернулся после трёх пропущенных
+#             занятий подряд и трёх недель без единой своей сдачи — то есть
+#             тревога по нему была уместной, а не шумом;
+#   21 день — 2 помеченных, 2 ухода, но сигнал приходит на неделю позже.
+#
+# Значение по умолчанию; фактическое берётся из `DROPOUT_RISK_WINDOW_DAYS`.
+# Порог — решение оператора, и менять его нужно без выката: цена у обеих ошибок
+# разная. Ослаблять можно только новым замером, а не ощущением.
+DROPOUT_WINDOW_DAYS = 14
 
 # Пороги признака ИИ-авторства. Оба сразу, а не любой из них: три работы из
 # трёхсот — это шум, а две из двух — слишком мало, чтобы звать человека.
@@ -206,6 +222,178 @@ async def find_ai_authorship_gaps(
     return [dict(r) for r in rows]
 
 
+# Датчик «затих» (tsk-647): ученик, который вот-вот перестанет ходить.
+#
+# **Почему именно два условия сразу, а не пропуски.** Пропуски проверены на
+# боевых данных и как признак не работают: `no_show` — четверть всех участий,
+# школа так живёт. Правило «два пропуска подряд», проверенное на четырёх датах
+# августа, дало 14 тревог и 4 попадания — три четверти шума, а сигнал, который
+# читают через раз, равен отсутствию сигнала. Тишина в кабинете сама по себе не
+# лучше: паузы в 7–19 дней есть у самых прилежных, включая ученика с 1486
+# сдачами. Разделяет только СОВПАДЕНИЕ: занятия идут — его нет; кабинет открыт —
+# он в нём не работает. Замер: docs/qa/2026-08-28-tsk647-dropout-signal.md.
+#
+# **Почему `spw_web`, а не любые строки `task_results`.** 73% строк на боевой
+# базе — ручные простановки преподавателя (`manual_teacher`). Считать их работой
+# ученика значит мерить активность ПРЕПОДАВАТЕЛЯ: первый вариант этого запроса
+# так и делал и «видел» работу там, где ученик не заходил месяц.
+#
+# **Почему нужна история своей работы.** Без условия «раньше сдавал сам» датчик
+# вырождается в «не был 14 дней» — для учеников, чью работу преподаватель
+# отмечает руками, второе условие истинно всегда. На тех же данных это дало 11
+# тревог вместо 3 при том же числе находок. Цена: пятеро из 46 учеников с
+# занятиями остаются вне охвата — у троих работа только с ручной отметкой, у
+# двоих сдач нет вовсе. Это честная граница, а не недосмотр.
+#
+# **Почему перерыв проверяется на пересечение с окном, а не на сегодня.**
+# Перерыв заводят задним числом и на месяц вперёд; сверка «идёт ли он прямо
+# сейчас» пропустила бы ученика, у которого окно целиком лежит внутри отъезда.
+_DROPOUT_RISK_SQL = """
+WITH win AS (
+    SELECT now() - make_interval(days => :days) AS since
+),
+-- Один курс на человека, а не по курсу на запись: две карточки об одном
+-- ученике — это не два сигнала, это способ отучить читать список. Записывают
+-- только на корень дерева, поэтому вверх по `course_parents` идти незачем.
+--
+-- Граница: ученик без активной записи на курс сигнала не получит — карточку
+-- некуда привязать (`learning_gap_signal.course_id` обязателен). На боевой базе
+-- такой один, и он и так вне охвата: своей работы у него нет вовсе.
+enrolled AS (
+    SELECT DISTINCT ON (uc.user_id)
+           uc.user_id, uc.course_id
+    FROM user_courses uc
+    WHERE uc.is_active = true
+    ORDER BY uc.user_id, uc.added_at DESC, uc.course_id
+),
+lessons AS (
+    SELECT p.student_id,
+           COUNT(*) AS lessons_in_window,
+           COUNT(*) FILTER (WHERE p.status = 'confirmed') AS attended
+    FROM lesson_occurrence_participant p
+    JOIN lesson_occurrence o ON o.id = p.occurrence_id
+    CROSS JOIN win
+    WHERE p.status IN ('confirmed', 'no_show')
+      AND o.scheduled_at >= win.since
+      AND o.scheduled_at < now()
+    GROUP BY p.student_id
+),
+own_work AS (
+    SELECT tr.user_id, MAX(tr.submitted_at) AS last_own_work
+    FROM task_results tr
+    WHERE {real_student}
+    GROUP BY tr.user_id
+),
+last_seen AS (
+    SELECT p.student_id, MAX(o.scheduled_at) AS last_attended
+    FROM lesson_occurrence_participant p
+    JOIN lesson_occurrence o ON o.id = p.occurrence_id
+    WHERE p.status = 'confirmed'
+    GROUP BY p.student_id
+),
+-- Когда по этому ученику в последний раз ЗАКРЫВАЛИ такой сигнал. Без поправки
+-- признак остаётся истинным навсегда: ученик не вернулся — значит завтра
+-- заведём тот же сигнал заново, и так до бесконечности.
+closed AS (
+    SELECT student_id, MAX(COALESCE(acknowledged_at, created_at)) AS closed_at
+    FROM learning_gap_signal
+    WHERE reason = 'dropout_risk'
+      AND status IN ('resolved', 'dismissed')
+      AND student_id IS NOT NULL
+    GROUP BY student_id
+)
+SELECT u.id AS student_id,
+       e.course_id,
+       c.title AS course_title,
+       l.lessons_in_window,
+       ls.last_attended,
+       w.last_own_work,
+       EXTRACT(DAY FROM now() - w.last_own_work)::int AS silence_days
+FROM users u
+JOIN user_roles ur ON ur.user_id = u.id
+JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
+JOIN enrolled e ON e.user_id = u.id
+JOIN courses c ON c.id = e.course_id
+JOIN lessons l ON l.student_id = u.id
+JOIN own_work w ON w.user_id = u.id
+LEFT JOIN last_seen ls ON ls.student_id = u.id
+LEFT JOIN closed ON closed.student_id = u.id
+CROSS JOIN win
+WHERE u.is_active
+  AND u.merged_into_user_id IS NULL
+  AND u.blocked_at IS NULL
+  -- Преподаватель заведён и как ученик, но участником занятий не бывает; всё
+  -- же отсекаем явно: одна карточка про коллегу обесценивает весь список.
+  --
+  -- Смотреть надо ВСЕ ТРИ места: у занятия ведущий хранится и колонкой
+  -- `lesson_occurrence.teacher_id`, и строками `lesson_occurrence_teacher`
+  -- (несколько ведущих, tsk-443). Первая версия проверяла только таблицы — и
+  -- тест поймал на этом преподавателя, чьи занятия заведены старым способом.
+  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence lo WHERE lo.teacher_id = u.id)
+  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence_teacher lt WHERE lt.teacher_id = u.id)
+  AND NOT EXISTS (SELECT 1 FROM lesson_slot_teacher st WHERE st.teacher_id = u.id)
+  -- Занятия шли, и он не был ни на одном.
+  AND l.attended = 0
+  -- И сам в кабинете за это время не работал ни разу.
+  AND w.last_own_work < win.since
+  -- Перерыв задан ДАТАМИ школы, а окно — моментами времени; сервер живёт в UTC.
+  -- Без приведения к московской дате границы уезжают на сутки (то же правило,
+  -- что и в `break_service._LOCAL_DAY`).
+  AND NOT EXISTS (
+      SELECT 1 FROM student_break b
+      WHERE b.student_id = u.id
+        AND b.ends_on >= (win.since AT TIME ZONE 'Europe/Moscow')::date
+        AND b.starts_on <= (now() AT TIME ZONE 'Europe/Moscow')::date
+  )
+  -- Разобранный сигнал поднимается заново, только если человек успел вернуться
+  -- и затих снова.
+  AND (closed.closed_at IS NULL
+       OR w.last_own_work > closed.closed_at
+       OR ls.last_attended > closed.closed_at)
+ORDER BY w.last_own_work
+LIMIT :limit
+"""
+
+
+def dropout_window_days() -> int:
+    """Окно признака «затих» из настроек, с запасным значением.
+
+    Читается на каждом проходе, а не при импорте модуля: иначе смена порога
+    требовала бы перезапуска — то есть выката, которого правило и избегает.
+    """
+    try:
+        return int(getattr(Settings(), "dropout_risk_window_days", DROPOUT_WINDOW_DAYS))
+    except Exception:
+        logger.warning("dropout_risk: настройка окна не прочиталась, беру %s дн.",
+                       DROPOUT_WINDOW_DAYS)
+        return DROPOUT_WINDOW_DAYS
+
+
+async def find_dropout_risk(
+    db: AsyncSession,
+    *,
+    days: int | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """Ученики, которые затихли: занятия идут мимо них, и сами они не работают.
+
+    Отдельный датчик, а не порог внутри существующих: те меряют, КАК ученик
+    учится, этот — учится ли вообще. Ученик из первой строки августовского
+    замера ошибок не делал вовсе — ему просто нечем было их сделать.
+
+    Признак срабатывает не раньше чем через две недели после отвала: это не
+    предсказание ухода, а раннее обнаружение вместо позднего. Сегодня
+    преподаватель узнаёт постфактум — по данным августа он узнавал бы на
+    2–4 недели раньше.
+    """
+    sql = _DROPOUT_RISK_SQL.format(real_student=real_student_results_filter("tr"))
+    rows = (await db.execute(text(sql), {
+        "days": days if days is not None else dropout_window_days(),
+        "limit": limit,
+    })).mappings().all()
+    return [dict(r) for r in rows]
+
+
 async def upsert_signal(
     db: AsyncSession, *, course_id: int, student_id: int | None,
     submissions: int, students: int, wrong_rate: float,
@@ -246,6 +434,7 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
     topics = await find_topic_gaps(db, days=days)
     students = await find_student_gaps(db, days=days)
     authorship = await find_ai_authorship_gaps(db)
+    dropout = await find_dropout_risk(db)
 
     new_topics = 0
     for g in topics:
@@ -284,18 +473,47 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
         ):
             new_authorship += 1
 
+    new_dropout = 0
+    dropout_window = dropout_window_days()
+    for r in dropout:
+        if await upsert_signal(
+            db, course_id=int(r["course_id"]), student_id=int(r["student_id"]),
+            # Число, которое человек читает первым, — сколько занятий прошло
+            # мимо ученика. Доли ошибок у этого повода нет: он про то, что
+            # ученик не работал вовсе, а не про то, как он работал.
+            submissions=int(r["lessons_in_window"]), students=1,
+            wrong_rate=0.0,
+            reason=REASON_DROPOUT_RISK,
+            meta={
+                "reason": REASON_DROPOUT_RISK,
+                "window_days": dropout_window,
+                "lessons_missed": int(r["lessons_in_window"]),
+                "silence_days": int(r["silence_days"]),
+                # None — «не был ни разу»: не то же самое, что «давно не был», и
+                # преподавателю это разные разговоры.
+                "last_attended": (
+                    r["last_attended"].date().isoformat()
+                    if r["last_attended"] is not None else None
+                ),
+            },
+        ):
+            new_dropout += 1
+
     await db.commit()
     logger.info(
         "learning_gaps: проход завершён — тем найдено %s (новых сигналов %s), "
-        "учеников %s (новых %s), признак авторства %s (новых %s), период %s дн.",
+        "учеников %s (новых %s), признак авторства %s (новых %s), "
+        "затихших %s (новых %s), период %s дн.",
         len(topics), new_topics, len(students), new_students,
-        len(authorship), new_authorship, days,
+        len(authorship), new_authorship, len(dropout), new_dropout, days,
     )
     return {
         "topics_found": len(topics), "topic_signals_created": new_topics,
         "students_found": len(students), "student_signals_created": new_students,
         "authorship_found": len(authorship),
         "authorship_signals_created": new_authorship,
+        "dropout_found": len(dropout),
+        "dropout_signals_created": new_dropout,
     }
 
 
@@ -480,7 +698,11 @@ async def list_signals(
         -- отправляла сигнал о признаке авторства в самый низ списка — у него
         -- доля ошибок честно нулевая. Живой проход это и показал: карточка
         -- выехала методисту последней строкой с бейджем «0% ошибок».
+        -- «Затих» идёт первым всегда, а не по числу: у остальных поводов речь о
+        -- том, КАК ученик учится, и разговор можно отложить до занятия. Здесь
+        -- ученика может не оказаться уже на следующем занятии, и ждать нечего.
         ORDER BY CASE s.reason
+                     WHEN 'dropout_risk' THEN 1.0
                      WHEN 'ai_authorship' THEN
                          COALESCE((s.meta->>'flagged')::float
                                   / NULLIF((s.meta->>'reviewed')::float, 0), 0)

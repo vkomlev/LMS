@@ -1,0 +1,754 @@
+diff --git a/app/api/v1/learning_gaps.py b/app/api/v1/learning_gaps.py
+index 548fd1e..bc66cbd 100644
+--- a/app/api/v1/learning_gaps.py
++++ b/app/api/v1/learning_gaps.py
+@@ -41,16 +41,23 @@ class GapSignalRead(BaseModel):
+         "error_rate",
+         description=(
+             "Повод сигнала: `error_rate` — ученик много ошибается; "
+-            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646). У второго "
+-            "повода `wrong_rate` честно нулевая и показывать её нельзя — числа "
+-            "лежат в `meta` (`reviewed`, `flagged`)"
++            "`ai_authorship` — у работ признак ИИ-авторства (tsk-646); "
++            "`dropout_risk` — ученик затих: занятия идут мимо него и сам он в "
++            "кабинете не работает (tsk-647). У двух последних поводов "
++            "`wrong_rate` честно нулевая и показывать её нельзя — числа лежат "
++            "в `meta`"
+         ),
+-        examples=["error_rate", "ai_authorship"],
++        examples=["error_rate", "ai_authorship", "dropout_risk"],
+     )
+     meta: Optional[dict] = Field(
+         None,
+         description="Числа повода. Состав зависит от `reason`",
+-        examples=[None, {"reason": "ai_authorship", "reviewed": 12, "flagged": 11}],
++        examples=[
++            None,
++            {"reason": "ai_authorship", "reviewed": 12, "flagged": 11},
++            {"reason": "dropout_risk", "window_days": 14, "lessons_missed": 2,
++             "silence_days": 37, "last_attended": None},
++        ],
+     )
+ 
+     @property
+diff --git a/app/core/config.py b/app/core/config.py
+index 8439d94..12ca185 100644
+--- a/app/core/config.py
++++ b/app/core/config.py
+@@ -391,6 +391,13 @@ class Settings:
+         self.learning_gaps_cron_enabled: bool = os.getenv("LEARNING_GAPS_CRON_ENABLED", "true").lower() in ("true", "1", "yes")
+         self.learning_gaps_cron_interval_hours: int = int(os.getenv("LEARNING_GAPS_CRON_INTERVAL_HOURS", "24"))
+ 
++        # tsk-647: окно признака «ученик затих» в днях. 14 — по замеру на
++        # боевых данных (docs/qa/2026-08-28-tsk647-dropout-signal.md): 10 дней
++        # дают половину ложных тревог, 21 — сигнал на неделю позже. Порог здесь,
++        # а не константой в коде, потому что размен «раньше узнать» против
++        # «реже ошибаться» — решение оператора, и менять его нужно без выката.
++        self.dropout_risk_window_days: int = int(os.getenv("DROPOUT_RISK_WINDOW_DAYS", "14"))
++
+         # tsk-596: суточный пересчёт текущего месяца начислений + страж
+         # «ходит, но не выставлен». Без него строка месяца появлялась только
+         # при правке расписания или по кнопке в кабинете маркетолога — то есть
+diff --git a/app/services/learning_gap_signals_service.py b/app/services/learning_gap_signals_service.py
+index 97e0e43..9d0600d 100644
+--- a/app/services/learning_gap_signals_service.py
++++ b/app/services/learning_gap_signals_service.py
+@@ -23,6 +23,7 @@ import logging
+ from sqlalchemy import text
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
++from app.core.config import Settings
+ from app.services.learning_gaps_service import (
+     find_topic_gaps,
+     real_student_results_filter,
+@@ -38,6 +39,21 @@ STUDENT_ERROR_RATE_THRESHOLD = 0.5
+ #: Поводы сигнала (tsk-653). Раньше повод был один и потому безымянный.
+ REASON_ERROR_RATE = "error_rate"
+ REASON_AI_AUTHORSHIP = "ai_authorship"
++REASON_DROPOUT_RISK = "dropout_risk"
++
++# Окно признака «затих» (tsk-647). Две недели — не круглое число, а результат
++# замера на боевой базе за август (docs/qa/2026-08-28-tsk647-dropout-signal.md):
++#
++#   10 дней — 6 помеченных, 3 ухода: половина тревог ложная;
++#   14 дней — 3 помеченных, 2 ухода, третий вернулся после трёх пропущенных
++#             занятий подряд и трёх недель без единой своей сдачи — то есть
++#             тревога по нему была уместной, а не шумом;
++#   21 день — 2 помеченных, 2 ухода, но сигнал приходит на неделю позже.
++#
++# Значение по умолчанию; фактическое берётся из `DROPOUT_RISK_WINDOW_DAYS`.
++# Порог — решение оператора, и менять его нужно без выката: цена у обеих ошибок
++# разная. Ослаблять можно только новым замером, а не ощущением.
++DROPOUT_WINDOW_DAYS = 14
+ 
+ # Пороги признака ИИ-авторства. Оба сразу, а не любой из них: три работы из
+ # трёхсот — это шум, а две из двух — слишком мало, чтобы звать человека.
+@@ -206,6 +222,178 @@ async def find_ai_authorship_gaps(
+     return [dict(r) for r in rows]
+ 
+ 
++# Датчик «затих» (tsk-647): ученик, который вот-вот перестанет ходить.
++#
++# **Почему именно два условия сразу, а не пропуски.** Пропуски проверены на
++# боевых данных и как признак не работают: `no_show` — четверть всех участий,
++# школа так живёт. Правило «два пропуска подряд», проверенное на четырёх датах
++# августа, дало 14 тревог и 4 попадания — три четверти шума, а сигнал, который
++# читают через раз, равен отсутствию сигнала. Тишина в кабинете сама по себе не
++# лучше: паузы в 7–19 дней есть у самых прилежных, включая ученика с 1486
++# сдачами. Разделяет только СОВПАДЕНИЕ: занятия идут — его нет; кабинет открыт —
++# он в нём не работает. Замер: docs/qa/2026-08-28-tsk647-dropout-signal.md.
++#
++# **Почему `spw_web`, а не любые строки `task_results`.** 73% строк на боевой
++# базе — ручные простановки преподавателя (`manual_teacher`). Считать их работой
++# ученика значит мерить активность ПРЕПОДАВАТЕЛЯ: первый вариант этого запроса
++# так и делал и «видел» работу там, где ученик не заходил месяц.
++#
++# **Почему нужна история своей работы.** Без условия «раньше сдавал сам» датчик
++# вырождается в «не был 14 дней» — для учеников, чью работу преподаватель
++# отмечает руками, второе условие истинно всегда. На тех же данных это дало 11
++# тревог вместо 3 при том же числе находок. Цена: пятеро из 46 учеников с
++# занятиями остаются вне охвата — у троих работа только с ручной отметкой, у
++# двоих сдач нет вовсе. Это честная граница, а не недосмотр.
++#
++# **Почему перерыв проверяется на пересечение с окном, а не на сегодня.**
++# Перерыв заводят задним числом и на месяц вперёд; сверка «идёт ли он прямо
++# сейчас» пропустила бы ученика, у которого окно целиком лежит внутри отъезда.
++_DROPOUT_RISK_SQL = """
++WITH win AS (
++    SELECT now() - make_interval(days => :days) AS since
++),
++-- Один курс на человека, а не по курсу на запись: две карточки об одном
++-- ученике — это не два сигнала, это способ отучить читать список. Записывают
++-- только на корень дерева, поэтому вверх по `course_parents` идти незачем.
++--
++-- Граница: ученик без активной записи на курс сигнала не получит — карточку
++-- некуда привязать (`learning_gap_signal.course_id` обязателен). На боевой базе
++-- такой один, и он и так вне охвата: своей работы у него нет вовсе.
++enrolled AS (
++    SELECT DISTINCT ON (uc.user_id)
++           uc.user_id, uc.course_id
++    FROM user_courses uc
++    WHERE uc.is_active = true
++    ORDER BY uc.user_id, uc.added_at DESC, uc.course_id
++),
++lessons AS (
++    SELECT p.student_id,
++           COUNT(*) AS lessons_in_window,
++           COUNT(*) FILTER (WHERE p.status = 'confirmed') AS attended
++    FROM lesson_occurrence_participant p
++    JOIN lesson_occurrence o ON o.id = p.occurrence_id
++    CROSS JOIN win
++    WHERE p.status IN ('confirmed', 'no_show')
++      AND o.scheduled_at >= win.since
++      AND o.scheduled_at < now()
++    GROUP BY p.student_id
++),
++own_work AS (
++    SELECT tr.user_id, MAX(tr.submitted_at) AS last_own_work
++    FROM task_results tr
++    WHERE {real_student}
++    GROUP BY tr.user_id
++),
++last_seen AS (
++    SELECT p.student_id, MAX(o.scheduled_at) AS last_attended
++    FROM lesson_occurrence_participant p
++    JOIN lesson_occurrence o ON o.id = p.occurrence_id
++    WHERE p.status = 'confirmed'
++    GROUP BY p.student_id
++),
++-- Когда по этому ученику в последний раз ЗАКРЫВАЛИ такой сигнал. Без поправки
++-- признак остаётся истинным навсегда: ученик не вернулся — значит завтра
++-- заведём тот же сигнал заново, и так до бесконечности.
++closed AS (
++    SELECT student_id, MAX(COALESCE(acknowledged_at, created_at)) AS closed_at
++    FROM learning_gap_signal
++    WHERE reason = 'dropout_risk'
++      AND status IN ('resolved', 'dismissed')
++      AND student_id IS NOT NULL
++    GROUP BY student_id
++)
++SELECT u.id AS student_id,
++       e.course_id,
++       c.title AS course_title,
++       l.lessons_in_window,
++       ls.last_attended,
++       w.last_own_work,
++       EXTRACT(DAY FROM now() - w.last_own_work)::int AS silence_days
++FROM users u
++JOIN user_roles ur ON ur.user_id = u.id
++JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
++JOIN enrolled e ON e.user_id = u.id
++JOIN courses c ON c.id = e.course_id
++JOIN lessons l ON l.student_id = u.id
++JOIN own_work w ON w.user_id = u.id
++LEFT JOIN last_seen ls ON ls.student_id = u.id
++LEFT JOIN closed ON closed.student_id = u.id
++CROSS JOIN win
++WHERE u.is_active
++  AND u.merged_into_user_id IS NULL
++  AND u.blocked_at IS NULL
++  -- Преподаватель заведён и как ученик, но участником занятий не бывает; всё
++  -- же отсекаем явно: одна карточка про коллегу обесценивает весь список.
++  --
++  -- Смотреть надо ВСЕ ТРИ места: у занятия ведущий хранится и колонкой
++  -- `lesson_occurrence.teacher_id`, и строками `lesson_occurrence_teacher`
++  -- (несколько ведущих, tsk-443). Первая версия проверяла только таблицы — и
++  -- тест поймал на этом преподавателя, чьи занятия заведены старым способом.
++  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence lo WHERE lo.teacher_id = u.id)
++  AND NOT EXISTS (SELECT 1 FROM lesson_occurrence_teacher lt WHERE lt.teacher_id = u.id)
++  AND NOT EXISTS (SELECT 1 FROM lesson_slot_teacher st WHERE st.teacher_id = u.id)
++  -- Занятия шли, и он не был ни на одном.
++  AND l.attended = 0
++  -- И сам в кабинете за это время не работал ни разу.
++  AND w.last_own_work < win.since
++  -- Перерыв задан ДАТАМИ школы, а окно — моментами времени; сервер живёт в UTC.
++  -- Без приведения к московской дате границы уезжают на сутки (то же правило,
++  -- что и в `break_service._LOCAL_DAY`).
++  AND NOT EXISTS (
++      SELECT 1 FROM student_break b
++      WHERE b.student_id = u.id
++        AND b.ends_on >= (win.since AT TIME ZONE 'Europe/Moscow')::date
++        AND b.starts_on <= (now() AT TIME ZONE 'Europe/Moscow')::date
++  )
++  -- Разобранный сигнал поднимается заново, только если человек успел вернуться
++  -- и затих снова.
++  AND (closed.closed_at IS NULL
++       OR w.last_own_work > closed.closed_at
++       OR ls.last_attended > closed.closed_at)
++ORDER BY w.last_own_work
++LIMIT :limit
++"""
++
++
++def dropout_window_days() -> int:
++    """Окно признака «затих» из настроек, с запасным значением.
++
++    Читается на каждом проходе, а не при импорте модуля: иначе смена порога
++    требовала бы перезапуска — то есть выката, которого правило и избегает.
++    """
++    try:
++        return int(getattr(Settings(), "dropout_risk_window_days", DROPOUT_WINDOW_DAYS))
++    except Exception:
++        logger.warning("dropout_risk: настройка окна не прочиталась, беру %s дн.",
++                       DROPOUT_WINDOW_DAYS)
++        return DROPOUT_WINDOW_DAYS
++
++
++async def find_dropout_risk(
++    db: AsyncSession,
++    *,
++    days: int | None = None,
++    limit: int = 100,
++) -> list[dict]:
++    """Ученики, которые затихли: занятия идут мимо них, и сами они не работают.
++
++    Отдельный датчик, а не порог внутри существующих: те меряют, КАК ученик
++    учится, этот — учится ли вообще. Ученик из первой строки августовского
++    замера ошибок не делал вовсе — ему просто нечем было их сделать.
++
++    Признак срабатывает не раньше чем через две недели после отвала: это не
++    предсказание ухода, а раннее обнаружение вместо позднего. Сегодня
++    преподаватель узнаёт постфактум — по данным августа он узнавал бы на
++    2–4 недели раньше.
++    """
++    sql = _DROPOUT_RISK_SQL.format(real_student=real_student_results_filter("tr"))
++    rows = (await db.execute(text(sql), {
++        "days": days if days is not None else dropout_window_days(),
++        "limit": limit,
++    })).mappings().all()
++    return [dict(r) for r in rows]
++
++
+ async def upsert_signal(
+     db: AsyncSession, *, course_id: int, student_id: int | None,
+     submissions: int, students: int, wrong_rate: float,
+@@ -246,6 +434,7 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
+     topics = await find_topic_gaps(db, days=days)
+     students = await find_student_gaps(db, days=days)
+     authorship = await find_ai_authorship_gaps(db)
++    dropout = await find_dropout_risk(db)
+ 
+     new_topics = 0
+     for g in topics:
+@@ -284,18 +473,47 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
+         ):
+             new_authorship += 1
+ 
++    new_dropout = 0
++    dropout_window = dropout_window_days()
++    for r in dropout:
++        if await upsert_signal(
++            db, course_id=int(r["course_id"]), student_id=int(r["student_id"]),
++            # Число, которое человек читает первым, — сколько занятий прошло
++            # мимо ученика. Доли ошибок у этого повода нет: он про то, что
++            # ученик не работал вовсе, а не про то, как он работал.
++            submissions=int(r["lessons_in_window"]), students=1,
++            wrong_rate=0.0,
++            reason=REASON_DROPOUT_RISK,
++            meta={
++                "reason": REASON_DROPOUT_RISK,
++                "window_days": dropout_window,
++                "lessons_missed": int(r["lessons_in_window"]),
++                "silence_days": int(r["silence_days"]),
++                # None — «не был ни разу»: не то же самое, что «давно не был», и
++                # преподавателю это разные разговоры.
++                "last_attended": (
++                    r["last_attended"].date().isoformat()
++                    if r["last_attended"] is not None else None
++                ),
++            },
++        ):
++            new_dropout += 1
++
+     await db.commit()
+     logger.info(
+         "learning_gaps: проход завершён — тем найдено %s (новых сигналов %s), "
+-        "учеников %s (новых %s), признак авторства %s (новых %s), период %s дн.",
++        "учеников %s (новых %s), признак авторства %s (новых %s), "
++        "затихших %s (новых %s), период %s дн.",
+         len(topics), new_topics, len(students), new_students,
+-        len(authorship), new_authorship, days,
++        len(authorship), new_authorship, len(dropout), new_dropout, days,
+     )
+     return {
+         "topics_found": len(topics), "topic_signals_created": new_topics,
+         "students_found": len(students), "student_signals_created": new_students,
+         "authorship_found": len(authorship),
+         "authorship_signals_created": new_authorship,
++        "dropout_found": len(dropout),
++        "dropout_signals_created": new_dropout,
+     }
+ 
+ 
+@@ -480,7 +698,11 @@ async def list_signals(
+         -- отправляла сигнал о признаке авторства в самый низ списка — у него
+         -- доля ошибок честно нулевая. Живой проход это и показал: карточка
+         -- выехала методисту последней строкой с бейджем «0% ошибок».
++        -- «Затих» идёт первым всегда, а не по числу: у остальных поводов речь о
++        -- том, КАК ученик учится, и разговор можно отложить до занятия. Здесь
++        -- ученика может не оказаться уже на следующем занятии, и ждать нечего.
+         ORDER BY CASE s.reason
++                     WHEN 'dropout_risk' THEN 1.0
+                      WHEN 'ai_authorship' THEN
+                          COALESCE((s.meta->>'flagged')::float
+                                   / NULLIF((s.meta->>'reviewed')::float, 0), 0)
+diff --git a/tests/test_tsk647_dropout_risk_signal.py b/tests/test_tsk647_dropout_risk_signal.py
+new file mode 100644
+index 0000000..447fdb3
+--- /dev/null
++++ b/tests/test_tsk647_dropout_risk_signal.py
+@@ -0,0 +1,414 @@
++"""tsk-647: признак «затих» — ученик, который вот-вот перестанет ходить.
++
++Что закрываем — по одному тесту на каждое решение, принятое НА ДАННЫХ
++(разбор: docs/qa/2026-08-28-tsk647-dropout-signal.md):
++
++- датчик находит ученика, мимо которого идут занятия и который сам не работает;
++- ручная простановка преподавателя не считается работой ученика — иначе датчик
++  мерит активность ПРЕПОДАВАТЕЛЯ (73 % строк `task_results` на бою именно такие);
++- пропуски сами по себе сигналом не становятся: ученик, который ходит, но
++  молчит в кабинете, не помечается, и наоборот;
++- оформленный перерыв снимает сигнал, причём по пересечению с окном, а не по
++  сегодняшнему дню;
++- ученик без истории своей работы вне охвата — сознательная граница, а не
++  недосмотр;
++- разобранный сигнал не поднимается заново на следующем же проходе.
++"""
++from __future__ import annotations
++
++import json
++import random
++from datetime import date, datetime, timedelta, timezone
++
++import pytest
++from sqlalchemy import text
++
++from app.models.lesson_occurrence import LessonOccurrence
++from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
++from app.models.users import Users
++from app.services import learning_gap_signals_service as sig
++from app.services.auth import identity_link_service
++
++
++async def _user(db, prefix: str, *, role: str | None = "student") -> int:
++    email = f"{prefix}-{random.randint(10**8, 10**10)}@example.com"
++    u = Users(email=email, password_hash=None, full_name=prefix, tg_id=None)
++    db.add(u)
++    await db.flush()
++    await identity_link_service.upsert_identity(db, u.id, "email", email)
++    if role is not None:
++        await db.execute(text(
++            "INSERT INTO user_roles (user_id, role_id) "
++            "SELECT :u, id FROM roles WHERE name = :r ON CONFLICT DO NOTHING"
++        ), {"u": u.id, "r": role})
++    await db.commit()
++    return u.id
++
++
++async def _course(db, title: str) -> int:
++    cid = int((await db.execute(text(
++        "INSERT INTO courses (title, access_level, is_required, course_uid) "
++        "VALUES (:t,'auto_check',false,:u) RETURNING id"
++    ), {"t": title, "u": f"tsk647-{random.randint(10**8, 10**10)}"})).scalar_one())
++    await db.commit()
++    return cid
++
++
++async def _enroll(db, user_id: int, course_id: int) -> None:
++    await db.execute(text(
++        "INSERT INTO user_courses (user_id, course_id) VALUES (:u, :c)"
++    ), {"u": user_id, "c": course_id})
++    await db.commit()
++
++
++async def _lesson(
++    db, *, student_id: int, teacher_id: int, days_ago: int, status: str,
++) -> int:
++    """Прошедшее занятие с участием ученика."""
++    occ = LessonOccurrence(
++        slot_id=None, teacher_id=teacher_id,
++        scheduled_at=datetime.now(timezone.utc) - timedelta(days=days_ago),
++        duration_minutes=60,
++    )
++    db.add(occ)
++    await db.flush()
++    db.add(LessonOccurrenceParticipant(
++        occurrence_id=occ.id, student_id=student_id, status=status,
++    ))
++    await db.flush()
++    occ_id = occ.id
++    await db.commit()
++    return occ_id
++
++
++async def _submission(
++    db, *, user_id: int, course_id: int, days_ago: int,
++    source: str = "spw_web",
++) -> None:
++    task_id = int((await db.execute(text(
++        "INSERT INTO tasks (external_uid, max_score, task_content, solution_rules, "
++        " course_id, difficulty_id, is_active) "
++        "VALUES (:e, 1, CAST(:c AS jsonb), CAST(:r AS jsonb), :cid, 1, true) RETURNING id"
++    ), {
++        "e": f"tsk647-t-{random.randint(10**8, 10**10)}",
++        "c": json.dumps({"type": "SA", "stem": "2+2"}),
++        "r": json.dumps({"answers": ["4"]}),
++        "cid": course_id,
++    })).scalar_one())
++    when = datetime.now(timezone.utc) - timedelta(days=days_ago)
++    await db.execute(text(
++        "INSERT INTO task_results (score, user_id, task_id, submitted_at, count_retry, "
++        " received_at, max_score, source_system, is_correct, answer_json) "
++        "VALUES (1, :u, :t, :w, 0, :w, 1, :src, true, CAST(:a AS jsonb))"
++    ), {"u": user_id, "t": task_id, "w": when, "src": source,
++        "a": json.dumps({"type": "SA", "response": {"value": "4"}})})
++    await db.commit()
++
++
++async def _cleanup(db, users: list[int], courses: list[int]) -> None:
++    await db.execute(text(
++        "DELETE FROM task_results WHERE task_id IN "
++        "(SELECT id FROM tasks WHERE course_id = ANY(:c))"
++    ), {"c": courses})
++    await db.execute(text("DELETE FROM tasks WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text("DELETE FROM user_courses WHERE course_id = ANY(:c)"), {"c": courses})
++    await db.execute(text(
++        "DELETE FROM learning_gap_signal WHERE course_id = ANY(:c) OR student_id = ANY(:u)"
++    ), {"c": courses, "u": users})
++    await db.execute(text("DELETE FROM student_break WHERE student_id = ANY(:u)"), {"u": users})
++    await db.execute(text(
++        "DELETE FROM lesson_occurrence_participant WHERE student_id = ANY(:u)"
++    ), {"u": users})
++    await db.execute(text("DELETE FROM lesson_occurrence WHERE teacher_id = ANY(:u)"), {"u": users})
++    await db.execute(text("DELETE FROM notifications WHERE user_id = ANY(:u)"), {"u": users})
++    await db.commit()
++    if users:
++        try:
++            await db.execute(text("DELETE FROM user_session WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM identity_link WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM user_roles WHERE user_id = ANY(:u)"), {"u": users})
++            await db.execute(text("DELETE FROM users WHERE id = ANY(:u)"), {"u": users})
++            await db.commit()
++        except Exception:
++            await db.rollback()
++    await db.execute(text("DELETE FROM courses WHERE id = ANY(:c)"), {"c": courses})
++    await db.commit()
++
++
++async def _setup_silent_student(db, prefix: str) -> tuple[int, int, int]:
++    """Ученик, который затих: два занятия мимо, своя работа — три недели назад.
++
++    Возвращает (student_id, teacher_id, course_id).
++    """
++    course = await _course(db, f"{prefix} курс")
++    teacher = await _user(db, f"{prefix}-teacher", role="teacher")
++    student = await _user(db, f"{prefix}-student")
++    await _enroll(db, student, course)
++    await _submission(db, user_id=student, course_id=course, days_ago=21)
++    await _lesson(db, student_id=student, teacher_id=teacher, days_ago=10, status="no_show")
++    await _lesson(db, student_id=student, teacher_id=teacher, days_ago=3, status="no_show")
++    return student, teacher, course
++
++
++def _mine(rows: list[dict], student_id: int) -> list[dict]:
++    return [r for r in rows if r["student_id"] == student_id]
++
++
++# ───────────────────────────── Датчик ────────────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_finds_student_who_went_quiet(db):
++    """Главный случай: занятия шли, ученика на них не было, сам он не работал."""
++    student, teacher, course = await _setup_silent_student(db, "tsk647-main")
++    try:
++        found = await sig.find_dropout_risk(db)
++        mine = _mine(found, student)
++        assert len(mine) == 1, "затихший ученик не найден"
++        assert mine[0]["course_id"] == course
++        assert mine[0]["lessons_in_window"] == 2
++        assert mine[0]["silence_days"] >= 14
++        # Он ни разу не был — это не то же самое, что «давно не был», и
++        # преподавателю это разные разговоры.
++        assert mine[0]["last_attended"] is None
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_manual_teacher_marks_are_not_student_work(db):
++    """Ручная простановка преподавателя не спасает ученика от сигнала.
++
++    На боевой базе 73 % строк `task_results` — `manual_teacher`. Первый вариант
++    запроса считал их работой ученика и «видел» активность там, где человек не
++    заходил месяц.
++    """
++    student, teacher, course = await _setup_silent_student(db, "tsk647-manual")
++    try:
++        await _submission(
++            db, user_id=student, course_id=course, days_ago=1,
++            source="manual_teacher",
++        )
++        found = await sig.find_dropout_risk(db)
++        assert _mine(found, student), "ручная отметка не должна считаться работой ученика"
++
++        # А своя сдача — считается и снимает сигнал.
++        await _submission(db, user_id=student, course_id=course, days_ago=1)
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, student), "после своей сдачи ученик не затихший"
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_attendance_alone_and_silence_alone_are_not_enough(db):
++    """Ни пропуски сами по себе, ни тишина в кабинете сама по себе — не сигнал.
++
++    Проверено на бою и потому проверяется здесь: `no_show` — четверть всех
++    участий, а паузы в кабинете по 7–19 дней есть у самых прилежных, включая
++    ученика с 1486 сдачами.
++    """
++    course = await _course(db, "tsk647-half курс")
++    teacher = await _user(db, "tsk647-half-teacher", role="teacher")
++    # Ходит на занятия, но в кабинете молчит месяц.
++    goes = await _user(db, "tsk647-goes")
++    # В кабинете работает каждый день, но занятия пропускает.
++    works = await _user(db, "tsk647-works")
++    try:
++        for student in (goes, works):
++            await _enroll(db, student, course)
++        await _submission(db, user_id=goes, course_id=course, days_ago=30)
++        await _lesson(db, student_id=goes, teacher_id=teacher, days_ago=9, status="confirmed")
++        await _lesson(db, student_id=goes, teacher_id=teacher, days_ago=2, status="no_show")
++
++        await _submission(db, user_id=works, course_id=course, days_ago=30)
++        await _submission(db, user_id=works, course_id=course, days_ago=1)
++        await _lesson(db, student_id=works, teacher_id=teacher, days_ago=9, status="no_show")
++        await _lesson(db, student_id=works, teacher_id=teacher, days_ago=2, status="no_show")
++
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, goes), "ученик, который ходит, затихшим не считается"
++        assert not _mine(found, works), "ученик, который работает сам, затихшим не считается"
++    finally:
++        await _cleanup(db, [goes, works, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_no_lessons_in_window_is_not_a_signal(db):
++    """Занятий не было вовсе — «не был» ничего не значит.
++
++    Иначе каникулы всей группы превращаются в список тревог на всю школу.
++    """
++    course = await _course(db, "tsk647-nolessons курс")
++    teacher = await _user(db, "tsk647-nolessons-teacher", role="teacher")
++    student = await _user(db, "tsk647-nolessons")
++    try:
++        await _enroll(db, student, course)
++        await _submission(db, user_id=student, course_id=course, days_ago=30)
++        await _lesson(db, student_id=student, teacher_id=teacher, days_ago=40, status="no_show")
++
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, student)
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_break_overlapping_window_removes_signal(db):
++    """Оформленный перерыв снимает сигнал — даже если сегодня он уже закончился.
++
++    Перерыв заводят задним числом и на месяц вперёд. Сверка «идёт ли он прямо
++    сейчас» пропустила бы ученика, у которого окно целиком внутри отъезда.
++    """
++    student, teacher, course = await _setup_silent_student(db, "tsk647-break")
++    try:
++        today = date.today()
++        await db.execute(text(
++            "INSERT INTO student_break (student_id, starts_on, ends_on, note) "
++            "VALUES (:u, :s, :e, 'Отъезд')"
++        ), {"u": student, "s": today - timedelta(days=20), "e": today - timedelta(days=2)})
++        await db.commit()
++
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, student), "у ученика оформлен перерыв — это не уход"
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_student_without_own_work_history_is_out_of_scope(db):
++    """Ученик, который никогда не работал сам, датчиком не покрывается.
++
++    Сознательная граница: без неё правило вырождается в «не был 14 дней» и на
++    боевых данных давало 11 тревог вместо 3 при том же числе находок.
++    """
++    course = await _course(db, "tsk647-noown курс")
++    teacher = await _user(db, "tsk647-noown-teacher", role="teacher")
++    student = await _user(db, "tsk647-noown")
++    try:
++        await _enroll(db, student, course)
++        await _submission(
++            db, user_id=student, course_id=course, days_ago=20,
++            source="manual_teacher",
++        )
++        await _lesson(db, student_id=student, teacher_id=teacher, days_ago=8, status="no_show")
++        await _lesson(db, student_id=student, teacher_id=teacher, days_ago=1, status="no_show")
++
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, student)
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_teacher_is_never_flagged(db):
++    """Преподаватель заведён и как ученик — одна карточка про коллегу
++    обесценивает весь список."""
++    course = await _course(db, "tsk647-teacher курс")
++    teacher = await _user(db, "tsk647-teacher-both", role="student")
++    await db.execute(text(
++        "INSERT INTO user_roles (user_id, role_id) "
++        "SELECT :u, id FROM roles WHERE name = 'teacher' ON CONFLICT DO NOTHING"
++    ), {"u": teacher})
++    await db.commit()
++    other = await _user(db, "tsk647-teacher-peer", role="teacher")
++    try:
++        await _enroll(db, teacher, course)
++        await _submission(db, user_id=teacher, course_id=course, days_ago=25)
++        await _lesson(db, student_id=teacher, teacher_id=other, days_ago=9, status="no_show")
++        # Он ведёт собственное занятие — по этому признаку и отсекается.
++        await _lesson(db, student_id=other, teacher_id=teacher, days_ago=2, status="confirmed")
++
++        found = await sig.find_dropout_risk(db)
++        assert not _mine(found, teacher)
++    finally:
++        await _cleanup(db, [teacher, other], [course])
++
++
++# ───────────────────────── Сигнал и его жизнь ────────────────────────────────
++
++
++@pytest.mark.asyncio
++async def test_scan_creates_signal_with_readable_numbers(db):
++    """Проход заводит карточку, и в ней есть, что прочитать.
++
++    Доля ошибок у этого повода честно нулевая — числа лежат в `meta`, иначе
++    карточка выехала бы преподавателю с бейджем «0 % ошибок», то есть выглядела
++    бы как «всё в порядке» (ровно так уже стрелял повод про ИИ-авторство).
++    """
++    student, teacher, course = await _setup_silent_student(db, "tsk647-scan")
++    try:
++        res = await sig.scan_and_create_signals(db)
++        assert res["dropout_signals_created"] >= 1
++
++        row = (await db.execute(text(
++            "SELECT reason, status, submissions, wrong_rate, meta "
++            "FROM learning_gap_signal WHERE student_id = :u"
++        ), {"u": student})).mappings().one()
++        assert row["reason"] == sig.REASON_DROPOUT_RISK
++        assert row["status"] == "new"
++        assert row["submissions"] == 2, "число занятий, прошедших мимо ученика"
++        assert row["wrong_rate"] == 0.0
++        assert row["meta"]["window_days"] == sig.DROPOUT_WINDOW_DAYS
++        assert row["meta"]["lessons_missed"] == 2
++        assert row["meta"]["silence_days"] >= 14
++        assert row["meta"]["last_attended"] is None
++
++        # Повтор прохода не плодит карточки: cron ходит ежесуточно, и без этого
++        # за неделю накопилось бы семь одинаковых.
++        again = await sig.scan_and_create_signals(db)
++        assert again["dropout_signals_created"] == 0
++    finally:
++        await _cleanup(db, [student, teacher], [course])
++
++
++@pytest.mark.asyncio
++async def test_signal_sorts_first_among_reasons(db):
++    """«Затих» идёт первым: у остальных поводов разговор можно отложить до
++    занятия, здесь ученика может не оказаться уже на следующем."""
++    student, teacher, course = await _setup_silent_student(db, "tsk647-order")
++    peer = await _user(db, "tsk647-order-peer")
++    try:
++        await _enroll(db, peer, course)
++        await sig.upsert_signal(
++            db, course_id=course, student_id=peer, submissions=20, students=1,
++            wrong_rate=0.9,
++        )
++        await db.commit()
++        await sig.scan_and_create_signals(db)
++
++        rows = await sig.list_signals(db, for_student=True)
++        mine = [r for r in rows if r["student_id"] in (student, peer)]
++        assert mine[0]["student_id"] == student, (
++            "сигнал о риске ухода должен стоять выше сигнала о доле ошибок"
++        )
++    finally:
++        await _cleanup(db, [student, teacher, peer], [course])
++
++
++@pytest.mark.asyncio
++async def test_dismissed_signal_does_not_return_next_day(db):
++    """Разобранный сигнал не поднимается заново на следующем же проходе.
++
++    Признак остаётся истинным, пока ученик не вернулся, — без поправки датчик
++    заводил бы ту же карточку каждый день до бесконечности.
++    """
++    student, teacher, course = await _setup_silent_student(db, "tsk647-closed")
++    try:
++        await sig.scan_and_create_signals(db)
++        signal_id = int((await db.execute(text(
++            "SELECT id FROM learning_gap_signal WHERE student_id = :u"
++        ), {"u": student})).scalar_one())
++        await sig.dismiss_signal(db, signal_id=signal_id, teacher_id=teacher)
++
++        res = await sig.scan_and_create_signals(db)
++        assert res["dropout_signals_created"] == 0
++        assert not _mine(await sig.find_dropout_risk(db), student)
++
++        # А вот если ученик вернулся и затих снова — сигнал обязан вернуться.
++        await _submission(db, user_id=student, course_id=course, days_ago=0)
++        assert not _mine(await sig.find_dropout_risk(db), student), (
++            "сразу после возвращения ученик ещё не затихший"
++        )
++    finally:
++        await _cleanup(db, [student, teacher], [course])
