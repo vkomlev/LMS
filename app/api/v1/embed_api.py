@@ -32,6 +32,7 @@ from app.services.auth.embed_token_service import (
     consume_token,
     issue_token,
 )
+from app.services.learning_guest_service import is_task_visible_to_guest
 from app.services.rate_limit_service import get_redis, is_rate_limited
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,8 @@ async def issue_embed_token(
 ) -> EmbedAuthIssueResponse:
     """Выдать одноразовый JWT для embed-iframe.
 
-    Requires `course_uid` ∈ public-demo + `external_uid` существует в этом курсе.
+    Requires `course_uid` ∈ public-demo + `external_uid` существует в этом курсе
+    и не снят с публикации (`is_active = true`, tsk-702).
     """
     if not _settings.embed_jwt_secret:
         # Fail-secure: не выдаём токены без секрета
@@ -103,7 +105,7 @@ async def issue_embed_token(
         )
     )
     task = task_row.scalar_one_or_none()
-    if task is None:
+    if task is None or not is_task_visible_to_guest(task, surface="embed_issue"):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             "Задача не найдена в указанном демо-курсе.",
@@ -136,6 +138,11 @@ async def read_embed_task(
 
     Single-use enforce: повторный read с тем же token → 401 token_consumed.
     Payload не содержит correct_answer / solution_rules.
+
+    tsk-702: снятое с публикации задание (`is_active = false`) отдаёт 404 —
+    вторая дверь того же контура, здесь своя выборка, а не вызов гостевого
+    сервиса. Выдача токена закрыта тем же гейтом, но проверять надо обе: токен
+    живёт 5 минут, и задание могли выключить между выдачей и чтением.
     """
     ip = _client_ip(request)
     redis = get_redis(_settings.redis_url)
@@ -188,7 +195,7 @@ async def read_embed_task(
         )
     )
     task = task_row.scalar_one_or_none()
-    if task is None:
+    if task is None or not is_task_visible_to_guest(task, surface="embed_read"):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             "Задача не найдена.",

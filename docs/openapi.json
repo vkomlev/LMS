@@ -25095,7 +25095,7 @@
           "embed-api"
         ],
         "summary": "Issue Embed Token",
-        "description": "Выдать одноразовый JWT для embed-iframe.\n\nRequires `course_uid` ∈ public-demo + `external_uid` существует в этом курсе.",
+        "description": "Выдать одноразовый JWT для embed-iframe.\n\nRequires `course_uid` ∈ public-demo + `external_uid` существует в этом курсе\nи не снят с публикации (`is_active = true`, tsk-702).",
         "operationId": "issue_embed_token_embed_api_auth_issue_post",
         "requestBody": {
           "content": {
@@ -25137,7 +25137,7 @@
           "embed-api"
         ],
         "summary": "Read Embed Task",
-        "description": "Прочитать display-only payload задачи для встраивания в iframe.\n\nSingle-use enforce: повторный read с тем же token → 401 token_consumed.\nPayload не содержит correct_answer / solution_rules.",
+        "description": "Прочитать display-only payload задачи для встраивания в iframe.\n\nSingle-use enforce: повторный read с тем же token → 401 token_consumed.\nPayload не содержит correct_answer / solution_rules.\n\ntsk-702: снятое с публикации задание (`is_active = false`) отдаёт 404 —\nвторая дверь того же контура, здесь своя выборка, а не вызов гостевого\nсервиса. Выдача токена закрыта тем же гейтом, но проверять надо обе: токен\nживёт 5 минут, и задание могли выключить между выдачей и чтением.",
         "operationId": "read_embed_task_embed_api_courses__course_uid__task__external_uid__get",
         "parameters": [
           {
@@ -25287,7 +25287,7 @@
           "learning-guest"
         ],
         "summary": "Get Guest Task",
-        "description": "Загрузить stem + варианты задачи. Только для public-demo курсов.\n\ncorrect_answer / solution_rules в payload отсутствуют (защита от слива).\nSA_COM/TA задачи отдают 404 (нет teacher review без user).",
+        "description": "Загрузить stem + варианты задачи. Только для public-demo курсов.\n\ncorrect_answer / solution_rules в payload отсутствуют (защита от слива).\nSA_COM/TA задачи отдают 404 (нет teacher review без user).\ntsk-702: снятое с публикации задание (`is_active = false`) тоже отдаёт 404 —\nвитрина не показывает то, что убрали.",
         "operationId": "get_guest_task_api_v1_learning_guest_task__task_id__get",
         "parameters": [
           {
@@ -25348,7 +25348,7 @@
           "learning-guest"
         ],
         "summary": "Create Guest Attempt",
-        "description": "Принять ответ гостя на demo-задачу.\n\nCookie `guest_session` обязательна; иначе 400.\nRate-limit: 5/час/IP И 3/сутки/(guest_session) — оба должны пройти.",
+        "description": "Принять ответ гостя на demo-задачу.\n\nCookie `guest_session` обязательна; иначе 400.\nRate-limit: 5/час/IP И 3/сутки/(guest_session) — оба должны пройти.\ntsk-702: снятое с публикации задание (`is_active = false`) ответ не\nпринимает — 404, как если бы его не было среди публичных демо.",
         "operationId": "create_guest_attempt_api_v1_learning_guest_attempts_post",
         "parameters": [
           {

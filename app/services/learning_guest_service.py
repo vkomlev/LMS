@@ -35,6 +35,51 @@ _GUEST_ALLOWED_TYPES: tuple[str, ...] = ("SA", "SC", "MC")
 _checking_service = CheckingService()
 
 
+def is_task_visible_to_guest(task: Tasks, *, surface: str) -> bool:
+    """Пустить гостя только к АКТИВНОМУ заданию демо-курса (tsk-702).
+
+    Хвост линии tsk-695 (материал) → tsk-697 (одна ручка задания) → tsk-699
+    (список заданий курса) → tsk-701 (приём ответа). Там закрыли УЧЕНИКА, на
+    чтении и на записи. Гостевой контур ходит своей веткой и ученических гейтов
+    не касается вовсе: обе выборки здесь и обе выборки embed-API фильтровали
+    только по `courses.is_public_demo`, но не по `tasks.is_active`. То есть
+    снятое с публикации задание открывалось анонимно, без всякой авторизации, и
+    принимало ответ. На проде 26.08.2026 — 63 выключенных задания из 4146 в
+    публичных демо-курсах.
+
+    Витрина от фильтра не пустеет: выключенные задания есть всего у 2 демо-курсов
+    из 464 (1179 `wp:oge-z14` — 50 из 78, 1253 `wp:vst-it-r1-t4` — 13 из 26), в
+    обоих активные остаются. Гостевых попыток на проде 12, по выключенным
+    заданиям — ни одной, чистить нечего.
+
+    Ролей и привилегий в гостевом контуре нет (это анонимный вызывающий), поэтому
+    исключения `privileged`, как у `_deny_if_inactive_for_student` (tsk-697) и
+    `assert_task_active_for_student` (tsk-701), здесь нет: методист смотрит
+    выключенное задание из своего кабинета, под своей учётной записью.
+
+    Предикат, а не raise: у четырёх точек вызова разные способы сказать «не
+    найдено» — `None` → 404 роутера в чтении гостя, `DomainError` 404 в приёме
+    ответа, `HTTPException` 404 с двумя разными текстами в embed. Общее у них —
+    решение и запись в журнал, они и живут здесь.
+
+    Отказ логируется: 63 выключенных задания встроены ссылками на страницы WP, и
+    строка в журнале — единственный способ узнать, какая витринная страница
+    показывает погасший блок.
+
+    :param task: строка `tasks` (нужны `is_active`, `id`, `course_id`).
+    :param surface: точка вызова для журнала (`read` / `submit` / `embed_issue` /
+        `embed_read`).
+    :return: True — задание можно отдавать гостю.
+    """
+    if task.is_active:
+        return True
+    logger.info(
+        "tsk-702: deny guest %s task_id=%s course_id=%s (is_active=false)",
+        surface, task.id, task.course_id,
+    )
+    return False
+
+
 async def _enforce_demo_task_limit(
     db: AsyncSession,
     guest_session_id: Optional[UUID],
@@ -144,6 +189,10 @@ async def get_demo_task(
     Sanitizes payload: возвращает только whitelist полей (без correct_answer,
     solution_rules, options[].is_correct, options[].explanation).
 
+    tsk-702: выключенное задание (`is_active = false`) гостю не отдаётся —
+    см. `is_task_visible_to_guest`. Проверка идёт ДО демо-лимита: снятое с
+    публикации задание не должно ни расходовать лимит, ни отвечать про него.
+
     Raises:
         DomainError 403 (tsk-423): курс настроен с `demo_task_limit`, гость его
             исчерпал, и запрошенное задание — новое (не из уже использованных).
@@ -157,7 +206,7 @@ async def get_demo_task(
         )
     )
     row = result.first()
-    if row is None:
+    if row is None or not is_task_visible_to_guest(row[0], surface="read"):
         return None
     task, course = row
 
@@ -208,12 +257,16 @@ async def submit_guest_attempt(
     Returns:
         (attempt_id, CheckResult) — id новой записи + результат проверки.
 
+    tsk-702: выключенное задание (`is_active = false`) ответ гостя не принимает —
+    тот же 404, что и «задания нет среди публичных демо». Проверка ДО демо-лимита
+    и до проверки ответа.
+
     Raises:
         DomainError 400: task не в public-demo / SA_COM / type mismatch.
         DomainError 403 (tsk-423): `demo_task_limit` курса исчерпан для нового
             задания (payload.code=demo_limit_reached).
     """
-    # 1. Проверить ACL: task ∈ public-demo course
+    # 1. Проверить ACL: task ∈ public-demo course + задание не снято с публикации
     result = await db.execute(
         select(Tasks, Courses)
         .join(Courses, Tasks.course_id == Courses.id)
@@ -223,7 +276,7 @@ async def submit_guest_attempt(
         )
     )
     row = result.first()
-    if row is None:
+    if row is None or not is_task_visible_to_guest(row[0], surface="submit"):
         raise DomainError(
             detail="Задача не найдена среди публичных демо-курсов.",
             status_code=404,

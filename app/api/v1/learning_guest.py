@@ -130,6 +130,8 @@ async def get_guest_task(
 
     correct_answer / solution_rules в payload отсутствуют (защита от слива).
     SA_COM/TA задачи отдают 404 (нет teacher review без user).
+    tsk-702: снятое с публикации задание (`is_active = false`) тоже отдаёт 404 —
+    витрина не показывает то, что убрали.
     """
     ip = _client_ip(request)
     if ip:
@@ -186,6 +188,8 @@ async def create_guest_attempt(
 
     Cookie `guest_session` обязательна; иначе 400.
     Rate-limit: 5/час/IP И 3/сутки/(guest_session) — оба должны пройти.
+    tsk-702: снятое с публикации задание (`is_active = false`) ответ не
+    принимает — 404, как если бы его не было среди публичных демо.
     """
     if not guest_session:
         raise HTTPException(
