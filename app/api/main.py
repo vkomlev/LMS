@@ -513,6 +513,10 @@ app.include_router(schedule_preferences_router, prefix=API_PREFIX)
 from app.api.v1.schedule_plan import router as schedule_plan_router
 app.include_router(schedule_plan_router, prefix=API_PREFIX)
 
+# tsk-674 фаза 3: запись нового ученика в свободные слоты и заявки «не нашёл время».
+from app.api.v1.schedule_booking import router as schedule_booking_router
+app.include_router(schedule_booking_router, prefix=API_PREFIX)
+
 # tsk-674 фаза 1: суточный проход напоминаний тем, кто пожеланий не оставил.
 # Кладёт строку в inbox — оттуда её видит и кабинет, и student-бот TG_LMS.
 from app.services import schedule_preference_reminder_service as _pref_reminder

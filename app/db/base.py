@@ -43,6 +43,7 @@ import app.models.lesson_occurrence
 import app.models.lesson_occurrence_participant
 import app.models.lesson_occurrence_teacher
 import app.models.student_schedule_preference  # пожелания по расписанию (tsk-674)
+import app.models.schedule_slot_request  # заявки «не нашёл время» (tsk-674 фаза 3)
 import app.models.attendance_event
 import app.models.parent_access_link
 import app.models.pricing            # тарифы курсов (tsk-505)
