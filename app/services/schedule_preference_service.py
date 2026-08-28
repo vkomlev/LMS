@@ -14,6 +14,10 @@
   «что сейчас», но и «что было в августе».
 - Аудитория опроса — учащиеся, кроме выпускников (`alumni`) и демо (`demo`).
   Это дословное решение оператора от 2026-08-25.
+- **Кому показываем и кого считаем — это два разных списка** (tsk-712).
+  Тестовым учёткам (`test`) опрос показывается и напоминание им приходит —
+  иначе кабинет не на чем проверять, — но в охват и в спрос по часам они не
+  идут ни числителем, ни знаменателем.
 """
 from __future__ import annotations
 
@@ -38,11 +42,30 @@ logger = logging.getLogger(__name__)
 #: не ученик школы в смысле расписания.
 EXCLUDED_PLAN_CODES = ("alumni", "demo")
 
-#: Кусок SQL: аудитория опроса. Держится одной строкой, потому что по нему
-#: считаются И флаг в `/me`, И сводка охвата, И вёрстка расписания (tsk-674
-#: фаза 2) — разъехавшись, они начали бы спорить друг с другом на глазах у
-#: методиста. Имя без подчёркивания: константу переиспользует `schedule_plan_service`.
-AUDIENCE_FROM = """
+#: Тарифы, которым опрос показывается, но которых НЕ считают (tsk-712).
+#: Тестовые учётки заведены, чтобы проверять на них кабинет: плашку и
+#: напоминание они получают наравне со всеми — иначе проверять нечего. А вот
+#: в «сколько заполнили / кто молчит», в спрос по часам и в раскладку слотов
+#: им нельзя: методист по этим числам собирает расписание живым людям, и
+#: каждая пятая строка была бы выдуманной.
+NOT_COUNTED_PLAN_CODES = ("test",)
+
+
+def _sql_codes(codes: tuple[str, ...]) -> str:
+    """Список кодов тарифов для `IN (...)`. Значения свои, не пользовательские."""
+    return ", ".join(f"'{code}'" for code in codes)
+
+
+def _plan_filter(codes: tuple[str, ...]) -> str:
+    """SQL-условие «тариф человека не из этого списка».
+
+    Человек без действующей подписки (`cur.code IS NULL`) подходит всегда:
+    отсутствие тарифа — не повод выкинуть его из опроса.
+    """
+    return f"(cur.code IS NULL OR cur.code NOT IN ({_sql_codes(codes)}))"
+
+
+_AUDIENCE_CORE = """
     FROM users u
     JOIN user_roles ur ON ur.user_id = u.id
     JOIN roles r ON r.id = ur.role_id AND r.name = 'student'
@@ -53,8 +76,22 @@ AUDIENCE_FROM = """
          WHERE ss.ends_on IS NULL
     ) cur ON cur.student_id = u.id
    WHERE u.is_active
-     AND (cur.code IS NULL OR cur.code NOT IN ('alumni', 'demo'))
+     AND {plan_filter}
 """
+
+#: Кусок SQL: **кому опрос показывается**. По нему живут флаг в `/me` и
+#: напоминания. Держится одной строкой, потому что показ и напоминание обязаны
+#: совпадать: плашка без напоминания и напоминание без плашки одинаково
+#: выглядят как поломка.
+AUDIENCE_FROM = _AUDIENCE_CORE.format(plan_filter=_plan_filter(EXCLUDED_PLAN_CODES))
+
+#: Кусок SQL: **кого считают**. Та же аудитория минус тестовые. По нему живут
+#: сводка охвата, спрос по часам и вёрстка расписания (tsk-674 фаза 2). Собран
+#: из того же куска, что и показ, — иначе два списка разъедутся молча, и
+#: методист увидит «в опросе 61, а в вёрстке 49», не понимая, кто прав.
+COUNTED_AUDIENCE_FROM = _AUDIENCE_CORE.format(
+    plan_filter=_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)
+)
 
 
 class SchedulePreferenceError(ValueError):
@@ -420,11 +457,16 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
 
     Молчащие идут первыми: методист открывает экран, чтобы понять, кого
     дёргать, а не чтобы полюбоваться заполнившими.
+
+    Считаются здесь только настоящие ученики (tsk-712): тестовые учётки опрос
+    видят и заполнить его могут, но в числа не входят — ни в список, ни в
+    спрос по часам. Сколько их отброшено, видно отдельным числом: без него
+    падение «61 → 51» на экране читалось бы как пропавшие люди.
     """
     rows = (
         await db.execute(
             text(
-                """
+                f"""
                 SELECT u.id,
                        u.full_name,
                        u.email,
@@ -467,7 +509,7 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
                        WHERE lss.student_id = u.id AND lss.is_active AND ls.is_active
                   ) slots ON TRUE
                  WHERE u.is_active
-                   AND (cur.code IS NULL OR cur.code NOT IN ('alumni', 'demo'))
+                   AND {_plan_filter(EXCLUDED_PLAN_CODES + NOT_COUNTED_PLAN_CODES)}
                  ORDER BY (pref.id IS NOT NULL), u.full_name NULLS LAST, u.id
                 """
             )
@@ -491,16 +533,24 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
         for r in rows
     ]
 
+    # Спрос считается по той же счётной аудитории, что и список (tsk-712).
+    # Раньше здесь фильтра не было вовсе: анкета тестовой учётки добавляла
+    # заявок на час, и раскладка могла отвести под этот час живой слот.
     demand_rows = (
         await db.execute(
             text(
-                """
+                f"""
+                WITH counted AS (
+                    SELECT u.id AS student_id
+                    {COUNTED_AUDIENCE_FROM}
+                )
                 SELECT h.weekday,
                        h.start_time,
                        COUNT(*) FILTER (WHERE h.kind = 'preferred') AS preferred_count,
                        COUNT(*) FILTER (WHERE h.kind = 'possible')  AS possible_count
                   FROM student_schedule_preference_hour h
                   JOIN student_schedule_preference p ON p.id = h.preference_id
+                  JOIN counted c ON c.student_id = p.student_id
                  GROUP BY h.weekday, h.start_time
                  ORDER BY h.weekday, h.start_time
                 """
@@ -508,9 +558,23 @@ async def get_summary(db: AsyncSession) -> dict[str, Any]:
         )
     ).fetchall()
 
+    # Сколько учёток показ видит, а счёт не берёт. Число показывается рядом со
+    # сводкой: иначе разница с прошлым охватом выглядит как потеря людей.
+    not_counted_total = int(
+        (
+            await db.execute(
+                text(
+                    f"SELECT count(*) {AUDIENCE_FROM} "
+                    f"AND cur.code IN ({_sql_codes(NOT_COUNTED_PLAN_CODES)})"
+                )
+            )
+        ).scalar_one()
+    )
+
     filled = [s for s in students if s["is_filled"]]
     return {
         "audience_total": len(students),
+        "not_counted_total": not_counted_total,
         "filled_total": len(filled),
         "silent_total": len(students) - len(filled),
         "lessons_demand": sum(s["lessons_per_week"] or 0 for s in filled),

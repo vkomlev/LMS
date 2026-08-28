@@ -174,9 +174,14 @@ class SchedulePreferenceReminderRun(BaseModel):
 class SchedulePreferenceSummary(BaseModel):
     """Сводка охвата опроса для методиста и оператора."""
 
+    #: Сколько человек СЧИТАЕТСЯ — настоящие ученики. Тестовых здесь нет.
     audience_total: int
     filled_total: int
     silent_total: int
+    #: Сколько учёток опрос видят, но в счёт не идут (тестовый тариф, tsk-712).
+    #: Показывается рядом со сводкой: без этого числа падение охвата читается
+    #: как пропавшие ученики.
+    not_counted_total: int = 0
     #: Сумма `lessons_per_week` заполнивших — спрос в посещениях в неделю.
     lessons_demand: int
     students: list[SchedulePreferenceStudentRow]

@@ -64,7 +64,7 @@ from app.schemas.schedule_preference import (
     SCHEDULE_GRID,
 )
 from app.services import lesson_calendar_service
-from app.services.schedule_preference_service import AUDIENCE_FROM, grid_as_days
+from app.services.schedule_preference_service import COUNTED_AUDIENCE_FROM, grid_as_days
 
 logger = logging.getLogger(__name__)
 
@@ -336,13 +336,15 @@ def find_gaps(hours: Iterable[HourKey]) -> list[PlanDayGap]:
 
 # ────────────────────────────── чтение данных ───────────────────────────────
 
-#: Аудитория вёрстки — буквально та же, что у опроса: подзапрос собран из
-#: `schedule_preference_service.AUDIENCE_FROM`, а не переписан рядом. Иначе
-#: «в опросе 51 человек, а в вёрстке 49» — и никто не знает, кто прав.
+#: Аудитория вёрстки — буквально та же, что у сводки охвата: подзапрос собран
+#: из `schedule_preference_service.COUNTED_AUDIENCE_FROM`, а не переписан рядом.
+#: Иначе «в сводке 51 человек, а в вёрстке 49» — и никто не знает, кто прав.
+#: Счётная, а не показная (tsk-712): тестовым учёткам опрос показывается, но
+#: занимать ими живые слоты нельзя — расписание собирается настоящим людям.
 _STUDENTS_SQL = f"""
     WITH audience AS (
         SELECT u.id AS student_id
-        {AUDIENCE_FROM}
+        {COUNTED_AUDIENCE_FROM}
     )
     SELECT u.id,
            u.full_name,

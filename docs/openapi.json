@@ -55784,6 +55784,11 @@
             "type": "integer",
             "title": "Silent Total"
           },
+          "not_counted_total": {
+            "type": "integer",
+            "title": "Not Counted Total",
+            "default": 0
+          },
           "lessons_demand": {
             "type": "integer",
             "title": "Lessons Demand"

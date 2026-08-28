@@ -7,6 +7,7 @@
 - сохранение и правка: часы перезаписываются целиком, история копится;
 - аудитория опроса — выпускник (`alumni`) и демо (`demo`) в неё не входят,
   и флаг `schedule_preference_pending` в `GET /me` для них молчит;
+- тестовый тариф (`test`) — опрос видит, но в счёт не идёт (tsk-712);
 - сводка охвата: заполнившие, молчащие, спрос по часам;
 - гейт сводки — методист/админ, ученику она недоступна.
 """
@@ -19,7 +20,7 @@ from sqlalchemy import text
 
 from app.models.users import Users
 from app.schemas.schedule_preference import SchedulePreferenceWrite
-from app.services import schedule_preference_service
+from app.services import schedule_plan_service, schedule_preference_service
 from app.services.auth.session_service import create_session
 from app.services.schedule_preference_service import SchedulePreferenceError
 
@@ -240,6 +241,60 @@ async def test_alumni_and_demo_are_not_audience(db):
 
     assert await schedule_preference_service.is_pending(db, alumni_id) is False
     assert await schedule_preference_service.is_pending(db, active_id) is True
+
+
+@pytest.mark.asyncio
+async def test_test_plan_sees_survey_but_is_not_counted(db, client):
+    """tsk-712: тестовым опрос показываем, но в числа они не идут.
+
+    Обе стороны в одном тесте намеренно: разъедься они — и правка выглядела бы
+    сделанной. Тестовая учётка должна и видеть плашку, и заполнить анкету, и
+    при этом не появиться ни в списке методиста, ни в спросе по часам; живой
+    ученик — появиться, как раньше.
+    """
+    methodist_id = await _create_user(db, role="methodist", prefix="tsk712-meth")
+    token, _, _ = await create_session(db, user_id=methodist_id)
+
+    test_id = await _create_user(db, role="student", prefix="tsk712-test")
+    await _assign_plan(db, test_id, "test")
+    real_id = await _create_user(db, role="student", prefix="tsk712-real")
+    await _assign_plan(db, real_id, "base_legacy")
+
+    # Показ: плашка и напоминание тестовой учётке положены.
+    assert await schedule_preference_service.is_audience(db, test_id) is True
+    assert await schedule_preference_service.is_pending(db, test_id) is True
+
+    hours = [
+        {"weekday": 1, "start_time": "13:00", "kind": "preferred"},
+        {"weekday": 3, "start_time": "14:00", "kind": "preferred"},
+    ]
+    for student_id in (test_id, real_id):
+        await schedule_preference_service.save_preference(
+            db, student_id, _body(lessons_per_week=2, hours=hours), changed_by=student_id
+        )
+
+    resp = await client.get(
+        "/api/v1/methodist/schedule-preferences/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    ids = {r["student_id"] for r in body["students"]}
+    assert real_id in ids, "настоящий ученик считается, как раньше"
+    assert test_id not in ids, "тестовая учётка в сводку охвата не попадает"
+    assert body["not_counted_total"] >= 1, "отброшенных показываем числом"
+
+    # Спрос по часам: обе анкеты одинаковые, значит на этот час должна быть
+    # засчитана ровно одна — от живого ученика.
+    demand = {(c["weekday"], c["start_time"]): c for c in body["demand"]}
+    assert demand[(1, "13:00:00")]["preferred_count"] == 1
+
+    # Вёрстка берёт ту же счётную аудиторию: тестовому слот не отводится.
+    view, plan_input = await schedule_plan_service.load_students(db)
+    assert real_id in {r.student_id for r in view}
+    assert test_id not in {r.student_id for r in view}
+    assert test_id not in {r.student_id for r in plan_input}
 
 
 @pytest.mark.asyncio
