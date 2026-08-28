@@ -365,14 +365,20 @@ async def test_scan_creates_signal_with_readable_numbers(db):
 @pytest.mark.asyncio
 async def test_signal_sorts_first_among_reasons(db):
     """«Затих» идёт первым: у остальных поводов разговор можно отложить до
-    занятия, здесь ученика может не оказаться уже на следующем."""
+    занятия, здесь ученика может не оказаться уже на следующем.
+
+    Соседний сигнал взят с долей ошибок РОВНО 1.0, а не 0.9: с ключом 1.0 у
+    обоих порядок решался бы датой создания, а у сигналов одного прохода она
+    одинаковая (`now()` — время начала транзакции). На проде это и случилось —
+    карточка встала третьей, под двумя «100 % ошибок».
+    """
     student, teacher, course = await _setup_silent_student(db, "tsk647-order")
     peer = await _user(db, "tsk647-order-peer")
     try:
         await _enroll(db, peer, course)
         await sig.upsert_signal(
             db, course_id=course, student_id=peer, submissions=20, students=1,
-            wrong_rate=0.9,
+            wrong_rate=1.0,
         )
         await db.commit()
         await sig.scan_and_create_signals(db)
