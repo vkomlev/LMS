@@ -381,6 +381,7 @@ async def purchase_plan(
     Returns:
         True — подписка выдана и платёж зачтён; False — этот платёж уже учтён.
     """
+    from app.core import settings_store  # noqa: PLC0415
     from app.core.config import Settings  # noqa: PLC0415
     from app.services import charge_service, payment_service  # noqa: PLC0415
 
@@ -408,7 +409,9 @@ async def purchase_plan(
     group_id = int(plan.pricing_group_id)
     period = (
         date(today.year, today.month, 1)
-        if today.day <= settings.first_month_charge_cutoff_day
+        # tsk-721: число читается на месте применения — правка в кабинете
+        # действует со следующей покупки, без перезапуска.
+        if today.day <= settings_store.get_int("first_month_charge_cutoff_day")
         else charge_service.next_month(date(today.year, today.month, 1))
     )
 

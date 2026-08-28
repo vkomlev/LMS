@@ -39,6 +39,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.me_payments import store_receipt_payment
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.models.parent_access_link import ParentAccessLink
@@ -136,7 +137,7 @@ async def gateway_status_by_link(
         "enabled": yookassa_service.is_enabled(),
         "test_mode": yookassa_service.is_test_mode(),
         # Реквизиты перевода — основного способа оплаты.
-        "transfer_details": settings.payment_transfer_details or None,
+        "transfer_details": settings_store.get_str("payment_transfer_details") or None,
     }
 
 

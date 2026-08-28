@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import settings_store
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
 from app.models.lesson_slot import LessonSlot
@@ -49,7 +50,24 @@ _LOCKED_STATUSES = frozenset({"no_show", "completed", "rescheduled"})
 # На сколько дней вперёд подбираются варианты переноса. Совпадает с дефолтом
 # горизонта генератора занятий (LESSON_OCCURRENCE_HORIZON_DAYS): дальше него
 # занятий ещё нет, и присоединяться было бы не к чему.
+#
+# tsk-721: значение переехало в настройки школы, здесь остался запасной
+# вариант на случай, если настройки не прочитались. Читается функцией ниже, а
+# не подставляется умолчанием параметра: умолчание вычисляется при импорте
+# модуля, то есть правка в кабинете ждала бы перезапуска.
 _RESCHEDULE_HORIZON_DAYS = 14
+
+
+def _reschedule_horizon_days() -> int:
+    """Горизонт переноса из настроек школы, с запасным значением."""
+    try:
+        return settings_store.get_int("lesson_reschedule_horizon_days")
+    except Exception:
+        logger.warning(
+            "tsk-721: горизонт переноса не прочитался, беру %s дн.",
+            _RESCHEDULE_HORIZON_DAYS,
+        )
+        return _RESCHEDULE_HORIZON_DAYS
 
 
 # ─── Teacher panel ──────────────────────────────────────────────────────────
@@ -257,7 +275,7 @@ async def _list_slot_candidates(
     student_id: int,
     exclude_occurrence_id: Optional[int] = None,
     limit: int = 10,
-    horizon_days: int = _RESCHEDULE_HORIZON_DAYS,
+    horizon_days: int | None = None,
 ) -> list[datetime]:
     """Ближайшие времена активных слотов этих преподавателей, свободные у
     ученика и попадающие в часы работы школы. Отсортированы по возрастанию.
@@ -267,11 +285,14 @@ async def _list_slot_candidates(
     с временем уже созданного занятия слота, и ученик попадает в него, а не
     в параллельное.
     """
+    # tsk-721: не задали горизонт явно — берём его из настроек школы прямо
+    # здесь, при подборе вариантов.
+    horizon = _reschedule_horizon_days() if horizon_days is None else horizon_days
     now_utc = datetime.now(timezone.utc)
     moments: set[datetime] = set()
     for slot in await _active_slots_of(db, teacher_ids, duration_minutes=duration_minutes):
         moments.update(
-            iter_occurrence_datetimes(slot, horizon_days=horizon_days, now_utc=now_utc)
+            iter_occurrence_datetimes(slot, horizon_days=horizon, now_utc=now_utc)
         )
 
     candidates: list[datetime] = []
@@ -658,7 +679,7 @@ async def list_available_slots(
     occurrence_id: int,
     student_id: int,
     limit: int = 10,
-    horizon_days: int = _RESCHEDULE_HORIZON_DAYS,
+    horizon_days: int | None = None,
 ) -> list[datetime]:
     """Кандидаты для переноса — времена РЕАЛЬНЫХ слотов расписания тех же
     преподавателей, что ведут это занятие: в рамках `operating_hours`, без

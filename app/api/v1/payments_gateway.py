@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_current_user
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import get_async_db
 from app.schemas.payment import GatewayPaymentStart, PaymentStartRequest
@@ -48,7 +49,7 @@ async def gateway_status(
         # деньги не спишутся, а не гадать, почему карта «не прошла».
         "test_mode": yookassa_service.is_test_mode(),
         # Реквизиты перевода — основного способа оплаты.
-        "transfer_details": settings.payment_transfer_details or None,
+        "transfer_details": settings_store.get_str("payment_transfer_details") or None,
     }
 
 
@@ -176,10 +177,12 @@ async def start_ai_package_payment(
             or "На вашем тарифе пакет обращений к наставнику не нужен",
         )
 
-    units = settings.ai_package_units
+    # tsk-721: цена и объём пакета — продуктовое решение, читаем их в
+    # момент покупки, а не при запуске приложения.
+    units = settings_store.get_int("ai_package_units")
     try:
         payment = await yookassa_service.create_payment(
-            amount_minor=settings.ai_package_price_minor,
+            amount_minor=settings_store.get_int("ai_package_price_minor"),
             description=f"Пакет обращений к наставнику, {units} шт.",
             return_url=f"{settings.public_base_url}/me/subscription",
             metadata={

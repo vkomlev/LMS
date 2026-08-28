@@ -71,6 +71,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import inbox_service
@@ -495,7 +496,20 @@ async def lesson_idle_cron_tick(
     """Один проход. Возвращает summary для логов и тестов."""
     factory = session_factory or async_session_factory
     settings = Settings()
-    threshold = timedelta(minutes=int(settings.lesson_idle_threshold_minutes))
+    # tsk-721: рубильник проверяется в НАЧАЛЕ прохода, а не при поднятии
+    # планировщика. Иначе включение обратно требовало бы перезапуска — то
+    # есть ровно того, от чего задача и избавляет. Выключенный проход
+    # просыпается и сразу выходит: работы он не делает.
+    if not settings_store.get_bool("lesson_idle_cron_enabled"):
+        logger.info("tsk-591: слежение за простоем выключено настройкой школы")
+        return {
+            "locked": False, "lessons": 0, "participants": 0,
+            "opened": 0, "resolved": 0, "updated": 0,
+        }
+
+    # tsk-721: порог тишины берём на каждом проходе — администратор
+    # меняет его в кабинете, и перезапуска это требовать не должно.
+    threshold = timedelta(minutes=settings_store.get_int("lesson_idle_threshold_minutes"))
     stale = timedelta(seconds=int(settings.presence_stale_seconds))
     now = datetime.now(timezone.utc)
 
@@ -569,9 +583,8 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     """Поднять периодический тик (если включён настройкой)."""
     global _scheduler
     settings = Settings()
-    if not settings.lesson_idle_cron_enabled:
-        logger.info("tsk-591: тик простоя выключен (LESSON_IDLE_CRON_ENABLED)")
-        return None
+    # Планировщик поднимается всегда — работать или молчать, решает тик по
+    # настройке школы (tsk-721).
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 

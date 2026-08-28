@@ -39701,6 +39701,302 @@
           }
         }
       }
+    },
+    "/api/v1/system-settings": {
+      "get": {
+        "tags": [
+          "system_settings"
+        ],
+        "summary": "List System Settings",
+        "description": "Все настройки школы по группам: что стоит, откуда взято, кто менял.",
+        "operationId": "list_system_settings_api_v1_system_settings_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemSettingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system-settings/{key}": {
+      "put": {
+        "tags": [
+          "system_settings"
+        ],
+        "summary": "Update System Setting",
+        "description": "Сохранить значение. Границы проверяет сервер, форма их лишь подсказывает.",
+        "operationId": "update_system_setting_api_v1_system_settings__key__put",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemSettingUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemSettingRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "system_settings"
+        ],
+        "summary": "Reset System Setting",
+        "description": "Вернуть как было: снять выбор администратора, вернуться к прежнему значению.",
+        "operationId": "reset_system_setting_api_v1_system_settings__key__delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemSettingRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -59597,6 +59893,199 @@
         ],
         "title": "SyllabusTaskItem",
         "description": "Состояние задания в syllabus-дереве курса."
+      },
+      "SystemSettingGroup": {
+        "properties": {
+          "group": {
+            "type": "string",
+            "title": "Group",
+            "description": "Название группы по-русски"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SystemSettingRead"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "group",
+          "items"
+        ],
+        "title": "SystemSettingGroup",
+        "description": "Группа настроек — так они разложены на экране."
+      },
+      "SystemSettingRead": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key",
+            "description": "Ключ настройки"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Название по-русски — то, что читает человек"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "На что влияет, одной строкой"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind",
+            "description": "Тип значения: int | float | bool | str"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit",
+            "description": "Единица измерения по-русски",
+            "default": ""
+          },
+          "value": {
+            "title": "Value",
+            "description": "Действующее значение"
+          },
+          "default": {
+            "title": "Default",
+            "description": "Умолчание в коде"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Откуда взято действующее значение: cabinet — выбрано здесь, env — из файла настроек, default — из кода"
+          },
+          "min_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Value",
+            "description": "Нижняя граница"
+          },
+          "max_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Value",
+            "description": "Верхняя граница"
+          },
+          "max_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Length",
+            "description": "Предел длины текста"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning",
+            "description": "Что перестанет работать при выключении"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At",
+            "description": "Когда меняли"
+          },
+          "updated_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By",
+            "description": "Кто менял, номер учётки"
+          },
+          "updated_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Name",
+            "description": "Кто менял, имя"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "description",
+          "kind",
+          "value",
+          "default",
+          "source"
+        ],
+        "title": "SystemSettingRead",
+        "description": "Одна настройка так, как её рисует кабинет."
+      },
+      "SystemSettingUpdate": {
+        "properties": {
+          "value": {
+            "title": "Value",
+            "description": "Новое значение настройки"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "SystemSettingUpdate",
+        "description": "Новое значение. Тип свободный: приводит и проверяет его сервер по реестру."
+      },
+      "SystemSettingsResponse": {
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SystemSettingGroup"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "title": "SystemSettingsResponse"
       },
       "TableAnswerRules": {
         "properties": {

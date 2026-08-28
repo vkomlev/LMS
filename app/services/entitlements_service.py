@@ -25,6 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import settings_store
 from app.core.config import Settings
 
 if TYPE_CHECKING:  # только для аннотации: импорт схемы в рантайме создал бы
@@ -514,8 +515,8 @@ async def snapshot(db: AsyncSession, *, student_id: int) -> "MyEntitlements":
     tutor = caps["ai_tutor"]
     offer = (
         {
-            "units": settings.ai_package_units,
-            "price_minor": settings.ai_package_price_minor,
+            "units": settings_store.get_int("ai_package_units"),
+            "price_minor": settings_store.get_int("ai_package_price_minor"),
         }
         if tutor.limit is not None
         else None

@@ -70,6 +70,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import charge_service, inbox_service
@@ -293,6 +294,14 @@ async def charge_cron_tick(
     """
     factory = session_factory or async_session_factory
     settings = Settings()
+    # tsk-721: рубильник проверяется в НАЧАЛЕ прохода, а не при поднятии
+    # планировщика. Иначе включение обратно требовало бы перезапуска — то
+    # есть ровно того, от чего задача и избавляет. Выключенный проход
+    # просыпается и сразу выходит: работы он не делает.
+    if not settings_store.get_bool("charge_cron_enabled"):
+        logger.info("tsk-596: автопересчёт начислений выключен настройкой школы")
+        return {"locked": False, "disabled": True}
+
     period = charge_service.month_start(today or date.today())
     summary: dict = {
         "locked": False,
@@ -388,9 +397,7 @@ def start_scheduler() -> None:
     """Поднимает суточный проход (если включён настройкой)."""
     global _scheduler
     settings = Settings()
-    if not settings.charge_cron_enabled:
-        logger.info("tsk-596: автопересчёт начислений выключен (CHARGE_CRON_ENABLED)")
-        return
+    # Планировщик поднимается всегда — решает тик по настройке школы (tsk-721).
     if _scheduler is not None:
         return
 

@@ -53,7 +53,6 @@ async def test_reminder_goes_once_a_week(db, client, mail_ok, monkeypatch):
     env = await _setup(db, "rem-once", price=550000)
     await _recalc(db, student_id=env["student_id"])
     await _set_email(db, env["student_id"], "debtor-once@example.com")
-    monkeypatch.setattr(payment_reminder_service, "settings", payment_service.settings)
 
     first = await payment_reminder_service.send_reminders(
         db, sent_by=env["student_id"], today=OVERDUE_DAY

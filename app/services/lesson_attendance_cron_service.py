@@ -36,6 +36,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import inbox_service
@@ -188,8 +189,8 @@ async def lesson_attendance_cron_tick(
     """Один проход. Возвращает summary для логов/тестов."""
     factory = session_factory or async_session_factory
     settings = Settings()
-    lead_minutes = int(settings.lesson_reminder_lead_minutes)
-    threshold_minutes = int(settings.lesson_no_show_threshold_minutes)
+    lead_minutes = settings_store.get_int("lesson_reminder_lead_minutes")
+    threshold_minutes = settings_store.get_int("lesson_no_show_threshold_minutes")
 
     summary = {"locked": False, "reminders_sent": 0, "no_show_marked": 0}
 

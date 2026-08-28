@@ -41,9 +41,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.learning_gaps_service import (
-    ERROR_RATE_THRESHOLD,
-    MIN_STUDENTS,
-    MIN_SUBMISSIONS,
+    task_error_rate,
+    task_min_students,
+    task_min_submissions,
     real_student_results_filter,
 )
 from app.utils.task_title import humanize_task_title
@@ -105,7 +105,9 @@ def classify_topic(wrong_rate: float, median_pace_seconds: float | None) -> str:
     условие. Поэтому при неизвестном темпе (у ученика одна сдача в теме, второй
     точки для промежутка нет) признак «лёгкая» не ставится вовсе.
     """
-    if wrong_rate >= ERROR_RATE_THRESHOLD:
+    # tsk-721: тот же порог, что у датчика пробелов, и берётся он оттуда же
+    # функцией — иначе кабинет менял бы одно место из двух.
+    if wrong_rate >= task_error_rate():
         return SIGNAL_HARD
     if (
         wrong_rate <= EASY_WRONG_RATE
@@ -295,7 +297,10 @@ def _build_topic(row) -> TopicMastery:
         wrong_rate=wrong_rate,
         median_pace_seconds=pace,
         pace_source=pace_source,
-        reliable=submissions >= MIN_SUBMISSIONS and students_reached >= MIN_STUDENTS,
+        reliable=(
+            submissions >= task_min_submissions()
+            and students_reached >= task_min_students()
+        ),
         signal=classify_topic(wrong_rate, pace),
     )
 
@@ -340,9 +345,9 @@ async def topic_overview(db: AsyncSession, *, days: int = 90) -> dict:
         "topics": [t.as_dict() for t in topics],
         "topics_without_submissions": max(total_with_tasks - len(topics), 0),
         "thresholds": {
-            "min_submissions": MIN_SUBMISSIONS,
-            "min_students": MIN_STUDENTS,
-            "hard_wrong_rate": ERROR_RATE_THRESHOLD,
+            "min_submissions": task_min_submissions(),
+            "min_students": task_min_students(),
+            "hard_wrong_rate": task_error_rate(),
             "easy_wrong_rate": EASY_WRONG_RATE,
             "fast_pace_seconds": FAST_PACE_SECONDS,
             "slow_pace_seconds": SLOW_PACE_SECONDS,

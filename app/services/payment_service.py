@@ -30,11 +30,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
+from app.core import settings_store
 from app.services import charge_service
 
 logger = logging.getLogger(__name__)
-settings = Settings()
 
 __all__ = [
     "PaymentStatus",
@@ -126,7 +125,11 @@ def block_date_for(period: date) -> date:
     после конца месяца, а доступ закрывается на несколько дней позже — человеку
     нужно время заплатить после того, как месяц закончился.
     """
-    return due_date_for(period) + timedelta(days=settings.payment_block_after_days)
+    # tsk-721: срок читается в момент применения, а не при импорте модуля —
+    # иначе правка в кабинете администратора ждала бы перезапуска.
+    return due_date_for(period) + timedelta(
+        days=settings_store.get_int("payment_block_after_days")
+    )
 
 
 def payment_state(

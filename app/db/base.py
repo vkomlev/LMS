@@ -52,4 +52,5 @@ import app.models.charge             # начисления, перерывы, �
 import app.models.subscription       # права тарифа, квота и пакеты наставника (tsk-301)
 import app.models.student_presence    # пульс присутствия ученика (tsk-591)
 import app.models.lesson_idle_episode  # простои на занятии (tsk-591)
+import app.models.system_setting       # настройки школы из кабинета админа (tsk-721)
 

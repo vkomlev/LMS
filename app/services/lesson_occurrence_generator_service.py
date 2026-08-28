@@ -28,6 +28,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.models.lesson_slot import LessonSlot
@@ -105,7 +106,7 @@ async def lesson_occurrence_generator_tick(
     """
     factory = session_factory or async_session_factory
     settings = Settings()
-    horizon_days = int(settings.lesson_occurrence_horizon_days)
+    horizon_days = settings_store.get_int("lesson_occurrence_horizon_days")
 
     summary = {
         "locked": False, "active_slots": 0, "generated": 0,

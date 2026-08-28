@@ -800,3 +800,30 @@ async def _stop_charge_cron_scheduler() -> None:
         _charge_cron.stop_scheduler()
     except Exception:
         logger.exception("tsk-596: не удалось остановить автопересчёт начислений")
+
+# tsk-721: настройки школы, выбранные администратором в кабинете. Читаются в
+# память при старте и обновляются фоном раз в минуту, чтобы правка порога
+# действовала без перезапуска (сам сохраняющий процесс видит её сразу).
+from app.core import settings_store as _settings_store
+from app.api.v1.system_settings import router as system_settings_router
+
+app.include_router(system_settings_router, prefix=API_PREFIX)
+
+
+@app.on_event("startup")
+async def _load_school_settings() -> None:
+    # load_once не бросает наружу: не прочиталась таблица — школа работает на
+    # переменных окружения и умолчаниях, как до задачи.
+    await _settings_store.load_once()
+    try:
+        _settings_store.start_refresh_loop()
+    except Exception:
+        logger.exception("tsk-721: не удалось запустить обновление настроек школы")
+
+
+@app.on_event("shutdown")
+async def _stop_school_settings_refresh() -> None:
+    try:
+        _settings_store.stop_refresh_loop()
+    except Exception:
+        logger.exception("tsk-721: не удалось остановить обновление настроек школы")

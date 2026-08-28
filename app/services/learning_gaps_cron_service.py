@@ -16,6 +16,7 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services import learning_gap_signals_service
@@ -32,6 +33,14 @@ async def learning_gaps_tick() -> None:
     вместе с ним остальные фоновые задачи. Но и молчать нельзя — след в логе
     остаётся всегда, иначе отказ датчика неотличим от «пробелов не нашлось».
     """
+    # tsk-721: рубильник проверяется в НАЧАЛЕ прохода, а не при поднятии
+    # планировщика. Иначе включение обратно требовало бы перезапуска — то
+    # есть ровно того, от чего задача и избавляет. Выключенный проход
+    # просыпается и сразу выходит: работы он не делает.
+    if not settings_store.get_bool("learning_gaps_cron_enabled"):
+        logger.info("learning_gaps: проход выключен настройкой школы")
+        return
+
     try:
         async with async_session_factory() as db:
             res = await learning_gap_signals_service.scan_and_create_signals(db)
@@ -44,9 +53,8 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     """Поднять суточный проход, если включён настройкой."""
     global _scheduler
     settings = Settings()
-    if not getattr(settings, "learning_gaps_cron_enabled", True):
-        logger.info("learning_gaps: проход выключен (LEARNING_GAPS_CRON_ENABLED)")
-        return None
+    # Планировщик поднимается всегда: включён проход или нет, решает сам тик
+    # по настройке школы (tsk-721).
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 

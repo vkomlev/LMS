@@ -15,6 +15,7 @@ from typing import Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.models.lesson_occurrence import LessonOccurrence
 from app.models.lesson_occurrence_participant import LessonOccurrenceParticipant
@@ -155,7 +156,9 @@ async def auto_confirm_if_in_progress(db: AsyncSession, *, student_id: int) -> b
         db,
         student_id=student_id,
         now=datetime.now(timezone.utc),
-        early_grace_minutes=settings.lesson_auto_confirm_early_grace_minutes,
+        early_grace_minutes=settings_store.get_int(
+            "lesson_auto_confirm_early_grace_minutes"
+        ),
     )
     if participant is None:
         return False

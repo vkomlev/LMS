@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, get_current_user
 from app.auth.current_user import CurrentUser
+from app.core import settings_store
 from app.core.config import Settings
 from app.schemas.lesson_calendar import (
     AddParticipantRequest,
@@ -81,7 +82,7 @@ async def list_teacher_occurrences(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> list[TeacherLessonOccurrenceRead]:
     await _ensure_self_or_service(db, current_user, teacher_id)
-    threshold_minutes = Settings().lesson_no_show_threshold_minutes
+    threshold_minutes = settings_store.get_int("lesson_no_show_threshold_minutes")
     pairs = await lesson_occurrence_service.list_for_teacher(
         db,
         teacher_id=teacher_id,
@@ -137,7 +138,7 @@ async def get_teacher_lesson_summary(
     Список строк обходится без прогресса (`include_progress=false`), а
     подробности одного ученика запрашиваются по клику (`student_id`)."""
     await _ensure_self_or_service(db, current_user, teacher_id)
-    threshold_minutes = Settings().lesson_no_show_threshold_minutes
+    threshold_minutes = settings_store.get_int("lesson_no_show_threshold_minutes")
     data = await teacher_lesson_summary_service.get_occurrence_summary(
         db,
         occurrence_id=occurrence_id,

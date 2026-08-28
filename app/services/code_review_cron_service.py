@@ -35,6 +35,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core import settings_store
 from app.core.config import Settings
 from app.db.session import async_session_factory
 from app.services.code_quality_service import analyze_student_code_quality
@@ -113,6 +114,14 @@ async def code_review_cron_tick(
         "locked": False, "picked": 0, "reviewed": 0,
         "retried": 0, "failed": 0, "skipped": 0, "degraded": 0,
     }
+
+    # tsk-721: рубильник проверяется в НАЧАЛЕ прохода, а не при поднятии
+    # планировщика. Иначе включение обратно требовало бы перезапуска — то
+    # есть ровно того, от чего задача и избавляет. Выключенный проход
+    # просыпается и сразу выходит: работы он не делает, очередь копится.
+    if not settings_store.get_bool("code_review_cron_enabled"):
+        logger.info("tsk-302: фоновая оценка кода выключена настройкой школы")
+        return summary
 
     # Фаза 1 — захват пачки. Короткая транзакция: замок, выборка, пометка,
     # коммит. Всё вместе — доли секунды.
@@ -395,9 +404,7 @@ def start_scheduler() -> Optional[AsyncIOScheduler]:
     """Поднимает периодический тик (если включён настройкой)."""
     global _scheduler
     settings = Settings()
-    if not settings.code_review_cron_enabled:
-        logger.info("tsk-302: фоновая оценка кода выключена (CODE_REVIEW_CRON_ENABLED)")
-        return None
+    # Планировщик поднимается всегда — решает тик по настройке школы (tsk-721).
     if _scheduler is not None and _scheduler.running:
         return _scheduler
 

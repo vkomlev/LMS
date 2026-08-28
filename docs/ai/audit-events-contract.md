@@ -72,6 +72,8 @@ SELECT * FROM audit_event WHERE details->>'request_id' = 'abc-...';
 | `STUDENT_ROLE_AUTO_ASSIGNED` | `student.role.auto_assigned` | `auth/*_service.py`, `role_assign_service.py` | Y-4 pre-S5: auto-присвоение роли student при регистрации | `role`, `origin`, `channel` |
 | `AUTH_ROLE_MISSING_SELF_HEALED` | `auth.role.missing_self_healed` | `deps.py` (`get_current_user_defensive`) | Defensive self-heal у user без ролей | `role`, `origin`, `channel` |
 | `AUTH_TEST_SESSION_ISSUED` | `auth.test.session_issued` | `auth/test_session.py` | Тестовая сессия выпущена (dev/CI) | `purpose` |
+| `SETTING_CHANGED` | `admin.setting.changed` | `system_settings_service.py` | tsk-721: администратор изменил настройку школы в кабинете | `key`, `title`, `old_value`, `new_value`, `old_source` |
+| `SETTING_RESET` | `admin.setting.reset` | `system_settings_service.py` | tsk-721: администратор вернул настройку к значению из `.env`/кода | `key`, `title`, `old_value`, `new_value`, `new_source` |
 
 ## Инварианты
 

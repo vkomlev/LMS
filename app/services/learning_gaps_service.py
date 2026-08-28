@@ -48,6 +48,48 @@ ERROR_RATE_THRESHOLD = 0.35
 MIN_STUDENTS = 3
 
 
+# tsk-721: три порога выше переехали в настройки школы, здесь остались
+# запасные значения. Читать их нужно ФУНКЦИЯМИ ниже, а не именами констант:
+# константа берётся при импорте модуля, и правка в кабинете ждала бы
+# перезапуска. Тот же порог спрашивает `topic_mastery_service` — он зовёт эти
+# же функции, иначе два места разъехались бы по разным значениям.
+
+
+def _setting_int(key: str, fallback: int) -> int:
+    """Числовой порог из настроек школы; не прочитался — берём запасной."""
+    from app.core import settings_store
+
+    try:
+        return settings_store.get_int(key)
+    except Exception:
+        logger.warning("пробелы: настройка %s не прочиталась, беру %s", key, fallback)
+        return fallback
+
+
+def task_min_submissions() -> int:
+    """Сколько сдач нужно, чтобы говорить о пробеле по заданию."""
+    return _setting_int("gap_task_min_submissions", MIN_SUBMISSIONS)
+
+
+def task_min_students() -> int:
+    """Сколько разных учеников должны ошибиться."""
+    return _setting_int("gap_task_min_students", MIN_STUDENTS)
+
+
+def task_error_rate() -> float:
+    """Доля ошибок, с которой задание считается проблемным."""
+    from app.core import settings_store
+
+    try:
+        return settings_store.get_float("gap_task_error_rate")
+    except Exception:
+        logger.warning(
+            "пробелы: настройка gap_task_error_rate не прочиталась, беру %s",
+            ERROR_RATE_THRESHOLD,
+        )
+        return ERROR_RATE_THRESHOLD
+
+
 def real_student_results_filter(alias: str = "tr") -> str:
     """Условие «это реальная сдача ученика» для SQL.
 
@@ -118,15 +160,22 @@ async def find_topic_gaps(
     db: AsyncSession,
     *,
     days: int = 30,
-    min_submissions: int = MIN_SUBMISSIONS,
-    min_students: int = MIN_STUDENTS,
-    threshold: float = ERROR_RATE_THRESHOLD,
+    min_submissions: int | None = None,
+    min_students: int | None = None,
+    threshold: float | None = None,
     limit: int = 20,
 ) -> list[TopicGap]:
     """Темы с высокой долей неверных сдач за период.
 
     Считает ТОЛЬКО по реальным ученическим сдачам — см. модульную докстроку.
     """
+    # tsk-721: пороги — из настроек школы, в момент прохода.
+    if min_submissions is None:
+        min_submissions = task_min_submissions()
+    if min_students is None:
+        min_students = task_min_students()
+    if threshold is None:
+        threshold = task_error_rate()
     sql = _GAPS_SQL.format(real_student=real_student_results_filter("tr"))
     rows = (await db.execute(text(sql), {
         "days": days, "min_submissions": min_submissions,

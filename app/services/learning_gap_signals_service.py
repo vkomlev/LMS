@@ -23,7 +23,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
+from app.core import settings_store
 from app.services.learning_gaps_service import (
     find_topic_gaps,
     real_student_results_filter,
@@ -92,8 +92,8 @@ async def find_student_gaps(
     db: AsyncSession,
     *,
     days: int = 30,
-    min_submissions: int = STUDENT_MIN_SUBMISSIONS,
-    threshold: float = STUDENT_ERROR_RATE_THRESHOLD,
+    min_submissions: int | None = None,
+    threshold: float | None = None,
     limit: int = 100,
 ) -> list[dict]:
     """Ученики, которым нужно повторение конкретной темы.
@@ -101,6 +101,13 @@ async def find_student_gaps(
     Тот же фильтр источника, что и у тем: ручная простановка преподавателя — не
     ответ ученика и в счёт его ошибок идти не должна.
     """
+    # tsk-721: пороги читаются на каждом проходе, а не подставляются
+    # умолчанием параметра — умолчание вычисляется при импорте модуля, и
+    # правка в кабинете ждала бы перезапуска.
+    if min_submissions is None:
+        min_submissions = _setting_int("gap_student_min_submissions", STUDENT_MIN_SUBMISSIONS)
+    if threshold is None:
+        threshold = _setting_float("gap_student_error_rate", STUDENT_ERROR_RATE_THRESHOLD)
     sql = _STUDENT_GAPS_SQL.format(real_student=real_student_results_filter("tr"))
     rows = (await db.execute(text(sql), {
         "days": days, "min_submissions": min_submissions,
@@ -190,9 +197,9 @@ LIMIT :limit
 async def find_ai_authorship_gaps(
     db: AsyncSession,
     *,
-    days: int = AI_WINDOW_DAYS,
-    min_flagged: int = AI_MIN_FLAGGED_WORKS,
-    min_share: float = AI_MIN_FLAGGED_SHARE,
+    days: int | None = None,
+    min_flagged: int | None = None,
+    min_share: float | None = None,
     limit: int = 100,
 ) -> list[dict]:
     """Ученики, чьи работы несут признак ИИ-авторства.
@@ -214,6 +221,13 @@ async def find_ai_authorship_gaps(
     и показываются человеку. Доля ошибок сюда не входит: у этого повода она
     ничего не значит.
     """
+    # tsk-721: пороги признака ИИ — на месте применения, см. find_student_gaps.
+    if days is None:
+        days = ai_window_days()
+    if min_flagged is None:
+        min_flagged = _setting_int("ai_signal_min_flagged_works", AI_MIN_FLAGGED_WORKS)
+    if min_share is None:
+        min_share = _setting_float("ai_signal_min_flagged_share", AI_MIN_FLAGGED_SHARE)
     sql = _AI_AUTHORSHIP_SQL.format(real_student=real_student_results_filter("tr"))
     rows = (await db.execute(text(sql), {
         "days": days, "min_flagged": min_flagged,
@@ -355,18 +369,40 @@ LIMIT :limit
 """
 
 
+def _setting_int(key: str, fallback: int) -> int:
+    """Числовой порог из настроек школы; не прочитался — берём запасной.
+
+    Датчик не должен умолкать из-за настроек: молчащий сигнал выглядит как
+    «всё хорошо», а это худшая из возможных ошибок здесь (tsk-721).
+    """
+    try:
+        return settings_store.get_int(key)
+    except Exception:
+        logger.warning("сигналы: настройка %s не прочиталась, беру %s", key, fallback)
+        return fallback
+
+
+def _setting_float(key: str, fallback: float) -> float:
+    """То же для долей."""
+    try:
+        return settings_store.get_float(key)
+    except Exception:
+        logger.warning("сигналы: настройка %s не прочиталась, беру %s", key, fallback)
+        return fallback
+
+
+def ai_window_days() -> int:
+    """Окно признака ИИ-авторства из настроек, с запасным значением."""
+    return _setting_int("ai_signal_window_days", AI_WINDOW_DAYS)
+
+
 def dropout_window_days() -> int:
     """Окно признака «затих» из настроек, с запасным значением.
 
     Читается на каждом проходе, а не при импорте модуля: иначе смена порога
     требовала бы перезапуска — то есть выката, которого правило и избегает.
     """
-    try:
-        return int(getattr(Settings(), "dropout_risk_window_days", DROPOUT_WINDOW_DAYS))
-    except Exception:
-        logger.warning("dropout_risk: настройка окна не прочиталась, беру %s дн.",
-                       DROPOUT_WINDOW_DAYS)
-        return DROPOUT_WINDOW_DAYS
+    return _setting_int("dropout_risk_window_days", DROPOUT_WINDOW_DAYS)
 
 
 async def find_dropout_risk(
@@ -468,7 +504,7 @@ async def scan_and_create_signals(db: AsyncSession, *, days: int = 30) -> dict:
                 "reason": REASON_AI_AUTHORSHIP,
                 "reviewed": int(r["reviewed"]),
                 "flagged": int(r["flagged"]),
-                "window_days": AI_WINDOW_DAYS,
+                "window_days": ai_window_days(),
             },
         ):
             new_authorship += 1
