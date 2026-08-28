@@ -20,22 +20,22 @@
    отдельный, а не ``website``: смысл задачи — узнать, сколько людей приводит
    квиз, а не сайт вообще.
 
-Rollback-note: ``alembic downgrade tsk674_schedule_slot_request`` снимает оба поля
+Rollback-note: ``alembic downgrade tsk721_system_setting`` снимает оба поля
 у ``leads`` (привязка заявок к квизу теряется безвозвратно — сами заявки остаются),
 поле ``scale_scores`` у ``guest_attempt`` и строку канала ``quiz``. Лиды, заведённые
 с этим каналом, откат бы осиротил, поэтому канал удаляется только если на него не
 ссылается ни один лид; иначе он остаётся в справочнике выключенным (``is_active=false``).
 
 Revision ID: tsk053_guest_quiz_lead
-Revises: tsk674_schedule_slot_request
+Revises: tsk721_system_setting
 Create Date: 2026-08-28
 
-Примечание о порядке: соседняя задача tsk-721 в тот же час создала миграцию от этой
-же головы. Ветвление уронило бы выкат — `deploy/vps/deploy.sh` зовёт `alembic upgrade
-head` в единственном числе. Сводить линию здесь нельзя: файл соседа ещё не в
-репозитории, и ссылка на его ревизию сделала бы выкат невозможным вовсе («Can't
-locate revision»). Поэтому опираемся на ревизию, которая есть и в репозитории, и на
-проде; свести линию — ход того, кто коммитит вторым.
+Примечание о порядке: соседняя задача tsk-721 в тот же час создала миграцию от той
+же головы. Две головы уронили бы выкат — `deploy/vps/deploy.sh` зовёт `alembic upgrade
+head` в единственном числе. Линия сведена здесь, в своём файле: чужой не трогаем.
+Сначала опиралось на `tsk674` (файла соседа ещё не было в репозитории, и ссылка на его
+ревизию сделала бы выкат невозможным вовсе — «Can't locate revision»); после того как
+он закоммитился, ссылка стала валидной, и ветвление ушло.
 """
 from typing import Sequence, Union
 
@@ -44,7 +44,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "tsk053_guest_quiz_lead"
-down_revision: Union[str, None] = "tsk674_schedule_slot_request"
+down_revision: Union[str, None] = "tsk721_system_setting"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
