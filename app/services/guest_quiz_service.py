@@ -47,6 +47,7 @@ from app.schemas.guest_quiz import (
 )
 from app.schemas.solution_rules import SolutionRules
 from app.schemas.task_content import TaskContent
+from app.services import lead_magnet_service
 from app.services.assignment_rules_service import quiz_scale_matched
 from app.services.checking_service import CheckingService
 from app.services.learning_guest_service import is_task_visible_to_guest
@@ -344,22 +345,6 @@ def _contact_url(quiz_title: str, recommendation: Optional[QuizRecommendation]) 
     return f"https://t.me/{_settings.quiz_contact_tg}?text={quote(message)}"
 
 
-async def _existing_lead(
-    db: AsyncSession, guest_session_id: UUID, course_id: int
-) -> Optional[Lead]:
-    """Заявка, уже оставленная этой гостевой сессией по этому квизу."""
-    return (
-        await db.execute(
-            select(Lead)
-            .where(
-                Lead.guest_session_id == guest_session_id,
-                Lead.quiz_course_id == course_id,
-            )
-            .order_by(Lead.id.desc())
-        )
-    ).scalars().first()
-
-
 async def get_quiz_result(
     db: AsyncSession, course_uid: str, guest_session_id: Optional[UUID]
 ) -> Optional[QuizResultResponse]:
@@ -386,7 +371,9 @@ async def get_quiz_result(
 
     lead_submitted = False
     if guest_session_id is not None:
-        lead_submitted = await _existing_lead(db, guest_session_id, course.id) is not None
+        lead_submitted = (
+            await lead_magnet_service.find_lead(db, guest_session_id, course.id)
+        ) is not None
 
     return QuizResultResponse(
         course_uid=course.course_uid or course_uid,
@@ -425,20 +412,6 @@ async def create_quiz_lead(
             payload={"course_uid": course_uid},
         )
 
-    source_id = (
-        await db.execute(
-            select(LeadSource.id).where(LeadSource.code == QUIZ_LEAD_SOURCE_CODE)
-        )
-    ).scalar_one_or_none()
-    if source_id is None:
-        # Канал заводит миграция; если его нет — среда не доедена, и молча
-        # подставлять «другое» нельзя: канал перестанет считаться.
-        logger.error("guest_quiz: в справочнике нет канала '%s'", QUIZ_LEAD_SOURCE_CODE)
-        raise DomainError(
-            detail="Приём заявок с квиза временно недоступен.",
-            status_code=503,
-        )
-
     questions = await _load_questions(db, course.id)
     totals = await _accumulate_guest_scales(db, guest_session_id, [t.id for t, _ in questions])
     recommendation = await _resolve_recommendation(db, course.id, totals)
@@ -447,95 +420,17 @@ async def create_quiz_lead(
         f"{recommendation.title if recommendation else 'не определилась'}. "
         f"Шкалы: {totals or '—'}."
     )
-
-    existing = await _existing_lead(db, guest_session_id, course.id)
-    if existing is not None:
-        existing.contact = contact
-        if full_name:
-            existing.full_name = full_name
-        existing.note = note
-        await db.flush()
-        return existing.id, True
-
-    lead = Lead(
-        source_id=source_id,
-        source_detail=course.course_uid,
-        full_name=full_name,
-        contact=contact,
-        note=note,
+    return await lead_magnet_service.upsert_lead(
+        db,
+        course=course,
         guest_session_id=guest_session_id,
-        quiz_course_id=course.id,
+        contact=contact,
+        full_name=full_name,
+        note=note,
     )
-    db.add(lead)
-    await db.flush()
-    return lead.id, False
 
 
 async def get_quiz_funnel(db: AsyncSession) -> List[Dict[str, Any]]:
-    """Воронка по каждому квизу: начали, прошли до конца, оставили контакт.
-
-    «Начали» и «прошли» считаются по гостевым сессиям, а не по ответам: человек,
-    поменявший ответ, — по-прежнему один человек. «Прошли» — сессии, у которых
-    различных отвеченных вопросов столько же, сколько активных вопросов в квизе.
-    """
-    rows = (
-        await db.execute(
-            text(
-                """
-                WITH quiz AS (
-                    SELECT c.id, c.course_uid, c.title,
-                           count(t.id) AS total_questions
-                    FROM courses c
-                    JOIN tasks t ON t.course_id = c.id
-                     AND t.is_active
-                     AND t.task_content->>'type' IN ('SC_Qw', 'MC_Qw')
-                    WHERE c.is_public_demo
-                    GROUP BY c.id, c.course_uid, c.title
-                ),
-                progress AS (
-                    -- Условие на тип и активность здесь обязано повторять
-                    -- условие в `quiz`: без него ответ на обычную демо-задачу
-                    -- того же курса считался бы прогрессом по квизу, и человек
-                    -- попадал бы в «прошли», не ответив ни на один вопрос.
-                    SELECT q.id AS course_id,
-                           ga.guest_session_id,
-                           count(DISTINCT ga.task_id) AS answered
-                    FROM quiz q
-                    JOIN tasks t ON t.course_id = q.id
-                     AND t.is_active
-                     AND t.task_content->>'type' IN ('SC_Qw', 'MC_Qw')
-                    JOIN guest_attempt ga ON ga.task_id = t.id
-                    GROUP BY q.id, ga.guest_session_id
-                )
-                SELECT q.course_uid,
-                       q.title,
-                       q.total_questions,
-                       count(p.guest_session_id) AS started,
-                       count(p.guest_session_id)
-                         FILTER (WHERE p.answered >= q.total_questions) AS completed,
-                       (SELECT count(*) FROM leads l WHERE l.quiz_course_id = q.id) AS leads
-                FROM quiz q
-                LEFT JOIN progress p ON p.course_id = q.id
-                GROUP BY q.id, q.course_uid, q.title, q.total_questions
-                ORDER BY q.course_uid
-                """
-            )
-        )
-    ).fetchall()
-
-    funnel: List[Dict[str, Any]] = []
-    for course_uid, title, total_questions, started, completed, leads in rows:
-        funnel.append(
-            {
-                "course_uid": course_uid,
-                "title": title,
-                "total_questions": int(total_questions),
-                "started": int(started),
-                "completed": int(completed),
-                "leads": int(leads),
-                # Та самая цифра, ради которой всё считается: доля дошедших до
-                # заявки среди прошедших квиз до конца.
-                "lead_rate": round(leads / completed, 4) if completed else None,
-            }
-        )
-    return funnel
+    """Воронка лид-магнитов. Считается в общем модуле: с появлением диагностики
+    (фаза 2) она перестала быть «воронкой квизов» и стала общей для обоих."""
+    return await lead_magnet_service.get_funnel(db)

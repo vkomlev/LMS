@@ -25655,6 +25655,259 @@
         }
       }
     },
+    "/api/v1/learning/guest/diagnostic/{course_uid}": {
+      "get": {
+        "tags": [
+          "guest-diagnostic"
+        ],
+        "summary": "Get Diagnostic",
+        "description": "Задачи этого посетителя и то, что он уже ответил.",
+        "operationId": "get_diagnostic_api_v1_learning_guest_diagnostic__course_uid__get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса диагностики",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса диагностики"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/diagnostic/answers": {
+      "post": {
+        "tags": [
+          "guest-diagnostic"
+        ],
+        "summary": "Submit Answer",
+        "description": "Принять решение задачи.\n\nЛимиты те же, что у квиза: демо-лимиты (5/час/IP, 3/сутки/сессия) берегут платный\nконтент, а здесь беречь нечего — зонды написаны специально для витрины и никакого\nплатного банка не открывают.",
+        "operationId": "submit_answer_api_v1_learning_guest_diagnostic_answers_post",
+        "parameters": [
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagnosticAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticAnswerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/diagnostic/{course_uid}/result": {
+      "get": {
+        "tags": [
+          "guest-diagnostic"
+        ],
+        "summary": "Get Result",
+        "description": "Итог: сколько решено, разбор по темам, что подтянуть и куда идти.",
+        "operationId": "get_result_api_v1_learning_guest_diagnostic__course_uid__result_get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса диагностики",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса диагностики"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosticResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/diagnostic/{course_uid}/lead": {
+      "post": {
+        "tags": [
+          "guest-diagnostic"
+        ],
+        "summary": "Submit Lead",
+        "description": "Принять контакт по итогам диагностики.\n\nКонтракт тела и ответа общий с квизом: для человека это одно и то же действие,\nи разводить две одинаковые схемы значило бы чинить их потом по отдельности.",
+        "operationId": "submit_lead_api_v1_learning_guest_diagnostic__course_uid__lead_post",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса диагностики",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса диагностики"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizLeadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizLeadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/test/issue-session": {
       "post": {
         "tags": [
@@ -45143,6 +45396,307 @@
         ],
         "title": "CriteriaWriteResponse",
         "description": "Итог записи по одному заданию."
+      },
+      "DiagnosticAnswerRequest": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Value",
+            "description": "Краткий ответ: число или одно слово"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "value"
+        ],
+        "title": "DiagnosticAnswerRequest",
+        "description": "Тело POST /learning/guest/diagnostic/answers."
+      },
+      "DiagnosticAnswerResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "answered_count",
+          "total_count",
+          "is_complete"
+        ],
+        "title": "DiagnosticAnswerResponse",
+        "description": "Ответ на приём решения.\n\nПравильность здесь НЕ возвращается намеренно: иначе диагностика превращается в\nугадайку — человек подбирал бы ответ по отклику, и итог перестал бы что-либо\nизмерять. Разбор он получает один раз, в конце."
+      },
+      "DiagnosticQuestion": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "order": {
+            "type": "integer",
+            "title": "Order",
+            "description": "Порядковый номер, начиная с 1"
+          },
+          "topic_code": {
+            "type": "string",
+            "title": "Topic Code",
+            "description": "Код темы ЕГЭ, например z14"
+          },
+          "topic_title": {
+            "type": "string",
+            "title": "Topic Title",
+            "description": "Название темы для экрана"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem"
+          },
+          "answered": {
+            "type": "boolean",
+            "title": "Answered",
+            "description": "Отвечал ли уже на неё этот посетитель"
+          },
+          "answer_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answer Value",
+            "description": "Что человек ответил ранее — чтобы вернуться и поправить"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "order",
+          "topic_code",
+          "topic_title",
+          "stem",
+          "answered"
+        ],
+        "title": "DiagnosticQuestion",
+        "description": "Задача-зонд. Эталон и разбор наружу не отдаются — их человек увидит в итоге."
+      },
+      "DiagnosticResponse": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticQuestion"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title",
+          "questions",
+          "answered_count",
+          "total_count",
+          "is_complete"
+        ],
+        "title": "DiagnosticResponse",
+        "description": "Ответ на GET /learning/guest/diagnostic/{course_uid}."
+      },
+      "DiagnosticResultResponse": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          },
+          "solved": {
+            "type": "integer",
+            "title": "Solved",
+            "description": "Сколько задач решено верно"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticTopicResult"
+            },
+            "type": "array",
+            "title": "Topics"
+          },
+          "weak_topics": {
+            "items": {
+              "$ref": "#/components/schemas/DiagnosticTopicResult"
+            },
+            "type": "array",
+            "title": "Weak Topics",
+            "description": "Темы, которые стоит подтянуть в первую очередь"
+          },
+          "recommendation_course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Course Uid",
+            "description": "Общий курс подготовки к ЕГЭ"
+          },
+          "recommendation_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendation Title"
+          },
+          "contact_url": {
+            "type": "string",
+            "title": "Contact Url"
+          },
+          "lead_submitted": {
+            "type": "boolean",
+            "title": "Lead Submitted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title",
+          "is_complete",
+          "solved",
+          "total",
+          "topics",
+          "contact_url",
+          "lead_submitted"
+        ],
+        "title": "DiagnosticResultResponse",
+        "description": "Ответ на GET /learning/guest/diagnostic/{course_uid}/result."
+      },
+      "DiagnosticTopicResult": {
+        "properties": {
+          "topic_code": {
+            "type": "string",
+            "title": "Topic Code"
+          },
+          "topic_title": {
+            "type": "string",
+            "title": "Topic Title"
+          },
+          "is_correct": {
+            "type": "boolean",
+            "title": "Is Correct"
+          },
+          "your_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Your Answer"
+          },
+          "correct_answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Answer",
+            "description": "Верный ответ — показывается только в итоге"
+          },
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid",
+            "description": "Курс по этой теме, если её стоит подтянуть"
+          }
+        },
+        "type": "object",
+        "required": [
+          "topic_code",
+          "topic_title",
+          "is_correct"
+        ],
+        "title": "DiagnosticTopicResult",
+        "description": "Итог по одной теме."
       },
       "DifficultyLevelCreate": {
         "properties": {

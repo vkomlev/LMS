@@ -401,6 +401,7 @@ from app.api.v1.me_notifications import router as me_notifications_router
 from app.api.v1.embed_api import router as embed_router
 from app.api.v1.learning_guest import router as learning_guest_router
 from app.api.v1.guest_quiz import router as guest_quiz_router
+from app.api.v1.guest_diagnostic import router as guest_diagnostic_router
 from app.api.v1.auth.test_session import router as auth_test_session_router
 
 app.include_router(magic_link_router, prefix=API_PREFIX)
@@ -417,6 +418,8 @@ app.include_router(learning_guest_router, prefix=API_PREFIX)
 # у того все пути литеральные (/session, /attempts, /task/{id}, /courses/{uid}),
 # ветка /quiz/* с ними не пересекается.
 app.include_router(guest_quiz_router, prefix=API_PREFIX)
+# tsk-053 фаза 2: ЕГЭ-диагностика. Ветка /diagnostic/* с квизовой не пересекается.
+app.include_router(guest_diagnostic_router, prefix=API_PREFIX)
 app.include_router(auth_test_session_router, prefix=API_PREFIX)
 
 # Phase Y-6: methodist escalations
