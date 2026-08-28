@@ -426,6 +426,10 @@ class Settings:
         # Базовый URL SPW (для встраивания в magic-link письма).
         # Dev: http://localhost:3000; prod: https://learn.victor-komlev.ru
         self.public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:3000")
+        # Telegram-контакт для заявок с квиза-лид-магнита (tsk-053). Ник, без «@»:
+        # ссылка собирается как https://t.me/<ник>?text=... Настройкой, а не
+        # константой в коде — контакт для записи меняется, а выкат ради него не нужен.
+        self.quiz_contact_tg: str = os.getenv("QUIZ_CONTACT_TG", "Vvkomlev")
         self.magic_link_secret: str = os.getenv("MAGIC_LINK_SECRET", "")
         self.session_signing_key: str = os.getenv("SESSION_SIGNING_KEY", "")
         self.fernet_master_key: str = os.getenv("FERNET_MASTER_KEY", "")

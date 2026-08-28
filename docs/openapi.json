@@ -25402,6 +25402,259 @@
         }
       }
     },
+    "/api/v1/learning/guest/quiz/{course_uid}": {
+      "get": {
+        "tags": [
+          "guest-quiz"
+        ],
+        "summary": "Get Quiz",
+        "description": "Вопросы квиза и уже выбранные варианты этой гостевой сессии.",
+        "operationId": "get_quiz_api_v1_learning_guest_quiz__course_uid__get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса-квиза",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса-квиза"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/quiz/answers": {
+      "post": {
+        "tags": [
+          "guest-quiz"
+        ],
+        "summary": "Submit Quiz Answer",
+        "description": "Принять ответ на вопрос квиза.\n\nЛимиты щедрее, чем у демо-заданий (5/час/IP, 3/сутки/сессия): там лимит бережёт\nплатный контент, здесь бы он просто не дал пройти опрос из шести вопросов —\nи уж тем более пройти второй квиз с того же адреса.",
+        "operationId": "submit_quiz_answer_api_v1_learning_guest_quiz_answers_post",
+        "parameters": [
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizAnswerResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/quiz/{course_uid}/result": {
+      "get": {
+        "tags": [
+          "guest-quiz"
+        ],
+        "summary": "Get Quiz Result",
+        "description": "Итог квиза: рекомендация программы и ссылка на запись.\n\nОграничение частоты такое же, как у чтения вопросов: страница публичная и на\nнеё будет идти реклама, а итог считает шкалы и перебирает правила — самая\nтяжёлая из четырёх ручек.",
+        "operationId": "get_quiz_result_api_v1_learning_guest_quiz__course_uid__result_get",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса-квиза",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса-квиза"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizResultResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/learning/guest/quiz/{course_uid}/lead": {
+      "post": {
+        "tags": [
+          "guest-quiz"
+        ],
+        "summary": "Submit Quiz Lead",
+        "description": "Принять контакт по итогам квиза.\n\nРучка публичная и пишущая, поэтому лимит здесь строже, чем на ответах: 10 заявок\nв час с адреса и 5 в сутки с сессии — живому человеку хватает с запасом даже\nесли он передумал и поправил телефон, а на спам-рассылку заявок не разгонишься.",
+        "operationId": "submit_quiz_lead_api_v1_learning_guest_quiz__course_uid__lead_post",
+        "parameters": [
+          {
+            "name": "course_uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "course_uid курса-квиза",
+              "title": "Course Uid"
+            },
+            "description": "course_uid курса-квиза"
+          },
+          {
+            "name": "guest_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guest Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuizLeadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizLeadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/test/issue-session": {
       "post": {
         "tags": [
@@ -31444,6 +31697,100 @@
                     "$ref": "#/components/schemas/LeadSourceRead"
                   },
                   "title": "Response List Sources Api V1 Marketer Lead Sources Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/marketer/quiz-funnel": {
+      "get": {
+        "tags": [
+          "marketer_leads"
+        ],
+        "summary": "Воронка квизов-лид-магнитов",
+        "description": "По каждому квизу: сколько человек начали, сколько прошли до конца и сколько оставили контакт (tsk-053). Считается по гостевым сессиям, поэтому поменянный ответ не превращает одного человека в двух.",
+        "operationId": "quiz_funnel_api_v1_marketer_quiz_funnel_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/QuizFunnelRow"
+                  },
+                  "title": "Response Quiz Funnel Api V1 Marketer Quiz Funnel Get"
                 }
               }
             }
@@ -53684,6 +54031,400 @@
         ],
         "title": "PublicParentDashboardRead",
         "description": "Дашборд, открытый по ссылке. Тот же состав, что у привилегированных\nзрителей (контракт tsk-494 — без `solution_rules` и текста заявок помощи),\nплюс имя ученика: родитель по ссылке не имеет профиля и иначе не увидел\nбы, чей это дашборд."
+      },
+      "QuizAnswerRequest": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id",
+            "description": "ID вопроса квиза"
+          },
+          "selected_option_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Selected Option Ids",
+            "description": "Выбранные варианты: ровно один для SC_Qw, один и более для MC_Qw"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "selected_option_ids"
+        ],
+        "title": "QuizAnswerRequest",
+        "description": "Тело POST /learning/guest/quiz/answers."
+      },
+      "QuizAnswerResponse": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "answered_count",
+          "total_count",
+          "is_complete"
+        ],
+        "title": "QuizAnswerResponse",
+        "description": "Ответ на POST /learning/guest/quiz/answers — прогресс, а не «верно/неверно»."
+      },
+      "QuizFunnelRow": {
+        "properties": {
+          "course_uid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "total_questions": {
+            "type": "integer",
+            "title": "Total Questions",
+            "description": "Сколько активных вопросов в квизе"
+          },
+          "started": {
+            "type": "integer",
+            "title": "Started",
+            "description": "Гостевых сессий, ответивших хотя бы на один вопрос"
+          },
+          "completed": {
+            "type": "integer",
+            "title": "Completed",
+            "description": "Из них прошли квиз до конца"
+          },
+          "leads": {
+            "type": "integer",
+            "title": "Leads",
+            "description": "Заявок с контактом, оставленных по этому квизу"
+          },
+          "lead_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Rate",
+            "description": "Доля дошедших до заявки среди прошедших квиз до конца. null — квиз ещё никто не завершил, делить не на что"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "total_questions",
+          "started",
+          "completed",
+          "leads"
+        ],
+        "title": "QuizFunnelRow",
+        "description": "Строка воронки по одному квизу."
+      },
+      "QuizLeadRequest": {
+        "properties": {
+          "contact": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Contact",
+            "description": "Телефон, почта или ник — как человеку удобнее; формат не навязываем"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name",
+            "description": "Имя, если человек его указал"
+          }
+        },
+        "type": "object",
+        "required": [
+          "contact"
+        ],
+        "title": "QuizLeadRequest",
+        "description": "Тело POST /learning/guest/quiz/{course_uid}/lead."
+      },
+      "QuizLeadResponse": {
+        "properties": {
+          "lead_id": {
+            "type": "integer",
+            "title": "Lead Id"
+          },
+          "already_submitted": {
+            "type": "boolean",
+            "title": "Already Submitted",
+            "description": "True — контакт из этой сессии уже был оставлен, повторная отправка обновила существующую заявку, а не завела вторую"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead_id",
+          "already_submitted"
+        ],
+        "title": "QuizLeadResponse",
+        "description": "Ответ на POST /learning/guest/quiz/{course_uid}/lead."
+      },
+      "QuizOption": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Устойчивый ID варианта"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "description": "Текст варианта"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "QuizOption",
+        "description": "Вариант ответа. Баллы по шкалам наружу не отдаются — это внутренняя механика подбора."
+      },
+      "QuizQuestion": {
+        "properties": {
+          "task_id": {
+            "type": "integer",
+            "title": "Task Id"
+          },
+          "order": {
+            "type": "integer",
+            "title": "Order",
+            "description": "Порядковый номер вопроса, начиная с 1"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "SC_Qw",
+              "MC_Qw"
+            ],
+            "title": "Type",
+            "description": "Одиночный или множественный выбор"
+          },
+          "stem": {
+            "type": "string",
+            "title": "Stem",
+            "description": "Текст вопроса"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuizOption"
+            },
+            "type": "array",
+            "title": "Options"
+          },
+          "selected_option_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Option Ids",
+            "description": "Что гость выбрал ранее. Не null — вопрос уже отвечен; ответ можно поменять, опрос не экзамен"
+          }
+        },
+        "type": "object",
+        "required": [
+          "task_id",
+          "order",
+          "type",
+          "stem",
+          "options"
+        ],
+        "title": "QuizQuestion",
+        "description": "Вопрос квиза с уже отмеченным ответом, если гость на него отвечал."
+      },
+      "QuizRecommendation": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title"
+        ],
+        "title": "QuizRecommendation",
+        "description": "Программа, подобранная по итогам квиза."
+      },
+      "QuizResponse": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuizQuestion"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count",
+            "description": "Сколько вопросов уже отвечено этой гостевой сессией"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete",
+            "description": "True — отвечены все вопросы, можно показывать итог"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title",
+          "questions",
+          "answered_count",
+          "total_count",
+          "is_complete"
+        ],
+        "title": "QuizResponse",
+        "description": "Ответ на GET /learning/guest/quiz/{course_uid}."
+      },
+      "QuizResultResponse": {
+        "properties": {
+          "course_uid": {
+            "type": "string",
+            "title": "Course Uid"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "is_complete": {
+            "type": "boolean",
+            "title": "Is Complete"
+          },
+          "answered_count": {
+            "type": "integer",
+            "title": "Answered Count"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "scales": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Scales",
+            "description": "Накопленные баллы по шкалам этой гостевой сессии"
+          },
+          "recommendation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuizRecommendation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "contact_url": {
+            "type": "string",
+            "title": "Contact Url",
+            "description": "Ссылка на переписку с уже заполненным сообщением"
+          },
+          "lead_submitted": {
+            "type": "boolean",
+            "title": "Lead Submitted",
+            "description": "True — контакт из этой гостевой сессии уже оставлен"
+          }
+        },
+        "type": "object",
+        "required": [
+          "course_uid",
+          "title",
+          "is_complete",
+          "answered_count",
+          "total_count",
+          "contact_url",
+          "lead_submitted"
+        ],
+        "title": "QuizResultResponse",
+        "description": "Ответ на GET /learning/guest/quiz/{course_uid}/result.\n\n`recommendation = null` — законный исход, а не ошибка: правило маршрутизации\nможет не сработать (например, шкалы сравнялись). Тогда экран честно зовёт\nразобраться в переписке, а не подсовывает случайную программу."
       },
       "QuizRules": {
         "properties": {

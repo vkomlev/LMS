@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from sqlalchemy import (
     Boolean,
@@ -19,6 +20,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -69,6 +71,14 @@ class Lead(Base):
             ["created_by"], ["users.id"], ondelete="SET NULL",
             name="leads_created_by_fkey",
         ),
+        ForeignKeyConstraint(
+            ["guest_session_id"], ["guest_session.id"], ondelete="SET NULL",
+            name="leads_guest_session_id_fkey",
+        ),
+        ForeignKeyConstraint(
+            ["quiz_course_id"], ["courses.id"], ondelete="SET NULL",
+            name="leads_quiz_course_id_fkey",
+        ),
         PrimaryKeyConstraint("id", name="leads_pkey"),
         {"comment": "Лиды — мини-CRM кабинета маркетолога (tsk-506)"},
     )
@@ -88,6 +98,13 @@ class Lead(Base):
         Integer, comment="Проставляется после регистрации — до неё лид ни с кем не связан"
     )
     created_by: Mapped[Optional[int]] = mapped_column(Integer)
+    guest_session_id: Mapped[Optional[UUID]] = mapped_column(
+        PgUUID(as_uuid=True),
+        comment="Гостевая сессия, из которой пришла заявка — связь квиза с лидом (tsk-053)",
+    )
+    quiz_course_id: Mapped[Optional[int]] = mapped_column(
+        Integer, comment="Курс-квиз, после которого оставлен контакт (tsk-053)"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

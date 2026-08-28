@@ -30,6 +30,11 @@ class GuestAttempt(Base):
     )
     answer_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     is_correct: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    scale_scores: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        nullable=True,
+        comment="Баллы по шкалам квиз-ответа гостя (SC_Qw/MC_Qw, tsk-053)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )

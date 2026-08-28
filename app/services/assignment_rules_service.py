@@ -451,9 +451,14 @@ async def _accumulate_course_scales(
     return totals
 
 
-def _quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
+def quiz_scale_matched(condition: dict[str, Any], totals: dict[str, int]) -> bool:
     """
     Совпало ли правило ``quiz_scale`` с накопленными шкалами.
+
+    Публичная (tsk-053): тем же правилом ``assignment_rule`` пользуется гостевой
+    квиз-лид-магнит, только вместо назначения курса ученику он показывает
+    рекомендацию посетителю. Условие подбора должно быть одно на оба контура —
+    иначе методист настроит правило, а на витрине увидит другой ответ.
 
     ``min_score`` имеет приоритет: ``totals[scale] >= min_score``. Иначе режим
     ``argmax``: шкала строго максимальна (уникальный победитель, балл > 0). При
@@ -513,7 +518,7 @@ async def _evaluate_quiz_scale(
             ):
                 continue
 
-            if not _quiz_scale_matched(condition, totals):
+            if not quiz_scale_matched(condition, totals):
                 continue
 
             await assign_course_to_student(

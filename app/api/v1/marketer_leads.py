@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_async_db, require_role
 from app.auth.current_user import CurrentUser
+from app.schemas.guest_quiz_funnel import QuizFunnelRow
 from app.schemas.lead import (
     LeadCreateRequest,
     LeadLinkRequest,
@@ -20,7 +21,7 @@ from app.schemas.lead import (
     LeadUpdateRequest,
     StudentBrief,
 )
-from app.services import lead_service
+from app.services import guest_quiz_service, lead_service
 
 router = APIRouter(prefix="/marketer", tags=["marketer_leads"])
 
@@ -52,6 +53,24 @@ async def list_sources(
     current_user: CurrentUser = Depends(_LEADS_GATE),
 ) -> list[LeadSourceRead]:
     return await lead_service.list_sources(db)
+
+
+@router.get(
+    "/quiz-funnel",
+    response_model=list[QuizFunnelRow],
+    summary="Воронка квизов-лид-магнитов",
+    description=(
+        "По каждому квизу: сколько человек начали, сколько прошли до конца и "
+        "сколько оставили контакт (tsk-053). Считается по гостевым сессиям, "
+        "поэтому поменянный ответ не превращает одного человека в двух."
+    ),
+)
+async def quiz_funnel(
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_LEADS_GATE),
+) -> list[QuizFunnelRow]:
+    rows = await guest_quiz_service.get_quiz_funnel(db)
+    return [QuizFunnelRow(**row) for row in rows]
 
 
 @router.get(
