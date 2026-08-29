@@ -1,0 +1,340 @@
+diff --git a/app/services/attachment_storage.py b/app/services/attachment_storage.py
+index 10b8e7f..316056a 100644
+--- a/app/services/attachment_storage.py
++++ b/app/services/attachment_storage.py
+@@ -41,8 +41,9 @@ import mimetypes
+ import os
+ import re
+ import tempfile
++import threading
+ from pathlib import Path
+-from typing import IO, Iterator, List, Optional, Set, Tuple
++from typing import IO, Any, Iterator, List, Optional, Set, Tuple
+ from urllib.parse import quote
+ 
+ from fastapi import UploadFile
+@@ -163,29 +164,64 @@ def content_disposition(filename: str, *, inline: bool = False) -> str:
+     return f'{kind}; filename="{escaped}"'
+ 
+ 
++#: Готовый клиент и реквизиты, на которых он собран. Пересобираем только при
++#: смене реквизитов — в бою они не меняются, а в тестах и скриптах меняются.
++_client_cache: Tuple[Optional[tuple], Any] = (None, None)
++_client_lock = threading.Lock()
++
++
+ def _client():
+-    """Создаёт boto3-клиент S3. Импорт локальный: без ключей зависимость не нужна.
++    """Клиент S3 — один на процесс. Импорт локальный: без ключей зависимость не нужна.
+ 
+     tsk-644: таймауты заданы явно. На умолчаниях botocore (60 c соединение,
+     60 c чтение, режим повторов `legacy`) молчащее хранилище держит вызывающего
+     минутами — а зовут отсюда в том числе приём ответа ученика, синхронно.
+     Замер стенда 2026-08-22: до починки одно чтение держало 211 c.
++
++    tsk-735: клиент ПЕРЕИСПОЛЬЗУЕТСЯ, а не собирается на каждый вызов. Сборка
++    сама по себе дёшева (медиана 4 мс), но вместе с ней выбрасывалось и
++    соединение: каждый вызов начинался новым рукопожатием TLS. Замер на боевой
++    машине 29.08: проверка наличия файла новым клиентом — 80 мс, общим — 13 мс,
++    вшестеро дешевле. Клиент botocore рассчитан на вызовы из нескольких потоков
++    (а зовут его именно так — через `asyncio.to_thread`), поэтому общий
++    экземпляр здесь безопасен; небезопасна общая `Session`, которую мы не
++    держим.
+     """
++    global _client_cache
+     import boto3  # локальный импорт: разработка без S3 живёт без установленного boto3
+     from botocore.config import Config
+ 
+-    return boto3.client(
+-        "s3",
+-        endpoint_url=settings.s3_endpoint_url,
+-        aws_access_key_id=settings.s3_access_key,
+-        aws_secret_access_key=settings.s3_secret_key,
+-        region_name=settings.s3_region,
+-        config=Config(
+-            connect_timeout=settings.s3_connect_timeout_sec,
+-            read_timeout=settings.s3_read_timeout_sec,
+-            retries={"max_attempts": settings.s3_retries, "mode": "standard"},
+-        ),
++    key = (
++        settings.s3_endpoint_url,
++        settings.s3_access_key,
++        settings.s3_secret_key,
++        settings.s3_region,
++        settings.s3_connect_timeout_sec,
++        settings.s3_read_timeout_sec,
++        settings.s3_retries,
+     )
++    cached_key, cached = _client_cache
++    if cached is not None and cached_key == key:
++        return cached
++
++    with _client_lock:
++        cached_key, cached = _client_cache
++        if cached is not None and cached_key == key:
++            return cached
++        client = boto3.client(
++            "s3",
++            endpoint_url=settings.s3_endpoint_url,
++            aws_access_key_id=settings.s3_access_key,
++            aws_secret_access_key=settings.s3_secret_key,
++            region_name=settings.s3_region,
++            config=Config(
++                connect_timeout=settings.s3_connect_timeout_sec,
++                read_timeout=settings.s3_read_timeout_sec,
++                retries={"max_attempts": settings.s3_retries, "mode": "standard"},
++            ),
++        )
++        _client_cache = (key, client)
++        return client
+ 
+ 
+ def _safe_local_path(space: str, name: str) -> Optional[Path]:
+diff --git a/app/services/learning_engine_service.py b/app/services/learning_engine_service.py
+index 71e456a..8e6db88 100644
+--- a/app/services/learning_engine_service.py
++++ b/app/services/learning_engine_service.py
+@@ -548,6 +548,7 @@ class LearningEngineService:
+         *,
+         last_results: Optional[dict[int, Any]] = None,
+         root_course_id: Optional[int] = None,
++        mark_missing: bool = False,
+     ) -> dict[int, TaskStateResult]:
+         """Пакетная версия `compute_task_state` для дерева заданий (review tsk-297, находка S3-3).
+ 
+@@ -583,11 +584,29 @@ class LearningEngineService:
+                 по всем корням. Квиз (`QUIZ_TASK_TYPES`) корень игнорирует
+                 всегда: его ответ один навсегда и submit отклоняет повтор
+                 глобально — паритет с `compute_task_state`.
++            mark_missing: пометить ли в `last_answer_json` вложения, файлов
++                которых в хранилище больше нет (tsk-575). По умолчанию НЕТ, и
++                это главный рычаг цены вызова: пометка стоит по сетевому
++                запросу в объектное хранилище на КАЖДОЕ вложение, а нужна она
++                только тому, кто отдаёт `answer_json` наружу — экрану работы.
++                Учебному движку (`next-item`, `last-position`) и карточке
++                ученика из `manual_progress_service` нужен только статус, и
++                поле `last_answer_json` они не читают вовсе.
++
++                tsk-735 (29.08): пока пометка считалась всегда, один
++                `GET /me/last-position` у ученика 4515 делал 183 проверки
++                файлов и занимал 5,96 с, из них 5,66 с (95%) — ожидание
++                хранилища. Проверки идут через общий на процесс пул из шести
++                потоков (`asyncio.to_thread`, два ядра), поэтому на границе
++                занятия, когда группа разом жмёт «дальше», они выстраивались в
++                общую очередь: запросы висели по 14-21 с, а база в это время
++                простаивала — активных соединений ноль.
+ 
+         Returns:
+             `task_id -> TaskStateResult`, поэлементно эквивалентно
+             `compute_task_state(db, student_id, tid, root_course_id)` для тех
+-            же `task_ids`.
++            же `task_ids`. Исключение — `last_answer_json`: без `mark_missing`
++            оно пустое (см. описание параметра).
+         """
+         if not task_ids:
+             return {}
+@@ -672,10 +691,13 @@ class LearningEngineService:
+ 
+         # tsk-593: наличие файлов вложений спрашиваем у хранилища одной пачкой
+         # на весь список заданий — иначе экран курса дал бы по сетевому запросу
+-        # на каждое задание с вложением.
+-        existing_attachments = await existing_attachment_ids(
+-            [r["answer_json"] for r in last_results.values()]
+-        )
++        # на каждое задание с вложением. tsk-735: и только если пометка вообще
++        # нужна вызывающему — см. `mark_missing` в docstring.
++        existing_attachments: set[str] = set()
++        if mark_missing:
++            existing_attachments = await existing_attachment_ids(
++                [r["answer_json"] for r in last_results.values()]
++            )
+ 
+         results: dict[int, TaskStateResult] = {}
+         for tid in ids:
+@@ -693,9 +715,13 @@ class LearningEngineService:
+ 
+             last_score = int(row["score"]) if row["score"] is not None else 0
+             last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
++            # Без `mark_missing` поле остаётся пустым намеренно. Отдать ответ
++            # БЕЗ пометки было бы хуже пустоты: экран показал бы живую ссылку
++            # на файл, которого в хранилище уже нет (ровно то, что чинил
++            # tsk-575), и молча — а пустое поле вызывающий заметит сразу.
+             last_answer_json = (
+                 mark_missing_attachments(row["answer_json"], existing_attachments)
+-                if isinstance(row["answer_json"], dict) else None
++                if mark_missing and isinstance(row["answer_json"], dict) else None
+             )
+             common = dict(
+                 last_attempt_id=int(row["attempt_id"]),
+diff --git a/tests/test_tsk735_engine_skips_storage.py b/tests/test_tsk735_engine_skips_storage.py
+new file mode 100644
+index 0000000..89b8b5b
+--- /dev/null
++++ b/tests/test_tsk735_engine_skips_storage.py
+@@ -0,0 +1,166 @@
++"""tsk-735: учебный движок не ходит в хранилище файлов.
++
++**Что чинили.** `compute_task_states_batch` на каждый узел дерева спрашивал у
++объектного хранилища, лежат ли на месте файлы прошлых ответов ученика, — чтобы
++пометить утраченные вложения (tsk-575). Пометка нужна только экрану работы, а
++платили за неё все: движок (`GET /learning/next-item`, `GET /me/last-position`)
++и карточка ученика у преподавателя, которые `last_answer_json` не читают вовсе.
++
++**Чем это обернулось.** Замер на боевой машине 29.08.2026: один проход движка у
++ученика 4515 — 183 проверки файлов, 5,96 с, из них 5,66 с (95%) ожидание
++хранилища. Проверки идут через общий на процесс пул из шести потоков, поэтому на
++границе занятия, когда группа разом жмёт «дальше», они выстраивались в общую
++очередь: `next-item` и `last-position` висели по 14-21 с — и всё это время база
++простаивала, активных соединений было ноль.
++
++Поэтому тест сторожит не скорость (её на дев-базе не измерить), а сам факт:
++**без явного запроса пометки обращений к хранилищу не происходит**. Скорость —
++следствие, и она вернётся ровно тогда, когда этот инвариант нарушат.
++"""
++from __future__ import annotations
++
++import random
++
++import pytest
++from sqlalchemy import text
++
++from app.services import learning_engine_service as les
++from app.services.learning_engine_service import LearningEngineService
++
++_TAG = "tsk735"
++
++
++@pytest.fixture
++async def case(db, monkeypatch):
++    """Ученик с одним решённым заданием, к ответу приложен файл.
++
++    Возвращает `(student_id, task_id, calls)`, где `calls` — список запросов к
++    хранилищу, накопленный подменённой `existing_attachment_ids`.
++    """
++    uid = random.randint(10**8, 10**10)
++    course_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO courses (title, access_level, is_required, course_uid) "
++                    "VALUES (:t, 'self_guided', false, :uid) RETURNING id"
++                ),
++                {"t": f"{_TAG}-курс", "uid": f"{_TAG}-{uid}"},
++            )
++        ).scalar_one()
++    )
++    student_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO users (email, full_name, is_active) "
++                    "VALUES (:e, :n, true) RETURNING id"
++                ),
++                {"e": f"{_TAG}-{uid}@example.test", "n": f"{_TAG}-ученик"},
++            )
++        ).scalar_one()
++    )
++    difficulty_id = (
++        await db.execute(text("SELECT id FROM difficulties ORDER BY id LIMIT 1"))
++    ).scalar()
++    task_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO tasks (course_id, difficulty_id, external_uid, task_content, "
++                    "  max_score, is_active, requirement_level, order_position) "
++                    "VALUES (:c, :d, :uid, CAST(:content AS jsonb), 10, true, 'required', 1) "
++                    "RETURNING id"
++                ),
++                {
++                    "c": course_id,
++                    "d": difficulty_id,
++                    "uid": f"{_TAG}-task-{uid}",
++                    "content": '{"type": "TA", "title": "работа с файлом"}',
++                },
++            )
++        ).scalar_one()
++    )
++    attempt_id = int(
++        (
++            await db.execute(
++                text(
++                    "INSERT INTO attempts (user_id, course_id, root_course_id, source_system) "
++                    "VALUES (:u, :c, :c, 'test') RETURNING id"
++                ),
++                {"u": student_id, "c": course_id},
++            )
++        ).scalar_one()
++    )
++    answer = (
++        '{"response": {"text": "готово", "meta": {"attachments": ['
++        f'{{"attachment_id": "{attempt_id}_{_TAG}_task1.py", "filename": "task1.py"}}'
++        "]}}}"
++    )
++    await db.execute(
++        text(
++            "INSERT INTO task_results (user_id, task_id, attempt_id, score, max_score, "
++            "  is_correct, answer_json, submitted_at, received_at, count_retry, source_system) "
++            "VALUES (:u, :t, :a, 0, 10, false, CAST(:ans AS jsonb), now(), now(), 0, 'test')"
++        ),
++        {"u": student_id, "t": task_id, "a": attempt_id, "ans": answer},
++    )
++    # Зачисление обязательно: без него `resolve_next_item` возвращает «нет
++    # активных курсов», не заходя в дерево, и третий тест ничего бы не проверял.
++    await db.execute(
++        text(
++            "INSERT INTO user_courses (user_id, course_id, is_active, order_number) "
++            "VALUES (:u, :c, true, 1) ON CONFLICT DO NOTHING"
++        ),
++        {"u": student_id, "c": course_id},
++    )
++    await db.commit()
++
++    calls: list[list] = []
++
++    async def _spy(answer_jsons):
++        calls.append(list(answer_jsons))
++        return set()
++
++    monkeypatch.setattr(les, "existing_attachment_ids", _spy)
++    return student_id, task_id, calls
++
++
++async def test_batch_does_not_touch_storage_by_default(case, db):
++    """Пакетный расчёт статусов не спрашивает хранилище, пока не попросили."""
++    student_id, task_id, calls = case
++
++    states = await LearningEngineService().compute_task_states_batch(
++        db, student_id, [task_id]
++    )
++
++    assert calls == [], "движок обратился в хранилище, хотя пометка не запрашивалась"
++    assert states[task_id].state == "FAILED"
++    # Пустое поле — намеренно: отдать ответ без пометки значило бы показать
++    # живую ссылку на файл, которого может уже не быть (tsk-575).
++    assert states[task_id].last_answer_json is None
++
++
++async def test_batch_marks_attachments_when_asked(case, db):
++    """С `mark_missing=True` пометка считается — и вложение помечается утраченным."""
++    student_id, task_id, calls = case
++
++    states = await LearningEngineService().compute_task_states_batch(
++        db, student_id, [task_id], mark_missing=True
++    )
++
++    assert len(calls) == 1, "пометка запрошена, но хранилище не спросили"
++    attachments = states[task_id].last_answer_json["response"]["meta"]["attachments"]
++    assert attachments[0]["missing"] is True
++
++
++async def test_next_item_walk_does_not_touch_storage(case, db):
++    """Проход движка по дереву курса обходится без единого запроса в хранилище."""
++    student_id, task_id, calls = case
++
++    result = await LearningEngineService().resolve_next_item(db, student_id)
++
++    # Сначала убеждаемся, что обход дошёл до задания с вложением: иначе тест
++    # проверял бы тишину там, где движок и не начинал работу.
++    assert (result.type, result.task_id) == ("task", task_id)
++    assert calls == [], f"проход движка сходил в хранилище {len(calls)} раз(а)"

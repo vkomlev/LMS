@@ -41,8 +41,9 @@ import mimetypes
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
-from typing import IO, Iterator, List, Optional, Set, Tuple
+from typing import IO, Any, Iterator, List, Optional, Set, Tuple
 from urllib.parse import quote
 
 from fastapi import UploadFile
@@ -163,29 +164,64 @@ def content_disposition(filename: str, *, inline: bool = False) -> str:
     return f'{kind}; filename="{escaped}"'
 
 
+#: Готовый клиент и реквизиты, на которых он собран. Пересобираем только при
+#: смене реквизитов — в бою они не меняются, а в тестах и скриптах меняются.
+_client_cache: Tuple[Optional[tuple], Any] = (None, None)
+_client_lock = threading.Lock()
+
+
 def _client():
-    """Создаёт boto3-клиент S3. Импорт локальный: без ключей зависимость не нужна.
+    """Клиент S3 — один на процесс. Импорт локальный: без ключей зависимость не нужна.
 
     tsk-644: таймауты заданы явно. На умолчаниях botocore (60 c соединение,
     60 c чтение, режим повторов `legacy`) молчащее хранилище держит вызывающего
     минутами — а зовут отсюда в том числе приём ответа ученика, синхронно.
     Замер стенда 2026-08-22: до починки одно чтение держало 211 c.
+
+    tsk-735: клиент ПЕРЕИСПОЛЬЗУЕТСЯ, а не собирается на каждый вызов. Сборка
+    сама по себе дёшева (медиана 4 мс), но вместе с ней выбрасывалось и
+    соединение: каждый вызов начинался новым рукопожатием TLS. Замер на боевой
+    машине 29.08: проверка наличия файла новым клиентом — 80 мс, общим — 13 мс,
+    вшестеро дешевле. Клиент botocore рассчитан на вызовы из нескольких потоков
+    (а зовут его именно так — через `asyncio.to_thread`), поэтому общий
+    экземпляр здесь безопасен; небезопасна общая `Session`, которую мы не
+    держим.
     """
+    global _client_cache
     import boto3  # локальный импорт: разработка без S3 живёт без установленного boto3
     from botocore.config import Config
 
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.s3_endpoint_url,
-        aws_access_key_id=settings.s3_access_key,
-        aws_secret_access_key=settings.s3_secret_key,
-        region_name=settings.s3_region,
-        config=Config(
-            connect_timeout=settings.s3_connect_timeout_sec,
-            read_timeout=settings.s3_read_timeout_sec,
-            retries={"max_attempts": settings.s3_retries, "mode": "standard"},
-        ),
+    key = (
+        settings.s3_endpoint_url,
+        settings.s3_access_key,
+        settings.s3_secret_key,
+        settings.s3_region,
+        settings.s3_connect_timeout_sec,
+        settings.s3_read_timeout_sec,
+        settings.s3_retries,
     )
+    cached_key, cached = _client_cache
+    if cached is not None and cached_key == key:
+        return cached
+
+    with _client_lock:
+        cached_key, cached = _client_cache
+        if cached is not None and cached_key == key:
+            return cached
+        client = boto3.client(
+            "s3",
+            endpoint_url=settings.s3_endpoint_url,
+            aws_access_key_id=settings.s3_access_key,
+            aws_secret_access_key=settings.s3_secret_key,
+            region_name=settings.s3_region,
+            config=Config(
+                connect_timeout=settings.s3_connect_timeout_sec,
+                read_timeout=settings.s3_read_timeout_sec,
+                retries={"max_attempts": settings.s3_retries, "mode": "standard"},
+            ),
+        )
+        _client_cache = (key, client)
+        return client
 
 
 def _safe_local_path(space: str, name: str) -> Optional[Path]:

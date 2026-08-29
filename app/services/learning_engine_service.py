@@ -548,6 +548,7 @@ class LearningEngineService:
         *,
         last_results: Optional[dict[int, Any]] = None,
         root_course_id: Optional[int] = None,
+        mark_missing: bool = False,
     ) -> dict[int, TaskStateResult]:
         """Пакетная версия `compute_task_state` для дерева заданий (review tsk-297, находка S3-3).
 
@@ -583,11 +584,29 @@ class LearningEngineService:
                 по всем корням. Квиз (`QUIZ_TASK_TYPES`) корень игнорирует
                 всегда: его ответ один навсегда и submit отклоняет повтор
                 глобально — паритет с `compute_task_state`.
+            mark_missing: пометить ли в `last_answer_json` вложения, файлов
+                которых в хранилище больше нет (tsk-575). По умолчанию НЕТ, и
+                это главный рычаг цены вызова: пометка стоит по сетевому
+                запросу в объектное хранилище на КАЖДОЕ вложение, а нужна она
+                только тому, кто отдаёт `answer_json` наружу — экрану работы.
+                Учебному движку (`next-item`, `last-position`) и карточке
+                ученика из `manual_progress_service` нужен только статус, и
+                поле `last_answer_json` они не читают вовсе.
+
+                tsk-735 (29.08): пока пометка считалась всегда, один
+                `GET /me/last-position` у ученика 4515 делал 183 проверки
+                файлов и занимал 5,96 с, из них 5,66 с (95%) — ожидание
+                хранилища. Проверки идут через общий на процесс пул из шести
+                потоков (`asyncio.to_thread`, два ядра), поэтому на границе
+                занятия, когда группа разом жмёт «дальше», они выстраивались в
+                общую очередь: запросы висели по 14-21 с, а база в это время
+                простаивала — активных соединений ноль.
 
         Returns:
             `task_id -> TaskStateResult`, поэлементно эквивалентно
             `compute_task_state(db, student_id, tid, root_course_id)` для тех
-            же `task_ids`.
+            же `task_ids`. Исключение — `last_answer_json`: без `mark_missing`
+            оно пустое (см. описание параметра).
         """
         if not task_ids:
             return {}
@@ -672,10 +691,13 @@ class LearningEngineService:
 
         # tsk-593: наличие файлов вложений спрашиваем у хранилища одной пачкой
         # на весь список заданий — иначе экран курса дал бы по сетевому запросу
-        # на каждое задание с вложением.
-        existing_attachments = await existing_attachment_ids(
-            [r["answer_json"] for r in last_results.values()]
-        )
+        # на каждое задание с вложением. tsk-735: и только если пометка вообще
+        # нужна вызывающему — см. `mark_missing` в docstring.
+        existing_attachments: set[str] = set()
+        if mark_missing:
+            existing_attachments = await existing_attachment_ids(
+                [r["answer_json"] for r in last_results.values()]
+            )
 
         results: dict[int, TaskStateResult] = {}
         for tid in ids:
@@ -693,9 +715,13 @@ class LearningEngineService:
 
             last_score = int(row["score"]) if row["score"] is not None else 0
             last_max_score = int(row["max_score"]) if row["max_score"] is not None else 0
+            # Без `mark_missing` поле остаётся пустым намеренно. Отдать ответ
+            # БЕЗ пометки было бы хуже пустоты: экран показал бы живую ссылку
+            # на файл, которого в хранилище уже нет (ровно то, что чинил
+            # tsk-575), и молча — а пустое поле вызывающий заметит сразу.
             last_answer_json = (
                 mark_missing_attachments(row["answer_json"], existing_attachments)
-                if isinstance(row["answer_json"], dict) else None
+                if mark_missing and isinstance(row["answer_json"], dict) else None
             )
             common = dict(
                 last_attempt_id=int(row["attempt_id"]),
