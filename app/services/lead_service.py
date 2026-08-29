@@ -30,6 +30,8 @@ __all__ = [
     "link_student",
     "unlink_student",
     "search_students",
+    "ingest_external_lead",
+    "get_source_id_by_code",
 ]
 
 _LEAD_SELECT = """
@@ -68,6 +70,21 @@ async def get_source_code(db: AsyncSession, source_id: int) -> Optional[str]:
         await db.execute(
             text("SELECT code FROM lead_source WHERE id = :id AND is_active"),
             {"id": source_id},
+        )
+    ).scalar()
+
+
+async def get_source_id_by_code(db: AsyncSession, code: str) -> Optional[int]:
+    """Найти канал привлечения по машинному коду (tsk-718).
+
+    Соседняя система знает про канал только его код («avito»): номер строки
+    справочника у неё взяться неоткуда, и зашивать его в чужой конфиг значило
+    бы сломать связку при первой же пересборке справочника.
+    """
+    return (
+        await db.execute(
+            text("SELECT id FROM lead_source WHERE code = :code AND is_active"),
+            {"code": code},
         )
     ).scalar()
 
@@ -232,6 +249,96 @@ async def search_students(db: AsyncSession, *, q: str, limit: int = 20) -> list[
         )
     ).all()
     return [StudentBrief(id=r.id, full_name=r.full_name) for r in rows]
+
+
+async def ingest_external_lead(
+    db: AsyncSession,
+    *,
+    external_source: str,
+    external_id: str,
+    source_id: int,
+    source_detail: Optional[str],
+    full_name: Optional[str],
+    contact: str,
+    note: Optional[str],
+) -> tuple[int, bool]:
+    """Завести лида по обращению из соседней системы — идемпотентно (tsk-718).
+
+    Один человек пишет с площадки по нескольким объявлениям и в разное время.
+    Каждое такое обращение не должно превращаться в нового лида, поэтому ключ
+    склейки — пара «источник + внешний номер человека», и она запоминается в
+    `lead_external_ref`.
+
+    Гонку двух одновременных вызовов ловит уникальный ключ таблицы связей, а не
+    предварительная проверка: между `SELECT` и `INSERT` успевает вклиниться
+    соседний вызов. Поэтому лид и связь пишутся одной транзакцией, и если связь
+    не легла — транзакция откатывается целиком, а номер лида берётся у того,
+    кто успел первым. Лида-сироту такой откат не оставляет.
+
+    :return: пара «номер лида, создан ли он именно сейчас».
+    """
+    existing = (
+        await db.execute(
+            text(
+                "SELECT lead_id FROM lead_external_ref "
+                "WHERE source = :source AND external_id = :external_id"
+            ),
+            {"source": external_source, "external_id": external_id},
+        )
+    ).scalar()
+    if existing is not None:
+        return int(existing), False
+
+    lead_id = (
+        await db.execute(
+            text(
+                "INSERT INTO leads "
+                "(source_id, source_detail, full_name, contact, note) "
+                "VALUES (:source_id, :source_detail, :full_name, :contact, :note) "
+                "RETURNING id"
+            ),
+            {
+                "source_id": source_id,
+                "source_detail": source_detail,
+                "full_name": full_name,
+                "contact": contact,
+                "note": note,
+            },
+        )
+    ).scalar_one()
+    linked = (
+        await db.execute(
+            text(
+                "INSERT INTO lead_external_ref (source, external_id, lead_id) "
+                "VALUES (:source, :external_id, :lead_id) "
+                "ON CONFLICT (source, external_id) DO NOTHING "
+                "RETURNING lead_id"
+            ),
+            {
+                "source": external_source,
+                "external_id": external_id,
+                "lead_id": lead_id,
+            },
+        )
+    ).scalar()
+    if linked is None:
+        # Соседний вызов успел завести того же человека, пока мы писали своего.
+        await db.rollback()
+        winner = (
+            await db.execute(
+                text(
+                    "SELECT lead_id FROM lead_external_ref "
+                    "WHERE source = :source AND external_id = :external_id"
+                ),
+                {"source": external_source, "external_id": external_id},
+            )
+        ).scalar()
+        if winner is None:
+            raise RuntimeError("Связь с внешним обращением потерялась при гонке")
+        return int(winner), False
+
+    await db.commit()
+    return int(lead_id), True
 
 
 def _escape_like(value: str) -> str:

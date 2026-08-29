@@ -470,6 +470,12 @@ app.include_router(marketer_pricing_router, prefix=API_PREFIX)
 from app.api.v1.marketer_leads import router as marketer_leads_router
 app.include_router(marketer_leads_router, prefix=API_PREFIX)
 
+# tsk-718: служебный вход лидов для соседних систем (переписка Авито).
+# Отдельно от кабинета: кабинет закрыт для сервисных ключей, а машине нужен
+# идемпотентный вход по паре «источник + внешний номер человека».
+from app.api.v1.integrations_leads import router as integrations_leads_router
+app.include_router(integrations_leads_router, prefix=API_PREFIX)
+
 # tsk-301 Фаза 9: управление тарифами персоналом (marketer/admin, преподавателю нельзя)
 from app.api.v1.subscriptions import router as subscriptions_router
 app.include_router(subscriptions_router, prefix=API_PREFIX)

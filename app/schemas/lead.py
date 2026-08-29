@@ -61,6 +61,52 @@ class LeadUpdateRequest(BaseModel):
         return self
 
 
+class ExternalLeadCreateRequest(BaseModel):
+    """Заявка на лида от соседней системы (tsk-718).
+
+    `external_source` + `external_id` — ключ склейки: повторный вызов с той же
+    парой возвращает уже заведённого лида, а не создаёт второго. Обе строки
+    обязательны и непустые именно поэтому.
+    """
+
+    external_source: str = Field(min_length=1, max_length=64)
+    external_id: str = Field(min_length=1, max_length=128)
+    source_code: str = Field(min_length=1, max_length=64)
+    contact: str = Field(min_length=1, max_length=500)
+    full_name: Optional[str] = Field(default=None, max_length=300)
+    source_detail: Optional[str] = Field(default=None, max_length=500)
+    note: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _key_is_really_filled(self) -> "ExternalLeadCreateRequest":
+        """Ключ склейки не бывает из пробелов.
+
+        `min_length` строку из пробелов пропускает: она непустая. Но лид,
+        заведённый на ключ «   », склеится с любым другим таким же и ни с чем
+        осмысленным — то есть дедуп перестанет работать молча, ровно как на
+        пустом значении. Поэтому пробельные строки отбиваются на входе, а сами
+        значения приходят к базе уже подрезанными.
+        """
+        self.external_source = self.external_source.strip()
+        self.external_id = self.external_id.strip()
+        self.source_code = self.source_code.strip()
+        self.contact = self.contact.strip()
+        if not (self.external_source and self.external_id and self.source_code):
+            raise ValueError(
+                "Источник, внешний номер и код канала не могут быть пустыми"
+            )
+        if not self.contact:
+            raise ValueError("Связь с лидом обязательна — без неё его не найти")
+        return self
+
+
+class ExternalLeadResponse(BaseModel):
+    """Ответ служебного входа: номер лида и создан ли он именно сейчас."""
+
+    lead_id: int
+    created: bool
+
+
 class LeadLinkRequest(BaseModel):
     student_id: int
 

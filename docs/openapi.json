@@ -32883,6 +32883,106 @@
         }
       }
     },
+    "/api/v1/integrations/leads": {
+      "post": {
+        "tags": [
+          "integrations_leads"
+        ],
+        "summary": "Завести лида из внешней системы",
+        "description": "Идемпотентно по паре `external_source` + `external_id`: повторный вызов возвращает уже заведённого лида с `created = false`.",
+        "operationId": "ingest_lead_api_v1_integrations_leads_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalLeadCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalLeadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/subscriptions/plans": {
       "get": {
         "tags": [
@@ -46233,6 +46333,97 @@
         ],
         "title": "EscalationListResponse",
         "description": "Ответ /escalations/pending."
+      },
+      "ExternalLeadCreateRequest": {
+        "properties": {
+          "external_source": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "External Source"
+          },
+          "external_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "External Id"
+          },
+          "source_code": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Source Code"
+          },
+          "contact": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Contact"
+          },
+          "full_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "source_detail": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Detail"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "external_source",
+          "external_id",
+          "source_code",
+          "contact"
+        ],
+        "title": "ExternalLeadCreateRequest",
+        "description": "Заявка на лида от соседней системы (tsk-718).\n\n`external_source` + `external_id` — ключ склейки: повторный вызов с той же\nпарой возвращает уже заведённого лида, а не создаёт второго. Обе строки\nобязательны и непустые именно поэтому."
+      },
+      "ExternalLeadResponse": {
+        "properties": {
+          "lead_id": {
+            "type": "integer",
+            "title": "Lead Id"
+          },
+          "created": {
+            "type": "boolean",
+            "title": "Created"
+          }
+        },
+        "type": "object",
+        "required": [
+          "lead_id",
+          "created"
+        ],
+        "title": "ExternalLeadResponse",
+        "description": "Ответ служебного входа: номер лида и создан ли он именно сейчас."
       },
       "FeedbackReportCloseRequest": {
         "properties": {

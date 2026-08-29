@@ -111,3 +111,43 @@ class Lead(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("now()"), nullable=False
     )
+
+
+class LeadExternalRef(Base):
+    """Связь лида с обращением во внешней системе (tsk-718).
+
+    Нужна, чтобы соседняя система могла заводить лидов **идемпотентно**: один
+    человек пишет по нескольким объявлениям и в разное время, и каждое такое
+    обращение не должно превращаться в нового лида.
+
+    Отдельная таблица, а не пара колонок в `leads`: у лида, заведённого руками
+    в кабинете, внешнего номера нет, колонки были бы пустыми — а уникальный
+    ключ с пустой колонкой в PostgreSQL не работает вовсе (два NULL друг другу
+    не противоречат), и дедуп молча перестал бы срабатывать. Здесь обе колонки
+    ключа объявлены NOT NULL, поэтому уникальность действует всегда.
+    """
+
+    __tablename__ = "lead_external_ref"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["lead_id"], ["leads.id"], ondelete="CASCADE",
+            name="lead_external_ref_lead_id_fkey",
+        ),
+        PrimaryKeyConstraint("id", name="lead_external_ref_pkey"),
+        UniqueConstraint("source", "external_id", name="uq_lead_external_ref"),
+        {"comment": "Внешние обращения, из которых заведён лид (tsk-718)"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, comment="Система-источник, например avito_messenger"
+    )
+    external_id: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Идентификатор человека во внешней системе — ключ склейки",
+    )
+    lead_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()"), nullable=False
+    )
