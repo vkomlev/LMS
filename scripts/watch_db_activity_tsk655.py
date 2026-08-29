@@ -31,6 +31,13 @@
 
     # разобрать уже снятый файл, ничего не снимая
     python scripts/watch_db_activity_tsk655.py --report out/watch-2026-08-25.jsonl
+
+Караул по расписанию НА САМОМ сервере (tsk-735). Машина оператора для этого не
+годится: занятия идут утром в будни, а ноутбук в это время может спать, и
+пропущенное окно не переснять. Поэтому таймер systemd на боевой машине, а
+строка подключения — из окружения (`WATCH_DB_DSN`), не ключом: пароль в
+командной строке виден любому пользователю машины через `ps`. Юнит и таймер —
+`deploy/vps/lms-watch-tsk655.service` и `.timer`.
 """
 from __future__ import annotations
 
@@ -38,6 +45,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from collections import Counter, deque
@@ -511,9 +519,19 @@ async def main_async(args: argparse.Namespace) -> None:
     import asyncpg  # noqa: PLC0415
     from asyncpg.exceptions import InterfaceError  # noqa: PLC0415
 
-    dsn = _dsn_from_mcp("learn_prod_db") if args.prod else args.dsn
+    # tsk-735: третий источник — переменная окружения. Нужен для караула по
+    # расписанию НА САМОМ сервере: `.mcp.json` там нет, а передать строку
+    # ключом `--dsn` нельзя — пароль осел бы в списке процессов, видимом любому
+    # пользователю машины. Порядок источников: явный ключ, потом `.mcp.json`,
+    # потом окружение.
+    dsn = args.dsn or (_dsn_from_mcp("learn_prod_db") if args.prod else None) or os.getenv("WATCH_DB_DSN")
     if not dsn:
-        raise SystemExit("нужен --prod или --dsn")
+        raise SystemExit("нужен --prod, --dsn или переменная окружения WATCH_DB_DSN")
+    # `DATABASE_URL` приложения записан в диалекте SQLAlchemy
+    # (`postgresql+asyncpg://`), а asyncpg такую схему не понимает и падает.
+    # Срезаем драйвер, чтобы строку из `.env` можно было подать как есть.
+    if "+" in dsn.split("://", 1)[0]:
+        dsn = dsn.split("+", 1)[0] + "://" + dsn.split("://", 1)[1]
 
     out_path = Path(args.out or (_REPO_ROOT / "out" / f"watch-tsk655-{datetime.now(timezone.utc):%Y%m%d-%H%M}.jsonl"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -612,7 +630,11 @@ async def main_async(args: argparse.Namespace) -> None:
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Улавливатель заторов на боевой базе (tsk-655)")
     parser.add_argument("--prod", action="store_true", help="боевая база из .mcp.json (только чтение)")
-    parser.add_argument("--dsn", default=None, help="явная строка подключения")
+    parser.add_argument(
+        "--dsn", default=None,
+        help="явная строка подключения; без неё и без --prod берётся WATCH_DB_DSN "
+             "из окружения (так караул по расписанию не светит пароль в списке процессов)",
+    )
     parser.add_argument("--auto", action="store_true", help="караулить границы ближайших занятий")
     # Сутки, а не полсуток: типичный сценарий — запустить вечером и поймать
     # утреннее занятие следующего дня. С горизонтом в 12 часов такой запуск

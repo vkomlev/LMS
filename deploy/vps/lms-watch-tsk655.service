@@ -1,0 +1,42 @@
+[Unit]
+# Караул улавливателя заторов по расписанию (tsk-735).
+#
+# Зачем на сервере, а не на машине оператора: занятия идут утром в будни, а
+# ноутбук в это время может спать — пропущенное окно не переснять. Караул
+# read-only: снимает pg_stat_activity и новые строки slow_request, в базу не
+# пишет (соединение открывается с default_transaction_read_only=on).
+Description=LMS: караул заторов на границах занятий (tsk-655/tsk-735)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=app
+Group=app
+WorkingDirectory=/opt/lms
+EnvironmentFile=/opt/lms/.env
+
+# Снимки старше двух недель не нужны: разбор идёт по свежему окну, а файл за
+# учебный день весит десятки мегабайт.
+ExecStartPre=/bin/sh -c 'mkdir -p /opt/lms/out && find /opt/lms/out -name "watch-tsk655-auto-*.jsonl" -mtime +14 -delete'
+
+# Строка подключения передаётся ОКРУЖЕНИЕМ, а не ключом --dsn: аргументы
+# процесса видны любому пользователю машины через `ps`, и пароль боевой базы
+# осел бы там на всё время прогона. Присваивание происходит внутри sh, поэтому
+# ни в argv питона, ни в argv самого sh значения нет.
+#
+# Горизонт 12 часов: таймер стартует до первого занятия, а поймать нужно все
+# окна учебного дня. Программа между окнами спит с ЗАКРЫТЫМ соединением
+# (tsk-662), поэтому долгое ожидание её не роняет.
+ExecStart=/bin/sh -c 'WATCH_DB_DSN="$DATABASE_URL" exec /opt/lms/venv/bin/python /opt/lms/scripts/watch_db_activity_tsk655.py --auto --horizon-hours 12 --out "/opt/lms/out/watch-tsk655-auto-$(date -u +%%Y%%m%%d).jsonl"'
+
+# Разбор и предупреждения караула читать так:
+#   journalctl -u lms-watch-tsk655 --since today
+StandardOutput=journal
+StandardError=journal
+
+# Учебный день длиннее часа по умолчанию, а караул живёт до последнего окна.
+TimeoutStartSec=14h
+
+[Install]
+WantedBy=multi-user.target
