@@ -101,12 +101,27 @@ def _variant_tasks(variant_id: str) -> list[dict]:
 def _markdown_to_html(raw_md: str) -> str:
     """Yandex отдаёт условие Markdown-подобной строкой (**жирный**, \\r\\n\\r\\n = абзац).
     Экранируем сначала (без этого `<`/`>` из текста стали бы тегами), потом
-    восстанавливаем только жирный — большего в этих текстах нет."""
+    восстанавливаем только жирный.
+
+    tsk-731: «большего в этих текстах нет» было неверно — есть ещё маркированные
+    списки (пункты «* ...» через ОДИНОЧНЫЙ перевод строки внутри одного абзаца).
+    Именно на них и порвалось: абзац-список уезжал в один `<p>` с переводами
+    строк внутри, а разбор ниже его терял. Теперь такой абзац сразу становится
+    `<ul>`, и переводов строк внутри абзацев не остаётся вовсе.
+    """
     s = html_mod.escape(raw_md)
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
     s = s.replace("\xa0", " ")
     paras = [p.strip() for p in re.split(r"\r?\n\r?\n", s) if p.strip()]
-    return "".join(f"<p>{p}</p>" for p in paras)
+    out: list[str] = []
+    for p in paras:
+        lines = [ln.strip() for ln in re.split(r"\r?\n", p) if ln.strip()]
+        if lines and all(ln.startswith(("* ", "- ")) for ln in lines):
+            items = "".join(f"<li>{ln[2:].strip()}</li>" for ln in lines)
+            out.append(f"<ul>{items}</ul>")
+        else:
+            out.append("<p>" + " ".join(lines) + "</p>")
+    return "".join(out)
 
 
 def _task_stem(task: dict) -> str:
@@ -144,8 +159,13 @@ def _tail_after_common_paragraphs(q19_html: str, qn_html: str) -> str:
     не перепечатывает текст заново для каждого вопроса подборки, поэтому
     точное сравнение достаточно (в отличие от sdamgia, экранированные
     </p><p> совпадают буква в букву)."""
-    p19 = re.findall(r"<p>.*?</p>", q19_html)
-    pn = re.findall(r"<p>.*?</p>", qn_html)
+    # tsk-731: блоками считаем и `<p>`, и `<ul>` (списки условий), и берём их с
+    # `re.S`. Прежний шаблон `<p>.*?</p>` без `re.S` молча выбрасывал любой блок
+    # с переводом строки внутри — а это ровно список из двух условий заданий
+    # 20/21. Так у 3470 и 3472 из условия исчезло то, ради чего они существуют.
+    blocks_re = re.compile(r"<p>.*?</p>|<ul>.*?</ul>", re.S)
+    p19 = blocks_re.findall(q19_html)
+    pn = blocks_re.findall(qn_html)
     common = 0
     while common < len(p19) and common < len(pn) and p19[common] == pn[common]:
         common += 1
