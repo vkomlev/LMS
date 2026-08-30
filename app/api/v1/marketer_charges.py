@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import CurrentUser, require_role
 from app.db.session import get_async_db
 from app.schemas.charge import (
+    BlockHoldRead,
+    BlockHoldRequest,
     ChargeRead,
     ClosePeriodRequest,
     ManualAmountRequest,
@@ -20,7 +22,12 @@ from app.schemas.charge import (
     PriceOverrideRequest,
     RecalculateResult,
 )
-from app.services import break_service, charge_service, payment_service
+from app.services import (
+    break_service,
+    charge_service,
+    payment_block_hold_service,
+    payment_service,
+)
 
 router = APIRouter(prefix="/marketer", tags=["marketer_charges"])
 
@@ -223,6 +230,84 @@ async def clear_override(
     await charge_service.recalculate_open_months_for_student(
         db, student_id=student_id
     )
+
+
+# ── tsk-744: отсрочка блокировки за неоплату ────────────────────────────────
+
+
+@router.get(
+    "/block-holds",
+    response_model=list[BlockHoldRead],
+    summary="Отсрочки блокировки за неоплату",
+    description=(
+        "По умолчанию — только действующие. `only_active=false` открывает "
+        "историю: сколько раз ученику уже шли навстречу."
+    ),
+)
+async def list_block_holds(
+    student_id: Optional[int] = Query(default=None),
+    only_active: bool = Query(default=True),
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_charges_gate),
+) -> list[BlockHoldRead]:
+    holds = await payment_block_hold_service.list_holds(
+        db, student_id=student_id, only_active=only_active
+    )
+    return [BlockHoldRead(**vars(h)) for h in holds]
+
+
+@router.post(
+    "/block-holds",
+    response_model=BlockHoldRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Отложить блокировку ученику",
+    description=(
+        "Долг не гасится и с экрана оплаты не исчезает — откладывается только "
+        "закрытие занятий. Срок обязателен и истекает сам; прежняя действующая "
+        "отсрочка этого ученика снимается, чтобы срок можно было и сократить."
+    ),
+)
+async def create_block_hold(
+    body: BlockHoldRequest,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_charges_gate),
+) -> BlockHoldRead:
+    # Тот же гейт персональных данных, что у ручной цены: принимаем только
+    # действующего ученика, иначе перебором номеров всплывут чужие имена.
+    if not await break_service.student_exists(db, body.student_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ученик не найден")
+    hold = await payment_block_hold_service.create_hold(
+        db,
+        student_id=body.student_id,
+        until=body.until,
+        reason=body.reason,
+        created_by=current_user.id,
+    )
+    return BlockHoldRead(**vars(hold))
+
+
+@router.delete(
+    "/block-holds/{hold_id}",
+    response_model=BlockHoldRead,
+    summary="Снять отсрочку досрочно",
+    description=(
+        "Строка остаётся в истории — снимается только действие. Блокировка "
+        "возвращается к общему правилу со следующего же запроса."
+    ),
+)
+async def cancel_block_hold(
+    hold_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    current_user: CurrentUser = Depends(_charges_gate),
+) -> BlockHoldRead:
+    hold = await payment_block_hold_service.cancel_hold(
+        db, hold_id=hold_id, cancelled_by=current_user.id
+    )
+    if hold is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "Действующая отсрочка не найдена"
+        )
+    return BlockHoldRead(**vars(hold))
 
 
 async def _reload_charge(db: AsyncSession, charge_id: int) -> ChargeRead:

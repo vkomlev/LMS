@@ -30,7 +30,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.services import charge_service, payment_service
+from app.services import charge_service, payment_block_hold_service, payment_service
 from app.utils.exceptions import DomainError
 
 logger = logging.getLogger(__name__)
@@ -112,8 +112,21 @@ async def blocking_debt(
 
     Приложенный чек, ждущий подтверждения, долгом не считается: человек своё
     сделал, дальше очередь наша — закрывать ему занятия за это нельзя.
+
+    Действующая отсрочка (tsk-744) закрывает вопрос ещё раньше: оператор
+    договорился с семьёй подождать, и до названного дня занятия не трогаем. Долг
+    при этом никуда не девается — он виден на экране оплаты и держит плашку в
+    кабинете; отложен только момент, когда закрывается учебный контент.
     """
     today = today or date.today()
+    hold = await payment_block_hold_service.active_hold(db, student_id, today=today)
+    if hold is not None:
+        logger.info(
+            "tsk-744: блокировка ученику %s не применяется — отсрочка до %s",
+            student_id,
+            hold.until,
+        )
+        return None
     rows = (
         await db.execute(
             text(

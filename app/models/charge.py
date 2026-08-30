@@ -107,6 +107,41 @@ class StudentMonthlyCharge(Base):
     )
 
 
+class PaymentBlockHold(Base):
+    """Отсрочка блокировки за неоплату конкретному ученику (tsk-744).
+
+    Действующая — та, у которой не проставлено `cancelled_at` и `until` ещё не
+    прошёл. Снятая досрочно строка остаётся: важно не только текущее состояние,
+    но и сколько раз ученику уже шли навстречу.
+
+    Бессрочной отсрочки нет намеренно (решение оператора 31.08): дата истекает
+    сама, поэтому забыть про ученика невозможно.
+    """
+
+    __tablename__ = "payment_block_hold"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    until: Mapped[Date] = mapped_column(Date, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    cancelled_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    cancelled_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("reason ~ '\\S'", name="ck_payment_block_hold_reason"),
+    )
+
+
 class ChargeAdjustment(Base):
     """Поправка к месяцу: перенос с закрытого месяца либо ручная."""
 

@@ -113,3 +113,34 @@ class ClosePeriodRequest(BaseModel):
 class RecalculateResult(BaseModel):
     period: date
     touched: int
+
+
+class BlockHoldRead(BaseModel):
+    """Отсрочка блокировки за неоплату (tsk-744)."""
+
+    id: int
+    student_id: int
+    student_name: Optional[str] = None
+    until: date
+    reason: str
+    created_by: Optional[int] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    cancelled_at: Optional[datetime] = None
+    #: Действует прямо сейчас. Считает сервер: «сегодня» у него и у браузера
+    #: ученика — разные дни в разных поясах, а гейт доступа идёт по серверному.
+    is_active: bool
+
+
+class BlockHoldRequest(BaseModel):
+    """Отложить блокировку ученику до дня включительно.
+
+    Причина обязательна и здесь, и в сервисе, и в CHECK таблицы: строка
+    «отложено» без объяснения через месяц не отличается от ошибки. Верхнюю
+    границу срока проверяет сервис — она зависит от «сегодня», которого схема
+    не знает.
+    """
+
+    student_id: int
+    until: date
+    reason: str = Field(min_length=1, max_length=500)
