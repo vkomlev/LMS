@@ -678,6 +678,65 @@ def test_block_comes_later_than_the_mark():
     assert waiting.is_overdue is False
 
 
+def test_due_soon_warns_before_the_month_ends():
+    """tsk-744: плашка загорается за несколько дней ДО конца месяца.
+
+    Смысл признака в том, что он появляется раньше `is_overdue`: предупредить
+    человека нужно, пока месяц ещё идёт и он может заплатить не будучи
+    должником. При настройке «4 дня» и сентябре плашка видна 27–30 сентября.
+    """
+    period = date(2026, 9, 1)
+    start = payment_service.due_soon_from_for(period)
+    assert start == date(2026, 9, 27), "четыре последних дня месяца, считая сам конец"
+
+    def state(today: date, *, pending: int = 0):
+        return payment_service.payment_state(
+            total_minor=550000, paid_minor=0, pending_minor=pending,
+            period=period, today=today,
+        )
+
+    assert state(start - timedelta(days=1)).is_due_soon is False, "рано — молчим"
+    assert state(start).is_due_soon is True, "первый день окна"
+    assert state(start).is_overdue is False, "должником он ещё не стал"
+
+    # После конца месяца плашка НЕ гаснет: долг стал настоящим, и убирать
+    # напоминание ровно в этот момент — худшее, что можно сделать.
+    late = state(date(2026, 10, 3))
+    assert late.is_due_soon is True and late.is_overdue is True
+
+    # Чек, покрывающий остаток, гасит плашку сразу — как и блокировку.
+    assert state(start, pending=550000).is_due_soon is False
+    # Частичный чек не гасит: остаток не закрыт.
+    assert state(start, pending=100000).is_due_soon is True
+
+
+def test_due_soon_is_silent_for_those_who_owe_nothing():
+    """Заплатившему плашка не показывается ни в один день месяца.
+
+    Главный риск tsk-744: яркое напоминание тому, кто уже заплатил. Проверяется
+    и точная оплата, и переплата, и нулевое начисление — на проде за август
+    есть все три случая.
+    """
+    period = date(2026, 9, 1)
+    for today in (date(2026, 9, 27), date(2026, 9, 30), date(2026, 10, 10)):
+        exact = payment_service.payment_state(
+            total_minor=550000, paid_minor=550000, pending_minor=0,
+            period=period, today=today,
+        )
+        assert exact.is_due_soon is False, f"точная оплата, {today}"
+
+        overpaid = payment_service.payment_state(
+            total_minor=244444, paid_minor=550000, pending_minor=0,
+            period=period, today=today,
+        )
+        assert overpaid.is_due_soon is False, f"переплата, {today}"
+
+        zero = payment_service.payment_state(
+            total_minor=0, paid_minor=0, pending_minor=0, period=period, today=today,
+        )
+        assert zero.is_due_soon is False, f"нулевое начисление, {today}"
+
+
 def test_due_date_is_last_day_of_any_month():
     """Срок — последний день месяца, включая февраль и переход через год."""
     assert payment_service.due_date_for(date(2026, 2, 1)) == date(2026, 2, 28)

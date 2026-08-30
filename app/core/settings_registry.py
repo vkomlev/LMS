@@ -104,6 +104,22 @@ SETTINGS: Tuple[SettingDef, ...] = (
         max_value=60,
     ),
     SettingDef(
+        key="payment_due_soon_days",
+        group=GROUP_MONEY,
+        title="За сколько последних дней месяца напоминать об оплате в кабинете",
+        description=(
+            "Плашка «период заканчивается» появляется в кабинете у того, кто "
+            "ещё не оплатил: при 4 она видна с 28 августа по 31-е. После конца "
+            "месяца не гаснет — держится, пока долг не закрыт."
+        ),
+        kind="int",
+        default=4,
+        env_var="PAYMENT_DUE_SOON_DAYS",
+        unit="дни",
+        min_value=1,
+        max_value=15,
+    ),
+    SettingDef(
         key="first_month_charge_cutoff_day",
         group=GROUP_MONEY,
         title="До какого числа первая покупка оплачивает текущий месяц",

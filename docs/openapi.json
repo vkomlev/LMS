@@ -22841,7 +22841,7 @@
           "me"
         ],
         "summary": "Get Me",
-        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).\ntsk-674: `schedule_preference_pending` — ученик из аудитории опроса по\nосеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание\nпопадает на все экраны кабинета сразу. Сервисному токену флаг не считается:\nу него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый\nвнутренний вызов.",
+        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).\ntsk-674: `schedule_preference_pending` — ученик из аудитории опроса по\nосеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание\nпопадает на все экраны кабинета сразу. Сервисному токену флаг не считается:\nу него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый\nвнутренний вызов.\ntsk-744: `payment_due` — тем же способом и по той же причине едет\nнапоминание об оплате: месяц кончается, деньги не пришли. Сервисному токену\nне считается — начислений у него нет.",
         "operationId": "get_me_api_v1_me_get",
         "security": [
           {
@@ -51380,6 +51380,16 @@
             "type": "boolean",
             "title": "Schedule Preference Pending",
             "default": false
+          },
+          "payment_due": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentDueNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -53136,6 +53146,40 @@
         "type": "object",
         "title": "PaymentDecisionRequest",
         "description": "Решение маркетолога по платежу."
+      },
+      "PaymentDueNotice": {
+        "properties": {
+          "due_minor": {
+            "type": "integer",
+            "title": "Due Minor"
+          },
+          "due_date": {
+            "type": "string",
+            "format": "date",
+            "title": "Due Date"
+          },
+          "periods": {
+            "items": {
+              "type": "string",
+              "format": "date"
+            },
+            "type": "array",
+            "title": "Periods"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue"
+          }
+        },
+        "type": "object",
+        "required": [
+          "due_minor",
+          "due_date",
+          "periods",
+          "is_overdue"
+        ],
+        "title": "PaymentDueNotice",
+        "description": "Напоминание об оплате для плашки в кабинете (tsk-744).\n\nСумма и дата отдаются вместе с признаком, а не собираются клиентом: иначе\nSPW пришлось бы вторым запросом идти за начислениями на каждом экране —\nи держать свою копию правила «что считать долгом»."
       },
       "PaymentExportRow": {
         "properties": {

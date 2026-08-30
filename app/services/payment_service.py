@@ -44,7 +44,10 @@ __all__ = [
     "ChargePaymentState",
     "due_date_for",
     "block_date_for",
+    "due_soon_from_for",
     "payment_state",
+    "DueSoonNotice",
+    "due_soon_notice",
     "attach_payment_state",
     "charge_for_student",
     "list_student_charges",
@@ -107,6 +110,12 @@ class ChargePaymentState:
     #: `is_overdue`: между ними несколько дней, за которые человек может успеть
     #: заплатить, не потеряв доступ.
     is_blocked: bool
+    #: Месяц ЕЩЁ идёт, но кончается на днях, а деньги не пришли — предупреждение
+    #: в кабинете (tsk-744). Загорается раньше `is_overdue` и после его
+    #: наступления НЕ гаснет: иначе плашка «period кончается» пропала бы ровно в
+    #: тот день, когда долг стал настоящим. Отношение трёх признаков —
+    #: `is_due_soon` ⊇ `is_overdue` ⊇ `is_blocked` по времени.
+    is_due_soon: bool
 
 
 def due_date_for(period: date) -> date:
@@ -129,6 +138,23 @@ def block_date_for(period: date) -> date:
     # иначе правка в кабинете администратора ждала бы перезапуска.
     return due_date_for(period) + timedelta(
         days=settings_store.get_int("payment_block_after_days")
+    )
+
+
+def due_soon_from_for(period: date) -> date:
+    """С какого дня месяц напоминает о себе плашкой в кабинете (tsk-744).
+
+    Настройка задаёт, сколько ПОСЛЕДНИХ дней месяца человек видит напоминание,
+    поэтому вычитается на единицу меньше: при 4 и августе выходит 28-е, и
+    плашка видна 28, 29, 30, 31 — четыре дня, как просил оператор («за 3-4 дня
+    до конца»). Вычитание полных четырёх дало бы пять дней показа.
+
+    Срок читается в момент применения, а не при импорте модуля, — как у
+    `block_date_for`: иначе правка в кабинете администратора ждала бы
+    перезапуска (tsk-721).
+    """
+    return due_date_for(period) - timedelta(
+        days=settings_store.get_int("payment_due_soon_days") - 1
     )
 
 
@@ -157,6 +183,113 @@ def payment_state(
         is_unpaid=unpaid,
         is_overdue=overdue,
         is_blocked=unpaid and today >= block_date_for(period),
+        is_due_soon=unpaid and today >= due_soon_from_for(period),
+    )
+
+
+@dataclass(frozen=True)
+class DueSoonNotice:
+    """Повод показать ученику плашку об оплате (tsk-744).
+
+    Сумма и дата едут вместе с признаком: «оплатите» без числа и без дня
+    заставляет человека идти искать, сколько и до когда, — тот же довод, по
+    которому их несёт в себе отказ блокировки (`payment_access_service`).
+    """
+
+    #: Сколько осталось заплатить по всем незакрытым месяцам, копейки.
+    due_minor: int
+    #: Месяцы долга, по возрастанию. Обычно один.
+    periods: tuple[date, ...]
+    #: Крайний день оплаты САМОГО РАННЕГО долга — тот, о котором речь в первую
+    #: очередь. По нему клиент пишет «до 31 августа».
+    due_date: date
+    #: Срок уже прошёл. Меняет только текст плашки: с «period заканчивается» на
+    #: «period закончился», сам показ этим не управляется.
+    is_overdue: bool
+
+
+async def due_soon_notice(
+    db: AsyncSession, student_id: int, *, today: Optional[date] = None
+) -> Optional[DueSoonNotice]:
+    """Что показать ученику в кабинете об оплате — или None, если показывать нечего.
+
+    Правило «кто должен» здесь не вводится заново: берутся те же открытые
+    начисления и те же подтверждённые платежи, из которых считается долг на
+    экране оплаты и блокировка занятий. Своя копия правила разъехалась бы с
+    ними, и человек получил бы яркую плашку, не имея долга, — цена ошибки тут
+    выше обычной, потому что плашка видна на каждом экране.
+
+    Приложенный чек, покрывающий остаток, гасит плашку сразу, не дожидаясь
+    решения маркетолога: человек своё сделал, и торопить его дальше нечем.
+    Ровно так же чек придерживает блокировку.
+    """
+    today = today or date.today()
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT ch.period,
+                       ch.calculated_minor,
+                       ch.manual_minor,
+                       COALESCE(adj.total, 0)   AS adjustments_minor,
+                       COALESCE(pay.paid, 0)    AS paid_minor,
+                       COALESCE(pay.pending, 0) AS pending_minor
+                  FROM student_monthly_charge ch
+                  LEFT JOIN LATERAL (
+                        SELECT sum(a.amount_minor) AS total
+                          FROM charge_adjustment a
+                         WHERE a.student_id = ch.student_id
+                           AND a.group_id = ch.group_id
+                           AND a.period = ch.period
+                  ) adj ON TRUE
+                  LEFT JOIN LATERAL (
+                        SELECT sum(p.amount_minor) FILTER (WHERE p.status = 'confirmed') AS paid,
+                               sum(p.amount_minor) FILTER (WHERE p.status = 'pending')   AS pending
+                          FROM student_payment p
+                         WHERE p.student_id = ch.student_id
+                           AND p.group_id = ch.group_id
+                           AND p.period = ch.period
+                           -- Разовая покупка чужой месяц не гасит (tsk-615).
+                           AND p.purpose = 'monthly'
+                  ) pay ON TRUE
+                 WHERE ch.student_id = :s
+                   AND ch.status = 'open'
+                """
+            ),
+            {"s": student_id},
+        )
+    ).all()
+
+    due_minor = 0
+    periods: list[date] = []
+    overdue = False
+    for row in rows:
+        total_minor = charge_service.charge_total_minor(
+            calculated_minor=row.calculated_minor,
+            manual_minor=row.manual_minor,
+            adjustments_minor=int(row.adjustments_minor),
+        )
+        state = payment_state(
+            total_minor=total_minor,
+            paid_minor=int(row.paid_minor),
+            pending_minor=int(row.pending_minor),
+            period=row.period,
+            today=today,
+        )
+        if not state.is_due_soon:
+            continue
+        due_minor += state.due_minor
+        periods.append(row.period)
+        overdue = overdue or state.is_overdue
+
+    if not periods:
+        return None
+    ordered = tuple(sorted(periods))
+    return DueSoonNotice(
+        due_minor=due_minor,
+        periods=ordered,
+        due_date=due_date_for(ordered[0]),
+        is_overdue=overdue,
     )
 
 

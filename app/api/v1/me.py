@@ -53,6 +53,7 @@ from app.schemas.me import (
     MeResponse,
     MeUpdateRequest,
     MyEntitlements,
+    PaymentDueNotice,
     StreakRead,
     SyllabusStatesResponse,
 )
@@ -65,6 +66,7 @@ from app.services.student_teacher_links_service import StudentTeacherLinksServic
 from app.services import (
     lesson_calendar_service,
     me_service,
+    payment_service,
     retention_service,
     roles_service,
     schedule_preference_service,
@@ -97,6 +99,32 @@ _student_teacher_links_service = StudentTeacherLinksService()
 _parent_student_links_service = ParentStudentLinksService()
 
 
+async def _payment_due_notice(
+    db: AsyncSession, current_user: CurrentUser
+) -> PaymentDueNotice | None:
+    """Напоминание об оплате для профиля — общее для GET и PATCH (tsk-744).
+
+    Одна функция на оба эндпоинта не ради краткости: ответ PATCH клиент кладёт
+    прямо в кэш профиля, и вторая, забытая ветка погасила бы плашку в тот
+    момент, когда человек сохранил ФИО. Ровно этой ошибкой обжёгся tsk-674 —
+    там она была поймана и оставила после себя парный комментарий ниже.
+
+    Сервисному токену не считается: начислений у него нет, а запрос он делал бы
+    на каждый внутренний вызов бота.
+    """
+    if current_user.is_service:
+        return None
+    notice = await payment_service.due_soon_notice(db, current_user.id)
+    if notice is None:
+        return None
+    return PaymentDueNotice(
+        due_minor=notice.due_minor,
+        due_date=notice.due_date,
+        periods=list(notice.periods),
+        is_overdue=notice.is_overdue,
+    )
+
+
 # ── GET /me ─────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=MeResponse)
@@ -117,6 +145,9 @@ async def get_me(
     попадает на все экраны кабинета сразу. Сервисному токену флаг не считается:
     у него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый
     внутренний вызов.
+    tsk-744: `payment_due` — тем же способом и по той же причине едет
+    напоминание об оплате: месяц кончается, деньги не пришли. Сервисному токену
+    не считается — начислений у него нет.
     """
     profile = await me_service.get_profile(db, current_user.id)
     roles = await roles_service.get_user_role_names(db, current_user.id)
@@ -125,8 +156,10 @@ async def get_me(
         if current_user.is_service
         else await schedule_preference_service.is_pending(db, current_user.id)
     )
+    payment_due = await _payment_due_notice(db, current_user)
     return MeResponse(
         schedule_preference_pending=schedule_pending,
+        payment_due=payment_due,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
@@ -225,14 +258,17 @@ async def update_me(
     roles = await roles_service.get_user_role_names(db, current_user.id)
     # tsk-674: тот же флаг, что и в GET. Ответ PATCH кладётся клиентом прямо в
     # кэш профиля — без него сохранение ФИО в онбординге гасило бы напоминание
-    # про пожелания, хотя ученик их не оставлял.
+    # про пожелания, хотя ученик их не оставлял. tsk-744: по той же причине
+    # здесь пересчитывается и напоминание об оплате.
     schedule_pending = (
         False
         if current_user.is_service
         else await schedule_preference_service.is_pending(db, current_user.id)
     )
+    payment_due = await _payment_due_notice(db, current_user)
     return MeResponse(
         schedule_preference_pending=schedule_pending,
+        payment_due=payment_due,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
