@@ -1,0 +1,487 @@
+commit 1f365aa6accd5574df37b3600016d8c025cf923b
+Author: Victor <victor.komlev@mail.ru>
+Date:   Sun Aug 30 22:32:36 2026 +0500
+
+    feat: tsk-744 - плашка об оплате в кабинете за несколько дней до конца месяца
+    
+    Признак is_due_soon в payment_state встаёт раньше is_overdue и после него не
+    гаснет; окно задаётся настройкой кабинета payment_due_soon_days (умолчание 4).
+    GET /me отдаёт payment_due — сумму, крайний день и месяцы долга, — по которому
+    SPW рисует полосу на всех экранах.
+    
+    Правило «кто должен» новое не вводится: берутся те же начисления и платежи, из
+    которых уже считаются долг на экране оплаты и блокировка занятий. Проверено на
+    прошедшем августе по боевой базе: правило назвало 41 обязанного, все 23
+    плательщика месяца среди них, плательщиков без начисления 0.
+    
+    Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+diff --git a/app/api/v1/me.py b/app/api/v1/me.py
+index 19b3de9..8af052a 100644
+--- a/app/api/v1/me.py
++++ b/app/api/v1/me.py
+@@ -53,6 +53,7 @@ from app.schemas.me import (
+     MeResponse,
+     MeUpdateRequest,
+     MyEntitlements,
++    PaymentDueNotice,
+     StreakRead,
+     SyllabusStatesResponse,
+ )
+@@ -65,6 +66,7 @@ from app.services.student_teacher_links_service import StudentTeacherLinksServic
+ from app.services import (
+     lesson_calendar_service,
+     me_service,
++    payment_service,
+     retention_service,
+     roles_service,
+     schedule_preference_service,
+@@ -97,6 +99,32 @@ _student_teacher_links_service = StudentTeacherLinksService()
+ _parent_student_links_service = ParentStudentLinksService()
+ 
+ 
++async def _payment_due_notice(
++    db: AsyncSession, current_user: CurrentUser
++) -> PaymentDueNotice | None:
++    """Напоминание об оплате для профиля — общее для GET и PATCH (tsk-744).
++
++    Одна функция на оба эндпоинта не ради краткости: ответ PATCH клиент кладёт
++    прямо в кэш профиля, и вторая, забытая ветка погасила бы плашку в тот
++    момент, когда человек сохранил ФИО. Ровно этой ошибкой обжёгся tsk-674 —
++    там она была поймана и оставила после себя парный комментарий ниже.
++
++    Сервисному токену не считается: начислений у него нет, а запрос он делал бы
++    на каждый внутренний вызов бота.
++    """
++    if current_user.is_service:
++        return None
++    notice = await payment_service.due_soon_notice(db, current_user.id)
++    if notice is None:
++        return None
++    return PaymentDueNotice(
++        due_minor=notice.due_minor,
++        due_date=notice.due_date,
++        periods=list(notice.periods),
++        is_overdue=notice.is_overdue,
++    )
++
++
+ # ── GET /me ─────────────────────────────────────────────────────────────────
+ 
+ @router.get("", response_model=MeResponse)
+@@ -117,6 +145,9 @@ async def get_me(
+     попадает на все экраны кабинета сразу. Сервисному токену флаг не считается:
+     у него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый
+     внутренний вызов.
++    tsk-744: `payment_due` — тем же способом и по той же причине едет
++    напоминание об оплате: месяц кончается, деньги не пришли. Сервисному токену
++    не считается — начислений у него нет.
+     """
+     profile = await me_service.get_profile(db, current_user.id)
+     roles = await roles_service.get_user_role_names(db, current_user.id)
+@@ -125,8 +156,10 @@ async def get_me(
+         if current_user.is_service
+         else await schedule_preference_service.is_pending(db, current_user.id)
+     )
++    payment_due = await _payment_due_notice(db, current_user)
+     return MeResponse(
+         schedule_preference_pending=schedule_pending,
++        payment_due=payment_due,
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+@@ -225,14 +258,17 @@ async def update_me(
+     roles = await roles_service.get_user_role_names(db, current_user.id)
+     # tsk-674: тот же флаг, что и в GET. Ответ PATCH кладётся клиентом прямо в
+     # кэш профиля — без него сохранение ФИО в онбординге гасило бы напоминание
+-    # про пожелания, хотя ученик их не оставлял.
++    # про пожелания, хотя ученик их не оставлял. tsk-744: по той же причине
++    # здесь пересчитывается и напоминание об оплате.
+     schedule_pending = (
+         False
+         if current_user.is_service
+         else await schedule_preference_service.is_pending(db, current_user.id)
+     )
++    payment_due = await _payment_due_notice(db, current_user)
+     return MeResponse(
+         schedule_preference_pending=schedule_pending,
++        payment_due=payment_due,
+         id=current_user.id,
+         email=current_user.email,
+         tg_id=current_user.tg_id,
+diff --git a/app/core/settings_registry.py b/app/core/settings_registry.py
+index b9bc2d7..5180757 100644
+--- a/app/core/settings_registry.py
++++ b/app/core/settings_registry.py
+@@ -103,6 +103,22 @@ SETTINGS: Tuple[SettingDef, ...] = (
+         min_value=1,
+         max_value=60,
+     ),
++    SettingDef(
++        key="payment_due_soon_days",
++        group=GROUP_MONEY,
++        title="За сколько последних дней месяца напоминать об оплате в кабинете",
++        description=(
++            "Плашка «период заканчивается» появляется в кабинете у того, кто "
++            "ещё не оплатил: при 4 она видна с 28 августа по 31-е. После конца "
++            "месяца не гаснет — держится, пока долг не закрыт."
++        ),
++        kind="int",
++        default=4,
++        env_var="PAYMENT_DUE_SOON_DAYS",
++        unit="дни",
++        min_value=1,
++        max_value=15,
++    ),
+     SettingDef(
+         key="first_month_charge_cutoff_day",
+         group=GROUP_MONEY,
+diff --git a/app/schemas/me.py b/app/schemas/me.py
+index 4d0482d..a3c1b88 100644
+--- a/app/schemas/me.py
++++ b/app/schemas/me.py
+@@ -44,6 +44,24 @@ def validate_timezone(v: str | None) -> str | None:
+     return v
+ 
+ 
++class PaymentDueNotice(BaseModel):
++    """Напоминание об оплате для плашки в кабинете (tsk-744).
++
++    Сумма и дата отдаются вместе с признаком, а не собираются клиентом: иначе
++    SPW пришлось бы вторым запросом идти за начислениями на каждом экране —
++    и держать свою копию правила «что считать долгом».
++    """
++
++    #: Сколько осталось заплатить, копейки. Формат тот же, что у начислений.
++    due_minor: int
++    #: Крайний день оплаты ближайшего долга.
++    due_date: date
++    #: Месяцы, за которые не заплачено. Обычно один.
++    periods: list[date]
++    #: Срок уже прошёл — плашка говорит «месяц закончился», а не «заканчивается».
++    is_overdue: bool
++
++
+ class MeResponse(BaseModel):
+     id: int
+     email: str | None
+@@ -71,6 +89,12 @@ class MeResponse(BaseModel):
+     # куда человек однажды зашёл сам (урок tsk-591/tsk-652: уведомление, которое
+     # не открывают, равно отсутствию уведомления). Гасится сохранением пожеланий.
+     schedule_preference_pending: bool = False
++    # tsk-744: чем закончится месяц, если не заплатить. Едет тем же способом и
++    # по той же причине, что флаг выше: напоминание об оплате должно быть видно
++    # на ЛЮБОМ экране кабинета, а не только на странице оплаты, куда должник как
++    # раз не заходит. `None` — показывать нечего: либо человек ничего не должен,
++    # либо до конца месяца ещё далеко.
++    payment_due: PaymentDueNotice | None = None
+ 
+     model_config = {"from_attributes": True}
+ 
+diff --git a/app/services/payment_service.py b/app/services/payment_service.py
+index e8a82b4..3d33ae3 100644
+--- a/app/services/payment_service.py
++++ b/app/services/payment_service.py
+@@ -44,7 +44,10 @@ __all__ = [
+     "ChargePaymentState",
+     "due_date_for",
+     "block_date_for",
++    "due_soon_from_for",
+     "payment_state",
++    "DueSoonNotice",
++    "due_soon_notice",
+     "attach_payment_state",
+     "charge_for_student",
+     "list_student_charges",
+@@ -107,6 +110,12 @@ class ChargePaymentState:
+     #: `is_overdue`: между ними несколько дней, за которые человек может успеть
+     #: заплатить, не потеряв доступ.
+     is_blocked: bool
++    #: Месяц ЕЩЁ идёт, но кончается на днях, а деньги не пришли — предупреждение
++    #: в кабинете (tsk-744). Загорается раньше `is_overdue` и после его
++    #: наступления НЕ гаснет: иначе плашка «period кончается» пропала бы ровно в
++    #: тот день, когда долг стал настоящим. Отношение трёх признаков —
++    #: `is_due_soon` ⊇ `is_overdue` ⊇ `is_blocked` по времени.
++    is_due_soon: bool
+ 
+ 
+ def due_date_for(period: date) -> date:
+@@ -132,6 +141,23 @@ def block_date_for(period: date) -> date:
+     )
+ 
+ 
++def due_soon_from_for(period: date) -> date:
++    """С какого дня месяц напоминает о себе плашкой в кабинете (tsk-744).
++
++    Настройка задаёт, сколько ПОСЛЕДНИХ дней месяца человек видит напоминание,
++    поэтому вычитается на единицу меньше: при 4 и августе выходит 28-е, и
++    плашка видна 28, 29, 30, 31 — четыре дня, как просил оператор («за 3-4 дня
++    до конца»). Вычитание полных четырёх дало бы пять дней показа.
++
++    Срок читается в момент применения, а не при импорте модуля, — как у
++    `block_date_for`: иначе правка в кабинете администратора ждала бы
++    перезапуска (tsk-721).
++    """
++    return due_date_for(period) - timedelta(
++        days=settings_store.get_int("payment_due_soon_days") - 1
++    )
++
++
+ def payment_state(
+     *, total_minor: int, paid_minor: int, pending_minor: int, period: date, today: date
+ ) -> ChargePaymentState:
+@@ -157,6 +183,113 @@ def payment_state(
+         is_unpaid=unpaid,
+         is_overdue=overdue,
+         is_blocked=unpaid and today >= block_date_for(period),
++        is_due_soon=unpaid and today >= due_soon_from_for(period),
++    )
++
++
++@dataclass(frozen=True)
++class DueSoonNotice:
++    """Повод показать ученику плашку об оплате (tsk-744).
++
++    Сумма и дата едут вместе с признаком: «оплатите» без числа и без дня
++    заставляет человека идти искать, сколько и до когда, — тот же довод, по
++    которому их несёт в себе отказ блокировки (`payment_access_service`).
++    """
++
++    #: Сколько осталось заплатить по всем незакрытым месяцам, копейки.
++    due_minor: int
++    #: Месяцы долга, по возрастанию. Обычно один.
++    periods: tuple[date, ...]
++    #: Крайний день оплаты САМОГО РАННЕГО долга — тот, о котором речь в первую
++    #: очередь. По нему клиент пишет «до 31 августа».
++    due_date: date
++    #: Срок уже прошёл. Меняет только текст плашки: с «period заканчивается» на
++    #: «period закончился», сам показ этим не управляется.
++    is_overdue: bool
++
++
++async def due_soon_notice(
++    db: AsyncSession, student_id: int, *, today: Optional[date] = None
++) -> Optional[DueSoonNotice]:
++    """Что показать ученику в кабинете об оплате — или None, если показывать нечего.
++
++    Правило «кто должен» здесь не вводится заново: берутся те же открытые
++    начисления и те же подтверждённые платежи, из которых считается долг на
++    экране оплаты и блокировка занятий. Своя копия правила разъехалась бы с
++    ними, и человек получил бы яркую плашку, не имея долга, — цена ошибки тут
++    выше обычной, потому что плашка видна на каждом экране.
++
++    Приложенный чек, покрывающий остаток, гасит плашку сразу, не дожидаясь
++    решения маркетолога: человек своё сделал, и торопить его дальше нечем.
++    Ровно так же чек придерживает блокировку.
++    """
++    today = today or date.today()
++    rows = (
++        await db.execute(
++            text(
++                """
++                SELECT ch.period,
++                       ch.calculated_minor,
++                       ch.manual_minor,
++                       COALESCE(adj.total, 0)   AS adjustments_minor,
++                       COALESCE(pay.paid, 0)    AS paid_minor,
++                       COALESCE(pay.pending, 0) AS pending_minor
++                  FROM student_monthly_charge ch
++                  LEFT JOIN LATERAL (
++                        SELECT sum(a.amount_minor) AS total
++                          FROM charge_adjustment a
++                         WHERE a.student_id = ch.student_id
++                           AND a.group_id = ch.group_id
++                           AND a.period = ch.period
++                  ) adj ON TRUE
++                  LEFT JOIN LATERAL (
++                        SELECT sum(p.amount_minor) FILTER (WHERE p.status = 'confirmed') AS paid,
++                               sum(p.amount_minor) FILTER (WHERE p.status = 'pending')   AS pending
++                          FROM student_payment p
++                         WHERE p.student_id = ch.student_id
++                           AND p.group_id = ch.group_id
++                           AND p.period = ch.period
++                           -- Разовая покупка чужой месяц не гасит (tsk-615).
++                           AND p.purpose = 'monthly'
++                  ) pay ON TRUE
++                 WHERE ch.student_id = :s
++                   AND ch.status = 'open'
++                """
++            ),
++            {"s": student_id},
++        )
++    ).all()
++
++    due_minor = 0
++    periods: list[date] = []
++    overdue = False
++    for row in rows:
++        total_minor = charge_service.charge_total_minor(
++            calculated_minor=row.calculated_minor,
++            manual_minor=row.manual_minor,
++            adjustments_minor=int(row.adjustments_minor),
++        )
++        state = payment_state(
++            total_minor=total_minor,
++            paid_minor=int(row.paid_minor),
++            pending_minor=int(row.pending_minor),
++            period=row.period,
++            today=today,
++        )
++        if not state.is_due_soon:
++            continue
++        due_minor += state.due_minor
++        periods.append(row.period)
++        overdue = overdue or state.is_overdue
++
++    if not periods:
++        return None
++    ordered = tuple(sorted(periods))
++    return DueSoonNotice(
++        due_minor=due_minor,
++        periods=ordered,
++        due_date=due_date_for(ordered[0]),
++        is_overdue=overdue,
+     )
+ 
+ 
+diff --git a/docs/openapi.json b/docs/openapi.json
+index aa1ba70..1838cce 100644
+--- a/docs/openapi.json
++++ b/docs/openapi.json
+@@ -22841,7 +22841,7 @@
+           "me"
+         ],
+         "summary": "Get Me",
+-        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).\ntsk-674: `schedule_preference_pending` — ученик из аудитории опроса по\nосеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание\nпопадает на все экраны кабинета сразу. Сервисному токену флаг не считается:\nу него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый\nвнутренний вызов.",
++        "description": "Вернуть профиль аутентифицированного пользователя.\n\ntsk-223: `full_name` подгружается из `users.full_name` (БД), а не из\n`CurrentUser` — dataclass CurrentUser имя не несёт.\ntsk-298: `roles` — имена ролей из user_roles (M2M); SPW гейтит по ним\nteacher-зону портала.\ntsk-427: доп. поля профиля (category/school_grade/city/timezone) грузятся\nвместе с full_name одним запросом (`me_service.get_profile`).\ntsk-674: `schedule_preference_pending` — ученик из аудитории опроса по\nосеннему расписанию, который пожеланий ещё не оставил. Отсюда напоминание\nпопадает на все экраны кабинета сразу. Сервисному токену флаг не считается:\nу него нет ни ролей, ни расписания, а лишний запрос он делал бы на каждый\nвнутренний вызов.\ntsk-744: `payment_due` — тем же способом и по той же причине едет\nнапоминание об оплате: месяц кончается, деньги не пришли. Сервисному токену\nне считается — начислений у него нет.",
+         "operationId": "get_me_api_v1_me_get",
+         "security": [
+           {
+@@ -51380,6 +51380,16 @@
+             "type": "boolean",
+             "title": "Schedule Preference Pending",
+             "default": false
++          },
++          "payment_due": {
++            "anyOf": [
++              {
++                "$ref": "#/components/schemas/PaymentDueNotice"
++              },
++              {
++                "type": "null"
++              }
++            ]
+           }
+         },
+         "type": "object",
+@@ -53137,6 +53147,40 @@
+         "title": "PaymentDecisionRequest",
+         "description": "Решение маркетолога по платежу."
+       },
++      "PaymentDueNotice": {
++        "properties": {
++          "due_minor": {
++            "type": "integer",
++            "title": "Due Minor"
++          },
++          "due_date": {
++            "type": "string",
++            "format": "date",
++            "title": "Due Date"
++          },
++          "periods": {
++            "items": {
++              "type": "string",
++              "format": "date"
++            },
++            "type": "array",
++            "title": "Periods"
++          },
++          "is_overdue": {
++            "type": "boolean",
++            "title": "Is Overdue"
++          }
++        },
++        "type": "object",
++        "required": [
++          "due_minor",
++          "due_date",
++          "periods",
++          "is_overdue"
++        ],
++        "title": "PaymentDueNotice",
++        "description": "Напоминание об оплате для плашки в кабинете (tsk-744).\n\nСумма и дата отдаются вместе с признаком, а не собираются клиентом: иначе\nSPW пришлось бы вторым запросом идти за начислениями на каждом экране —\nи держать свою копию правила «что считать долгом»."
++      },
+       "PaymentExportRow": {
+         "properties": {
+           "id": {
+diff --git a/tests/test_tsk010_payments.py b/tests/test_tsk010_payments.py
+index b75d2dc..3114673 100644
+--- a/tests/test_tsk010_payments.py
++++ b/tests/test_tsk010_payments.py
+@@ -678,6 +678,65 @@ def test_block_comes_later_than_the_mark():
+     assert waiting.is_overdue is False
+ 
+ 
++def test_due_soon_warns_before_the_month_ends():
++    """tsk-744: плашка загорается за несколько дней ДО конца месяца.
++
++    Смысл признака в том, что он появляется раньше `is_overdue`: предупредить
++    человека нужно, пока месяц ещё идёт и он может заплатить не будучи
++    должником. При настройке «4 дня» и сентябре плашка видна 27–30 сентября.
++    """
++    period = date(2026, 9, 1)
++    start = payment_service.due_soon_from_for(period)
++    assert start == date(2026, 9, 27), "четыре последних дня месяца, считая сам конец"
++
++    def state(today: date, *, pending: int = 0):
++        return payment_service.payment_state(
++            total_minor=550000, paid_minor=0, pending_minor=pending,
++            period=period, today=today,
++        )
++
++    assert state(start - timedelta(days=1)).is_due_soon is False, "рано — молчим"
++    assert state(start).is_due_soon is True, "первый день окна"
++    assert state(start).is_overdue is False, "должником он ещё не стал"
++
++    # После конца месяца плашка НЕ гаснет: долг стал настоящим, и убирать
++    # напоминание ровно в этот момент — худшее, что можно сделать.
++    late = state(date(2026, 10, 3))
++    assert late.is_due_soon is True and late.is_overdue is True
++
++    # Чек, покрывающий остаток, гасит плашку сразу — как и блокировку.
++    assert state(start, pending=550000).is_due_soon is False
++    # Частичный чек не гасит: остаток не закрыт.
++    assert state(start, pending=100000).is_due_soon is True
++
++
++def test_due_soon_is_silent_for_those_who_owe_nothing():
++    """Заплатившему плашка не показывается ни в один день месяца.
++
++    Главный риск tsk-744: яркое напоминание тому, кто уже заплатил. Проверяется
++    и точная оплата, и переплата, и нулевое начисление — на проде за август
++    есть все три случая.
++    """
++    period = date(2026, 9, 1)
++    for today in (date(2026, 9, 27), date(2026, 9, 30), date(2026, 10, 10)):
++        exact = payment_service.payment_state(
++            total_minor=550000, paid_minor=550000, pending_minor=0,
++            period=period, today=today,
++        )
++        assert exact.is_due_soon is False, f"точная оплата, {today}"
++
++        overpaid = payment_service.payment_state(
++            total_minor=244444, paid_minor=550000, pending_minor=0,
++            period=period, today=today,
++        )
++        assert overpaid.is_due_soon is False, f"переплата, {today}"
++
++        zero = payment_service.payment_state(
++            total_minor=0, paid_minor=0, pending_minor=0, period=period, today=today,
++        )
++        assert zero.is_due_soon is False, f"нулевое начисление, {today}"
++
++
+ def test_due_date_is_last_day_of_any_month():
+     """Срок — последний день месяца, включая февраль и переход через год."""
+     assert payment_service.due_date_for(date(2026, 2, 1)) == date(2026, 2, 28)
