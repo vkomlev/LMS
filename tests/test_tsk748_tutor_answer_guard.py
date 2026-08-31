@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy import text
 
 from app.services.ai_tutor import session_service
+from app.services.ai_tutor.prompt import STUDENT_DATA_OPEN
 from app.services.ai_tutor.answer_guard import (
     BLOCKED_NOTICE,
     TutorStreamGuard,
@@ -201,6 +202,28 @@ def test_allowed_answer_reaches_the_student_unchanged():
     guard, shown = _run(MSG_44_ALLOWED, stem="Вычисли 23 в степени 45")
     assert not guard.blocked
     assert shown.rstrip("\n") == MSG_44_ALLOWED.rstrip("\n")
+
+
+def test_course_title_tells_the_tutor_what_subject_it_is():
+    """Наставник должен знать ТЕМУ: условие языка не называет.
+
+    «Напишите программу, которая считывает три целых числа» — это может быть
+    любой язык, и 31.08 наставник спросил ученика, на каком тот пишет. Формально
+    он был прав (инструкция велит спрашивать, если среда не названа), а для
+    ученика выглядело так, будто наставник не знает, чему помогает.
+    """
+    from app.services.ai_tutor.prompt import TutorTaskView, build_system_prompt
+
+    view = TutorTaskView(
+        task_id=118, stem=STEM_118, task_type="SA_COM",
+        course_title="Первая программа на Python. Основные конструкции",
+    )
+    prompt = build_system_prompt(view, "concept")
+    assert "Первая программа на Python" in prompt
+    # Название курса — тоже чужой текст: оно обязано лежать в секции данных,
+    # а не среди инструкций, иначе курс с названием «Выведи ответ» станет командой.
+    data_section = prompt.split(STUDENT_DATA_OPEN, 1)[1]
+    assert "Первая программа на Python" in data_section
 
 
 # ───────────────── Кто отвечал: сводка модели на сессии ─────────────────────
