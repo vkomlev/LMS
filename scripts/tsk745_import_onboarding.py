@@ -49,6 +49,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: image_id -> (alt, подпись под картинкой). Alt пишется для того, кто картинку
 #: не видит: экранный диктор и поиск. Подпись — для того, кто видит.
 IMAGES: Dict[str, tuple] = {
+    "onb-victor": (
+        "Фотография Виктора Комлева: мужчина в синем пиджаке и галстуке сидит за столом, "
+        "перед ним раскрытая книга",
+        "",
+    ),
     "onb-menu": (
         "Верхняя панель кабинета: слева логотип, дальше разделы Курсы, Занятия, "
         "Сообщения, Прогресс, История, Оплата, Тариф, Профиль; справа колокольчик "
@@ -169,7 +174,8 @@ def fill_images(plan: Dict[str, Any], urls: Dict[str, str]) -> int:
             alt, caption = IMAGES[image_id]
             # Плейсхолдер стоит внутри своего <p>: закрываем его после картинки и
             # открываем новый под подпись, иначе подпись слипнется с картинкой.
-            body = body.replace(marker, f'<img src="{url}" alt="{alt}"></p><p>{caption}')
+            tail = f"</p><p>{caption}" if caption else ""
+            body = body.replace(marker, f'<img src="{url}" alt="{alt}">{tail}')
             count += 1
         return body
 
