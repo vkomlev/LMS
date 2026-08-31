@@ -958,6 +958,34 @@ class CheckingService:
                     order_matters=order_matters,
                     partial=solution_rules.scoring_mode == "partial",
                 )
+                # tsk-752: разбивка строк не решает судьбу зачёта там, где она
+                # ничего не разделяет. Ответ на объединённое задание 19-21 ученик
+                # пишет по строке НА ВОПРОС («244 / 247 248 / 252»), а эталон
+                # хранится по строке НА ЗНАЧЕНИЕ — значения и порядок те же, но
+                # построчный разбор их не сводил, и верный ответ шёл в незачёт.
+                # Тот же ответ ОДНОЙ строкой при этом засчитывался, потому что
+                # резался по пробелам — расхождение лечим здесь.
+                # Путь дополнительный (как code_ast): включается, только если
+                # обычный разбор не дал полного балла, и только для эталона из
+                # атомарных ячеек — фразовые задания tsk-383 не затрагивает.
+                # columns > 1 сюда не попадает намеренно: там обе стороны и так
+                # режутся по любым пробелам, и разбивка строк уже несущественна.
+                if (
+                    score < accepted.score
+                    and columns == 1
+                    and not self._line_split_is_significant(expected)
+                ):
+                    score = max(
+                        score,
+                        self._score_table(
+                            cells=self._flat_cells(value_raw, rules.normalization),
+                            expected=expected,
+                            full_score=accepted.score,
+                            columns=columns,
+                            order_matters=order_matters,
+                            partial=solution_rules.scoring_mode == "partial",
+                        ),
+                    )
                 # tsk-383: TBL_COM не строже SA_COM на том же правиле — тот же
                 # инвариант, что зафиксирован в tsk-366
                 # (test_инвариант_tbl_com_засчитывает_всё_что_засчитывал_sa_com).
@@ -1041,8 +1069,41 @@ class CheckingService:
                 cells = [cls._normalize_text(ln, steps) for ln in lines]
                 return [cell for cell in cells if cell != ""]
 
+        return cls._flat_cells(value, steps)
+
+    @classmethod
+    def _flat_cells(cls, value: str, steps: List[str]) -> List[str]:
+        """
+        Разбирает ответ БЕЗ учёта разбивки строк: разделитель — любой пробельный
+        символ, поэтому пробел, табуляция и перевод строки равнозначны.
+
+        Пустые после нормализации ячейки отбрасываются — как и в `_table_cells`.
+        """
         cells = [cls._normalize_text(cell, steps) for cell in value.split()]
         return [cell for cell in cells if cell != ""]
+
+    @staticmethod
+    def _line_split_is_significant(expected: List[str]) -> bool:
+        """
+        Решает, несёт ли смысл ГРАНИЦА СТРОКИ в ответе на это задание.
+
+        Смысл она несёт там, где ячейка эталона — фраза с пробелами внутри
+        («Первое число больше»): только перевод строки отделяет один вывод
+        программы от другого, и склеить их в общий поток токенов нельзя
+        (инвариант tsk-383).
+
+        Если же КАЖДАЯ ячейка эталона атомарна (число, слово, True/False), то
+        границе строки нечего разделять: набор и порядок значений от неё не
+        зависят. Ученик, записавший ответ по строке на вопрос вместо строки на
+        значение, отвечает то же самое.
+
+        Args:
+            expected: Ячейки эталона после нормализации.
+
+        Returns:
+            True, если разбивку строк надо считать значимой (фразовое задание).
+        """
+        return any(" " in cell for cell in expected)
 
     @staticmethod
     def _score_table(
