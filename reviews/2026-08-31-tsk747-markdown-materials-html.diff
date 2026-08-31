@@ -1,0 +1,64 @@
+warning: in the working copy of 'scripts/import_authored_course.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'scripts/tsk653_import_mini_course.py', LF will be replaced by CRLF the next time Git touches it
+diff --git a/scripts/import_authored_course.py b/scripts/import_authored_course.py
+index 2219eef..98108a6 100644
+--- a/scripts/import_authored_course.py
++++ b/scripts/import_authored_course.py
+@@ -38,6 +38,9 @@ except ImportError:
+     sys.exit("нужен python-dotenv")
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT))
++
++from app.utils.md_to_html import markdown_to_html  # noqa: E402
+ 
+ 
+ def _token(explicit: str | None) -> str:
+@@ -143,11 +146,17 @@ def main() -> None:
+         items = []
+         for i, m in enumerate(materials, start=1):
+             body = bodies.get(m["external_uid"], "")
++            # tsk-747: тело автора пишется markdown'ом, а в базу уходит HTML.
++            # SPW рендерит content.text как HTML и format не смотрит вовсе —
++            # markdown ученик видел бы сырьём: решётки, звёздочки, ограды кода.
+             items.append({
+                 "course_id": course_id, "external_uid": m["external_uid"],
+                 "title": m["title"], "type": m.get("type", "text"),
+                 "order_position": m.get("order_position", i),
+-                "content": {"text": body, "format": "markdown"},
++                "content": {
++                    "text": markdown_to_html(body, title=m["title"]),
++                    "format": "html",
++                },
+             })
+         st, res = _call(args.base, token, "POST", "/api/v1/materials/bulk-upsert", {"items": items})
+         print(f"материалы : HTTP {st} {json.dumps(res, ensure_ascii=False)[:260] if isinstance(res, dict) else res}")
+diff --git a/scripts/tsk653_import_mini_course.py b/scripts/tsk653_import_mini_course.py
+index 58b9194..4b8facb 100644
+--- a/scripts/tsk653_import_mini_course.py
++++ b/scripts/tsk653_import_mini_course.py
+@@ -33,6 +33,9 @@ import urllib.request
+ from typing import Any, Dict, Optional
+ 
+ ROOT = pathlib.Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT))
++
++from app.utils.md_to_html import markdown_to_html  # noqa: E402
+ 
+ 
+ def _token(explicit: Optional[str]) -> str:
+@@ -168,7 +171,13 @@ def main() -> None:
+             "title": m["title"],
+             "type": "text",
+             "order_position": 1,
+-            "content": {"text": m["body"], "format": "markdown"},
++            # tsk-747: автор пишет markdown, в базу уходит HTML. SPW рендерит
++            # content.text как HTML и format не смотрит — markdown ученик видел
++            # бы сырьём (подтверждено на материале 3863 этого же курса).
++            "content": {
++                "text": markdown_to_html(m["body"], title=m["title"]),
++                "format": "html",
++            },
+         }]})
+         if st not in (200, 201):
+             sys.exit(f"материал {m['external_uid']} не импортирован: {st} {res}")

@@ -38,6 +38,9 @@ except ImportError:
     sys.exit("нужен python-dotenv")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from app.utils.md_to_html import markdown_to_html  # noqa: E402
 
 
 def _token(explicit: str | None) -> str:
@@ -143,11 +146,17 @@ def main() -> None:
         items = []
         for i, m in enumerate(materials, start=1):
             body = bodies.get(m["external_uid"], "")
+            # tsk-747: тело автора пишется markdown'ом, а в базу уходит HTML.
+            # SPW рендерит content.text как HTML и format не смотрит вовсе —
+            # markdown ученик видел бы сырьём: решётки, звёздочки, ограды кода.
             items.append({
                 "course_id": course_id, "external_uid": m["external_uid"],
                 "title": m["title"], "type": m.get("type", "text"),
                 "order_position": m.get("order_position", i),
-                "content": {"text": body, "format": "markdown"},
+                "content": {
+                    "text": markdown_to_html(body, title=m["title"]),
+                    "format": "html",
+                },
             })
         st, res = _call(args.base, token, "POST", "/api/v1/materials/bulk-upsert", {"items": items})
         print(f"материалы : HTTP {st} {json.dumps(res, ensure_ascii=False)[:260] if isinstance(res, dict) else res}")

@@ -33,6 +33,9 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from app.utils.md_to_html import markdown_to_html  # noqa: E402
 
 
 def _token(explicit: Optional[str]) -> str:
@@ -168,7 +171,13 @@ def main() -> None:
             "title": m["title"],
             "type": "text",
             "order_position": 1,
-            "content": {"text": m["body"], "format": "markdown"},
+            # tsk-747: автор пишет markdown, в базу уходит HTML. SPW рендерит
+            # content.text как HTML и format не смотрит — markdown ученик видел
+            # бы сырьём (подтверждено на материале 3863 этого же курса).
+            "content": {
+                "text": markdown_to_html(m["body"], title=m["title"]),
+                "format": "html",
+            },
         }]})
         if st not in (200, 201):
             sys.exit(f"материал {m['external_uid']} не импортирован: {st} {res}")
