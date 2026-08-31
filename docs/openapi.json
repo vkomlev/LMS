@@ -50218,6 +50218,14 @@
             "type": "array",
             "title": "Student Ids",
             "description": "Активные участники слота (заполняется на уровне API)"
+          },
+          "teacher_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Teacher Ids",
+            "description": "Кто ведёт слот (заполняется на уровне API)"
           }
         },
         "type": "object",

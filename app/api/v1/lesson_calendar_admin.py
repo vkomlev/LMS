@@ -53,8 +53,13 @@ _slot_student_repo = LessonSlotStudentRepository()
 
 async def _to_slot_read(db: AsyncSession, slot) -> LessonSlotRead:
     participants = await _slot_student_repo.list_for_slot(db, slot.id)
+    # tsk-746: вместе с участниками отдаём и состав ведущих. Без него расписание
+    # показывает `teacher_id` — основного/создателя, а он со слота может быть
+    # снят: после перестановки преподавателей экран называл бы не того человека.
+    teachers = await lesson_calendar_service.list_slot_teachers(db, slot.id)
     data = LessonSlotRead.model_validate(slot).model_dump()
     data["student_ids"] = [p.student_id for p in participants]
+    data["teacher_ids"] = [t.teacher_id for t in teachers]
     return LessonSlotRead(**data)
 
 

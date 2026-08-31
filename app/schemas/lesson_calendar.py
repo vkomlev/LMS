@@ -114,6 +114,14 @@ class LessonSlotRead(BaseModel):
     student_ids: list[int] = Field(
         default_factory=list, description="Активные участники слота (заполняется на уровне API)"
     )
+    #: tsk-746: кто РЕАЛЬНО ведёт слот (`lesson_slot_teacher`). `teacher_id`
+    #: выше — основной/создатель, и после перестановки преподавателей он может
+    #: со слота быть снят: расписание, показывающее только его, называет не того
+    #: человека. Пустой список означает «состав не задан», и тогда занятия ведёт
+    #: основной — так же, как их раскатывает генератор.
+    teacher_ids: list[int] = Field(
+        default_factory=list, description="Кто ведёт слот (заполняется на уровне API)"
+    )
 
 
 class EndSlotsRequest(BaseModel):
