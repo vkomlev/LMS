@@ -256,53 +256,54 @@ def scene_ege_karta() -> tuple[int, str]:
 
     Данные вымышленные: настоящая таблица содержит фамилии учеников и ссылки на
     варианты, а этот образ увидит любой ученик курса.
+
+    Показан ФРАГМЕНТ 12x5, а не все 27 заданий: полная сетка на телефоне
+    сжимается до нечитаемых штрихов (проверено на 360 px). Двенадцати строк
+    хватает, чтобы увидеть главное — как от варианта к варианту убывает красное.
     """
-    rows = 27
-    cols = 6
-    x0, y0 = 150, 96
-    cw, ch = 92, 22
-    # Раскладка детерминированная и с ЗАМЫСЛОМ: доля красного падает от первого
-    # варианта к шестому. Карта в курсе показывает не «пёстрые квадратики», а то,
-    # ради чего она заведена, — что при работе над ошибками цвет меняется.
-    # Случайный шум здесь выглядел бы как «прогресса нет».
+    rows = 12
+    cols = 5
+    x0, y0 = 250, 168
+    cw, ch = 116, 40
+
+    # Детерминированная раскладка с ЗАМЫСЛОМ: доля красного падает от первого
+    # варианта к последнему. Случайный шум читался бы как «прогресса нет».
     def cell(r: int, c: int) -> str:
         v = (r * 7 + c * 11) % 10
-        if v < 4 - c:          # красного всё меньше, к варианту 4 не остаётся
+        if v < 4 - c:
             return "r"
-        if v < 8 - c:          # жёлтое тоже убывает, но медленнее
+        if v < 8 - c:
             return "y"
         return "g"
 
-    cells = ["".join(cell(r, c) for c in range(cols)) for r in range(rows)]
-    color = {"g": ("#16a34a", "#ffffff"), "y": ("#f59e0b", "#1f2937"), "r": ("#dc2626", "#ffffff")}
+    color = {"g": "#16a34a", "y": "#f59e0b", "r": "#dc2626"}
 
-    h = y0 + rows * ch + 96
-    b = text(24, 44, "Карта прогресса: варианты и задания", size=20, weight="700")
-    b += text(24, 70, "Строка — номер задания ЕГЭ, столбец — прорешанный вариант.",
-              size=14, fill=MUTED)
+    h = y0 + rows * ch + 150
+    b = text(24, 52, "Карта прогресса: варианты и задания", size=26, weight="700")
+    b += text(24, 86, "Строка — номер задания, столбец — прорешанный вариант.",
+              size=18, fill=MUTED)
+    b += text(24, 110, "Показаны первые двенадцать заданий.", size=16, fill=MUTED)
 
     for c in range(cols):
-        b += text(x0 + c * cw + cw / 2, y0 - 10, f"Вариант {c + 1}", size=12,
+        b += text(x0 + c * cw + cw / 2, y0 - 16, f"Вар. {c + 1}", size=17,
                   fill=MUTED, weight="600", anchor="middle")
     for r in range(rows):
         y = y0 + r * ch
-        b += text(x0 - 14, y + 15, f"Задание {r + 1}", size=12, fill=INK, anchor="end")
+        b += text(x0 - 18, y + 27, f"Задание {r + 1}", size=17, anchor="end")
         for c in range(cols):
-            fill, fg = color[cells[r][c]]
-            b += rect(x0 + c * cw + 1, y + 1, cw - 2, ch - 2, fill=fill, stroke=fill, r=3)
+            fill = color[cell(r, c)]
+            b += rect(x0 + c * cw + 2, y + 2, cw - 4, ch - 4, fill=fill, stroke=fill, r=5)
 
-    ly = y0 + rows * ch + 26
+    ly = y0 + rows * ch + 34
     for i, (code, label) in enumerate([
         ("g", "верно с первого раза"),
         ("y", "исправлено работой над ошибками"),
         ("r", "не знаю, как решить — разбираем вместе"),
     ]):
-        y = ly + i * 22
-        fill, _ = color[code]
-        b += rect(24, y, 16, 16, fill=fill, stroke=fill, r=3)
-        b += text(50, y + 13, label, size=13)
+        y = ly + i * 34
+        b += rect(24, y, 24, 24, fill=color[code], stroke=color[code], r=5)
+        b += text(60, y + 19, label, size=19)
     return h, b
-
 
 
 def scene_oge_bally() -> tuple[int, str]:

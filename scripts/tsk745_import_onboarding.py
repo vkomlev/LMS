@@ -192,9 +192,25 @@ def fill_images(plan: Dict[str, Any], urls: Dict[str, str]) -> int:
             count += 1
         return body
 
+    def refresh(body: str) -> str:
+        """Обновить адрес у УЖЕ вставленной картинки.
+
+        Адрес в CAS считается по содержимому: пересобрал образ — адрес другой, а
+        в материале остался прежний, и плейсхолдера там уже нет. Сопоставляем по
+        `alt` — он берётся из IMAGES и при пересборке образа не меняется.
+        """
+        nonlocal count
+        for image_id, url in urls.items():
+            alt, _caption = IMAGES[image_id]
+            pattern = re.compile(
+                r'<img src="[^"]*" alt="' + re.escape(alt) + r'">')
+            body, n = pattern.subn('<img src="%s" alt="%s">' % (url, alt), body)
+            count += n
+        return body
+
     for node in [plan["root"], *plan["subcourses"]]:
         for material in _node_materials(node):
-            material["body"] = patch(material["body"])
+            material["body"] = refresh(patch(material["body"]))
     return count
 
 
