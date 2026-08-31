@@ -57257,6 +57257,14 @@
             },
             "type": "array",
             "title": "Hours"
+          },
+          "open_hours": {
+            "items": {
+              "type": "string",
+              "format": "time"
+            },
+            "type": "array",
+            "title": "Open Hours"
           }
         },
         "type": "object",

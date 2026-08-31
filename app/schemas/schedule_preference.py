@@ -65,6 +65,11 @@ class ScheduleGridDay(BaseModel):
 
     weekday: int
     hours: list[time]
+    #: tsk-746: часы, где занятие действительно есть и куда можно встать.
+    #: Остальные показываются серыми: расписание составлено, и выбор часа, в
+    #: котором группы нет, оставляет человека без занятия — так 31.08 новичок
+    #: выбрал четверг 17:00 и получил одно занятие вместо двух.
+    open_hours: list[time] = Field(default_factory=list)
 
 
 class SchedulePreferenceRead(BaseModel):

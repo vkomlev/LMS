@@ -98,15 +98,45 @@ class SchedulePreferenceError(ValueError):
     """Пожелание нельзя принять: сообщение уже написано для человека."""
 
 
-def grid_as_days() -> list[dict[str, Any]]:
-    """Сетка для клиента: список дней с допустимыми часами начала."""
+async def _open_hours(db: AsyncSession, student_id: int) -> set[tuple[int, time]] | None:
+    """Часы, где ученику есть куда встать; `None` — расписания ещё нет вовсе.
+
+    Импорт локальный: `schedule_booking_service` сам зовёт этот модуль, и на
+    верхнем уровне вышел бы круг.
+    """
+    from app.services import schedule_booking_service
+
+    hours = await schedule_booking_service.open_hours(db, student_id)
+    # Слотов нет совсем — значит расписание ещё не составлено, и опрос работает
+    # по всей сетке, как и задумывался (фаза 1).
+    return hours or None
+
+
+def grid_as_days(open_hours: set[tuple[int, time]] | None = None) -> list[dict[str, Any]]:
+    """Сетка для клиента: список дней с допустимыми часами начала.
+
+    tsk-746: рядом с каждым днём едут `open_hours` — часы, где занятие
+    действительно есть. Пустой набор (сетку спрашивают до вёрстки) означает
+    «открыты все»: иначе опрос перед составлением расписания стал бы невозможен.
+    """
     return [
-        {"weekday": weekday, "hours": [time(hour=h) for h in hours]}
+        {
+            "weekday": weekday,
+            "hours": [time(hour=h) for h in hours],
+            "open_hours": [
+                time(hour=h)
+                for h in hours
+                if open_hours is None or (weekday, time(hour=h)) in open_hours
+            ],
+        }
         for weekday, hours in sorted(SCHEDULE_GRID.items())
     ]
 
 
-def validate(body: SchedulePreferenceWrite) -> list[SchedulePreferenceHour]:
+def validate(
+    body: SchedulePreferenceWrite,
+    open_hours: set[tuple[int, time]] | None = None,
+) -> list[SchedulePreferenceHour]:
     """Проверить пожелание целиком и вернуть нормализованный список часов.
 
     Три правила, и все три — про то, можно ли по этому пожеланию собрать
@@ -119,6 +149,10 @@ def validate(body: SchedulePreferenceWrite) -> list[SchedulePreferenceHour]:
        противоречие, а не уточнение.
     3. Желательных часов не меньше, чем занятий в неделю. Требование оператора:
        иначе вёрстка упирается в человека, которому некуда встать.
+    4. tsk-746: час выбран из тех, где занятие ЕСТЬ (`open_hours`). Пока
+       расписание не составлено, набор не передаётся и правило не работает —
+       именно так собирался осенний опрос. После вёрстки оно обязательно:
+       выбранный «пустой» час не даёт человеку занятия вовсе.
     """
     seen: dict[tuple[int, time], str] = {}
     for hour in body.hours:
@@ -129,6 +163,12 @@ def validate(body: SchedulePreferenceWrite) -> list[SchedulePreferenceHour]:
                 "четверг с 12:00 до 19:00 и в субботу с 09:00 до 14:00 по Москве."
             )
         key = (hour.weekday, hour.start_time)
+        if open_hours is not None and key not in open_hours:
+            raise SchedulePreferenceError(
+                "В это время занятий нет — выберите час, в котором уже идёт "
+                "группа. Если ничего не подходит, нажмите «Не нашёл подходящее "
+                "время»: методист подберёт вариант."
+            )
         if key in seen:
             raise SchedulePreferenceError(
                 "Один и тот же час выбран дважды — он может быть либо желательным, "
@@ -249,7 +289,7 @@ async def get_preference(db: AsyncSession, student_id: int) -> dict[str, Any]:
         "comment": head[2] if head is not None else None,
         "updated_at": head[3] if head is not None else None,
         "is_audience": await is_audience(db, student_id),
-        "grid": grid_as_days(),
+        "grid": grid_as_days(await _open_hours(db, student_id)),
         # tsk-679: когда заканчивается нынешнее расписание. Кабинет ученика по
         # этой дате объясняет пустой календарь вместо того, чтобы молчать.
         "schedule_ends_on": await schedule_ends_on(db, student_id),
@@ -269,7 +309,10 @@ async def save_preference(
     их единицы, а частичная синхронизация — источник расхождений, которые
     видно только на вёрстке, то есть слишком поздно.
     """
-    hours = validate(body)
+    # tsk-746: принимаем только часы, где занятие есть. Проверка на сервере, а
+    # не только на экране: пожелание уходит обычным PUT, и «серая» кнопка на
+    # клиенте от повторной отправки не спасает.
+    hours = validate(body, await _open_hours(db, student_id))
 
     pref_id = (
         await db.execute(

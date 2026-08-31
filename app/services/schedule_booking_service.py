@@ -101,6 +101,32 @@ def _hour_label(weekday: int, start_time: time) -> str:
     return f"{day} {start_time:%H:%M}"
 
 
+async def open_hours(db: AsyncSession, student_id: int) -> set[tuple[int, time]]:
+    """Часы, в которых ученику вообще есть куда встать (tsk-746).
+
+    Расписание уже составлено, и опрос «когда вам удобно» перестал быть опросом:
+    выбирая час, где слота нет, человек не получает занятия вовсе. Так и вышло
+    31.08 у новичка — он отметил четверг 17:00, которого в сетке нет, и остался
+    с одним занятием вместо двух.
+
+    Свои часы included всегда: человек уже занимается в этом слоте, и запретить
+    ему назвать своё же время было бы странно, даже если группа полна.
+    """
+    hours: set[tuple[int, time]] = set()
+    today = _today_moscow()
+    for row in await _load_slots(db, student_id):
+        key = (row["weekday"], row["start_time"])
+        if row["is_mine"]:
+            hours.add(key)
+            continue
+        if not slot_is_alive(row["weekday"], row["active_until"], today):
+            continue
+        if not in_grid(key) or not is_bookable_count(row["student_count"]):
+            continue
+        hours.add(key)
+    return hours
+
+
 async def _load_slots(db: AsyncSession, student_id: int) -> list[dict[str, Any]]:
     """Все активные слоты с числом участников и пометкой «ученик уже здесь»."""
     rows = (
