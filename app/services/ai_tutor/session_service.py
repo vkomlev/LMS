@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -216,6 +217,58 @@ async def add_message(
         VALUES (:sid, :role, :content, :model, :truncated)
     """), {"sid": session_id, "role": role, "content": content,
            "model": model, "truncated": truncated})
+
+
+async def note_turn(
+    db: AsyncSession,
+    session_id: int,
+    *,
+    model: str | None,
+    guard_hit: dict | None = None,
+) -> None:
+    """Записать в сессию, КТО отвечал и срабатывал ли страж (tsk-748).
+
+    До 31.08 `meta` был пуст у всех 56 сессий, и разбор инцидента упирался в
+    вопрос без ответа: цепочка наставника перебирает четыре модели, последняя из
+    них мини-модель, а какая ответила — нигде. Модель по каждому сообщению
+    пишется в `ai_tutor_message.model` и раньше, но чтобы ответить «кто вёл ЭТОТ
+    разговор», приходилось собирать её по репликам; сводка на сессии отвечает
+    сразу и переживает чистку сообщений.
+
+    Слияние делается в одном запросе поверх текущего значения: параллельная
+    вкладка ученика не должна затирать чужой ход. `jsonb_typeof` здесь не
+    перестраховка — JSON-null в jsonb это не SQL NULL, и `COALESCE` его
+    пропускает, после чего `||` роняет запись.
+    """
+    if not model:
+        return
+    await db.execute(text("""
+        WITH cur AS (
+            SELECT id,
+                   CASE WHEN jsonb_typeof(meta) = 'object' THEN meta ELSE '{}'::jsonb END AS base
+            FROM ai_tutor_session WHERE id = :sid
+        )
+        UPDATE ai_tutor_session s
+        SET meta = cur.base
+            || jsonb_build_object(
+                 'last_model', CAST(:model AS text),
+                 'models', COALESCE(cur.base -> 'models', '{}'::jsonb)
+                     || jsonb_build_object(
+                          CAST(:model AS text),
+                          COALESCE(CAST(cur.base -> 'models' ->> :model AS int), 0) + 1
+                        )
+               )
+            || CASE WHEN CAST(:hit AS jsonb) IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object(
+                        'guard_hits',
+                        COALESCE(cur.base -> 'guard_hits', '[]'::jsonb)
+                            || jsonb_build_array(CAST(:hit AS jsonb))
+                    ) END
+        FROM cur WHERE s.id = cur.id
+    """), {
+        "sid": session_id, "model": model,
+        "hit": json.dumps(guard_hit, ensure_ascii=False) if guard_hit else None,
+    })
 
 
 async def history(db: AsyncSession, session_id: int) -> list[dict]:

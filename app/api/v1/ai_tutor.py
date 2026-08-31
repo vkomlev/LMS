@@ -30,6 +30,7 @@ from app.auth.current_user import CurrentUser
 from app.core.config import Settings
 from app.services import entitlements_service
 from app.services.ai_tutor import session_service
+from app.services.ai_tutor.answer_guard import TutorStreamGuard
 from app.services.llm import Budget, LLMError, stream
 from app.utils.exceptions import DomainError
 
@@ -267,6 +268,10 @@ async def ask(
         collected: list[str] = []
         model_used = ""
         truncated = False
+        # tsk-748: между моделью и учеником теперь стоит страж. Инструкция
+        # запрещала готовое решение и раньше — 31.08 модель просто не стала её
+        # соблюдать, и запретить это текстом нельзя в принципе.
+        guard = TutorStreamGuard(mode=session.mode, stem=session.task_stem_snapshot)
         try:
             async for chunk in stream(
                 messages, purpose="tutor", student_id=owner,
@@ -276,8 +281,18 @@ async def ask(
                     model_used = chunk.model
                     truncated = chunk.truncated
                     break
-                collected.append(chunk.delta)
-                yield _sse("delta", {"text": chunk.delta})
+                if guard.blocked:
+                    # Поток НЕ обрываем: дочитываем молча. Обрыв генератора
+                    # унёс бы запись учёта расхода (она делается после конца
+                    # потока) — то есть слив стоил бы денег и остался невидим в
+                    # расходе. Ученику при этом уже ничего не уходит.
+                    continue
+                # Отказ ученику страж дописывает сам, внутри `feed`: он знает,
+                # на каком месте оборвал, и лишнего куска после него не будет.
+                safe = guard.feed(chunk.delta)
+                if safe:
+                    collected.append(safe)
+                    yield _sse("delta", {"text": safe})
         except LLMError as exc:
             # Деградация: наставник молчит, но ученик не в тупике.
             logger.warning(
@@ -293,16 +308,41 @@ async def ask(
             yield _sse("done", {"offer_teacher": True, "degraded": True})
             return
 
+        tail = guard.finish()
+        if tail:
+            collected.append(tail)
+            yield _sse("delta", {"text": tail})
+
         text_out = "".join(collected).strip()
         if text_out:
+            # В архив разговора идёт РОВНО то, что видел ученик: карточка
+            # преподавателя не должна показывать код, которого на экране не было.
+            # Что вырезано и почему — в журнале приложения и в `meta` сессии.
             await session_service.add_message(
                 db, session.id, "tutor", text_out, model=model_used, truncated=truncated
             )
-            await db.commit()
+        await session_service.note_turn(
+            db, session.id, model=model_used,
+            guard_hit=(
+                {
+                    "reason": guard.hit.reason,
+                    "cut_chars": guard.hit.cut_chars,
+                    "model": model_used,
+                    "mode": session.mode,
+                    "turn": session.turns + 1,
+                }
+                if guard.hit else None
+            ),
+        )
+        await db.commit()
         yield _sse("done", {
             "truncated": truncated,
             "offer_teacher": session.soft_limit_reached,
             "turns": session.turns + 1,
+            # Клиенту полезно знать, что ответ обрезан не сбоем, а правилом:
+            # «наставник замолчал» и «наставник отказался решать за тебя» —
+            # разные вещи, и вторую он может показать спокойным тоном.
+            "guarded": guard.blocked,
         })
 
     return StreamingResponse(_generate(), media_type="text/event-stream", headers={

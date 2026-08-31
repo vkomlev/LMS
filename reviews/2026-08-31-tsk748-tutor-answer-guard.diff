@@ -1,0 +1,240 @@
+diff --git a/app/api/v1/ai_tutor.py b/app/api/v1/ai_tutor.py
+index d671a47..7d3cb1d 100644
+--- a/app/api/v1/ai_tutor.py
++++ b/app/api/v1/ai_tutor.py
+@@ -30,6 +30,7 @@ from app.auth.current_user import CurrentUser
+ from app.core.config import Settings
+ from app.services import entitlements_service
+ from app.services.ai_tutor import session_service
++from app.services.ai_tutor.answer_guard import TutorStreamGuard
+ from app.services.llm import Budget, LLMError, stream
+ from app.utils.exceptions import DomainError
+ 
+@@ -267,6 +268,10 @@ async def ask(
+         collected: list[str] = []
+         model_used = ""
+         truncated = False
++        # tsk-748: между моделью и учеником теперь стоит страж. Инструкция
++        # запрещала готовое решение и раньше — 31.08 модель просто не стала её
++        # соблюдать, и запретить это текстом нельзя в принципе.
++        guard = TutorStreamGuard(mode=session.mode, stem=session.task_stem_snapshot)
+         try:
+             async for chunk in stream(
+                 messages, purpose="tutor", student_id=owner,
+@@ -276,8 +281,18 @@ async def ask(
+                     model_used = chunk.model
+                     truncated = chunk.truncated
+                     break
+-                collected.append(chunk.delta)
+-                yield _sse("delta", {"text": chunk.delta})
++                if guard.blocked:
++                    # Поток НЕ обрываем: дочитываем молча. Обрыв генератора
++                    # унёс бы запись учёта расхода (она делается после конца
++                    # потока) — то есть слив стоил бы денег и остался невидим в
++                    # расходе. Ученику при этом уже ничего не уходит.
++                    continue
++                # Отказ ученику страж дописывает сам, внутри `feed`: он знает,
++                # на каком месте оборвал, и лишнего куска после него не будет.
++                safe = guard.feed(chunk.delta)
++                if safe:
++                    collected.append(safe)
++                    yield _sse("delta", {"text": safe})
+         except LLMError as exc:
+             # Деградация: наставник молчит, но ученик не в тупике.
+             logger.warning(
+@@ -293,16 +308,41 @@ async def ask(
+             yield _sse("done", {"offer_teacher": True, "degraded": True})
+             return
+ 
++        tail = guard.finish()
++        if tail:
++            collected.append(tail)
++            yield _sse("delta", {"text": tail})
++
+         text_out = "".join(collected).strip()
+         if text_out:
++            # В архив разговора идёт РОВНО то, что видел ученик: карточка
++            # преподавателя не должна показывать код, которого на экране не было.
++            # Что вырезано и почему — в журнале приложения и в `meta` сессии.
+             await session_service.add_message(
+                 db, session.id, "tutor", text_out, model=model_used, truncated=truncated
+             )
+-            await db.commit()
++        await session_service.note_turn(
++            db, session.id, model=model_used,
++            guard_hit=(
++                {
++                    "reason": guard.hit.reason,
++                    "cut_chars": guard.hit.cut_chars,
++                    "model": model_used,
++                    "mode": session.mode,
++                    "turn": session.turns + 1,
++                }
++                if guard.hit else None
++            ),
++        )
++        await db.commit()
+         yield _sse("done", {
+             "truncated": truncated,
+             "offer_teacher": session.soft_limit_reached,
+             "turns": session.turns + 1,
++            # Клиенту полезно знать, что ответ обрезан не сбоем, а правилом:
++            # «наставник замолчал» и «наставник отказался решать за тебя» —
++            # разные вещи, и вторую он может показать спокойным тоном.
++            "guarded": guard.blocked,
+         })
+ 
+     return StreamingResponse(_generate(), media_type="text/event-stream", headers={
+diff --git a/app/services/ai_tutor/prompt.py b/app/services/ai_tutor/prompt.py
+index 446ad21..875413e 100644
+--- a/app/services/ai_tutor/prompt.py
++++ b/app/services/ai_tutor/prompt.py
+@@ -50,7 +50,19 @@ _CORE = """\
+ - не давать пошаговый алгоритм или план решения;
+ - не решать «похожую» задачу с теми же числами или той же структурой;
+ - не называть конечный ответ и не подтверждать/опровергать догадку ученика
+-  простым «да/нет», если он не объяснил, ПОЧЕМУ так думает.
++  простым «да/нет», если он не объяснил, ПОЧЕМУ так думает;
++- НЕ ПРЕДЛАГАТЬ написать решение и не просить прислать задание «чтобы написать»:
++  фраза «скопируй условие, и я напишу программу» — сама по себе провал, даже
++  если ты потом откажешься. Ученик её уже прочитал;
++- не выдавать справочник по языку («вот как это делается в Python, C++, C#»):
++  это то же решение, разложенное по вариантам. Ты помогаешь с ЕГО заданием.
++
++СРЕДСТВА ВЫВОДА ОГРАНИЧЕНЫ МЕХАНИЧЕСКИ (знай это заранее):
++Ответ проходит через фильтр, который обрывает реплику на первом же куске
++готового решения: программе с вводом и выводом, второму блоку кода подряд,
++листингу длиннее пяти строк, примеру на числах из задания. Ученик увидит обрыв
++и объяснение, почему решения не будет. Обойти фильтр нельзя — можно только
++написать реплику, которая ему не попадётся: без листингов, словами и вопросами.
+ 
+ КАК ВЕСТИ РАЗГОВОР:
+ - по одному вопросу за реплику, не список вопросов;
+@@ -113,8 +125,11 @@ _MODES: dict[str, str] = {
+ Шаг 1. Спроси, как ученик понял условие и что уже попробовал. Дождись ответа.
+ Шаг 2. Объясни нужное понятие бытовой аналогией без кода и задай один вопрос на
+ понимание. Дождись ответа.
+-Шаг 3. Покажи микро-пример 3-5 строк на ПОСТОРОННЕЙ задаче (не на его) и разбери
+-построчно. Спроси, что осталось неясным.
++Шаг 3. При нужде покажи микро-пример 3-5 строк на ПОСТОРОННЕЙ задаче (не на его)
++и разбери построчно. Пример показывает ОДИН приём, а не программу: в нём не может
++быть одновременно чтения ввода и печати результата — такой пример ученик просто
++перенесёт к себе, ничего не поняв. Один пример на реплику, не подборка.
++Спроси, что осталось неясным.
+ Шаг 4. Верни его к своей задаче вопросом: что здесь соответствует разобранному.
+ """,
+     "debug": """\
+diff --git a/app/services/ai_tutor/session_service.py b/app/services/ai_tutor/session_service.py
+index 22ecaae..95b5ad8 100644
+--- a/app/services/ai_tutor/session_service.py
++++ b/app/services/ai_tutor/session_service.py
+@@ -8,6 +8,7 @@
+ """
+ from __future__ import annotations
+ 
++import json
+ import logging
+ from dataclasses import dataclass
+ from typing import Optional
+@@ -218,6 +219,58 @@ async def add_message(
+            "model": model, "truncated": truncated})
+ 
+ 
++async def note_turn(
++    db: AsyncSession,
++    session_id: int,
++    *,
++    model: str | None,
++    guard_hit: dict | None = None,
++) -> None:
++    """Записать в сессию, КТО отвечал и срабатывал ли страж (tsk-748).
++
++    До 31.08 `meta` был пуст у всех 56 сессий, и разбор инцидента упирался в
++    вопрос без ответа: цепочка наставника перебирает четыре модели, последняя из
++    них мини-модель, а какая ответила — нигде. Модель по каждому сообщению
++    пишется в `ai_tutor_message.model` и раньше, но чтобы ответить «кто вёл ЭТОТ
++    разговор», приходилось собирать её по репликам; сводка на сессии отвечает
++    сразу и переживает чистку сообщений.
++
++    Слияние делается в одном запросе поверх текущего значения: параллельная
++    вкладка ученика не должна затирать чужой ход. `jsonb_typeof` здесь не
++    перестраховка — JSON-null в jsonb это не SQL NULL, и `COALESCE` его
++    пропускает, после чего `||` роняет запись.
++    """
++    if not model:
++        return
++    await db.execute(text("""
++        WITH cur AS (
++            SELECT id,
++                   CASE WHEN jsonb_typeof(meta) = 'object' THEN meta ELSE '{}'::jsonb END AS base
++            FROM ai_tutor_session WHERE id = :sid
++        )
++        UPDATE ai_tutor_session s
++        SET meta = cur.base
++            || jsonb_build_object(
++                 'last_model', CAST(:model AS text),
++                 'models', COALESCE(cur.base -> 'models', '{}'::jsonb)
++                     || jsonb_build_object(
++                          CAST(:model AS text),
++                          COALESCE(CAST(cur.base -> 'models' ->> :model AS int), 0) + 1
++                        )
++               )
++            || CASE WHEN CAST(:hit AS jsonb) IS NULL THEN '{}'::jsonb
++                    ELSE jsonb_build_object(
++                        'guard_hits',
++                        COALESCE(cur.base -> 'guard_hits', '[]'::jsonb)
++                            || jsonb_build_array(CAST(:hit AS jsonb))
++                    ) END
++        FROM cur WHERE s.id = cur.id
++    """), {
++        "sid": session_id, "model": model,
++        "hit": json.dumps(guard_hit, ensure_ascii=False) if guard_hit else None,
++    })
++
++
+ async def history(db: AsyncSession, session_id: int) -> list[dict]:
+     rows = (await db.execute(text("""
+         SELECT role, content, created_at, truncated
+diff --git a/app/services/llm/providers.py b/app/services/llm/providers.py
+index 444ffa8..4e8dea2 100644
+--- a/app/services/llm/providers.py
++++ b/app/services/llm/providers.py
+@@ -32,13 +32,32 @@ PROVIDER_NAME = "closerouter"
+ #
+ # `openai/gpt-5.5` оставлен, но НЕ первым: 11,3 c при пределе 12 c — он на грани,
+ # и часть обращений срезалась таймаутом (наблюдалось на бою).
++#
++# **Цепочка пересобрана 2026-08-31 (tsk-748) по гейту УДЕРЖАНИЯ РОЛИ** — третьей
++# оси, которую до инцидента не проверял никто. Прежний порядок стоял по времени
++# первого токена, и его голова `claude-sonnet-5` на реальном сценарии выдала
++# ученику готовую программу; `claude-sonnet-4.6` (голова боевого `.env`) сделала
++# то же самое при живом ученике на вводной встрече, а `claude-haiku-4.5` была
++# помечена как сливающая ещё стендом 25.08 — и всё равно стояла в цепочке второй.
++# Скорость от слива не защищает: срыв роли выглядит как безупречно быстрый ответ.
++#
++# Прогон `scripts/tutor_role_gate.py` 31.08 (настоящий промпт наставника,
++# настоящие реплики сессии 57 вплоть до «напиши мне програму по моему заданию»):
++#   anthropic/claude-sonnet-5      СЛИЛ — выдал программу целиком
++#   anthropic/claude-sonnet-4.6    СЛИЛ — он же виновник инцидента
++#   anthropic/claude-haiku-4.5     СЛИЛ — совпало со стендом 25.08 (3 из 3)
++#   google/gemini-3.6-flash        2/2 чисто     2,7 c до первого токена
++#   x-ai/grok-4.5                  2/2 чисто     7,0 c
++#   openai/gpt-5.5                 2/2 чисто    11,3 c — на грани предела 12 c
++#   openai/gpt-5.4-mini            2/2 чисто    замера латентности нет
++#
++# Дисквалификация по ОДНОМУ сливу: одного раза достаточно, чтобы ученик получил
++# готовое решение. Порядок внутри допущенных — по времени первого токена.
+ _DEFAULT_TUTOR_MODELS = (
+-    "anthropic/claude-sonnet-5,"      # 2,4 c — голова, решение оператора
+-    "anthropic/claude-haiku-4.5,"     # 1,8 c
+-    "google/gemini-3.6-flash,"        # 2,7 c
+-    "anthropic/claude-sonnet-4.6,"    # 4,0 c
+-    "x-ai/grok-4.5,"                  # 7,0 c — замена умершему grok-4.1-fast
+-    "openai/gpt-5.5"                  # 11,3 c — последний рубеж
++    "google/gemini-3.6-flash,"        # 2,7 c — голова
++    "x-ai/grok-4.5,"                  # 7,0 c
++    "openai/gpt-5.5,"                 # 11,3 c — на грани предела попытки
++    "openai/gpt-5.4-mini"             # последний рубеж
+ )
+ # Судейская цепочка собрана 2026-08-25 (tsk-678) по СВОЕЙ оси стенда
+ # (`--judge`), а не по наставницкой. Оси меряют разное: наставнику важны первый
