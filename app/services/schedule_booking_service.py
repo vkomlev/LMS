@@ -38,7 +38,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.schedule_booking import (
-    HARD_MAX,
+    BOOKING_MAX,
     BookableSlot,
     ScheduleSlotRequestRead,
     availability_for,
@@ -168,7 +168,9 @@ def _to_slot(row: dict[str, Any], match: str) -> BookableSlot:
         teacher_id=row["teacher_id"],
         teacher_name=row["teacher_name"],
         student_count=count,
-        seats_left=max(0, HARD_MAX - count),
+        # От потолка ЗАПИСИ (tsk-746): это «сколько мест ещё открыто ученику»,
+        # а не «сколько человек методист может свести руками».
+        seats_left=max(0, BOOKING_MAX - count),
         availability=availability_for(count),
         match=match,  # type: ignore[arg-type]
         active_until=row["active_until"],
@@ -206,7 +208,7 @@ async def get_bookable(db: AsyncSession, student_id: int) -> dict[str, Any]:
         if not alive or not in_grid((row["weekday"], row["start_time"])):
             continue
         if not is_bookable_count(row["student_count"]):
-            # Слот набрал потолок — не показываем вовсе (запрет оператора).
+            # В слоте больше восьми — не показываем вовсе (tsk-746, запрет оператора).
             continue
         options.append(_to_slot(row, match))
 
@@ -214,7 +216,7 @@ async def get_bookable(db: AsyncSession, student_id: int) -> dict[str, Any]:
     options.sort(
         key=lambda s: (
             match_order[s.match],
-            0 if s.availability == "free" else 1,
+            {"free": 0, "partial": 1, "crowded": 2}[s.availability],
             s.weekday,
             s.start_time,
         )

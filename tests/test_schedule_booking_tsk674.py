@@ -133,23 +133,57 @@ async def test_full_slot_is_not_offered_at_all(db):
 
 
 @pytest.mark.asyncio
-async def test_free_and_partial_are_distinguished(db):
-    """Меньше цели — свободный; цель набрана, но места есть — частично свободный."""
+async def test_three_steps_of_fullness(db):
+    """Три ступени наполнения (tsk-746): мест много / обычно / людей уже много.
+
+    Двух ступеней не хватало: слот на двоих и слот на семерых одинаково
+    назывались «есть места», и ученик выбирал вслепую между полупустой группой
+    и почти набранной.
+    """
     teacher_id = await _create_user(db, role="teacher")
     newcomer = await _create_user(db, role="student")
     await _fill_preference(db, newcomer, hours=[(1, 12, "preferred")])
 
-    few = [await _create_user(db, role="student") for _ in range(2)]
-    many = [await _create_user(db, role="student") for _ in range(7)]
-    free_id = await _create_slot(db, teacher_id, weekday=1, hour=12, students=few)
-    partial_id = await _create_slot(db, teacher_id, weekday=1, hour=13, students=many)
+    roomy = [await _create_user(db, role="student") for _ in range(2)]
+    usual = [await _create_user(db, role="student") for _ in range(5)]
+    crowded = [await _create_user(db, role="student") for _ in range(7)]
+    free_id = await _create_slot(db, teacher_id, weekday=1, hour=12, students=roomy)
+    partial_id = await _create_slot(db, teacher_id, weekday=1, hour=13, students=usual)
+    crowded_id = await _create_slot(db, teacher_id, weekday=1, hour=14, students=crowded)
 
     data = await schedule_booking_service.get_bookable(db, newcomer)
     by_id = {s.slot_id: s for s in data["slots"]}
 
     assert by_id[free_id].availability == "free"
     assert by_id[partial_id].availability == "partial"
-    assert by_id[partial_id].seats_left == 3
+    assert by_id[crowded_id].availability == "crowded"
+    # Мест осталось до потолка ЗАПИСИ (восемь), а не до потолка вёрстки.
+    assert by_id[crowded_id].seats_left == 1
+
+
+@pytest.mark.asyncio
+async def test_slot_over_booking_cap_is_hidden(db):
+    """Слот, где уже больше восьми, ученику не предлагается вовсе.
+
+    Потолок записи ниже потолка вёрстки: свести десятерых методист может сам,
+    а расти дальше без его ведома группа не должна.
+    """
+    teacher_id = await _create_user(db, role="teacher")
+    newcomer = await _create_user(db, role="student")
+    await _fill_preference(
+        db, newcomer, hours=[(1, 12, "preferred"), (1, 13, "preferred")]
+    )
+
+    eight = [await _create_user(db, role="student") for _ in range(8)]
+    nine = [await _create_user(db, role="student") for _ in range(9)]
+    at_cap = await _create_slot(db, teacher_id, weekday=1, hour=12, students=eight)
+    over_cap = await _create_slot(db, teacher_id, weekday=1, hour=13, students=nine)
+
+    data = await schedule_booking_service.get_bookable(db, newcomer)
+    shown = {s.slot_id for s in data["slots"]}
+
+    assert at_cap in shown
+    assert over_cap not in shown
 
 
 @pytest.mark.asyncio

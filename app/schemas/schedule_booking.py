@@ -16,9 +16,10 @@
    уводит заявку методисту вместе с пожеланиями ученика: либо добавляется
    слот, либо с человеком договариваются на существующий.
 
-Пороги наполнения (5-6 / 10) те же, что у вёрстки, — берутся из
-`schedule_plan`, а не объявляются заново: разъехавшись, экран ученика и экран
-методиста начали бы спорить о том, свободен ли слот.
+Пороги ЗАПИСИ (tsk-746) отдельные и строже, чем у вёрстки: методист вправе
+свести в слот до десяти человек руками, но сам ученик записывается только туда,
+где сейчас не больше восьми. Разница намеренная — вёрстка это решение человека
+о всей школе, а запись идёт без спроса.
 """
 from __future__ import annotations
 
@@ -27,14 +28,24 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas.schedule_plan import HARD_MAX, TARGET_MIN
+from app.schemas.schedule_plan import HARD_MAX, TARGET_MIN  # noqa: F401  (потолок вёрстки)
 from app.schemas.schedule_preference import SchedulePreferenceHour
 
+#: Потолок записи: в слот, где уже больше восьми, ученик не записывается —
+#: решение оператора 31.08. Методисту потолок прежний (`HARD_MAX`), он верстает
+#: осознанно и видит всю школу.
+BOOKING_MAX = 8
+#: Меньше этого — «мест много», зелёный сигнал.
+ROOMY_BELOW = 4
+#: От этого и выше — «людей уже много», предупредительный сигнал.
+CROWDED_FROM = 6
+
 #: Насколько слот свободен глазами ученика:
-#: `free` — людей меньше цели (5-6), место точно есть;
-#: `partial` — цель набрана, но до потолка ещё есть места.
-#: Заполненные до потолка слоты в ответ не попадают вовсе.
-SlotAvailability = Literal["free", "partial"]
+#: `free` — меньше четырёх, мест много;
+#: `partial` — 4-5, обычное наполнение;
+#: `crowded` — 6-8, людей уже много, но записаться ещё можно.
+#: Слоты, где больше восьми, в ответ не попадают вовсе.
+SlotAvailability = Literal["free", "partial", "crowded"]
 
 #: Совпал ли слот с тем, что ученик просил в опросе.
 SlotMatch = Literal["preferred", "possible", "none"]
@@ -44,13 +55,25 @@ SlotRequestStatus = Literal["open", "resolved"]
 
 
 def availability_for(count: int) -> SlotAvailability:
-    """Свободен слот или уже частично занят — по числу учеников в нём."""
-    return "free" if count < TARGET_MIN else "partial"
+    """Насколько слот полон глазами ученика (tsk-746).
+
+    Три ступени вместо двух: пустой слот и слот на грани потолка человеку надо
+    показывать по-разному, а «есть места» говорило и о том, и о другом.
+    """
+    if count < ROOMY_BELOW:
+        return "free"
+    if count < CROWDED_FROM:
+        return "partial"
+    return "crowded"
 
 
 def is_bookable_count(count: int) -> bool:
-    """Можно ли вообще предлагать слот с таким числом учеников."""
-    return count < HARD_MAX
+    """Можно ли вообще предлагать слот с таким числом учеников.
+
+    Порог записи — восемь, а не потолок вёрстки: расти дальше группа может
+    только решением методиста.
+    """
+    return count <= BOOKING_MAX
 
 
 class BookableSlot(BaseModel):
@@ -159,5 +182,8 @@ __all__ = [
     "SlotRequestStatus",
     "SlotRequestWrite",
     "availability_for",
+    "BOOKING_MAX",
+    "ROOMY_BELOW",
+    "CROWDED_FROM",
     "is_bookable_count",
 ]

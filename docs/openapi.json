@@ -42859,7 +42859,8 @@
             "type": "string",
             "enum": [
               "free",
-              "partial"
+              "partial",
+              "crowded"
             ],
             "title": "Availability"
           },
