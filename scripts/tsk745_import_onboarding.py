@@ -173,9 +173,9 @@ def fill_images(plan: Dict[str, Any], urls: Dict[str, str]) -> int:
             count += 1
         return body
 
-    plan["root"]["material"]["body"] = patch(plan["root"]["material"]["body"])
-    for sub in plan["subcourses"]:
-        sub["material"]["body"] = patch(sub["material"]["body"])
+    for node in [plan["root"], *plan["subcourses"]]:
+        for material in _node_materials(node):
+            material["body"] = patch(material["body"])
     return count
 
 
@@ -207,19 +207,34 @@ def _create_course(base: str, token: str, node: Dict[str, Any], parent_id: Optio
     return int(res["id"])
 
 
-def _push_node(base: str, token: str, course_id: int, material: Dict[str, Any],
+def _node_materials(node: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Материалы узла: `material` (один) и/или `materials` (список, по порядку).
+
+    Оба ключа, а не только список: у разделов материал один, и заставлять их
+    носить список из одного элемента значило бы переписать весь план ради
+    единственного узла, которому понадобился второй материал.
+    """
+    out: List[Dict[str, Any]] = []
+    if node.get("material"):
+        out.append(node["material"])
+    out.extend(node.get("materials") or [])
+    return out
+
+
+def _push_node(base: str, token: str, course_id: int, materials: List[Dict[str, Any]],
                tasks: List[Dict[str, Any]], diff_id: Dict[str, int]) -> None:
-    st, res = _call(base, token, "POST", "/api/v1/materials/bulk-upsert", {"items": [{
-        "course_id": course_id,
-        "external_uid": material["external_uid"],
-        "title": material["title"],
-        "type": "text",
-        "order_position": 1,
-        "content": {"text": material["body"], "format": "html"},
-    }]})
-    if st not in (200, 201):
-        sys.exit(f"материал {material['external_uid']} не импортирован: {st} {res}")
-    print(f"    материал : {material['external_uid']} — HTTP {st}")
+    for position, material in enumerate(materials, start=1):
+        st, res = _call(base, token, "POST", "/api/v1/materials/bulk-upsert", {"items": [{
+            "course_id": course_id,
+            "external_uid": material["external_uid"],
+            "title": material["title"],
+            "type": "text",
+            "order_position": position,
+            "content": {"text": material["body"], "format": "html"},
+        }]})
+        if st not in (200, 201):
+            sys.exit(f"материал {material['external_uid']} не импортирован: {st} {res}")
+        print(f"    материал : {material['external_uid']} — HTTP {st}")
 
     if not tasks:
         return
@@ -318,7 +333,8 @@ def main() -> None:
     total_tasks = sum(len(s["tasks"]) for s in subs)
     print(f"цель      : {args.base}")
     print(f"корень    : {root['course_uid']} — {root['title']}")
-    print(f"разделов  : {len(subs)}, материалов {len(subs) + 1}, заданий {total_tasks}")
+    total_materials = sum(len(_node_materials(n)) for n in [root, *subs])
+    print(f"разделов  : {len(subs)}, материалов {total_materials}, заданий {total_tasks}")
 
     # Инвариант курса: только авто-проверяемые типы. Развёрнутый текст в
     # онбординге означал бы, что человека на входе просят написать сочинение,
@@ -387,7 +403,7 @@ def main() -> None:
             root_id = _create_course(args.base, token, root, parent_id=None)
             print(f"корень создан: id={root_id}")
         print(f"  корень id={root_id}")
-        _push_node(args.base, token, root_id, root["material"], [], diff_id)
+        _push_node(args.base, token, root_id, _node_materials(root), [], diff_id)
 
         for s in subs:
             sub_id = _find_course(args.base, token, s["course_uid"])
@@ -396,7 +412,7 @@ def main() -> None:
                 print(f"  раздел создан: {s['course_uid']} id={sub_id}")
             else:
                 print(f"  раздел есть  : {s['course_uid']} id={sub_id}")
-            _push_node(args.base, token, sub_id, s["material"], s["tasks"], diff_id)
+            _push_node(args.base, token, sub_id, _node_materials(s), s["tasks"], diff_id)
             st, chk = _call(args.base, token, "GET", f"/api/v1/tasks/by-course/{sub_id}")
             got = len(chk) if isinstance(chk, list) else (
                 len(chk.get("items", [])) if isinstance(chk, dict) else "?")
