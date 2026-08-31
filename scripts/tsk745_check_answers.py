@@ -25,7 +25,9 @@ sys.path.insert(0, "/opt/lms")
 
 from app.services.checking_service import CheckingService  # noqa: E402
 
-COURSE_ROOT_UID = "lms:onboarding:platforma"
+#: Корень проверяемого курса. Аргументом, а не константой: курсов-онбордингов
+#: уже два, и проверять надо оба одним и тем же кодом.
+DEFAULT_ROOT_UID = "lms:onboarding:platforma"
 
 #: Что реально напечатает ученик. Не «правильный ответ из плана», а варианты,
 #: которые пишет живой человек: другой падеж, «е» вместо «ё», заглавная буква,
@@ -37,6 +39,13 @@ PROBES = {
     "zanyatiya-01-sa": ["занятия", "Занятия", "мои занятия", "занятие"],
     "doma-02-sa": ["прогресс", "Прогресс", "мой прогресс", "прогресса"],
     "dengi-01-sa": ["оплата", "Оплата", "оплату", "оплаты"],
+    # курс ЕГЭ: ответы числовые, ученик пишет и цифрой, и словом
+    "ekzamen-01-sa": ["27", " 27 ", "двадцать семь"],
+    "ekzamen-03-sa": ["29", "двадцать девять"],
+    "bally-01-sa": ["6", "шесть"],
+    "bally-02-sa": ["70", "семьдесят"],
+    "instrumenty-02-sa": ["18", "восемнадцать"],
+    "etapy-02-sa": ["4", "четыре"],
 }
 
 #: Ответы, которые приниматься НЕ должны: иначе задание не различает знание.
@@ -47,10 +56,18 @@ NEGATIVE = {
     "zanyatiya-01-sa": ["расписание", "курсы"],
     "doma-02-sa": ["история", "курсы"],
     "dengi-01-sa": ["тариф", "платежи"],
+    "ekzamen-01-sa": ["29", "25"],
+    "ekzamen-03-sa": ["27", "100"],
+    "bally-01-sa": ["40", "5"],
+    "bally-02-sa": ["17", "72"],
+    "instrumenty-02-sa": ["27", "8"],
+    "etapy-02-sa": ["3", "5"],
 }
 
 
 async def main() -> None:
+    root_uid = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT_UID
+    print(f"курс: {root_uid}")
     dsn = ""
     for line in pathlib.Path("/opt/lms/.env").read_text(encoding="utf-8-sig").splitlines():
         if line.strip().startswith("DATABASE_URL="):
@@ -70,7 +87,7 @@ async def main() -> None:
              WHERE root.course_uid = $1 AND t.is_active
              ORDER BY t.external_uid
             """,
-            COURSE_ROOT_UID,
+            root_uid,
         )
     finally:
         await conn.close()

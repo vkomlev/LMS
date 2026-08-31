@@ -250,6 +250,60 @@ def scene_oplata() -> tuple[int, str]:
     return h, b
 
 
+
+def scene_ege_karta() -> tuple[int, str]:
+    """Карта прогресса по вариантам — по образцу рабочей таблицы оператора.
+
+    Данные вымышленные: настоящая таблица содержит фамилии учеников и ссылки на
+    варианты, а этот образ увидит любой ученик курса.
+    """
+    rows = 27
+    cols = 6
+    x0, y0 = 150, 96
+    cw, ch = 92, 22
+    # Раскладка детерминированная и с ЗАМЫСЛОМ: доля красного падает от первого
+    # варианта к шестому. Карта в курсе показывает не «пёстрые квадратики», а то,
+    # ради чего она заведена, — что при работе над ошибками цвет меняется.
+    # Случайный шум здесь выглядел бы как «прогресса нет».
+    def cell(r: int, c: int) -> str:
+        v = (r * 7 + c * 11) % 10
+        if v < 4 - c:          # красного всё меньше, к варианту 4 не остаётся
+            return "r"
+        if v < 8 - c:          # жёлтое тоже убывает, но медленнее
+            return "y"
+        return "g"
+
+    cells = ["".join(cell(r, c) for c in range(cols)) for r in range(rows)]
+    color = {"g": ("#16a34a", "#ffffff"), "y": ("#f59e0b", "#1f2937"), "r": ("#dc2626", "#ffffff")}
+
+    h = y0 + rows * ch + 96
+    b = text(24, 44, "Карта прогресса: варианты и задания", size=20, weight="700")
+    b += text(24, 70, "Строка — номер задания ЕГЭ, столбец — прорешанный вариант.",
+              size=14, fill=MUTED)
+
+    for c in range(cols):
+        b += text(x0 + c * cw + cw / 2, y0 - 10, f"Вариант {c + 1}", size=12,
+                  fill=MUTED, weight="600", anchor="middle")
+    for r in range(rows):
+        y = y0 + r * ch
+        b += text(x0 - 14, y + 15, f"Задание {r + 1}", size=12, fill=INK, anchor="end")
+        for c in range(cols):
+            fill, fg = color[cells[r][c]]
+            b += rect(x0 + c * cw + 1, y + 1, cw - 2, ch - 2, fill=fill, stroke=fill, r=3)
+
+    ly = y0 + rows * ch + 26
+    for i, (code, label) in enumerate([
+        ("g", "верно с первого раза"),
+        ("y", "исправлено работой над ошибками"),
+        ("r", "не знаю, как решить — разбираем вместе"),
+    ]):
+        y = ly + i * 22
+        fill, _ = color[code]
+        b += rect(24, y, 16, 16, fill=fill, stroke=fill, r=3)
+        b += text(50, y + 13, label, size=13)
+    return h, b
+
+
 SCENES: Dict[str, Callable[[], tuple[int, str]]] = {
     "onb-menu": scene_menu,
     "onb-kurs-karta": scene_kurs_karta,
@@ -258,6 +312,7 @@ SCENES: Dict[str, Callable[[], tuple[int, str]]] = {
     "onb-pomosch": scene_pomosch,
     "onb-zanyatie": scene_zanyatie,
     "onb-oplata": scene_oplata,
+    "onb-ege-karta": scene_ege_karta,
 }
 
 

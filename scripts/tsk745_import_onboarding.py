@@ -38,6 +38,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -49,6 +50,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: image_id -> (alt, подпись под картинкой). Alt пишется для того, кто картинку
 #: не видит: экранный диктор и поиск. Подпись — для того, кто видит.
 IMAGES: Dict[str, tuple] = {
+    "onb-ege-karta": (
+        "Таблица карты прогресса: строки — номера заданий ЕГЭ с первого по двадцать седьмое, "
+        "столбцы — прорешанные варианты, клетки закрашены зелёным, жёлтым и красным; "
+        "к последним вариантам красного заметно меньше",
+        "Пример карты. Видно главное: от варианта к варианту красного становится меньше.",
+    ),
     "onb-victor": (
         "Фотография Виктора Комлева: мужчина в синем пиджаке и галстуке сидит за столом, "
         "перед ним раскрытая книга",
@@ -366,6 +373,14 @@ def main() -> None:
             urls[image_id] = res["url"]
             print(f"  образ    : {image_id} -> {res['url']}")
         n = fill_images(plan, urls)
+        # Сторож: плейсхолдер, которого нет в IMAGES, раньше просто оставался в
+        # тексте, и ученик видел «IMG::onb-ege-karta» вместо картинки. Молчаливый
+        # пропуск здесь дороже падения — публикация идёт на боевой сайт.
+        left = sorted(set(re.findall(r"IMG::([a-z0-9-]+)",
+                                     json.dumps(plan, ensure_ascii=False))))
+        if left:
+            sys.exit(f"в плане остались неразвёрнутые образы: {left}. "
+                     f"Добавьте их в IMAGES и положите PNG в каталог образов.")
         plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n",
                              encoding="utf-8")
         print(f"  подставлено ссылок: {n} (план перезаписан)")
