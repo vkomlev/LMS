@@ -33,35 +33,48 @@ DEFAULT_ROOT_UID = "lms:onboarding:platforma"
 #: которые пишет живой человек: другой падеж, «е» вместо «ё», заглавная буква,
 #: слово с точкой. Все они обязаны приниматься.
 PROBES = {
-    "kabinet-03-sa": ["сообщения", "Сообщения", "сообщение", " сообщения ", "СООБЩЕНИЯ"],
-    "zadaniya-01-sa": ["отправить ответ", "Отправить ответ", "отправить", "«Отправить ответ»"],
-    "zadaniya-02-sa": ["3", "три", " 3 "],
-    "zanyatiya-01-sa": ["занятия", "Занятия", "мои занятия", "занятие"],
-    "doma-02-sa": ["прогресс", "Прогресс", "мой прогресс", "прогресса"],
-    "dengi-01-sa": ["оплата", "Оплата", "оплату", "оплаты"],
+    "platforma/kabinet-03-sa": ["сообщения", "Сообщения", "сообщение", " сообщения ", "СООБЩЕНИЯ"],
+    "platforma/zadaniya-01-sa": ["отправить ответ", "Отправить ответ", "отправить", "«Отправить ответ»"],
+    "platforma/zadaniya-02-sa": ["3", "три", " 3 "],
+    "platforma/zanyatiya-01-sa": ["занятия", "Занятия", "мои занятия", "занятие"],
+    "platforma/doma-02-sa": ["прогресс", "Прогресс", "мой прогресс", "прогресса"],
+    "platforma/dengi-01-sa": ["оплата", "Оплата", "оплату", "оплаты"],
     # курс ЕГЭ: ответы числовые, ученик пишет и цифрой, и словом
-    "ekzamen-01-sa": ["27", " 27 ", "двадцать семь"],
-    "ekzamen-03-sa": ["29", "двадцать девять"],
-    "bally-01-sa": ["6", "шесть"],
-    "bally-02-sa": ["70", "семьдесят"],
-    "instrumenty-02-sa": ["18", "восемнадцать"],
-    "etapy-02-sa": ["4", "четыре"],
+    "ege/ekzamen-01-sa": ["27", " 27 ", "двадцать семь"],
+    "ege/ekzamen-03-sa": ["29", "двадцать девять"],
+    "ege/bally-01-sa": ["6", "шесть"],
+    "ege/bally-02-sa": ["70", "семьдесят"],
+    "ege/instrumenty-02-sa": ["18", "восемнадцать"],
+    "ege/etapy-02-sa": ["4", "четыре"],
+    # курс ОГЭ
+    "oge/ekzamen-01-sa": ["16", "шестнадцать"],
+    "oge/ekzamen-02-sa": ["21", "двадцать один"],
+    "oge/ocenki-01-sa": ["5", "пять"],
+    "oge/ocenki-02-sa": ["17", "семнадцать"],
+    "oge/zadaniya-02-sa": ["14", "четырнадцать", "задание 14"],
+    "oge/praktika-01-sa": ["9", "девять"],
 }
 
 #: Ответы, которые приниматься НЕ должны: иначе задание не различает знание.
 NEGATIVE = {
-    "kabinet-03-sa": ["курсы", "профиль"],
-    "zadaniya-01-sa": ["отправить на проверку", "сдать"],
-    "zadaniya-02-sa": ["1", "5"],
-    "zanyatiya-01-sa": ["расписание", "курсы"],
-    "doma-02-sa": ["история", "курсы"],
-    "dengi-01-sa": ["тариф", "платежи"],
-    "ekzamen-01-sa": ["29", "25"],
-    "ekzamen-03-sa": ["27", "100"],
-    "bally-01-sa": ["40", "5"],
-    "bally-02-sa": ["17", "72"],
-    "instrumenty-02-sa": ["27", "8"],
-    "etapy-02-sa": ["3", "5"],
+    "platforma/kabinet-03-sa": ["курсы", "профиль"],
+    "platforma/zadaniya-01-sa": ["отправить на проверку", "сдать"],
+    "platforma/zadaniya-02-sa": ["1", "5"],
+    "platforma/zanyatiya-01-sa": ["расписание", "курсы"],
+    "platforma/doma-02-sa": ["история", "курсы"],
+    "platforma/dengi-01-sa": ["тариф", "платежи"],
+    "ege/ekzamen-01-sa": ["29", "25"],
+    "ege/ekzamen-03-sa": ["27", "100"],
+    "ege/bally-01-sa": ["40", "5"],
+    "ege/bally-02-sa": ["17", "72"],
+    "ege/instrumenty-02-sa": ["27", "8"],
+    "ege/etapy-02-sa": ["3", "5"],
+    "oge/ekzamen-01-sa": ["27", "21"],
+    "oge/ekzamen-02-sa": ["16", "29"],
+    "oge/ocenki-01-sa": ["11", "17"],
+    "oge/ocenki-02-sa": ["11", "21"],
+    "oge/zadaniya-02-sa": ["13", "16"],
+    "oge/praktika-01-sa": ["12", "21"],
 }
 
 
@@ -101,7 +114,7 @@ async def main() -> None:
         tc = json.loads(r["task_content"]) if isinstance(r["task_content"], str) else r["task_content"]
         sr = json.loads(r["solution_rules"]) if isinstance(r["solution_rules"], str) else r["solution_rules"]
         short = sr.get("short_answer")
-        key = uid.rsplit(":", 1)[-1]
+        key = f"{root_uid.rsplit(chr(58), 1)[-1]}/{uid.rsplit(chr(58), 1)[-1]}"
 
         if tc["type"] in ("SC", "MC"):
             option_ids = {o["id"] for o in (tc.get("options") or [])}

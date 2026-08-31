@@ -304,6 +304,48 @@ def scene_ege_karta() -> tuple[int, str]:
     return h, b
 
 
+
+def scene_oge_bally() -> tuple[int, str]:
+    """Где на ОГЭ лежат баллы: 12 заданий по одному против четырёх практических.
+
+    Столбик = задание, высота = его вес в баллах. Смысл образа один: показать,
+    что четыре последних задания стоят почти столько же, сколько все двенадцать
+    первых. Таблицей это видно хуже, чем высотой.
+    """
+    # Веса сверены по трём источникам и сходятся арифметически: 12 + 9 = 21.
+    weights = [1] * 12 + [2, 3, 2, 2]
+    h = 420
+    x0, ybase, bw, gap = 40, 300, 44, 8
+    unit = 62  # высота одного балла
+
+    b = text(24, 44, "Где на ОГЭ лежат баллы", size=20, weight="700")
+    b += text(24, 70, "Столбик — задание, высота — сколько баллов оно стоит.",
+              size=14, fill=MUTED)
+
+    for i, w in enumerate(weights):
+        x = x0 + i * (bw + gap)
+        bar_h = w * unit
+        practical = i >= 12
+        fill = PRIMARY if practical else "#93c5fd"
+        b += rect(x, ybase - bar_h, bw, bar_h, fill=fill, stroke=fill, r=6)
+        b += text(x + bw / 2, ybase - bar_h - 8, str(w), size=13,
+                  fill=INK, weight="700", anchor="middle")
+        b += text(x + bw / 2, ybase + 20, str(i + 1), size=12,
+                  fill=INK if practical else MUTED,
+                  weight="600" if practical else "400", anchor="middle")
+
+    b += text(x0 + 6 * (bw + gap), ybase + 48, "задания 1–12: краткий ответ, по 1 баллу",
+              size=13, fill=MUTED, anchor="middle")
+    b += text(x0 + 14 * (bw + gap) - 20, ybase + 48, "13–16: на компьютере",
+              size=13, fill=PRIMARY, weight="600", anchor="middle")
+
+    b += rect(24, ybase + 66, W - 48, 44, fill="#eff6ff", stroke="#bfdbfe")
+    b += text(W / 2, ybase + 94,
+              "12 баллов за двенадцать заданий  ·  9 баллов за четыре практических  ·  всего 21",
+              size=14, weight="600", anchor="middle")
+    return h, b
+
+
 SCENES: Dict[str, Callable[[], tuple[int, str]]] = {
     "onb-menu": scene_menu,
     "onb-kurs-karta": scene_kurs_karta,
@@ -313,6 +355,7 @@ SCENES: Dict[str, Callable[[], tuple[int, str]]] = {
     "onb-zanyatie": scene_zanyatie,
     "onb-oplata": scene_oplata,
     "onb-ege-karta": scene_ege_karta,
+    "onb-oge-bally": scene_oge_bally,
 }
 
 
