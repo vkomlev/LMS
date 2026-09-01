@@ -335,14 +335,26 @@ def chain_health(base: str, key: str, catalog: list[dict]) -> list[tuple]:
 
     Проверка ДЕШЁВАЯ (один запрос на модель, 5 токенов) — её не жалко гонять
     часто, в отличие от гейта на слив, где нужно три полных прогона на модель.
+
+    **Цепочки берутся оттуда же, откуда их берёт рантайм** (`providers`), а не из
+    `.env` напрямую (tsk-573, 01.09). С tsk-748 наставницкая цепочка живёт в коде
+    (`_DEFAULT_TUTOR_MODELS`), а строка в `.env` закомментирована — чтение по
+    имени переменной давало пустоту, вся наставницкая цепочка молча выпадала из
+    проверки, и режим печатал «все модели боевых цепочек живы», проверив только
+    судейскую. Ровно тот отказ, ради которого режим и заводился 25.08.
     """
+    for k, v in dotenv_values(ROOT / ".env", encoding="utf-8-sig").items():
+        if v is not None:
+            os.environ.setdefault(k, v)
+    sys.path.insert(0, str(ROOT))
+    from app.services.llm import providers
+
     known = {m.get("id") for m in catalog}
     aliases = {a for m in catalog for a in (m.get("aliases") or [])}
     rows = []
-    for chain_name, env_name in (("наставник", "LLM_TUTOR_MODELS"),
-                                 ("судья", "LLM_JUDGE_MODELS")):
-        raw = dotenv_values(ROOT / ".env").get(env_name) or ""
-        for pos, model in enumerate([m.strip() for m in raw.split(",") if m.strip()], 1):
+    for chain_name, chain in (("наставник", providers.tutor_models()),
+                              ("судья", providers.judge_models())):
+        for pos, model in enumerate(chain, 1):
             if model not in known and model not in aliases:
                 rows.append((chain_name, pos, model, "НЕТ В КАТАЛОГЕ", None))
                 continue
