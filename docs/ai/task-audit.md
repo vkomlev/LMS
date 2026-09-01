@@ -1,7 +1,7 @@
-# task_audit — аудит изменений tasks.course_id / tasks.is_active / solution_rules
+# task_audit — аудит изменений tasks.course_id / tasks.is_active / solution_rules / task_content
 
 **Источники:** таблица `public.task_audit` (append-only через триггер `task_audit_no_modify`), триггеры `trg_task_audit_update` / `trg_task_audit_delete` на `tasks` (функция `log_task_audit`), SQL-функция `task_answer_key(jsonb)`, модель `app/models/task_audit.py`.
-**Миграции:** `20260805_100000_tsk114_task_audit.py` (курс/активность), `20260822_010000_tsk636_task_rules_audit.py` (правило проверки).
+**Миграции:** `20260805_100000_tsk114_task_audit.py` (курс/активность), `20260822_010000_tsk636_task_rules_audit.py` (правило проверки), `20260901_040000_tsk760_task_touch_trail.py` (условие задания + `tasks.updated_at`).
 **Связано:** `docs/database-triggers-contract.md` (раздел 15 — тот же паттерн session-var, что `app.skip_task_order_trigger`), `app/db/audit_context.py`.
 **Задачи:** tsk-114 — профилактика повтора tsk-113 (353 задания курса «Python для ЕГЭ» тихо переехали в архивный курс сменой `course_id`; расследовать причину и дату не удалось — в `tasks` не было `created_at`/`updated_at`, а `audit_event` пишет только login-события). tsk-636 — тот же пробел по правилу проверки: правка эталона не оставляла следа, и десять незаслуженных незачётов пришлось объяснять косвенными уликами.
 
@@ -136,3 +136,52 @@ SELECT set_config('app.skip_task_audit_trigger', 'true', true);  -- is_local
 2. **Аудируются только реальные изменения** — `WHEN`-условие триггера (`OLD.course_id IS DISTINCT FROM NEW.course_id OR OLD.is_active IS DISTINCT FROM NEW.is_active OR OLD.solution_rules IS DISTINCT FROM NEW.solution_rules`) не вызывает функцию на `UPDATE`, где эти поля не менялись (правка `task_content`/`order_position` и т.п.). Сравнение `solution_rules` идёт по значению jsonb, а не по тексту, поэтому повторный импорт с теми же правилами строк не пишет. Выжимка `task_answer_key` считается уже внутри функции — то есть только там, где правило действительно изменилось.
 3. **INSERT не аудируется** — у новой строки нет «было», сравнивать не с чем. Аудит начинается с первого `UPDATE`/`DELETE` существующего задания.
 4. **Без FK на `tasks.id`** — намеренно: запись обязана пережить `DELETE` самого задания.
+
+## tsk-760: отпечаток условия и отметка «когда трогали»
+
+**Что добавилось.** У журнала появились `old_content_key`/`new_content_key` —
+sha256 условия задания (функция `task_content_key(jsonb)`), а триггер
+`trg_task_audit_update` начал срабатывать ещё и на изменение `task_content`.
+Отдельно у `tasks` появилась колонка `updated_at`: её ставит BEFORE-триггер
+`trg_task_set_updated_at` и только при правке содержимого — условия, правила
+проверки, сложности, балла, курса, активности. Перестановка `order_position`
+правкой не считается: её массово двигают триггеры порядка.
+
+**Почему отпечаток, а не текст.** Условие бывает в десятки килобайт (PDF-импорт,
+таблицы); две копии на каждое изменение раздули бы журнал, а на вопрос «правили
+ли условие и когда» отпечатка достаточно. Восстановление содержимого — не задача
+журнала: у переиздания курса для этого свой снимок «до».
+
+```sql
+-- Правили ли условие задания и когда
+SELECT changed_at, changed_by, db_role,
+       (old_content_key IS DISTINCT FROM new_content_key) AS условие_менялось,
+       (old_answer_key::text IS DISTINCT FROM new_answer_key::text) AS эталон_менялся
+FROM task_audit WHERE task_id = :task_id ORDER BY changed_at DESC;
+
+-- Задания, которые трогали после конкретной даты (например после публикации из CB)
+SELECT id, external_uid, updated_at FROM tasks
+WHERE updated_at > :moment ORDER BY updated_at DESC;
+```
+
+## Конвенция для скриптов правки данных
+
+Скрипт, который правит содержимое заданий, обязан сделать две вещи.
+
+1. **Назваться.** `SELECT set_config('app.audit_actor', 'tsk-NNN', true)` в той же
+   транзакции — иначе `changed_by` останется NULL, и через месяц придётся
+   гадать, чья это была правка (так было со всеми 223 правками августа).
+2. **Пометить задание как правленное вне источника**, если правка должна пережить
+   переиздание курса: `content_provenance = {"source": "manual_script",
+   "edited_by": "tsk-NNN", "fields": ["task_content", "solution_rules"], ...}`.
+   Источник `manual_script` уважается наравне с `manual_web`
+   (`TasksService.HUMAN_EDIT_SOURCES`): импорт такие поля не трогает.
+   Разовая простановка по следам прошлых правок —
+   `scripts/tsk760_mark_manual_edits.py`.
+
+**Обратная сторона пометки.** Помеченное задание перестаёт обновляться импортом
+целиком — в том числе служебными round-trip прогонами ContentBackbone (гигиена
+условия, докачка картинок в хранилище). Им для этого есть осознанный обход: поле
+`override_manual_edit: true` в элементе `POST /api/v1/tasks/bulk-upsert`
+(ContentBackbone проставляет его сам в режиме записи `force`). Обычному импорту
+флаг не нужен и означал бы возврат к перезаписи ручной работы.

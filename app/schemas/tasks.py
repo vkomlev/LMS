@@ -219,6 +219,18 @@ class TaskUpsertItem(BaseModel):
     is_active: bool = True
     requirement_level: RequirementLevel = "required"
     order_position: int | None = None
+    override_manual_edit: bool = Field(
+        default=False,
+        description=(
+            "Записать поверх ручной правки (tsk-760). По умолчанию задание с "
+            "пометкой `content_provenance` импорт не трогает — это защищает "
+            "работу, сделанную в LMS. Флаг нужен служебным round-trip "
+            "инструментам ContentBackbone (гигиена условия, докачка картинок в "
+            "хранилище): они читают задание ОТСЮДА, чинят и кладут обратно, то "
+            "есть чинят как раз ту версию, которую защита бережёт. Обычному "
+            "импорту флаг не нужен и означал бы перенос сырья поверх выверенного."
+        ),
+    )
     difficulty_provenance: dict[str, Any] | None = None
 
 

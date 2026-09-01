@@ -425,7 +425,20 @@ class TasksService(BaseService[Tasks]):
                 # материалов, и та же логика, что у is_active/requirement_level
                 # ниже, только источник решения не «передано ли поле», а пометка
                 # на самой строке.
-                protected_task_fields = _manually_edited_task_fields(existing)
+                # tsk-760: служебные round-trip инструменты ContentBackbone
+                # (гигиена условия, докачка картинок) читают задание ОТСЮДА,
+                # чинят и кладут обратно — они правят как раз ту версию, которую
+                # защита бережёт, поэтому им нужен осознанный обход. Флаг
+                # приходит в теле элемента импорта и в базе не сохраняется.
+                if data.get("override_manual_edit"):
+                    protected_task_fields = frozenset()
+                    logger_provenance.info(
+                        "tsk-760: задание %s переписано с override_manual_edit — "
+                        "пометка ручной правки обойдена намеренно",
+                        existing.id,
+                    )
+                else:
+                    protected_task_fields = _manually_edited_task_fields(existing)
                 for protected in protected_task_fields:
                     obj_in.pop(protected, None)
                 if protected_task_fields:

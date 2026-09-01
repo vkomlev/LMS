@@ -401,3 +401,41 @@ async def test_unknown_provenance_source_does_not_protect(db, client):
 
     after = await _row(db, uid)
     assert "из источника" in json.dumps(after.task_content, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_override_manual_edit_позволяет_служебную_правку(db, client):
+    """tsk-760: round-trip инструменты пробивают защиту явным флагом.
+
+    Гигиена условия и докачка картинок читают задание ИЗ LMS, чинят и кладут
+    обратно — то есть правят как раз ту версию, которую защита бережёт. Без
+    обхода они молча перестали бы работать на всех помеченных заданиях.
+    """
+    course_id = await _new_course(db)
+    uid = f"t760o-{uuid.uuid4().hex[:8]}"
+    await _post(client, [_source_task(uid, course_id, stem="условие из источника")])
+
+    await db.execute(
+        text(
+            "UPDATE tasks SET content_provenance = CAST(:prov AS jsonb) WHERE external_uid = :uid"
+        ),
+        {
+            "prov": json.dumps(
+                {"source": "manual_script", "fields": ["task_content", "solution_rules"]},
+                ensure_ascii=False,
+            ),
+            "uid": uid,
+        },
+    )
+    await db.flush()
+
+    payload = _source_task(uid, course_id, stem="условие починено служебным прогоном")
+    payload["override_manual_edit"] = True
+    await _post(client, [payload])
+
+    after = await _row(db, uid)
+    assert "починено служебным прогоном" in json.dumps(after.task_content, ensure_ascii=False)
+    # Пометка остаётся: обход разовый, задание по-прежнему считается правленным.
+    prov = after.content_provenance
+    prov = json.loads(prov) if isinstance(prov, str) else prov
+    assert prov["source"] == "manual_script"
