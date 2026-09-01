@@ -81,10 +81,19 @@ async def list_for_teacher(
     to_dt: Optional[datetime] = None,
     limit: int = 100,
     no_show_threshold_minutes: int = 10,
-) -> list[tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool]]]]:
-    """Занятия преподавателя, каждое — с полным списком участников + флаг
-    `is_overdue` НА КАЖДОГО (живой расчёт, не ждёт cron-тик): участник в
-    `status='scheduled'` и порог опоздания уже истёк."""
+) -> list[
+    tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool, Optional[str]]]]
+]:
+    """Занятия преподавателя, каждое — с полным списком участников; на каждого
+    участника: флаг `is_overdue` (живой расчёт, не ждёт cron-тик — участник в
+    `status='scheduled'` и порог опоздания уже истёк) и имя.
+
+    tsk-757: имя приходит вместе с занятием. Панель преподавателя подставляла
+    его из ростера (ученики по курсам преподавателя), и участник его же
+    занятия, в ростер не попавший, показывался как «Ученик #id». Запрос имён —
+    тот же, что в сводке занятия (`teacher_lesson_summary_service`), второго
+    источника не появляется. Видимость не расширяется: список участников и
+    раньше отдавался только владельцу занятия, методисту и админу."""
     occurrences = await _occurrence_repo.list_for_teacher(
         db, teacher_id=teacher_id, from_dt=from_dt, to_dt=to_dt, limit=limit
     )
@@ -97,21 +106,44 @@ async def list_for_teacher(
     for p in all_participants:
         participants_by_occurrence.setdefault(p.occurrence_id, []).append(p)
 
+    name_by_student_id = await _load_student_names(
+        db, {p.student_id for p in all_participants}
+    )
+
     now_utc = datetime.now(timezone.utc)
     threshold = timedelta(minutes=no_show_threshold_minutes)
 
-    result: list[tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool]]]] = []
+    result: list[
+        tuple[LessonOccurrence, list[tuple[LessonOccurrenceParticipant, bool, Optional[str]]]]
+    ] = []
     for occurrence in occurrences:
         participants = participants_by_occurrence.get(occurrence.id, [])
-        pairs = [
+        rows = [
             (
                 p,
                 p.status == "scheduled" and (occurrence.scheduled_at + threshold) < now_utc,
+                name_by_student_id.get(p.student_id),
             )
             for p in participants
         ]
-        result.append((occurrence, pairs))
+        result.append((occurrence, rows))
     return result
+
+
+async def _load_student_names(
+    db: AsyncSession, student_ids: set[int]
+) -> dict[int, Optional[str]]:
+    """Имена участников одним запросом (tsk-757). Пустое множество —
+    в БД не ходим."""
+    if not student_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text("SELECT id, full_name FROM users WHERE id = ANY(:ids)"),
+            {"ids": list(student_ids)},
+        )
+    ).mappings().fetchall()
+    return {int(r["id"]): r["full_name"] for r in rows}
 
 
 async def get_occurrence_for_teacher(

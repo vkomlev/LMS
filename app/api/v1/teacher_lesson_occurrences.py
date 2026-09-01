@@ -96,9 +96,13 @@ async def list_teacher_occurrences(
         data = LessonOccurrenceRead.model_validate(occurrence).model_dump()
         data["participants"] = [
             TeacherParticipantRead(
-                **ParticipantRead.model_validate(p).model_dump(), is_overdue=is_overdue,
+                **ParticipantRead.model_validate(p).model_dump(),
+                is_overdue=is_overdue,
+                # tsk-757: имя едет вместе с занятием, а не подставляется на
+                # фронте из ростера преподавателя.
+                full_name=full_name,
             )
-            for p, is_overdue in participant_pairs
+            for p, is_overdue, full_name in participant_pairs
         ]
         result.append(TeacherLessonOccurrenceRead(**data))
     return result

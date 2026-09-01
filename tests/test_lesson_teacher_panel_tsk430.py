@@ -193,6 +193,34 @@ async def test_teacher_list_group_occurrence_has_all_participants(db, client):
 
 
 @pytest.mark.asyncio
+async def test_teacher_list_participant_has_full_name(db, client):
+    """tsk-757: имя участника приходит вместе с занятием.
+
+    Ученик здесь не связан с преподавателем ни одним курсом — ровно случай
+    оператора, где панель показывала «Ученик #id»: имя подставлялось из
+    ростера (ученики по курсам преподавателя), а этого ученика там не было.
+    """
+    student_id = await _create_user(db, role="student", prefix="tsk757-stu")
+    teacher_id = await _create_user(db, role="teacher", prefix="tsk757-teach")
+    token, _, _ = await create_session(db, user_id=teacher_id)
+
+    occ_id = await _create_occurrence_with_participant(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(dt_timezone.utc) + timedelta(hours=1),
+    )
+
+    resp = await client.get(
+        "/api/v1/teacher/lesson-occurrences",
+        params={"teacher_id": teacher_id},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    item = next(i for i in resp.json() if i["id"] == occ_id)
+    participant = next(p for p in item["participants"] if p["student_id"] == student_id)
+    assert participant["full_name"] == "tsk757-stu-user"
+
+
+@pytest.mark.asyncio
 async def test_teacher_list_participant_order_stable_after_attendance_update(db, client):
     """tsk-441: список участников не должен "прыгать" после отметки явки —
     без ORDER BY Postgres не гарантирует порядок строк после UPDATE, и
