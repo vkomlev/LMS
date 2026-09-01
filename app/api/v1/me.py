@@ -54,6 +54,8 @@ from app.schemas.me import (
     MeUpdateRequest,
     MyEntitlements,
     PaymentDueNotice,
+    SchoolGradeDeclineRequest,
+    SchoolGradeDeclineResponse,
     StreakRead,
     SyllabusStatesResponse,
 )
@@ -70,6 +72,7 @@ from app.services import (
     retention_service,
     roles_service,
     schedule_preference_service,
+    school_grade_service,
     student_presence_service,
     task_history_service,
 )
@@ -125,6 +128,23 @@ async def _payment_due_notice(
     )
 
 
+async def _school_grade_pending(
+    db: AsyncSession, current_user: CurrentUser
+) -> bool:
+    """Показывать ли вопрос про класс — общее для GET и PATCH (tsk-741).
+
+    Отдельной функцией по той же причине, что и напоминание об оплате выше:
+    ответ PATCH клиент кладёт прямо в кэш профиля, и забытая вторая ветка
+    погасила бы вопрос в момент, когда человек сохранил, скажем, город.
+
+    Сервисному токену не считается: он не ученик и в аудиторию не входит, а
+    запрос делал бы на каждый внутренний вызов бота.
+    """
+    if current_user.is_service:
+        return False
+    return await school_grade_service.is_pending(db, current_user.id)
+
+
 # ── GET /me ─────────────────────────────────────────────────────────────────
 
 @router.get("", response_model=MeResponse)
@@ -157,9 +177,11 @@ async def get_me(
         else await schedule_preference_service.is_pending(db, current_user.id)
     )
     payment_due = await _payment_due_notice(db, current_user)
+    grade_pending = await _school_grade_pending(db, current_user)
     return MeResponse(
         schedule_preference_pending=schedule_pending,
         payment_due=payment_due,
+        school_grade_pending=grade_pending,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
@@ -266,9 +288,14 @@ async def update_me(
         else await schedule_preference_service.is_pending(db, current_user.id)
     )
     payment_due = await _payment_due_notice(db, current_user)
+    # tsk-741: и вопрос про класс — по той же причине. Человек, ответивший
+    # «11 класс», кладёт этот ответ в кэш профиля: посчитай флаг только в GET —
+    # и вопрос остался бы висеть до следующей загрузки страницы.
+    grade_pending = await _school_grade_pending(db, current_user)
     return MeResponse(
         schedule_preference_pending=schedule_pending,
         payment_due=payment_due,
+        school_grade_pending=grade_pending,
         id=current_user.id,
         email=current_user.email,
         tg_id=current_user.tg_id,
@@ -280,6 +307,50 @@ async def update_me(
         timezone=profile["timezone"] if profile else None,
         timezone_source=profile["timezone_source"] if profile else None,
         roles=roles,
+    )
+
+
+# ── POST /me/school-grade/decline — «класс не скажу» (tsk-741) ──────────────
+
+@router.post("/school-grade/decline", response_model=SchoolGradeDeclineResponse)
+async def decline_school_grade(
+    request: Request,
+    body: SchoolGradeDeclineRequest | None = None,
+    current_user: CurrentUser = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_async_db),
+) -> SchoolGradeDeclineResponse:
+    """Закрыть вопрос про класс без ответа — больше его не показывать.
+
+    tsk-741: класс определяет срок подготовки к экзамену, поэтому его
+    спрашивают в кабинете. Спрашивают ОДИН раз — а «один раз» невозможно без
+    места, где хранится отказ. Отметка серверная, а не в браузере: иначе
+    вопрос вернулся бы на втором устройстве, и оператор не увидел бы, кого
+    надо добрать лично.
+
+    Идемпотентно: повторный вызов ничего не меняет и отвечает так же.
+    Ответивший класс отказом себя не пометит — у него вопрос уже закрыт
+    ответом, и в сводке он не должен смешаться с молчунами.
+
+    Причина отказа (`later` — «не сейчас», `not_school` — «я не школьник»)
+    уходит в журнал событий: по ней оператор отличает, кого добирать лично.
+    Тело необязательно — без него причина считается «не сейчас».
+
+    401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.
+    """
+    reason = body.reason if body is not None else "later"
+    await school_grade_service.decline(db, current_user.id)
+    ip = request.client.host if request.client else "unknown"
+    await log_event(
+        db,
+        "user.profile.school_grade_declined",
+        user_id=current_user.id,
+        ip=ip,
+        details={"reason": reason},
+    )
+    await db.commit()
+
+    return SchoolGradeDeclineResponse(
+        school_grade_pending=await _school_grade_pending(db, current_user)
     )
 
 

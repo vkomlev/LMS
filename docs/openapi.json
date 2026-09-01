@@ -23023,6 +23023,113 @@
         }
       }
     },
+    "/api/v1/me/school-grade/decline": {
+      "post": {
+        "tags": [
+          "me"
+        ],
+        "summary": "Decline School Grade",
+        "description": "Закрыть вопрос про класс без ответа — больше его не показывать.\n\ntsk-741: класс определяет срок подготовки к экзамену, поэтому его\nспрашивают в кабинете. Спрашивают ОДИН раз — а «один раз» невозможно без\nместа, где хранится отказ. Отметка серверная, а не в браузере: иначе\nвопрос вернулся бы на втором устройстве, и оператор не увидел бы, кого\nнадо добрать лично.\n\nИдемпотентно: повторный вызов ничего не меняет и отвечает так же.\nОтветивший класс отказом себя не пометит — у него вопрос уже закрыт\nответом, и в сводке он не должен смешаться с молчунами.\n\nПричина отказа (`later` — «не сейчас», `not_school` — «я не школьник»)\nуходит в журнал событий: по ней оператор отличает, кого добирать лично.\nТело необязательно — без него причина считается «не сейчас».\n\n401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.",
+        "operationId": "decline_school_grade_api_v1_me_school_grade_decline_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SchoolGradeDeclineRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchoolGradeDeclineResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/timezone/auto": {
       "put": {
         "tags": [
@@ -51962,6 +52069,11 @@
                 "type": "null"
               }
             ]
+          },
+          "school_grade_pending": {
+            "type": "boolean",
+            "title": "School Grade Pending",
+            "default": false
           }
         },
         "type": "object",
@@ -58419,6 +58531,38 @@
         ],
         "title": "ScheduleSlotRequestRead",
         "description": "Заявка «не нашёл подходящее время» — глазами и ученика, и методиста."
+      },
+      "SchoolGradeDeclineRequest": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "later",
+              "not_school"
+            ],
+            "title": "Reason",
+            "description": "later — «не сейчас» (промолчал, оператор добирает лично); not_school — «я не школьник» (вопрос неприменим).",
+            "default": "later"
+          }
+        },
+        "type": "object",
+        "title": "SchoolGradeDeclineRequest",
+        "description": "Тело POST /me/school-grade/decline — почему человек не ответил.\n\nПричина нужна оператору: тех, кто промолчал, он добирает лично, а тому,\nкто сказал «я не школьник», задавать вопрос про класс больше незачем.\nХранится в журнале событий, а не в профиле: писать «взрослый» в категорию\nпо такому ответу нельзя — среди не-школьников есть и студенты, и\nабитуриенты, и правильное значение человек выберет сам в профиле."
+      },
+      "SchoolGradeDeclineResponse": {
+        "properties": {
+          "school_grade_pending": {
+            "type": "boolean",
+            "title": "School Grade Pending",
+            "description": "Показывать ли вопрос дальше. После отказа всегда False."
+          }
+        },
+        "type": "object",
+        "required": [
+          "school_grade_pending"
+        ],
+        "title": "SchoolGradeDeclineResponse",
+        "description": "Ответ POST /me/school-grade/decline — состояние вопроса после отказа.\n\nОтдельный эндпоинт, а не поле в PATCH /me: отказ — это не значение\nпрофиля, а решение «меня об этом не спрашивайте». Возвращает тот же флаг,\nчто и `/me`, чтобы клиент погасил вопрос без второго запроса."
       },
       "SenderStats": {
         "properties": {

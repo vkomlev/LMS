@@ -81,6 +81,13 @@ class Users(Base):
         Integer, nullable=True,
         comment="Класс (1-11), только для category=school_student",
     )
+    # tsk-741. Отказ отвечать на вопрос про класс, заданный в кабинете. Ответ
+    # виден по school_grade выше; здесь — «спросили, человек закрыл вопрос»,
+    # иначе «спрашиваем один раз» нечем выполнить. NULL — вопрос ещё открыт.
+    school_grade_declined_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+        comment="Когда человек закрыл вопрос про класс, не ответив",
+    )
     city: Mapped[Optional[str]] = mapped_column(
         String(255), nullable=True, comment="Город, свободный текст",
     )
