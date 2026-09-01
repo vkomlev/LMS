@@ -88,6 +88,13 @@ class StudentMonthlyCharge(Base):
     break_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
     #: Занятий на днях ДО прихода ученика в расписание (tsk-630).
     not_started_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
+    #: Занятий, которые сетка предполагала, но в прошедшие дни их не было (tsk-756).
+    missing_lessons: Mapped[int] = mapped_column(Integer, server_default="0")
+    #: Итог месяца на момент его окончания — опора стража сдвига (tsk-756).
+    frozen_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    frozen_at: Mapped[DateTime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     status: Mapped[str] = mapped_column(Text, server_default="open")
     closed_at: Mapped[DateTime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

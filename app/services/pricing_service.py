@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy import text
@@ -90,6 +90,29 @@ SELECT COALESCE(a.student_id, c.student_id)               AS student_id,
   FROM at_start a
   FULL JOIN current_row c ON c.student_id = a.student_id
 """
+
+
+def reference_day(period: Optional[date], *, today: Optional[date] = None) -> Optional[date]:
+    """Дата, на которую смотрят расписание при расчёте месяца (tsk-756).
+
+    Сегодняшний день, прижатый к границам месяца. Считая ТЕКУЩИЙ месяц, смотрим
+    на сегодня — прежнее поведение; считая прошедший — на его последний день, а
+    не на сегодняшнюю сетку (из-за этого цена августа и уехала по сентябрьской
+    частоте); считая будущий — на его первое число, то есть на сетку, с которой
+    месяц начнётся.
+
+    `None` на входе (витрина «как сейчас») даёт `None` на выходе — запрос сам
+    подставит `CURRENT_DATE`.
+    """
+    if period is None:
+        return None
+    first_day = period.replace(day=1)
+    last_day = date(
+        first_day.year + (first_day.month // 12), (first_day.month % 12) + 1, 1
+    ) - timedelta(days=1)
+    # Сегодня, прижатое к границам месяца: текущий месяц → сегодня, прошедший →
+    # его последний день, будущий → его первое число.
+    return min(last_day, max(first_day, today or date.today()))
 
 
 async def active_subscription_groups(
@@ -430,14 +453,17 @@ async def list_student_pricing(
                        pg.name             AS group_name,
                        c.title             AS course_title,
                        (SELECT count(*)
-                          FROM lesson_slot_student lss
-                          JOIN lesson_slot ls ON ls.id = lss.slot_id
-                         WHERE lss.student_id = u.id
-                           AND lss.is_active
-                           AND ls.is_active
-                           -- tsk-679: закончившийся слот в частоту не входит
-                           AND (ls.active_until IS NULL
-                                OR ls.active_until >= CURRENT_DATE))  AS weekly_lessons
+                              FROM lesson_slot_student lss
+                              JOIN lesson_slot ls ON ls.id = lss.slot_id
+                             WHERE lss.student_id = u.id
+                               AND lss.is_active
+                               AND ls.is_active
+                               -- tsk-679: закончившийся слот в частоту не входит.
+                               AND (ls.active_until IS NULL
+                                    OR ls.active_until >= COALESCE(CAST(:ref AS date), CURRENT_DATE))
+                               -- tsk-756: и не начавшийся тоже.
+                               AND (ls.active_from IS NULL
+                                    OR ls.active_from <= COALESCE(CAST(:ref AS date), CURRENT_DATE)))  AS weekly_lessons
                   FROM users u
                   JOIN user_courses uc ON uc.user_id = u.id AND uc.is_active
                   JOIN course_pricing cp ON cp.course_id = uc.course_id
@@ -447,7 +473,8 @@ async def list_student_pricing(
                  WHERE u.is_active
                  ORDER BY u.full_name, pg.name, c.title
                 """
-            )
+            ),
+            {"ref": reference_day(period)},
         )
     ).all()
 
@@ -479,13 +506,17 @@ async def list_student_pricing(
                                      WHERE uc.user_id = u.id AND uc.is_active)
                                                        AS course_title,
                                    (SELECT count(*)
-                                      FROM lesson_slot_student lss
-                                      JOIN lesson_slot ls ON ls.id = lss.slot_id
-                                     WHERE lss.student_id = u.id
-                                       AND lss.is_active
-                                       AND ls.is_active
-                                       AND (ls.active_until IS NULL
-                                            OR ls.active_until >= CURRENT_DATE))
+                                          FROM lesson_slot_student lss
+                                          JOIN lesson_slot ls ON ls.id = lss.slot_id
+                                         WHERE lss.student_id = u.id
+                                           AND lss.is_active
+                                           AND ls.is_active
+                                           -- tsk-679: закончившийся слот в частоту не входит.
+                                           AND (ls.active_until IS NULL
+                                                OR ls.active_until >= COALESCE(CAST(:ref AS date), CURRENT_DATE))
+                                           -- tsk-756: и не начавшийся тоже.
+                                           AND (ls.active_from IS NULL
+                                                OR ls.active_from <= COALESCE(CAST(:ref AS date), CURRENT_DATE)))
                                                        AS weekly_lessons
                               FROM unnest(CAST(:ids AS int[]), CAST(:gids AS int[]))
                                      AS m(student_id, group_id)
@@ -494,7 +525,11 @@ async def list_student_pricing(
                              ORDER BY u.full_name
                             """
                         ),
-                        {"ids": ids, "gids": [paid[i] for i in ids]},
+                        {
+                            "ids": ids,
+                            "gids": [paid[i] for i in ids],
+                            "ref": reference_day(period),
+                        },
                     )
                 ).all()
             )
@@ -736,6 +771,8 @@ async def _count_active_weekly_slots(db: AsyncSession, student_id: int) -> int:
                 "JOIN lesson_slot ls ON ls.id = lss.slot_id "
                 "WHERE lss.student_id = :s AND lss.is_active AND ls.is_active "
                 "  AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE)"
+                # tsk-756: и не начавшийся слот тоже не в счёт.
+                "  AND (ls.active_from IS NULL OR ls.active_from <= CURRENT_DATE)"
             ),
             {"s": student_id},
         )

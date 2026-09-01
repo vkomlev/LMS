@@ -155,6 +155,7 @@ async def upgrade_on_schedule(db: AsyncSession, student_id: int) -> bool:
                 # tsk-679: слот с истёкшей датой — уже не признак «человек
                 # начал ходить», перевод с demo на base по нему делать нельзя.
                 "   AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE) "
+                "   AND (ls.active_from IS NULL OR ls.active_from <= CURRENT_DATE) "
                 " LIMIT 1"
             ),
             {"sid": student_id},
@@ -447,8 +448,11 @@ async def purchase_plan(
     # действующей подписки, а до смены её там ещё нет. Считаем ИМЕННО целевой
     # период: «открытые месяцы» следующий месяц не покрывают, а при покупке
     # после порога платёж относится как раз к нему.
+    # `today` пробрасывается: период покупки считается от даты платежа, и
+    # без него строка начисления за «прошлый» относительно календаря месяц не
+    # создалась бы — а на неё ссылается внешним ключом сам платёж (tsk-756).
     await charge_service.recalculate_student_group(
-        db, student_id=student_id, group_id=group_id, period=period
+        db, student_id=student_id, group_id=group_id, period=period, today=today
     )
     await db.commit()
 
@@ -557,6 +561,9 @@ async def _staff_student_rows(db: AsyncSession) -> list[dict]:
                               -- tsk-679: закончившийся слот — не расписание
                               AND (ls.active_until IS NULL
                                    OR ls.active_until >= CURRENT_DATE)
+                              -- tsk-756: и не начавшийся тоже
+                              AND (ls.active_from IS NULL
+                                   OR ls.active_from <= CURRENT_DATE)
                        )                     AS has_schedule
                   FROM users u
                   LEFT JOIN student_subscription s

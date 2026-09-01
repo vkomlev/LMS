@@ -57,6 +57,47 @@ class OverdueDebtor:
     due_minor: int
     #: Уже напоминали на этой неделе — письмо не отправится.
     reminded_recently: bool
+    #: Из чего сложилась сумма (tsk-756). Письмо уходит живому человеку, и
+    #: увидеть «611 ₽ у того, у кого занятий не было» нужно ДО отправки, а не
+    #: после: 01.09.2026 семь писем из шестнадцати ушли по неверным данным.
+    total_minor: int = 0
+    paid_minor: int = 0
+    expected_lessons: int = 0
+    break_lessons: int = 0
+    not_started_lessons: int = 0
+    missing_lessons: int = 0
+    #: Занятий, которые у ученика фактически были в этом месяце.
+    fact_lessons: int = 0
+    #: Сумма месяца поставлена руками — расчёт её не перебивал.
+    is_manual: bool = False
+
+    @property
+    def basis(self) -> str:
+        """Основание суммы одной строкой — то, что оператор читает перед отправкой."""
+        if self.is_manual:
+            head = "сумма поставлена руками"
+        else:
+            billable = max(
+                self.expected_lessons
+                - self.break_lessons
+                - self.not_started_lessons
+                - self.missing_lessons,
+                0,
+            )
+            parts = [f"{self.expected_lessons} занятий по сетке"]
+            if self.not_started_lessons:
+                parts.append(f"{self.not_started_lessons} до прихода")
+            if self.break_lessons:
+                parts.append(f"{self.break_lessons} в перерыве")
+            if self.missing_lessons:
+                parts.append(f"{self.missing_lessons} не состоялось")
+            parts.append(f"{billable} к оплате")
+            head = ", ".join(parts)
+        return (
+            f"{head}; фактически занятий {self.fact_lessons}; "
+            f"начислено {self.total_minor / 100:.2f} ₽, "
+            f"оплачено {self.paid_minor / 100:.2f} ₽"
+        )
 
 
 @dataclass
@@ -89,6 +130,20 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                        ch.period,
                        ch.calculated_minor,
                        ch.manual_minor,
+                       ch.expected_lessons,
+                       ch.break_lessons,
+                       ch.not_started_lessons,
+                       ch.missing_lessons,
+                       -- tsk-756: занятий фактически было. Рядом с расчётом это
+                       -- сразу показывает «начислено, а занятий ноль».
+                       (SELECT count(*)
+                          FROM lesson_occurrence_participant lop
+                          JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+                         WHERE lop.student_id = ch.student_id
+                           AND date_trunc(
+                                 'month',
+                                 (lo.scheduled_at AT TIME ZONE 'Europe/Moscow')
+                               )::date = ch.period) AS fact_lessons,
                        COALESCE(adj.total, 0)  AS adjustments_minor,
                        COALESCE(pay.paid, 0)    AS paid_minor,
                        COALESCE(pay.pending, 0) AS pending_minor,
@@ -163,6 +218,14 @@ async def list_overdue(db: AsyncSession, *, today: Optional[date] = None) -> lis
                 period=r.period,
                 due_minor=state.due_minor,
                 reminded_recently=bool(r.reminded_recently),
+                total_minor=total_minor,
+                paid_minor=int(r.paid_minor),
+                expected_lessons=int(r.expected_lessons or 0),
+                break_lessons=int(r.break_lessons or 0),
+                not_started_lessons=int(r.not_started_lessons or 0),
+                missing_lessons=int(r.missing_lessons or 0),
+                fact_lessons=int(r.fact_lessons or 0),
+                is_manual=r.manual_minor is not None,
             )
         )
     return debtors

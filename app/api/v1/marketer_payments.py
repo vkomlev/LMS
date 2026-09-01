@@ -229,6 +229,22 @@ def _debtor_view(debtor: payment_reminder_service.OverdueDebtor) -> dict:
         "due_minor": debtor.due_minor,
         # Сам адрес не отдаём: на экране он не нужен, а в логах браузера лишний.
         "has_email": debtor.email is not None,
+        # tsk-756: из чего сложилась сумма — строкой и числами. Письмо уходит
+        # живому человеку, и «611 ₽ у того, у кого занятий не было» надо видеть
+        # ДО отправки: 01.09.2026 семь писем из шестнадцати ушли по неверным
+        # данным, и заметил это человек, а не система.
+        "basis": debtor.basis,
+        "total_minor": debtor.total_minor,
+        "paid_minor": debtor.paid_minor,
+        "expected_lessons": debtor.expected_lessons,
+        "not_started_lessons": debtor.not_started_lessons,
+        "break_lessons": debtor.break_lessons,
+        "missing_lessons": debtor.missing_lessons,
+        "fact_lessons": debtor.fact_lessons,
+        "is_manual": debtor.is_manual,
+        # Ученик, которому начислено, но занятий у него не было вовсе, — самый
+        # частый вид ошибочного письма. Помечаем прямо, а не оставляем считать.
+        "no_lessons_warning": debtor.fact_lessons == 0,
     }
 
 

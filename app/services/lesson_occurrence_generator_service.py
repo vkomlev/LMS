@@ -59,6 +59,8 @@ def iter_occurrence_datetimes(
     tsk-679: у слота может стоять `active_until` — последний день действия
     включительно. За него список не выходит, поэтому генератор просто перестаёт
     создавать занятия, а не требует погасить слот в нужный день вручную.
+    tsk-756: и `active_from` — первый день действия. Раньше него занятий тоже
+    нет: новая сетка, заведённая заранее, начинается в свой день, а не сразу.
 
     tsk-587: функция публичная, потому что этими же временами
     `lesson_occurrence_service` подбирает кандидатов для переноса. Общий
@@ -81,8 +83,16 @@ def iter_occurrence_datetimes(
         if end_of_day_local < horizon_end_local:
             horizon_end_local = end_of_day_local
 
-    days_ahead = (slot.weekday - now_local.weekday()) % 7
-    current_date = now_local.date() + timedelta(days=days_ahead)
+    # tsk-756: у слота есть и дата НАЧАЛА. Слот, заведённый заранее («новая
+    # сетка с 1 сентября»), не должен рождать занятия раньше своего первого дня —
+    # иначе он появится в календаре ученика тогда, когда ещё действует старый.
+    start_local = now_local.date()
+    active_from = getattr(slot, "active_from", None)
+    if active_from is not None and active_from > start_local:
+        start_local = active_from
+
+    days_ahead = (slot.weekday - start_local.weekday()) % 7
+    current_date = start_local + timedelta(days=days_ahead)
 
     results: list[datetime] = []
     while True:

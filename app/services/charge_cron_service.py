@@ -83,6 +83,12 @@ _CHARGE_CRON_LOCK_KEY = 0x43485247  # ascii "CHRG"
 
 NOTIFICATION_KIND = "unbilled_active_students"
 
+#: tsk-756: сумма месяца, который уже прошёл, разошлась со снимком. Класс
+#: тревоги отдельный: у него другая причина и другое действие, а в общей
+#: отсрочке он бы просто не дошёл до методиста в день, когда рядом нашлись
+#: невыставленные ученики.
+SHIFT_NOTIFICATION_KIND = "past_month_total_shifted"
+
 #: Служебные роли: их носители появляются в расписании как ведущие занятия, а не
 #: как плательщики. Виктор Комлев (id 2) числится и `teacher`, и `student` — без
 #: этого отсева он попадал бы в находки каждый день.
@@ -124,6 +130,8 @@ active_slots AS (
        -- tsk-679: закончившийся слот («действует по 31 августа») уже не
        -- расписание — иначе в сентябре человек числится ходящим без занятий.
        AND (ls.active_until IS NULL OR ls.active_until >= CURRENT_DATE)
+       -- tsk-756: слот, который ещё не начался, тоже не расписание.
+       AND (ls.active_from IS NULL OR ls.active_from <= CURRENT_DATE)
      GROUP BY 1
 ),
 future_lessons AS (
@@ -213,17 +221,91 @@ async def find_unbilled_active_students(
     ]
 
 
-async def _recently_notified(db: AsyncSession, cooldown_hours: int) -> bool:
-    """True, если уведомление такого рода уже отправляли за последние N часов."""
+async def _recently_notified(
+    db: AsyncSession, cooldown_hours: int, *, kind: str = NOTIFICATION_KIND
+) -> bool:
+    """True, если уведомление такого рода уже отправляли за последние N часов.
+
+    `kind` — параметр, а не константа: у сдвига сумм прошлого своя отсрочка
+    (tsk-756), иначе он молчал бы в день, когда уже ушло уведомление о
+    невыставленных.
+    """
     res = await db.execute(
         text(
             "SELECT count(*) FROM notifications "
             "WHERE kind = :kind "
             "  AND modified_at >= now() - CAST(:h AS text)::interval"
         ),
-        {"kind": NOTIFICATION_KIND, "h": f"{int(cooldown_hours)} hours"},
+        {"kind": kind, "h": f"{int(cooldown_hours)} hours"},
     )
     return int(res.scalar() or 0) > 0
+
+
+async def _methodist_ids(db: AsyncSession) -> list[int]:
+    """Кому уходят тревоги денежного контура."""
+    res = await db.execute(
+        text(
+            "SELECT ur.user_id FROM user_roles ur "
+            "JOIN roles r ON r.id = ur.role_id WHERE r.name = 'methodist'"
+        )
+    )
+    return [int(row[0]) for row in res.fetchall()]
+
+
+async def _notify_shifted_past_months(
+    db: AsyncSession, *, shifted: list[dict], max_examples: int
+) -> int:
+    """Сказать методисту, что сумма уже прошедшего месяца поехала (tsk-756).
+
+    Письмо ученику уходит по той сумме, которая в базе сейчас. Значит сдвиг
+    прошлого — не бухгалтерская мелочь, а готовое к отправке неверное письмо:
+    01.09.2026 троим ученикам так и написали о долге, которого не было. Поэтому
+    тревога адресная — с именем, месяцем и «было → стало», а не счётчиком.
+    """
+    methodist_ids = await _methodist_ids(db)
+    if not methodist_ids:
+        logger.warning("tsk-756: методистов в базе нет — сообщить о сдвиге некому")
+        return 0
+
+    examples = shifted[:max_examples]
+    lines = [
+        f"Суммы месяцев, которые уже прошли, изменились сами — строк: {len(shifted)}.",
+        "",
+    ]
+    for item in examples:
+        lines.append(
+            f"• {item['full_name']} (id {item['student_id']}), {item['period']:%m.%Y}: "
+            f"было {item['was_minor'] / 100:.2f} ₽, стало {item['now_minor'] / 100:.2f} ₽ "
+            f"({item['delta_minor'] / 100:+.2f} ₽)"
+        )
+    if len(shifted) > len(examples):
+        lines.append(f"…и ещё {len(shifted) - len(examples)}.")
+    lines += [
+        "",
+        "Прошедший месяц пересчёту по новому расписанию не подлежит. Проверьте "
+        "суммы до того, как отправлять напоминания об оплате.",
+    ]
+
+    payload = {
+        "shifted_count": len(shifted),
+        "examples": [
+            {**item, "period": item["period"].isoformat(),
+             "updated_at": item["updated_at"].isoformat() if item["updated_at"] else None}
+            for item in examples
+        ],
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    for mid in methodist_ids:
+        await inbox_service.create_for_user(
+            db,
+            user_id=mid,
+            kind=SHIFT_NOTIFICATION_KIND,
+            title="Сумма прошедшего месяца изменилась",
+            content="\n".join(lines),
+            payload=payload,
+            created_by=None,
+        )
+    return len(methodist_ids)
 
 
 async def _notify_methodists(
@@ -323,6 +405,35 @@ async def charge_cron_tick(
             period,
             summary["recalculated"],
         )
+
+        # tsk-756: сначала запомнить итоги месяцев, которые уже кончились, потом
+        # сверить со снимком. Именно в этом порядке: месяц, кончившийся минуту
+        # назад, должен быть зафиксирован до первой же сверки, иначе его сдвиг
+        # нечем будет заметить.
+        summary["frozen"] = await charge_service.freeze_finished_months(db, today=today)
+        shifted = await charge_service.find_shifted_past_months(db, today=today)
+        summary["shifted_past"] = len(shifted)
+        summary["shifted_past_rows"] = shifted[:50]
+        if shifted:
+            logger.warning(
+                "tsk-756: суммы прошедших месяцев сдвинулись у %s строк: %s",
+                len(shifted),
+                [(s["full_name"], str(s["period"]), s["delta_minor"]) for s in shifted[:5]],
+            )
+            # Своя отсрочка и свой лок: тревога о сдвиге не должна ни теряться в
+            # день, когда рядом нашлись невыставленные, ни уходить дважды с двух
+            # worker'ов.
+            if await _try_lock(db) and not await _recently_notified(
+                db,
+                settings.charge_anomaly_notify_cooldown_hours,
+                kind=SHIFT_NOTIFICATION_KIND,
+            ):
+                summary["shift_notified"] = await _notify_shifted_past_months(
+                    db,
+                    shifted=shifted,
+                    max_examples=settings.charge_anomaly_max_examples,
+                )
+                await db.commit()
 
         findings = await find_unbilled_active_students(db, period=period)
         summary["unbilled"] = len(findings)

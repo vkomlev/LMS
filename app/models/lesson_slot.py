@@ -77,6 +77,15 @@ class LessonSlot(Base):
             "слот ещё работает — просто до названного дня."
         ),
     )
+    active_from: Mapped[Optional[date]] = mapped_column(
+        Date,
+        comment=(
+            "Первый день действия слота ВКЛЮЧИТЕЛЬНО; NULL — действовал всегда. "
+            "Парная к active_until (tsk-756): без неё слот, заведённый 31 августа "
+            "под осеннюю сетку, считался действовавшим и весь август — то есть "
+            "смена расписания переписывала прошлое."
+        ),
+    )
     created_by: Mapped[Optional[int]] = mapped_column(
         Integer, comment="Admin/оператор, создавший слот"
     )

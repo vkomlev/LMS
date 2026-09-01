@@ -80,16 +80,28 @@ async def list_charges(
     summary="Пересчитать месяц",
     description=(
         "Открытые месяцы переписываются. Закрытые не трогаются — расхождение "
-        "уходит поправкой в следующий открытый месяц."
+        "уходит поправкой в следующий открытый месяц. Месяц, который уже "
+        "прошёл, пересчитывается только по явной команде (`allow_past=true`): "
+        "автоматика прошлое не трогает, потому что расписание помнит лишь своё "
+        "сегодняшнее состояние (tsk-756)."
     ),
 )
 async def recalculate(
     period: Optional[date] = Query(default=None),
+    allow_past: bool = Query(
+        default=False,
+        description=(
+            "Пересчитать прошедший месяц по СЕГОДНЯШНЕМУ расписанию. Цена "
+            "закрывшегося месяца при этом может измениться — включать осознанно."
+        ),
+    ),
     db: AsyncSession = Depends(get_async_db),
     current_user: CurrentUser = Depends(_charges_gate),
 ) -> RecalculateResult:
     target = _resolve_period(period)
-    touched = await charge_service.recalculate_month(db, period=target)
+    touched = await charge_service.recalculate_month(
+        db, period=target, allow_past=allow_past
+    )
     return RecalculateResult(period=target, touched=touched)
 
 
