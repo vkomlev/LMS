@@ -1,0 +1,137 @@
+diff --git a/scripts/llm_model_bakeoff.py b/scripts/llm_model_bakeoff.py
+index d9916cb..1d6c48a 100644
+--- a/scripts/llm_model_bakeoff.py
++++ b/scripts/llm_model_bakeoff.py
+@@ -23,6 +23,10 @@
+     python scripts/llm_model_bakeoff.py --catalog       # только показать каталог с ценами
+     python scripts/llm_model_bakeoff.py --out docs/qa/  # куда положить отчёт
+ 
++Отчёт дня (`YYYY-MM-DD-llm-*-bakeoff.md`) пишет только ПОЛНЫЙ прогон. Прогон со
++своим списком `--models` — частичный: он уходит в отдельный файл со временем и
++пометкой `-partial`, чтобы не затирать чужой разбор (tsk-573).
++
+ Ключ берётся из .env LMS (`CLOSEROUTER_API_KEY`) и НИКОГДА не печатается.
+ """
+ from __future__ import annotations
+@@ -370,6 +374,52 @@ def chain_health(base: str, key: str, catalog: list[dict]) -> list[tuple]:
+     return rows
+ 
+ 
++def report_path(outdir: pathlib.Path, stem: str, *, partial: bool) -> pathlib.Path:
++    """Куда писать отчёт: полный прогон — в файл дня, частичный — в свой файл.
++
++    Имя, собранное из одной даты, плюс `write_text` = молчаливая перезапись.
++    01.09 точечный прогон `--models x-ai/grok-4.5 --runs 3` снёс месячный разбор
++    на 345 строк, оставив вместо него табличку на одну строку; спасло только то,
++    что отчёт был закоммичен (tsk-573). Полный прогон отчёт дня перезаписывать
++    вправе — он его и составлял. Частичный замер по заданному вручную списку
++    чужой работой распоряжаться не должен: он меряет выборку, а не набор.
++    """
++    outdir.mkdir(parents=True, exist_ok=True)
++    if partial:
++        return outdir / f"{datetime.now():%Y-%m-%d-%H%M%S}-{stem}-partial.md"
++    path = outdir / f"{date.today():%Y-%m-%d}-{stem}.md"
++    if path.exists():
++        print(f"ВНИМАНИЕ: полный прогон ПЕРЕЗАПИШЕТ существующий отчёт дня: {path}")
++    return path
++
++
++def partial_note(models: list[str]) -> list[str]:
++    """Шапка частичного отчёта: чтобы его не приняли за разбор всего набора."""
++    names = ", ".join(f"`{m}`" for m in models)
++    return [
++        f"> **Частичный прогон.** Мерялись только заданные `--models`: {names}. "
++        "Это не разбор всего каталога и не замена отчёту дня — выводы верны "
++        "лишь для перечисленных моделей. Отчёт дня этот прогон не трогал.",
++        "",
++    ]
++
++
++def no_good_hint(results: list[dict], *, partial: bool) -> str:
++    """Строка «годных нет» — совет только там, где он осмыслен.
++
++    Раньше здесь всегда стояло «проверить баланс/квоту ключа». При прогоне по
++    одному кандидату, забракованному по формату, совет был ложным: баланс был в
++    порядке (`credits=5.06`), просто выборка состояла из одной негодной модели.
++    """
++    if all(a["ok_runs"] == 0 for a in results):
++        return ("- ни одна модель не ответила вообще — проверить баланс/квоту ключа "
++                "и доступность провайдера")
++    if partial:
++        return ("- среди заданных `--models` годных нет: модели ответили, но забракованы "
++                "по вердиктам выше. Это оценка выборки, а не каталога")
++    return "- нет ни одного: модели отвечают, но все забракованы по вердиктам выше"
++
++
+ def verdict(a: dict) -> tuple[str, str]:
+     if a["ok_runs"] == 0:
+         return "ОШИБКА", (a["errors"][0] if a["errors"] else "пустой ответ без ошибки в потоке")
+@@ -439,6 +489,10 @@ def main() -> None:
+             print("все модели боевых цепочек живы")
+         return
+ 
++    # Частичный прогон = список моделей задан руками. Полный (каталог/цепочка из
++    # .env) отчёт дня составляет и вправе его перезаписать, частичный — нет.
++    partial = bool(args.models)
++
+     if args.judge:
+         models = [m.strip() for m in args.models.split(",")] if args.models else \
+             [m.strip() for m in (dotenv_values(ROOT / ".env", encoding="utf-8-sig")
+@@ -462,7 +516,9 @@ def main() -> None:
+         results = [judge_aggregate(by_model[m]) for m in models]
+ 
+         lines = [
+-            f"# Стенд судейского разбора — {date.today():%Y-%m-%d}", "",
++            f"# Стенд судейского разбора — {date.today():%Y-%m-%d}"
++            + (f" (частичный, {datetime.now():%H:%M})" if partial else ""), "",
++        ] + (partial_note(models) if partial else []) + [
+             "Прогон: `scripts/llm_model_bakeoff.py --judge`. Ось отдельная от наставницкой:",
+             "судья не стримит и с учеником не разговаривает — там важны дисциплина формата,",
+             "ПОЛНОЕ время ответа и цена одного разбора.", "",
+@@ -485,15 +541,13 @@ def main() -> None:
+         lines += ["", "## Пригодны для судьи", ""]
+         lines += [f"- `{a['model']}` — медиана {a['total']:.1f} c, формат "
+                   f"{a['runs'] - a['bad_format']}/{a['runs']}" for a in good] or \
+-                 ["- нет ни одного — проверить баланс/квоту ключа"]
++                 [no_good_hint(results, partial=partial)]
+         lines += ["", "## Ответы кандидатов (читать глазами — метрики не всё)", ""]
+         for a in results:
+             lines += [f"### `{a['model']}`", "", "```",
+                       (a["sample"] or (a["errors"][0] if a["errors"] else ""))[:1200], "```", ""]
+ 
+-        outdir = ROOT / args.out
+-        outdir.mkdir(parents=True, exist_ok=True)
+-        path = outdir / f"{date.today():%Y-%m-%d}-llm-judge-bakeoff.md"
++        path = report_path(ROOT / args.out, "llm-judge-bakeoff", partial=partial)
+         path.write_text("\n".join(lines), encoding="utf-8")
+ 
+         print(f"{'модель':<40}{'вердикт':<13}{'формат':>8}{'мед.':>9}{'худший':>9}{'$/разбор':>11}")
+@@ -524,7 +578,9 @@ def main() -> None:
+     results = [aggregate(by_model[m]) for m in models]
+ 
+     lines = [
+-        f"# Стенд сравнения LLM-моделей — {date.today():%Y-%m-%d}", "",
++        f"# Стенд сравнения LLM-моделей — {date.today():%Y-%m-%d}"
++        + (f" (частичный, {datetime.now():%H:%M})" if partial else ""), "",
++    ] + (partial_note(models) if partial else []) + [
+         f"Прогон: `scripts/llm_model_bakeoff.py`. Каталог провайдера: {len(catalog)} моделей.",
+         f"Баланс: `credits={cr.get('total_credits') if cr else '?'}`, "
+         f"`usage={cr.get('total_usage') if cr else '?'}`.", "",
+@@ -549,15 +605,13 @@ def main() -> None:
+     lines += ["", "## Пригодны для интерактива (наставник)", ""]
+     lines += [f"- `{a['model']}` — первый токен {a['first']:.1f} c, чанков {a['chunks']}, "
+               f"сливов {a['leaks']}/{a['ok_runs']}" for a in good] or \
+-             ["- нет ни одного — проверить баланс/квоту ключа и латентность"]
++             [no_good_hint(results, partial=partial)]
+     lines += ["", "## Ответы кандидатов (читать глазами — метрики не всё)", ""]
+     for a in results:
+         lines += [f"### `{a['model']}`", "", "```",
+                   (a["sample"] or (a["errors"][0] if a["errors"] else ""))[:1200], "```", ""]
+ 
+-    outdir = ROOT / args.out
+-    outdir.mkdir(parents=True, exist_ok=True)
+-    path = outdir / f"{date.today():%Y-%m-%d}-llm-model-bakeoff.md"
++    path = report_path(ROOT / args.out, "llm-model-bakeoff", partial=partial)
+     path.write_text("\n".join(lines), encoding="utf-8")
+ 
+     print(f"{'модель':<40}{'вердикт':<13}{'сливы':>7}{'1й ток':>9}{'чанков':>9}")
