@@ -32,7 +32,7 @@ from app.repos.lesson_calendar_repository import (
     LessonSlotRepository,
     LessonSlotTeacherRepository,
 )
-from app.services import audit_service, lesson_calendar_service
+from app.services import audit_service, homework_service, lesson_calendar_service
 from app.services.lesson_occurrence_generator_service import iter_occurrence_datetimes
 from app.utils.exceptions import DomainError
 
@@ -234,6 +234,25 @@ async def record_teacher_attendance(
             "actor_role": "teacher",
         },
     )
+
+    # tsk-741: ученик был на занятии — значит пора задать домашнюю работу до
+    # следующего. Объём считает формула по темпу и классу. Выдача НЕ ломает
+    # отметку явки: она за своим переключателем (по умолчанию выключена),
+    # молчит на повторной отметке того же занятия и глушит свои ошибки — иначе
+    # преподаватель не смог бы отметить явку из-за домашней работы.
+    if new_status == "confirmed":
+        try:
+            await homework_service.auto_issue_after_lesson(
+                db,
+                student_id=student_id,
+                occurrence_id=occurrence.id,
+                occurrence_at=occurrence.scheduled_at,
+            )
+        except Exception:
+            logger.exception(
+                "tsk-741: автовыдача ДЗ после занятия %s ученику %s не удалась",
+                occurrence.id, student_id,
+            )
 
     await db.commit()
     await db.refresh(participant)

@@ -89,6 +89,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.services import (
     charge_service,
+    homework_service,
     manual_progress_service,
     pricing_service,
     retention_service,
@@ -742,6 +743,24 @@ async def get_student_dashboard(
         higher_is_better=False, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
     )
 
+    # tsk-741: выполнение ДЗ — показатель того же уровня, что посещаемость и
+    # активность между занятиями, и меряется ТОЙ ЖЕ шкалой терцилей по когорте
+    # (`_tercile_level`). Своя шкала здесь была бы третьей в одном экране, и
+    # «высокий» в ней значил бы не то же, что «высокий» рядом.
+    homework_status = (await homework_service.status_for_students(
+        db, student_ids=[student_id], now=now,
+    )).get(student_id)
+    homework_peer_ratios = await homework_service.completion_ratio_for_students(
+        db, student_ids=global_peer_ids, period_from=period_from, period_to=period_to,
+    )
+    own_homework_ratio = (await homework_service.completion_ratio_for_students(
+        db, student_ids=[student_id], period_from=period_from, period_to=period_to,
+    )).get(student_id)
+    homework_level = _tercile_level(
+        own_homework_ratio, list(homework_peer_ratios.values()),
+        higher_is_better=True, cohort_size=len(global_peer_ids), min_cohort=min_cohort,
+    )
+
     activity_peer_values = await _bulk_between_lessons_activity(
         db, peer_ids=global_peer_ids, period_from=period_from, period_to=period_to,
     )
@@ -835,6 +854,20 @@ async def get_student_dashboard(
         },
         "attendance": attendance,
         "between_lessons_activity_level": between_lessons_activity_level,
+        # tsk-741: домашняя работа — план рядом с фактом. `assigned_*` пустые,
+        # если ученику ничего не задавали; `completion_ratio` пуста, если за
+        # период выдач не было. Ноль в этих полях означал бы «не сделал», а это
+        # другое утверждение.
+        "homework": {
+            "assigned_total": (homework_status or {}).get("assigned_total"),
+            "assigned_done": (homework_status or {}).get("assigned_done"),
+            "due_at": (homework_status or {}).get("due_at"),
+            "is_overdue": (homework_status or {}).get("is_overdue"),
+            "completion_ratio": (
+                round(own_homework_ratio, 2) if own_homework_ratio is not None else None
+            ),
+            "level": homework_level,
+        },
         # tsk-032: серия активных недель между занятиями. Считается тем же
         # определением события, что и `between_lessons` выше (общий код —
         # `retention_service`), поэтому число и серия не могут разойтись.

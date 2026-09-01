@@ -34,7 +34,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.current_user import CurrentUser
 from app.repos.lesson_calendar_repository import LessonOccurrenceParticipantRepository
-from app.services import help_requests_service, lesson_occurrence_service, manual_progress_service
+from app.services import (
+    help_requests_service,
+    homework_service,
+    lesson_occurrence_service,
+    manual_progress_service,
+)
 from app.utils.task_title import humanize_task_title
 
 #: Сколько последних occurrence ученика поднимаем для поиска предыдущего
@@ -357,6 +362,23 @@ async def _load_course_progress_and_blocked(
     return progress, blocked
 
 
+def _assigned_fields(status: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Поля выданного ДЗ для сводки; всё `None`, если ничего не задавали."""
+    if status is None:
+        return {
+            "assigned_total": None,
+            "assigned_done": None,
+            "assigned_due_at": None,
+            "assigned_is_overdue": None,
+        }
+    return {
+        "assigned_total": status["assigned_total"],
+        "assigned_done": status["assigned_done"],
+        "assigned_due_at": status["due_at"],
+        "assigned_is_overdue": status["is_overdue"],
+    }
+
+
 async def get_occurrence_summary(
     db: AsyncSession,
     *,
@@ -410,6 +432,15 @@ async def get_occurrence_summary(
         ).mappings().fetchall()
         profiles = {int(r["id"]): dict(r) for r in rows}
 
+    # tsk-741: что ЗАДАНО, рядом с тем, что сделано. Прежние счётчики окна
+    # (`load_homework_window`) считают свободную работу ученика между
+    # занятиями — по ним не ответить на вопрос «сделал ли он то, что задали».
+    # Одним запросом на всю группу: состав выдачи здесь не нужен, нужны три
+    # числа на человека.
+    assigned = await homework_service.status_for_students(
+        db, student_ids=student_ids, now=datetime.now(timezone.utc)
+    )
+
     result_participants: list[dict[str, Any]] = []
     for p in participants:
         profile = profiles.get(p.student_id, {})
@@ -425,6 +456,11 @@ async def get_occurrence_summary(
         homework = await load_homework_window(
             db, student_id=p.student_id, window_from=window_from, window_to=now_utc,
         )
+        # Ученику могли ещё ничего не задавать — тогда полей плана нет вовсе
+        # (`None`), и это не то же самое, что «задали ноль»: пустых выдач не
+        # бывает, а спутать «не задавали» с «не сделал» на этом экране дороже
+        # всего — преподаватель спросит с человека за то, чего ему не давали.
+        homework.update(_assigned_fields(assigned.get(p.student_id)))
         open_help, closed_help = await _load_help_requests(
             db,
             teacher_id=teacher_id,

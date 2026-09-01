@@ -291,6 +291,12 @@ async def test_summary_basic_shape_and_ad_hoc_flag(db, client):
     assert p["window_from"] is None
     assert p["homework"] == {
         "tasks_completed": 0, "theory_completed": 0, "first_try": 0, "help_requested": 0,
+        # tsk-741: рядом со свободной работой между занятиями появился ПЛАН.
+        # Ученику ничего не задавали — поля пустые, и это не «задали ноль»:
+        # пустых выдач не бывает, а спутать «не задавали» с «не сделал» на
+        # этом экране дороже всего.
+        "assigned_total": None, "assigned_done": None,
+        "assigned_due_at": None, "assigned_is_overdue": None,
     }
 
 

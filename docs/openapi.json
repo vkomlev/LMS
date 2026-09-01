@@ -21986,6 +21986,511 @@
         }
       }
     },
+    "/api/v1/me/homework": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get My Homework",
+        "description": "Моя домашняя работа: состав, срок, что уже сделано.\n\n`null` — ничего не задано. Просроченную выдачу не прячем: невыполненное с\nпрошедшим сроком ученик должен видеть, а не обнаруживать на занятии.\n\n401 (без auth) и 403 (сервисный токен) даёт `require_authenticated`.",
+        "operationId": "get_my_homework_api_v1_me_homework_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HomeworkRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get My Homework Api V1 Me Homework Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/students/{student_id}/homework": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get Student Homework",
+        "description": "Что задано этому ученику и что из этого сделано.",
+        "operationId": "get_student_homework_api_v1_teacher_students__student_id__homework_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HomeworkRead"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Student Homework Api V1 Teacher Students  Student Id  Homework Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Issue Student Homework",
+        "description": "Выдать домашнюю работу. Предыдущая действующая выдача гасится.\n\nСостав собирается из следующих незавершённых элементов программы ученика в\nучебном порядке — материалы узла идут перед его заданиями, поэтому теория\nпопадает домой сама собой.\n\n422 — срок в прошлом или в программе не осталось незавершённых элементов.",
+        "operationId": "issue_student_homework_api_v1_teacher_students__student_id__homework_post",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeworkIssueRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Cancel Student Homework",
+        "description": "Отменить действующую выдачу. Идемпотентно: отменять нечего — тоже 204.\n\nВыдача не удаляется, а помечается отменённой: преподаватель должен видеть,\nчто задавал, а прошлые счётчики не должны меняться задним числом.",
+        "operationId": "cancel_student_homework_api_v1_teacher_students__student_id__homework_delete",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/teacher/students/{student_id}/homework/volume": {
+      "get": {
+        "tags": [
+          "homework"
+        ],
+        "summary": "Get Homework Volume",
+        "description": "Что советует формула — и из чего это число сложилось.\n\nНичего не пишет и ничего не задаёт: преподаватель вправе сначала\nпосмотреть, а решить потом. Здесь же видно `weeks_behind` — на сколько\nнедель программа опаздывает при нынешнем темпе ученика.",
+        "operationId": "get_homework_volume_api_v1_teacher_students__student_id__homework_volume_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          },
+          {
+            "APIKeyQuery": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "student_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Student Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HomeworkVolumeRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/teacher/students/{student_id}/tasks/{task_id}/history": {
       "get": {
         "tags": [
@@ -49584,6 +50089,315 @@
         "title": "HistoryItem",
         "description": "Запись истории попыток ученика."
       },
+      "HomeworkIssueRequest": {
+        "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At",
+            "description": "Срок; должен быть в будущем. Не передан — сервер берёт начало СЛЕДУЮЩЕГО занятия ученика, а если занятий в расписании нет — неделю. Тот же срок, что у автоматической выдачи: два разных ответа на «до когда» означали бы, что преподаватель и система задают на разные сроки"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume",
+            "description": "Сколько элементов задать вместо расчёта формулы. Норма всё равно считается и сохраняется — иначе потом не понять, от чего отступили"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "Комментарий ученику"
+          }
+        },
+        "type": "object",
+        "title": "HomeworkIssueRequest",
+        "description": "Тело выдачи домашней работы преподавателем."
+      },
+      "HomeworkItemRead": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "task",
+              "material"
+            ],
+            "title": "Kind",
+            "description": "task — задание, material — теория (её тоже учат дома)"
+          },
+          "item_id": {
+            "type": "integer",
+            "title": "Item Id",
+            "description": "ID задания или материала"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id",
+            "description": "Узел курса, которому принадлежит элемент"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "done": {
+            "type": "boolean",
+            "title": "Done",
+            "description": "Выполнено. Считается у источника: задание — есть верная сдача, материал — есть отметка прохождения. Отдельной отметки «сделал домашку» в базе нет намеренно"
+          },
+          "position": {
+            "type": "integer",
+            "title": "Position",
+            "description": "Порядок в выдаче — учебный"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "item_id",
+          "done",
+          "position"
+        ],
+        "title": "HomeworkItemRead",
+        "description": "Один элемент выдачи с отметкой выполнения."
+      },
+      "HomeworkRead": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "student_id": {
+            "type": "integer",
+            "title": "Student Id"
+          },
+          "issued_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Issued At"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Due At",
+            "description": "Срок — обычно начало следующего занятия"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "teacher"
+            ],
+            "title": "Source"
+          },
+          "issued_by": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issued By"
+          },
+          "occurrence_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence Id"
+          },
+          "planned_volume": {
+            "type": "integer",
+            "title": "Planned Volume",
+            "description": "Норма формулы на момент выдачи — снимок, не пересчитывается"
+          },
+          "volume_details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume Details",
+            "description": "Из чего сложилась норма: надо/факт/качество/класс/недель до экзамена. Нужен, чтобы объяснить человеку конкретное число"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HomeworkItemRead"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "is_overdue": {
+            "type": "boolean",
+            "title": "Is Overdue",
+            "description": "Срок прошёл, а сделано не всё. Ничего не блокирует — решение оператора 01.09: невыполненное ДЗ это показатель, а не долг"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "student_id",
+          "issued_at",
+          "due_at",
+          "source",
+          "planned_volume",
+          "total",
+          "done",
+          "is_overdue"
+        ],
+        "title": "HomeworkRead",
+        "description": "Действующая домашняя работа ученика."
+      },
+      "HomeworkVolumeRead": {
+        "properties": {
+          "grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade",
+            "description": "Класс ученика"
+          },
+          "grade_assumed": {
+            "type": "boolean",
+            "title": "Grade Assumed",
+            "description": "Класс не указан — считали по 11 (решение оператора 01.09)"
+          },
+          "exam_date": {
+            "type": "string",
+            "title": "Exam Date",
+            "description": "Дата ближайшего экзамена для этого класса"
+          },
+          "weeks_to_exam": {
+            "type": "number",
+            "title": "Weeks To Exam"
+          },
+          "remaining_items": {
+            "type": "integer",
+            "title": "Remaining Items",
+            "description": "Незавершённых элементов программы"
+          },
+          "need_per_week": {
+            "type": "number",
+            "title": "Need Per Week",
+            "description": "Сколько нужно в неделю, чтобы успеть"
+          },
+          "fact_per_week": {
+            "type": "number",
+            "title": "Fact Per Week",
+            "description": "Сколько человек делает сейчас — медиана за 3 недели"
+          },
+          "correct_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct Ratio",
+            "description": "Доля верных сдач; null — сдач слишком мало"
+          },
+          "quality_penalty_applied": {
+            "type": "boolean",
+            "title": "Quality Penalty Applied",
+            "description": "Объём уменьшен на четверть: доля верных ниже 60%"
+          },
+          "volume_per_week": {
+            "type": "integer",
+            "title": "Volume Per Week",
+            "description": "Итоговая норма на неделю"
+          },
+          "weeks_behind": {
+            "type": "integer",
+            "title": "Weeks Behind",
+            "description": "На сколько недель программа опаздывает при НЫНЕШНЕМ темпе; 0 — успевает. Считается по факту, а не по норме"
+          }
+        },
+        "type": "object",
+        "required": [
+          "grade_assumed",
+          "exam_date",
+          "weeks_to_exam",
+          "remaining_items",
+          "need_per_week",
+          "fact_per_week",
+          "quality_penalty_applied",
+          "volume_per_week",
+          "weeks_behind"
+        ],
+        "title": "HomeworkVolumeRead",
+        "description": "Норма домашней работы и всё, из чего она сложилась (без выдачи)."
+      },
       "IdentityLinkEmailRequest": {
         "properties": {
           "link_token": {
@@ -55770,6 +56584,9 @@
             ],
             "title": "Between Lessons Activity Level"
           },
+          "homework": {
+            "$ref": "#/components/schemas/StudentDashboardHomeworkRead"
+          },
           "retention": {
             "$ref": "#/components/schemas/RetentionSummaryRead"
           },
@@ -55796,6 +56613,7 @@
           "between_lessons",
           "attendance",
           "between_lessons_activity_level",
+          "homework",
           "retention"
         ],
         "title": "PublicParentDashboardRead",
@@ -59812,6 +60630,82 @@
         ],
         "title": "StudentDashboardCourseRead"
       },
+      "StudentDashboardHomeworkRead": {
+        "properties": {
+          "assigned_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Total"
+          },
+          "assigned_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Done"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "is_overdue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Overdue"
+          },
+          "completion_ratio": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Ratio"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "worse",
+              "average",
+              "better",
+              "insufficient_data"
+            ],
+            "title": "Level"
+          }
+        },
+        "type": "object",
+        "required": [
+          "level"
+        ],
+        "title": "StudentDashboardHomeworkRead",
+        "description": "Домашняя работа: план рядом с фактом (tsk-741).\n\nВсе поля необязательные, и `None` здесь означает не «ноль», а «нечего\nсказать»: ученику могли ещё ничего не задавать. Ноль вместо этого читался\nбы как «не сделал» и утянул бы человека вниз в сравнении с группой."
+      },
       "StudentDashboardMetricsRead": {
         "properties": {
           "tasks_completed": {
@@ -59885,6 +60779,9 @@
             ],
             "title": "Between Lessons Activity Level"
           },
+          "homework": {
+            "$ref": "#/components/schemas/StudentDashboardHomeworkRead"
+          },
           "retention": {
             "$ref": "#/components/schemas/RetentionSummaryRead"
           }
@@ -59900,6 +60797,7 @@
           "between_lessons",
           "attendance",
           "between_lessons_activity_level",
+          "homework",
           "retention"
         ],
         "title": "StudentDashboardRead"
@@ -65278,6 +66176,55 @@
             "type": "integer",
             "title": "Help Requested",
             "description": "Заявок на помощь создано в окне"
+          },
+          "assigned_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Total",
+            "description": "Элементов в действующей выдаче ДЗ. `null` — ученику ничего не задавали (это НЕ то же самое, что «задали ноль»: пустых выдач не бывает)"
+          },
+          "assigned_done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Done",
+            "description": "Из выданного выполнено. Считается у источника — верная сдача задания либо отметка прохождения материала"
+          },
+          "assigned_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Due At",
+            "description": "Срок выданного ДЗ"
+          },
+          "assigned_is_overdue": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assigned Is Overdue",
+            "description": "Срок прошёл, а сделано не всё. Ничего не блокирует: решение оператора 01.09 — невыполненное ДЗ это показатель, а не долг"
           }
         },
         "type": "object",

@@ -376,6 +376,34 @@ class TeacherSummaryHomework(BaseModel):
         ..., description="Из заданий (не материалов) — сколько верно с первой попытки"
     )
     help_requested: int = Field(..., description="Заявок на помощь создано в окне")
+    # tsk-741: то же окно, но про ПЛАН, а не про свободную работу. Счётчики
+    # выше отвечают «сколько сделал», эти — «сделал ли то, что задали»; без
+    # второго вопроса выданное ДЗ не проверить.
+    assigned_total: Optional[int] = Field(
+        default=None,
+        description=(
+            "Элементов в действующей выдаче ДЗ. `null` — ученику ничего не "
+            "задавали (это НЕ то же самое, что «задали ноль»: пустых выдач "
+            "не бывает)"
+        ),
+    )
+    assigned_done: Optional[int] = Field(
+        default=None,
+        description=(
+            "Из выданного выполнено. Считается у источника — верная сдача "
+            "задания либо отметка прохождения материала"
+        ),
+    )
+    assigned_due_at: Optional[datetime] = Field(
+        default=None, description="Срок выданного ДЗ"
+    )
+    assigned_is_overdue: Optional[bool] = Field(
+        default=None,
+        description=(
+            "Срок прошёл, а сделано не всё. Ничего не блокирует: решение "
+            "оператора 01.09 — невыполненное ДЗ это показатель, а не долг"
+        ),
+    )
 
 
 class TeacherSummaryParticipant(BaseModel):

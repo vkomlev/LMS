@@ -273,6 +273,13 @@ class Settings:
         self.code_review_cron_enabled: bool = os.getenv(
             "CODE_REVIEW_CRON_ENABLED", "true"
         ).lower() in ("true", "1", "yes")
+        # tsk-741: автоматическая выдача ДЗ после занятия. Выключена по
+        # умолчанию: формула согласована, но на живых учениках не обкатана, а
+        # выдача видна ученику сразу. Ручная выдача преподавателем работает
+        # независимо от этого переключателя.
+        self.homework_auto_issue_enabled: bool = os.getenv(
+            "HOMEWORK_AUTO_ISSUE_ENABLED", "false"
+        ).lower() in ("true", "1", "yes")
         self.code_review_cron_interval_min: int = int(
             os.getenv("CODE_REVIEW_CRON_INTERVAL_MIN", "2")
         )

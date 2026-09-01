@@ -374,6 +374,10 @@ app.include_router(teacher_assignments_router, prefix=API_PREFIX)
 from app.api.v1.teacher_progress import router as teacher_progress_router
 app.include_router(teacher_progress_router, prefix=API_PREFIX)
 
+# tsk-741: домашняя работа — выдача, состав, срок, выполнение.
+from app.api.v1.homework import router as homework_router
+app.include_router(homework_router, prefix=API_PREFIX)
+
 # История выполнения задания учеником для преподавателя (tsk-349)
 from app.api.v1.teacher_task_history import router as teacher_task_history_router
 app.include_router(teacher_task_history_router, prefix=API_PREFIX)

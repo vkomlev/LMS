@@ -88,6 +88,30 @@ class StudentDashboardAttendanceRead(BaseModel):
     missed_level: CohortLevel
 
 
+class StudentDashboardHomeworkRead(BaseModel):
+    """Домашняя работа: план рядом с фактом (tsk-741).
+
+    Все поля необязательные, и `None` здесь означает не «ноль», а «нечего
+    сказать»: ученику могли ещё ничего не задавать. Ноль вместо этого читался
+    бы как «не сделал» и утянул бы человека вниз в сравнении с группой.
+    """
+
+    #: Элементов в действующей выдаче; `None` — ДЗ не выдавали.
+    assigned_total: Optional[int] = None
+    #: Из них выполнено. Считается у источника (верная сдача / отметка материала).
+    assigned_done: Optional[int] = None
+    #: Срок действующей выдачи.
+    due_at: Optional[datetime] = None
+    #: Срок прошёл, а сделано не всё. Ничего не блокирует (решение оператора
+    #: 01.09: невыполненное ДЗ — показатель, а не долг).
+    is_overdue: Optional[bool] = None
+    #: Доля выполненного из выданного ЗА ПЕРИОД, 0..1; `None` — выдач не было.
+    completion_ratio: Optional[float] = None
+    #: Та же шкала терцилей по когорте, что у посещаемости и активности
+    #: (tsk-504) — своя шкала стала бы третьей на одном экране.
+    level: CohortLevel
+
+
 class StudentDashboardRead(BaseModel):
     student_id: int
     period_from: datetime
@@ -103,6 +127,10 @@ class StudentDashboardRead(BaseModel):
     #: та же форма используется и для `period_total`/`in_class_hours`,
     #: которые оператор явно исключил из подсветки.
     between_lessons_activity_level: CohortLevel
+    #: tsk-741: домашняя работа — что задали, что сделано, как это выглядит на
+    #: фоне группы. Рядом с активностью между занятиями намеренно: это та же
+    #: работа дома, но заданная, а не свободная.
+    homework: StudentDashboardHomeworkRead
     #: Серия активных недель между занятиями (tsk-032). Соседствует с
     #: `between_lessons` намеренно: это та же активность, но в виде
     #: «возвращается ли ребёнок регулярно», а не «сколько сделал за период».
