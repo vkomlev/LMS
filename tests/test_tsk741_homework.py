@@ -397,7 +397,8 @@ async def test_volume_for_window_scales_by_days(db):
     plan = homework_volume_service.VolumePlan(
         grade=11, grade_assumed=False, exam_date=date(2027, 6, 1), weeks_to_exam=39.0,
         remaining_items=100, target_per_week=20, fact_per_week=10.0, correct_ratio=0.9,
-        quality_penalty_applied=False, volume_per_week=14, pace_gap=10,
+        quality_penalty_applied=False, volume_per_week=14, weeks_of_program_left=7,
+        needs_more_program=False, exam_sprint=False, pace_gap=10,
     )
     assert homework_volume_service.volume_for_window(plan, days=7) == 14
     assert homework_volume_service.volume_for_window(plan, days=3) == 6
@@ -705,3 +706,93 @@ async def test_completion_ratio_skips_students_without_assignments(db):
     )
     assert ratios[student_id] == pytest.approx(0.25)
     assert silent_student not in ratios
+
+
+# ============== Необязательное, опережение и финишный спринт ==============
+
+
+@pytest.mark.asyncio
+async def test_recommended_items_are_not_part_of_the_program(db):
+    """Необязательные задания в остаток программы не входят.
+
+    Вопрос оператора 01.09. В ВЫДАЧУ они не попадали и раньше — дерево курса
+    фильтрует их тем же правилом, что движок, — а вот остаток считался по
+    всему подряд. На проде это половина: у одного ученика 1224 обязательных
+    задания против 982 рекомендованных, то есть «сколько ещё осталось» врало
+    почти вдвое, и ученик с опережением не получил бы сигнала вовремя.
+    """
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, "mixed")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    for pos in range(1, 6):
+        await _new_task(db, course_id=course_id, order_position=pos)
+    recommended = [await _new_task(db, course_id=course_id, order_position=90 + i) for i in range(4)]
+    await db.execute(
+        text("UPDATE tasks SET requirement_level = 'recommended' WHERE id = ANY(:ids)"),
+        {"ids": recommended},
+    )
+    await db.commit()
+    await _set_grade(db, student_id=student_id, grade=11)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.remaining_items == 5, "рекомендованные попали в остаток программы"
+
+
+@pytest.mark.asyncio
+async def test_program_running_out_is_visible_in_advance(db):
+    """Идущего с опережением видно ЗАРАНЕЕ, а не в день, когда задавать нечего.
+
+    Требование оператора 01.09: без ДЗ такого ученика не оставляем — значит
+    ему нужно добавить курс, и узнать об этом надо загодя.
+    """
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, "ending")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    for pos in range(1, 7):
+        await _new_task(db, course_id=course_id, order_position=pos)
+    await _set_grade(db, student_id=student_id, grade=11)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    # Норма 3 (пол, темпа нет), остатка 6 — хватит на две недели.
+    assert plan.weeks_of_program_left == 2
+    assert plan.needs_more_program is True
+
+
+@pytest.mark.asyncio
+async def test_full_program_does_not_ask_for_more(db):
+    """Пока программы вдоволь, о новых курсах не напоминаем."""
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, "plenty")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    for pos in range(1, 60):
+        await _new_task(db, course_id=course_id, order_position=pos)
+    await _set_grade(db, student_id=student_id, grade=11)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.needs_more_program is False
+    assert plan.weeks_of_program_left is not None and plan.weeks_of_program_left >= 4
+
+
+def test_final_grade_target_drops_in_march():
+    """С марта у выпускников норма падает: время уходит на варианты.
+
+    До марта одиннадцатикласснику 20 в неделю, с 1 марта — 6: он решает
+    1-2 полных варианта в неделю, и на обычное ДЗ времени почти не остаётся.
+    Оставить прежние 20 значило бы весь финиш показывать «не дотягивает»,
+    хотя человек занят ровно тем, чем должен.
+    """
+    assert homework_volume_service.target_per_week_for(11, date(2026, 12, 1)) == 20
+    assert homework_volume_service.target_per_week_for(11, date(2027, 3, 1)) == 6
+    assert homework_volume_service.target_per_week_for(11, date(2027, 5, 20)) == 6
+
+
+def test_march_sprint_does_not_touch_other_grades():
+    """Десятикласснику в марте до его экзамена ещё год — норма прежняя."""
+    assert homework_volume_service.target_per_week_for(10, date(2027, 3, 1)) == 12
+    assert homework_volume_service.target_per_week_for(9, date(2027, 3, 1)) == 12
+
+
+def test_unknown_grade_follows_the_final_grade_sprint():
+    """Класс не указан — считаем как 11, значит и спринт с марта тот же."""
+    assert homework_volume_service.target_per_week_for(None, date(2026, 12, 1)) == 20
+    assert homework_volume_service.target_per_week_for(None, date(2027, 3, 1)) == 6

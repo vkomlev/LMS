@@ -63,6 +63,8 @@ from app.services.learning_gaps_service import (
     real_student_material_filter,
     real_student_results_filter,
 )
+# tsk-741: «что вообще входит в программу» — одно правило на весь проект.
+from app.services.manual_progress_service import REQUIREMENT_LEVELS
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,21 @@ GROWTH_FACTOR = 1.2
 TARGET_PER_WEEK_BY_GRADE: dict[int, int] = {11: 20, 10: 12, 9: 12}
 #: Норма для тех, кто младше девятого класса.
 TARGET_PER_WEEK_JUNIOR = 8
+
+#: С этого месяца выпускной класс уходит на отработку вариантов (1-2 варианта в
+#: неделю целиком), и времени на обычное ДЗ почти не остаётся. Норма падает —
+#: иначе система весь финиш будет показывать «не дотягивает», хотя человек как
+#: раз занят главным. Решение оператора 01.09.2026.
+EXAM_SPRINT_FROM_MONTH = 3
+#: Недельная норма выпускного класса на финише: остаток времени держим за
+#: вариантами, домашняя работа становится добавкой, а не основой.
+TARGET_PER_WEEK_EXAM_SPRINT = 6
+
+#: Остатка программы меньше, чем на столько недель — пора добавлять курс.
+#: Сигнал поднимается заранее: «программа кончилась» узнавать в тот день, когда
+#: ученику нечего задать, поздно (вопрос оператора 01.09: с опережением графика
+#: без ДЗ не оставляем).
+PROGRAM_LOW_WEEKS = 4
 #: Сколько полных недель берём для оценки фактического темпа.
 FACT_WEEKS = 3
 #: Доля верных, ниже которой человек считается тонущим.
@@ -126,6 +143,16 @@ class VolumePlan:
     quality_penalty_applied: bool
     #: Итоговая норма на неделю.
     volume_per_week: int
+    #: На сколько недель хватит остатка программы при этой норме; None — норма
+    #: нулевая (задавать нечего). Это ответ на «что делать с теми, кто идёт с
+    #: опережением»: их видно ЗАРАНЕЕ, а не в день, когда задавать стало нечего.
+    weeks_of_program_left: Optional[int]
+    #: Программы осталось меньше чем на PROGRAM_LOW_WEEKS недель (или её нет
+    #: вовсе) — пора добавлять ученику курс.
+    needs_more_program: bool
+    #: True — норма снижена, потому что выпускной класс с марта отрабатывает
+    #: варианты, а не проходит новое.
+    exam_sprint: bool
     #: На сколько элементов в неделю человек не дотягивает до нормы своего
     #: класса; 0 — дотягивает. Это и есть сигнал преподавателю: не «завалить
     #: заданиями», а «видно, что отстаёт».
@@ -161,15 +188,38 @@ def exam_date_for(grade: Optional[int], today: date) -> date:
     return date(base_year + years_left, EXAM_MONTH, EXAM_DAY)
 
 
-def target_per_week_for(grade: Optional[int]) -> int:
-    """Целевая недельная норма для класса.
+def target_per_week_for(grade: Optional[int], today: Optional[date] = None) -> int:
+    """Целевая недельная норма для класса на эту дату.
 
     Класс не указан — считаем как 11 (решение оператора 01.09): ошибиться в
     сторону более высокой нагрузки безопаснее, чем оставить выпускника без неё.
     Норма — не приговор: выше того, что человек тянет, объём всё равно не
     поднимется (`факт × 1.2`).
+
+    **С марта у выпускного класса норма падает.** С этого месяца одиннадцатый
+    класс переходит на отработку вариантов — 1-2 полных варианта в неделю, — и
+    времени на обычное ДЗ почти не остаётся. Оставить прежние 20 значило бы
+    весь финиш показывать преподавателю «не дотягивает», хотя ученик занят
+    ровно тем, чем должен. Считается по месяцу ЭКЗАМЕНАЦИОННОГО года: в марте
+    2027 выпускник 2027 года уже на финише, а десятикласснику до его марта
+    ещё год.
+
+    Args:
+        grade: класс 1-11 или None.
+        today: дата расчёта; None — сегодня.
+
+    Returns:
+        Сколько элементов в неделю считать нормой.
     """
     effective = grade if grade is not None else ASSUMED_GRADE
+    moment = today or date.today()
+
+    if effective >= 11 or grade is None:
+        exam_day = exam_date_for(grade, moment)
+        sprint_start = date(exam_day.year, EXAM_SPRINT_FROM_MONTH, 1)
+        if sprint_start <= moment <= exam_day:
+            return TARGET_PER_WEEK_EXAM_SPRINT
+
     if effective in TARGET_PER_WEEK_BY_GRADE:
         return TARGET_PER_WEEK_BY_GRADE[effective]
     return TARGET_PER_WEEK_JUNIOR
@@ -189,11 +239,13 @@ course_tasks AS (
     SELECT DISTINCT t.id
       FROM tasks t JOIN tree ON tree.member_course_id = t.course_id
      WHERE COALESCE(t.is_active, true)
+       AND t.requirement_level = ANY(:levels)
 ),
 course_materials AS (
     SELECT DISTINCT m.id
       FROM materials m JOIN tree ON tree.member_course_id = m.course_id
      WHERE COALESCE(m.is_active, true)
+       AND m.requirement_level = ANY(:levels)
 ),
 tasks_done AS (
     SELECT DISTINCT tr.task_id AS id
@@ -302,7 +354,10 @@ async def compute(
     ).scalar()
 
     totals = (
-        await db.execute(text(_REMAINING_SQL), {"student_id": student_id})
+        await db.execute(
+            text(_REMAINING_SQL),
+            {"student_id": student_id, "levels": list(REQUIREMENT_LEVELS)},
+        )
     ).mappings().one()
     remaining = max(int(totals["total_items"]) - int(totals["done_items"]), 0)
 
@@ -331,7 +386,10 @@ async def compute(
 
     exam_day = exam_date_for(grade, moment.date())
     weeks_to_exam = max((exam_day - moment.date()).days, 1) / 7.0
-    target = target_per_week_for(grade)
+    target = target_per_week_for(grade, moment.date())
+    sprint = target == TARGET_PER_WEEK_EXAM_SPRINT and (
+        grade is None or grade >= 11
+    )
 
     #: Растим не быстрее, чем на GROWTH_FACTOR от нынешнего темпа, но не ниже
     #: минимума: у человека с нулевым темпом факт×1.2 = 0, и без пола он не
@@ -352,6 +410,14 @@ async def compute(
     #: отставание — то, что человек делает на самом деле.
     pace_gap = max(int(round(target - fact_per_week)), 0) if remaining > 0 else 0
 
+    #: Насколько хватит программы при нынешней норме. Считается по НОРМЕ, а не
+    #: по факту: вопрос «когда ученику станет нечего задавать», а не «когда он
+    #: всё пройдёт».
+    weeks_left = int(remaining // volume) if volume > 0 else None
+    needs_more = remaining == 0 or (
+        weeks_left is not None and weeks_left < PROGRAM_LOW_WEEKS
+    )
+
     return VolumePlan(
         grade=int(grade) if grade is not None else None,
         grade_assumed=grade is None,
@@ -363,6 +429,9 @@ async def compute(
         correct_ratio=round(correct_ratio, 2) if correct_ratio is not None else None,
         quality_penalty_applied=penalty,
         volume_per_week=volume,
+        weeks_of_program_left=weeks_left,
+        needs_more_program=needs_more,
+        exam_sprint=sprint,
         pace_gap=pace_gap,
     )
 

@@ -85,7 +85,11 @@ SYSTEM_SOURCE = "system"
 #: Реэкспорт единого списка из схемы, чтобы whitelist не разъезжался (tsk-366).
 MANUAL_REVIEW_TASK_TYPES = _MANUAL_REVIEW_TASK_TYPES
 #: Фильтр обхода — тот же, что у учебного движка (см. `compute_course_state`).
-_REQUIREMENT_LEVELS = ("required", "skippable")
+#: Публичное имя (tsk-741): по этому же правилу считается остаток программы для
+#: нормы домашней работы. Своя копия там дала бы расхождение в полтора раза —
+#: `recommended` заданий на проде 982 против 5571 обязательных.
+REQUIREMENT_LEVELS = ("required", "skippable")
+_REQUIREMENT_LEVELS = REQUIREMENT_LEVELS
 #: Максимальная длина комментария преподавателя (обрезается, а не отклоняется).
 _COMMENT_MAX_LEN = 500
 

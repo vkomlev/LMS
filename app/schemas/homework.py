@@ -92,6 +92,26 @@ class HomeworkVolumeRead(BaseModel):
         description="Объём уменьшен на четверть: доля верных ниже 60%"
     )
     volume_per_week: int = Field(description="Итоговая норма на неделю")
+    weeks_of_program_left: Optional[int] = Field(
+        default=None,
+        description=(
+            "На сколько недель хватит остатка программы при этой норме; "
+            "null — задавать нечего. Идущего с опережением видно ЗАРАНЕЕ, а не "
+            "в день, когда ему стало нечего задать"
+        ),
+    )
+    needs_more_program: bool = Field(
+        description=(
+            "Программы осталось меньше чем на 4 недели (или её нет вовсе) — "
+            "пора добавить ученику курс"
+        )
+    )
+    exam_sprint: bool = Field(
+        description=(
+            "Норма снижена: с марта выпускной класс отрабатывает варианты "
+            "(1-2 в неделю), и на обычное ДЗ времени почти не остаётся"
+        )
+    )
     pace_gap: int = Field(
         description=(
             "На сколько элементов в неделю человек не дотягивает до нормы "

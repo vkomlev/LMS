@@ -50377,6 +50377,28 @@
             "title": "Volume Per Week",
             "description": "Итоговая норма на неделю"
           },
+          "weeks_of_program_left": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeks Of Program Left",
+            "description": "На сколько недель хватит остатка программы при этой норме; null — задавать нечего. Идущего с опережением видно ЗАРАНЕЕ, а не в день, когда ему стало нечего задать"
+          },
+          "needs_more_program": {
+            "type": "boolean",
+            "title": "Needs More Program",
+            "description": "Программы осталось меньше чем на 4 недели (или её нет вовсе) — пора добавить ученику курс"
+          },
+          "exam_sprint": {
+            "type": "boolean",
+            "title": "Exam Sprint",
+            "description": "Норма снижена: с марта выпускной класс отрабатывает варианты (1-2 в неделю), и на обычное ДЗ времени почти не остаётся"
+          },
           "pace_gap": {
             "type": "integer",
             "title": "Pace Gap",
@@ -50393,6 +50415,8 @@
           "fact_per_week",
           "quality_penalty_applied",
           "volume_per_week",
+          "needs_more_program",
+          "exam_sprint",
           "pace_gap"
         ],
         "title": "HomeworkVolumeRead",
