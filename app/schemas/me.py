@@ -30,8 +30,31 @@ def normalize_city(v: str | None) -> str | None:
     return stripped or None
 
 
+#: tsk-753: технические имена пояса вместо города. У `Etc/GMT±N` в POSIX
+#: ОБРАТНЫЙ знак (`Etc/GMT-3` — это UTC+3), поэтому при любой ручной сверке их
+#: читают наоборот; `UTC`/`GMT`/`Factory` приезжают с машин без настроенного
+#: пояса. В профиле человека такое значение означает не место, а недонастройку —
+#: у одного ученика школы так и было записано `Etc/GMT-3`.
+_TECHNICAL_TIMEZONE_PREFIXES = ("etc/", "gmt")
+_TECHNICAL_TIMEZONE_NAMES = {"utc", "universal", "zulu", "factory", "localtime"}
+
+
+def is_technical_timezone(v: str) -> bool:
+    """Техническое имя пояса вместо города — `Etc/GMT-3`, `UTC`, `Factory` (tsk-753)."""
+    normalized = v.strip().lower()
+    return normalized in _TECHNICAL_TIMEZONE_NAMES or normalized.startswith(
+        _TECHNICAL_TIMEZONE_PREFIXES
+    )
+
+
 def validate_timezone(v: str | None) -> str | None:
-    """Проверить, что значение — валидный IANA-идентификатор часового пояса."""
+    """Проверить, что значение — валидный IANA-идентификатор часового пояса.
+
+    tsk-753: технические имена (`Etc/GMT-3`, `UTC`) отклоняются, хотя `ZoneInfo`
+    их и знает. Считать по ним время можно, а хранить как «пояс человека» —
+    нет: знак в них обратный, и первый же, кто сверит значение глазами, прочтёт
+    его наоборот.
+    """
     if v is None:
         return v
     try:
@@ -41,6 +64,11 @@ def validate_timezone(v: str | None) -> str | None:
             f"Некорректный часовой пояс: «{v}». Ожидается IANA-идентификатор, "
             "например Europe/Moscow."
         ) from exc
+    if is_technical_timezone(v):
+        raise ValueError(
+            f"Часовой пояс «{v}» — техническое имя, а не место. Ожидается "
+            "идентификатор с городом, например Asia/Krasnoyarsk."
+        )
     return v
 
 

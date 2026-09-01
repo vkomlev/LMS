@@ -6,9 +6,10 @@
 
 - пустой пояс → записывается, источник `auto`;
 - тот же пояс повторно → записи нет (`applied=false`), эндпоинт идемпотентен;
-- сменился пояс (переезд) → обновляется, источник остаётся `auto`;
+- сменился пояс устройства → записанное значение НЕ трогается (tsk-753);
 - пояс вписан человеком (PATCH /me) → автозахват не трогает, `applied=false`;
 - некорректный IANA-идентификатор → 422;
+- техническое имя (`Etc/GMT-3`, `UTC`) → 422 (tsk-753);
 - без авторизации → 401.
 
 Образец подъёма user+session — как в test_tsk427_profile_extra_fields.py.
@@ -102,8 +103,14 @@ async def test_auto_timezone_is_idempotent(db, client):
 
 
 @pytest.mark.asyncio
-async def test_auto_timezone_follows_move_to_another_zone(db, client):
-    """Пояс, снятый автоматически, обновляется при смене пояса устройства."""
+async def test_auto_timezone_does_not_overwrite_recorded_value(db, client):
+    """tsk-753: другое устройство НЕ переписывает уже записанный пояс.
+
+    Прежнее поведение (автозахват шёл за устройством) и было дефектом: вход с
+    рабочего или чужого компьютера молча уводил пояс, а человек узнавал об этом
+    из подсказки «(у вас 16:00)» рядом со временем занятия. Что делать с
+    расхождением, решает человек в кабинете — его ответ приходит `PATCH /me`.
+    """
     user_id, token = await _setup_user_with_session(db)
     try:
         headers = {"Authorization": f"Bearer {token}"}
@@ -114,13 +121,34 @@ async def test_auto_timezone_follows_move_to_another_zone(db, client):
         )
         assert moved.status_code == 200, moved.text
         assert moved.json() == {
-            "timezone": "Asia/Novosibirsk",
+            "timezone": "Europe/Moscow",
             "source": "auto",
-            "applied": True,
+            "applied": False,
         }
 
         await db.commit()
-        assert await _read_timezone(db, user_id) == ("Asia/Novosibirsk", "auto")
+        assert await _read_timezone(db, user_id) == ("Europe/Moscow", "auto")
+    finally:
+        await _cleanup(db, user_id)
+
+
+@pytest.mark.asyncio
+async def test_manual_answer_replaces_auto_value(db, client):
+    """Ответ человека на расхождение проходит: `PATCH /me` меняет пояс и источник."""
+    user_id, token = await _setup_user_with_session(db)
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        await client.put(AUTO_URL, json={"timezone": "Asia/Yekaterinburg"}, headers=headers)
+
+        answered = await client.patch(
+            "/api/v1/me", json={"timezone": "Asia/Krasnoyarsk"}, headers=headers
+        )
+        assert answered.status_code == 200, answered.text
+        assert answered.json()["timezone"] == "Asia/Krasnoyarsk"
+        assert answered.json()["timezone_source"] == "manual"
+
+        await db.commit()
+        assert await _read_timezone(db, user_id) == ("Asia/Krasnoyarsk", "manual")
     finally:
         await _cleanup(db, user_id)
 
@@ -190,6 +218,34 @@ async def test_auto_timezone_rejects_garbage(db, client):
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 422, resp.text
+    finally:
+        await _cleanup(db, user_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", ["Etc/GMT-3", "UTC", "Factory"])
+async def test_auto_timezone_rejects_technical_names(db, client, value):
+    """tsk-753: `Etc/GMT-3` знает и ZoneInfo, но как «пояс человека» он ловушка.
+
+    В POSIX знак у этих имён обратный (`Etc/GMT-3` — это UTC+3), и первый же,
+    кто сверит значение глазами, прочтёт его наоборот. У одного ученика школы
+    так и было записано.
+    """
+    user_id, token = await _setup_user_with_session(db)
+    try:
+        resp = await client.put(
+            AUTO_URL,
+            json={"timezone": value},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 422, resp.text
+
+        patched = await client.patch(
+            "/api/v1/me",
+            json={"timezone": value},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert patched.status_code == 422, patched.text
     finally:
         await _cleanup(db, user_id)
 
