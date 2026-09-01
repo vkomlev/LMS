@@ -425,6 +425,34 @@ async def test_completion_is_derived_from_real_work(db):
 
 
 @pytest.mark.asyncio
+async def test_manual_grant_closes_homework_item_but_not_pace(db):
+    """Ручной зачёт закрывает пункт ДЗ, но темпом не считается.
+
+    Это два разных вопроса. «Сделано ли задание» решает преподаватель: зачёл —
+    значит закрыто, иначе он видел бы красную отметку, которую сам же и снял.
+    «С какой скоростью работает человек» — про его собственные сдачи.
+    """
+    student_id, course_id = await _student_with_program(db, materials=0, tasks=3)
+    homework = await homework_service.issue(
+        db, student_id=student_id, due_at=datetime.now(UTC) + timedelta(days=7),
+        source="teacher", volume_override=3,
+    )
+    await db.commit()
+
+    await _submit(
+        db, student_id=student_id, task_id=homework["items"][0]["item_id"],
+        course_id=course_id, is_correct=True, at=datetime.now(UTC),
+        source="manual_teacher",
+    )
+
+    updated = await homework_service.get_current(db, student_id=student_id)
+    assert updated["done"] == 1, "ручной зачёт обязан закрывать пункт ДЗ"
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.fact_per_week == 0.0, "ручной зачёт не должен считаться темпом"
+
+
+@pytest.mark.asyncio
 async def test_new_issue_cancels_previous(db):
     """Действующая выдача одна: иначе «текущее ДЗ» перестаёт быть определённым."""
     student_id, _ = await _student_with_program(db)
