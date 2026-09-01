@@ -4,8 +4,13 @@
 
 - **срок экзамена от класса** — 11 класс сдаёт этим летом, 10 — следующим,
   класс не указан считается как 11 (решение оператора 01.09);
+- **класс влияет на объём** — через целевую недельную норму (11 → 20, 10 и 9 →
+  12, младше → 8). Первая редакция выводила нагрузку из «остатка программы,
+  делённого на недели до экзамена», и на живых данных класс переставал влиять
+  вовсе: курс — банк из 1758 заданий, остаток 1700-4800, «надо» упиралось в
+  потолок у всех;
 - **норма** — не выше того, что человек тянет (`факт × 1.2`), не ниже пола, не
-  выше потолка; поправка на качество при доле верных ниже 60%;
+  больше остатка программы; поправка на качество при доле верных ниже 60%;
 - **выдача** — материалы попадают домой наравне с заданиями и идут первыми
   (прямое требование «теорию учат дома»), уже пройденное не выдаётся повторно;
 - **выполнение считается у источника** — верная сдача закрывает пункт ДЗ, хотя
@@ -246,11 +251,70 @@ async def test_volume_has_floor_for_idle_student(db):
     assert plan.volume_per_week == homework_volume_service.MIN_PER_WEEK
     assert plan.remaining_items == 39
     assert plan.grade == 11 and plan.grade_assumed is False
+    # Норма класса видна, даже когда объём до неё не дотягивает: разрыв — это и
+    # есть сигнал преподавателю.
+    assert plan.target_per_week == 20
+    assert plan.pace_gap == 20
 
 
 @pytest.mark.asyncio
-async def test_volume_does_not_exceed_ceiling(db):
-    """Даже когда программы много, а срока мало, норма упирается в потолок."""
+async def test_grade_changes_the_target(db):
+    """Класс влияет на норму — ради этого и спрашивали про класс.
+
+    Первая редакция формулы выводила нагрузку из «остатка программы, делённого
+    на недели до экзамена». На живых данных 01.09 остаток оказался 1700-4800
+    элементов (курс — банк заданий, а не конечная программа), «надо» выходило
+    52-58 в неделю у всех, всегда упиралось в потолок, и класс переставал
+    влиять на объём вовсе. Этот тест держит исправление.
+    """
+    now = datetime.now(UTC)
+    plans = {}
+    for grade in (11, 10, 7):
+        student_id, _ = await _new_user(db)
+        course_id = await _new_course(db, f"grade{grade}")
+        await _enroll(db, student_id=student_id, course_id=course_id)
+        for pos in range(1, 60):
+            task_id = await _new_task(db, course_id=course_id, order_position=pos)
+            if pos <= 45:
+                # Быстрый ученик: 15 сдач в каждую из трёх недель.
+                await _submit(
+                    db, student_id=student_id, task_id=task_id, course_id=course_id,
+                    is_correct=True, at=now - timedelta(days=(pos % 3) * 7 + 1),
+                )
+        await _set_grade(db, student_id=student_id, grade=grade)
+        plans[grade] = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert plans[11].target_per_week == 20
+    assert plans[10].target_per_week == 12
+    assert plans[7].target_per_week == 8
+    # Тот же темп, разные классы — разный объём: одиннадцатикласснику больше.
+    assert plans[11].volume_per_week > plans[10].volume_per_week
+    assert plans[10].volume_per_week > plans[7].volume_per_week
+
+
+@pytest.mark.asyncio
+async def test_volume_never_exceeds_remaining_program(db):
+    """Больше, чем осталось в программе, не задаём: выдавать нечего."""
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, "almost-done")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    for pos in range(1, 3):
+        await _new_task(db, course_id=course_id, order_position=pos)
+    await _set_grade(db, student_id=student_id, grade=11)
+
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.remaining_items == 2
+    assert plan.volume_per_week == 2
+
+
+@pytest.mark.asyncio
+async def test_volume_does_not_exceed_grade_target(db):
+    """Быстрый ученик получает ровно норму своего класса, не больше.
+
+    Потолок `MAX_PER_WEEK` остаётся крайним предохранителем (он откалиброван по
+    p90 живого темпа), но раньше него срабатывает цель класса — сегодня она
+    ниже для всех классов.
+    """
     student_id, _ = await _new_user(db)
     course_id = await _new_course(db, "huge")
     await _enroll(db, student_id=student_id, course_id=course_id)
@@ -268,7 +332,9 @@ async def test_volume_does_not_exceed_ceiling(db):
     await _set_grade(db, student_id=student_id, grade=11)
 
     plan = await homework_volume_service.compute(db, student_id=student_id)
-    assert plan.volume_per_week == homework_volume_service.MAX_PER_WEEK
+    assert plan.volume_per_week == plan.target_per_week == 20
+    assert plan.volume_per_week <= homework_volume_service.MAX_PER_WEEK
+    assert plan.pace_gap == 0, "человек и так делает норму — отставания нет"
 
 
 @pytest.mark.asyncio
@@ -330,8 +396,8 @@ async def test_volume_for_window_scales_by_days(db):
     """Норма недельная, а выдача — до следующего занятия."""
     plan = homework_volume_service.VolumePlan(
         grade=11, grade_assumed=False, exam_date=date(2027, 6, 1), weeks_to_exam=39.0,
-        remaining_items=100, need_per_week=3.0, fact_per_week=10.0, correct_ratio=0.9,
-        quality_penalty_applied=False, volume_per_week=14, weeks_behind=0,
+        remaining_items=100, target_per_week=20, fact_per_week=10.0, correct_ratio=0.9,
+        quality_penalty_applied=False, volume_per_week=14, pace_gap=10,
     )
     assert homework_volume_service.volume_for_window(plan, days=7) == 14
     assert homework_volume_service.volume_for_window(plan, days=3) == 6

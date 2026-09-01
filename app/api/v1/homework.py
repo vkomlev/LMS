@@ -87,8 +87,8 @@ async def get_homework_volume(
     """Что советует формула — и из чего это число сложилось.
 
     Ничего не пишет и ничего не задаёт: преподаватель вправе сначала
-    посмотреть, а решить потом. Здесь же видно `weeks_behind` — на сколько
-    недель программа опаздывает при нынешнем темпе ученика.
+    посмотреть, а решить потом. Здесь же видно `pace_gap` — на сколько
+    элементов в неделю ученик не дотягивает до нормы своего класса.
     """
     await manual_progress_service.ensure_can_edit_progress(db, current_user, student_id)
     plan = await homework_volume_service.compute(db, student_id=student_id)

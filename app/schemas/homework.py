@@ -46,7 +46,7 @@ class HomeworkRead(BaseModel):
     volume_details: Optional[dict[str, Any]] = Field(
         default=None,
         description=(
-            "Из чего сложилась норма: надо/факт/качество/класс/недель до "
+            "Из чего сложилась норма: цель класса, факт, качество, недель до "
             "экзамена. Нужен, чтобы объяснить человеку конкретное число"
         ),
     )
@@ -69,8 +69,19 @@ class HomeworkVolumeRead(BaseModel):
     )
     exam_date: str = Field(description="Дата ближайшего экзамена для этого класса")
     weeks_to_exam: float
-    remaining_items: int = Field(description="Незавершённых элементов программы")
-    need_per_week: float = Field(description="Сколько нужно в неделю, чтобы успеть")
+    remaining_items: int = Field(
+        description=(
+            "Незавершённых элементов программы. Не знаменатель нормы — курс "
+            "это банк заданий, а не конечная программа, — а потолок: больше, "
+            "чем осталось, задать нельзя"
+        )
+    )
+    target_per_week: int = Field(
+        description=(
+            "Целевая недельная норма этого класса: 11 — 20, 10 и 9 — 12, "
+            "младше — 8. Именно через неё класс влияет на нагрузку"
+        )
+    )
     fact_per_week: float = Field(
         description="Сколько человек делает сейчас — медиана за 3 недели"
     )
@@ -81,10 +92,11 @@ class HomeworkVolumeRead(BaseModel):
         description="Объём уменьшен на четверть: доля верных ниже 60%"
     )
     volume_per_week: int = Field(description="Итоговая норма на неделю")
-    weeks_behind: int = Field(
+    pace_gap: int = Field(
         description=(
-            "На сколько недель программа опаздывает при НЫНЕШНЕМ темпе; "
-            "0 — успевает. Считается по факту, а не по норме"
+            "На сколько элементов в неделю человек не дотягивает до нормы "
+            "своего класса; 0 — дотягивает. Считается по факту, а не по "
+            "выданному объёму"
         )
     )
 
