@@ -71,6 +71,33 @@ def keep_curated_title(incoming: Any, existing: Tasks) -> Any:
     return {**incoming, "title": current}
 
 
+def _same_after_validation(stored: Any, incoming: Any, model: Any) -> bool:
+    """Одно ли это содержимое: то, что лежит в базе, и то, что прислал импорт.
+
+    Импорт всегда пишет ПРОВАЛИДИРОВАННОЕ значение (`model_dump()`), а в базе
+    может лежать более раннее — без ключей, которые схема с тех пор завела. Тогда
+    буквальное сравнение jsonb говорит «изменилось», хотя по смыслу не изменилось
+    ничего: разница только в дописанных `null` (`scales`, `table`, `quiz`,
+    `turtle_sim`, `requires_attachment`, …). Из-за этого повторный импорт двигал
+    `tasks.updated_at` и писал пустую строку в журнал, а переиздание курса потом
+    считало такое задание правленным вручную (tsk-760).
+
+    Поэтому сравниваем обе стороны в одном виде: прогоняем сохранённое значение
+    через ту же схему. Совпало — поле не переписываем вовсе, и в базе остаётся
+    ровно то, что было; отметка правки не двигается.
+
+    Сохранённое значение не проходит нынешнюю схему (исторически битое) →
+    считаем разными: такое как раз надо переписать корректным.
+    """
+    if stored is None or incoming is None:
+        return False
+    try:
+        stored_normalized = model.model_validate(stored).model_dump()
+    except Exception:  # ValidationError и любые несовместимости старых данных
+        return False
+    return stored_normalized == incoming
+
+
 def _manually_edited_task_fields(existing: Tasks) -> frozenset[str]:
     """Поля задания, поправленные вручную и защищённые от перезаписи импортом.
 
@@ -425,6 +452,20 @@ class TasksService(BaseService[Tasks]):
                 # материалов, и та же логика, что у is_active/requirement_level
                 # ниже, только источник решения не «передано ли поле», а пометка
                 # на самой строке.
+                # tsk-760: нормализация — не правка. Если присланное значение
+                # после валидации совпадает с тем, что уже лежит в базе, поле не
+                # переписываем: иначе UPDATE менял бы jsonb только дописанными
+                # `null`, двигал отметку правки и засорял журнал, а переиздание
+                # потом считало задание правленным руками.
+                if _same_after_validation(
+                    existing.task_content, obj_in.get("task_content"), TaskContent
+                ):
+                    obj_in.pop("task_content", None)
+                if _same_after_validation(
+                    existing.solution_rules, obj_in.get("solution_rules"), SolutionRules
+                ):
+                    obj_in.pop("solution_rules", None)
+
                 # tsk-760: служебные round-trip инструменты ContentBackbone
                 # (гигиена условия, докачка картинок) читают задание ОТСЮДА,
                 # чинят и кладут обратно — они правят как раз ту версию, которую

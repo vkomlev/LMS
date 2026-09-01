@@ -393,3 +393,124 @@ async def test_повторная_запись_того_же_условия_ни
     ).scalar()
     assert after is None
     assert await _audit_rows(db, task_id) == []
+
+
+@pytest.mark.asyncio
+async def test_повторный_импорт_прежнего_содержимого_не_считается_правкой(db):
+    """tsk-760: нормализация схемой не двигает отметку правки и не пишет в журнал.
+
+    В базе может лежать значение, записанное до того, как схема завела новые
+    необязательные поля. Импорт всегда шлёт провалидированное значение — с
+    дописанными `null` (`scales`, `table`, `quiz`, `turtle_sim`, …), — и
+    буквальное сравнение jsonb называло это изменением. Из-за этого повторное
+    переиздание помечало задание как правленное, хотя по смыслу не менялось
+    ничего.
+    """
+    course = await _new_course(db, "tsk760_norm")
+    uid = f"tsk760-norm-{course}"
+    task_id = await _insert_task(db, course, external_uid=uid)
+
+    # Приводим строку к «исторической» форме: без полей, добавленных схемой позже.
+    # Форма, которая проходит нынешнюю схему, но записана без полей, заведённых
+    # позже (`scales`, `table`, `multiline_answer` в условии и т.п.).
+    historic_content = {"type": "SA_COM", "stem": "условие из источника"}
+    historic_rules = {
+        "max_score": 1,
+        "scoring_mode": "all_or_nothing",
+        "short_answer": {"accepted_answers": [{"value": "42", "score": 1}]},
+    }
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = CAST(:tc AS jsonb), "
+            "solution_rules = CAST(:sr AS jsonb) WHERE id = :tid"
+        ),
+        {
+            "tc": json.dumps(historic_content, ensure_ascii=False),
+            "sr": json.dumps(historic_rules, ensure_ascii=False),
+            "tid": task_id,
+        },
+    )
+    # Сброс отметки — ОТДЕЛЬНЫМ запросом: в одном с правкой содержимого её тут же
+    # переставил бы триггер, и подготовка теста молча не сработала бы.
+    await db.execute(text("UPDATE tasks SET updated_at = NULL WHERE id = :tid"), {"tid": task_id})
+    await db.flush()
+    # Журнал append-only: подготовительная правка уже оставила в нём строку —
+    # считаем от текущего количества, а не от нуля.
+    rows_before = len(await _audit_rows(db, task_id))
+
+    service = TasksService()
+    await service.bulk_upsert(
+        db,
+        [
+            {
+                "external_uid": uid,
+                "course_id": course,
+                "difficulty_id": 1,
+                "task_content": historic_content,
+                "solution_rules": historic_rules,
+                "max_score": 1,
+            }
+        ],
+    )
+    await db.flush()
+
+    touched = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert touched is None, "повторный импорт того же содержимого пометил задание как правленное"
+    assert len(await _audit_rows(db, task_id)) == rows_before, (
+        "в журнал ушла строка о правке, которой не было"
+    )
+
+
+@pytest.mark.asyncio
+async def test_настоящая_правка_из_источника_по_прежнему_видна(db):
+    """Обратная сторона: реальное изменение условия обязано двигать отметку."""
+    course = await _new_course(db, "tsk760_real")
+    uid = f"tsk760-real-{course}"
+    task_id = await _insert_task(db, course, external_uid=uid)
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = CAST(:tc AS jsonb), "
+            "solution_rules = CAST(:sr AS jsonb) WHERE id = :tid"
+        ),
+        {
+            "tc": json.dumps({"type": "SA_COM", "stem": "условие из источника"}, ensure_ascii=False),
+            "sr": json.dumps(
+                {
+                    "max_score": 1,
+                    "scoring_mode": "all_or_nothing",
+                    "short_answer": {"accepted_answers": [{"value": "42", "score": 1}]},
+                },
+                ensure_ascii=False,
+            ),
+            "tid": task_id,
+        },
+    )
+    await db.execute(text("UPDATE tasks SET updated_at = NULL WHERE id = :tid"), {"tid": task_id})
+    await db.flush()
+
+    service = TasksService()
+    await service.bulk_upsert(
+        db,
+        [
+            {
+                "external_uid": uid,
+                "course_id": course,
+                "difficulty_id": 1,
+                "task_content": {"type": "SA_COM", "stem": "условие переписано в источнике"},
+                "solution_rules": {
+                    "max_score": 1,
+                    "scoring_mode": "all_or_nothing",
+                    "short_answer": {"accepted_answers": [{"value": "42", "score": 1}]},
+                },
+                "max_score": 1,
+            }
+        ],
+    )
+    await db.flush()
+
+    touched = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert touched is not None
