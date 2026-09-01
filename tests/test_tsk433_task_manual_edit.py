@@ -312,3 +312,92 @@ async def test_task_without_provenance_unchanged_behaviour(db, client):
     after = await _row(db, uid)
     assert "стало" in json.dumps(after.task_content, ensure_ascii=False)
     assert after.content_provenance is None
+
+
+@pytest.mark.asyncio
+async def test_manual_script_source_respected_by_import(db, client):
+    """tsk-760: правка, помеченная как сделанная скриптом, тоже переживает импорт.
+
+    Правки августа делались не через кабинет, а скриптами и запросами к БД
+    (эталоны, условия, перенос картинок) — импорт считал их своими и
+    перезаписывал. Источник `manual_script` ставит разовая простановка
+    `scripts/tsk760_mark_manual_edits.py`, и он уважается наравне с `manual_web`.
+    """
+    course_id = await _new_course(db)
+    uid = f"t760-{uuid.uuid4().hex[:8]}"
+    await _post(client, [_source_task(uid, course_id, stem="условие из источника")])
+
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = CAST(:tc AS jsonb), "
+            "content_provenance = CAST(:prov AS jsonb) WHERE external_uid = :uid"
+        ),
+        {
+            "tc": json.dumps(
+                {
+                    "type": "SC",
+                    "stem": "условие поправлено скриптом",
+                    "options": [
+                        {"id": "a", "text": "из источника A"},
+                        {"id": "b", "text": "из источника B"},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            "prov": json.dumps(
+                {
+                    "source": "manual_script",
+                    "edited_by": "tsk-760",
+                    "fields": ["task_content", "solution_rules"],
+                },
+                ensure_ascii=False,
+            ),
+            "uid": uid,
+        },
+    )
+    await db.flush()
+
+    await _post(client, [_source_task(uid, course_id, stem="условие из источника")])
+
+    after = await _row(db, uid)
+    assert "поправлено скриптом" in json.dumps(after.task_content, ensure_ascii=False), (
+        "правка, помеченная manual_script, затёрта импортом"
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_provenance_source_does_not_protect(db, client):
+    """Чужой/битый источник в пометке защиты не даёт — иначе ей можно заморозить что угодно."""
+    course_id = await _new_course(db)
+    uid = f"t760x-{uuid.uuid4().hex[:8]}"
+    await _post(client, [_source_task(uid, course_id, stem="условие из источника")])
+
+    await db.execute(
+        text(
+            "UPDATE tasks SET task_content = CAST(:tc AS jsonb), "
+            "content_provenance = CAST(:prov AS jsonb) WHERE external_uid = :uid"
+        ),
+        {
+            "tc": json.dumps(
+                {
+                    "type": "SC",
+                    "stem": "правка неизвестного происхождения",
+                    "options": [
+                        {"id": "a", "text": "из источника A"},
+                        {"id": "b", "text": "из источника B"},
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            "prov": json.dumps(
+                {"source": "robot_unknown", "fields": ["task_content"]}, ensure_ascii=False
+            ),
+            "uid": uid,
+        },
+    )
+    await db.flush()
+
+    await _post(client, [_source_task(uid, course_id, stem="условие из источника")])
+
+    after = await _row(db, uid)
+    assert "из источника" in json.dumps(after.task_content, ensure_ascii=False)

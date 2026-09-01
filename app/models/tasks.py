@@ -150,6 +150,18 @@ class Tasks(Base):
             "срабатывает"
         ),
     )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment=(
+            "Когда последний раз меняли содержимое задания — условие, правило "
+            "проверки, сложность, балл, курс, активность (tsk-760). Ставится "
+            "триггером БД trg_task_set_updated_at; перестановка order_position "
+            "правкой не считается. NULL — с момента введения отметки задание не "
+            "трогали. По этой колонке переиздание курса из ContentBackbone "
+            "решает, не затрёт ли оно правку, сделанную здесь руками"
+        ),
+    )
 
     course: Mapped["Courses"] = relationship(
         "Courses",

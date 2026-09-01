@@ -80,6 +80,7 @@ async def _audit_rows(db, task_id: int) -> list[dict]:
             text(
                 """
                 SELECT action, old_answer_key, new_answer_key,
+                       old_content_key, new_content_key,
                        old_course_id, new_course_id, changed_by
                 FROM task_audit
                 WHERE task_id = :tid
@@ -167,8 +168,16 @@ async def test_повторная_запись_тех_же_правил_журн
 
 
 @pytest.mark.asyncio
-async def test_правка_текста_задания_журнал_не_трогает(db):
-    """`task_content` в WHEN не входит — обычная правка формулировки строк не пишет."""
+async def test_правка_текста_задания_пишет_отпечаток_условия(db):
+    """tsk-760: правка формулировки теперь попадает в журнал — отпечатком.
+
+    В редакции tsk-636 `task_content` в WHEN не входил, и правку условия
+    журнал не видел: именно поэтому нельзя было отличить ручную правку
+    формулировки от импорта. Теперь строка пишется, но хранит не текст, а
+    sha256 условия до и после — журнал отвечает на «правили ли и когда», а не
+    хранит вторую копию контента. Выжимка правила при этом пустая: правило не
+    менялось.
+    """
     course = await _new_course(db, "tsk636_b4")
     task_id = await _insert_task(db, course, _rules(["11110"]))
 
@@ -178,7 +187,12 @@ async def test_правка_текста_задания_журнал_не_тро
     )
     await db.flush()
 
-    assert await _audit_rows(db, task_id) == []
+    rows = await _audit_rows(db, task_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["old_content_key"] and row["new_content_key"]
+    assert row["old_content_key"] != row["new_content_key"]
+    assert row["old_answer_key"] is None and row["new_answer_key"] is None
 
 
 @pytest.mark.asyncio

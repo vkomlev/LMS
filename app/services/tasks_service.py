@@ -22,6 +22,14 @@ MANUALLY_EDITABLE_TASK_FIELDS: frozenset[str] = frozenset(
     {"task_content", "solution_rules"}
 )
 
+#: Источники, которые означают «правил человек, а не импорт» (tsk-760).
+#: `manual_web` — кабинет методиста (tsk-433). `manual_script` — правка, которую
+#: человек сделал скриптом или запросом к БД в рамках задачи: так чинилась
+#: бо́льшая часть находок августа (эталоны, условия, перенос картинок), и до
+#: tsk-760 такие правки не оставляли следа вообще — импорт считал их своими и
+#: перезаписывал. Пометку ставит тот, кто правит; список — в docs/ai/task-audit.md.
+HUMAN_EDIT_SOURCES: frozenset[str] = frozenset({"manual_web", "manual_script"})
+
 
 def _is_blank_title(value: Any) -> bool:
     """True, если названия фактически нет: ключ отсутствует, null или пробелы."""
@@ -67,15 +75,16 @@ def _manually_edited_task_fields(existing: Tasks) -> frozenset[str]:
     """Поля задания, поправленные вручную и защищённые от перезаписи импортом.
 
     Читает `tasks.content_provenance` (tsk-433). Защита действует только при
-    `source = "manual_web"` и только для полей из `fields`, пересечённых с
-    белым списком: битый или чужой провенанс не должен уметь заморозить
-    произвольную колонку.
+    `source` из `HUMAN_EDIT_SOURCES` (кабинет методиста или правка человека
+    скриптом, tsk-760) и только для полей из `fields`, пересечённых с белым
+    списком: битый или чужой провенанс не должен уметь заморозить произвольную
+    колонку.
 
     :param existing: строка задания из БД.
     :return: множество имён полей; пустое — защищать нечего.
     """
     prov = getattr(existing, "content_provenance", None)
-    if not isinstance(prov, dict) or prov.get("source") != "manual_web":
+    if not isinstance(prov, dict) or prov.get("source") not in HUMAN_EDIT_SOURCES:
         return frozenset()
     raw_fields = prov.get("fields")
     if not isinstance(raw_fields, list):

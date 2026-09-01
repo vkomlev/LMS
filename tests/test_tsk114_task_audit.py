@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -130,15 +132,19 @@ async def test_update_is_active_is_audited(db):
 
 @pytest.mark.asyncio
 async def test_update_other_field_not_audited(db):
-    """A3. UPDATE task_content/order_position — НЕ пишет строку (WHEN)."""
+    """A3. UPDATE order_position — НЕ пишет строку (WHEN).
+
+    tsk-760: правка `task_content` теперь аудируется (условие задания — ровно
+    то, что стирало переиздание курса, и без следа его было не отличить от
+    импорта). Порядок показа под аудит по-прежнему не подпадает: его массово
+    двигают триггеры порядка, а к содержимому задания он отношения не имеет.
+    """
     course_a = await _new_course(db, "task_audit_a3")
     task_id = await _insert_task(db, course_a)
 
     await db.execute(
-        text(
-            "UPDATE tasks SET task_content = CAST(:tc AS jsonb) WHERE id = :tid"
-        ),
-        {"tc": '{"type": "SC", "stem": "y", "options": [{"id": "a", "label": "1"}]}', "tid": task_id},
+        text("UPDATE tasks SET order_position = COALESCE(order_position, 0) + 1 WHERE id = :tid"),
+        {"tid": task_id},
     )
     await db.flush()
 
@@ -321,3 +327,69 @@ async def test_bulk_upsert_labels_actor(db):
     assert rows[0]["old_course_id"] == course_a
     assert rows[0]["new_course_id"] == course_b
     assert rows[0]["changed_by"] == "bulk_upsert"
+
+
+# ---------- tsk-760: отметка «когда трогали» и отпечаток условия ----------
+
+
+@pytest.mark.asyncio
+async def test_отметка_правки_ставится_при_смене_условия(db):
+    """Правка условия проставляет tasks.updated_at (tsk-760)."""
+    course = await _new_course(db, "tsk760_touch")
+    task_id = await _insert_task(db, course)
+
+    before = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert before is None, "у только что заведённого задания отметки правки быть не должно"
+
+    await db.execute(
+        text("UPDATE tasks SET task_content = CAST(:tc AS jsonb) WHERE id = :tid"),
+        {"tc": '{"type": "SA_COM", "stem": "правленное условие"}', "tid": task_id},
+    )
+    await db.flush()
+
+    after = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert after is not None
+
+
+@pytest.mark.asyncio
+async def test_перестановка_порядка_отметкой_правки_не_считается(db):
+    """order_position двигают триггеры порядка — это не правка содержимого."""
+    course = await _new_course(db, "tsk760_order")
+    task_id = await _insert_task(db, course)
+
+    await db.execute(
+        text("UPDATE tasks SET order_position = COALESCE(order_position, 0) + 5 WHERE id = :tid"),
+        {"tid": task_id},
+    )
+    await db.flush()
+
+    after = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert after is None
+
+
+@pytest.mark.asyncio
+async def test_повторная_запись_того_же_условия_ничего_не_двигает(db):
+    """Импорт с тем же содержимым не выглядит правкой: ни отметки, ни строки в журнале."""
+    course = await _new_course(db, "tsk760_idempotent")
+    task_id = await _insert_task(db, course)
+
+    same = (
+        await db.execute(text("SELECT task_content FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    await db.execute(
+        text("UPDATE tasks SET task_content = CAST(:tc AS jsonb) WHERE id = :tid"),
+        {"tc": json.dumps(same, ensure_ascii=False), "tid": task_id},
+    )
+    await db.flush()
+
+    after = (
+        await db.execute(text("SELECT updated_at FROM tasks WHERE id = :tid"), {"tid": task_id})
+    ).scalar()
+    assert after is None
+    assert await _audit_rows(db, task_id) == []

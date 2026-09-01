@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Optional, List, Literal, Dict, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -132,6 +133,17 @@ class TaskRead(BaseModel):
     has_hints: bool = Field(
         default=False,
         description="True, если есть хотя бы одна подсказка (текст или видео).",
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        description=(
+            "Когда последний раз меняли содержимое задания (tsk-760): условие, "
+            "правило проверки, сложность, балл, курс, активность. Ставится "
+            "триггером БД; перестановка порядка правкой не считается. NULL — с "
+            "момента введения отметки задание не трогали. Нужна ContentBackbone: "
+            "переиздание курса сверяет её с датой своей публикации и не трогает "
+            "задание, если после публикации его правили здесь."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True)
