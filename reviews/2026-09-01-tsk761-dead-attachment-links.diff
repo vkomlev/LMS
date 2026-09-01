@@ -1,0 +1,93 @@
+diff --git a/scripts/check_missing_attachments.py b/scripts/check_missing_attachments.py
+index b00eaa7..b972dd6 100644
+--- a/scripts/check_missing_attachments.py
++++ b/scripts/check_missing_attachments.py
+@@ -47,6 +47,10 @@
+    архивом числились нерешаемыми (tsk-392).
+ 
+ Что делает. Считает и перечисляет активные задания с файловым условием без ссылки на файл.
++Вторым разделом (tsk-761) — задания, где файл есть, но рядом остался якорь источника
++(`href="/get_file?id=N"`, `href="ege-txt/10-260.docx"`): на нашем домене такая ссылка
++даёт 404, а первая проверка считает такое задание благополучным, потому что рабочая
++ссылка на CAS в условии тоже есть.
+ Read-only: ни одного UPDATE. Чинит не этот скрипт — он только сообщает.
+ 
+ Куда смотрит. В базу из `DATABASE_URL`; по умолчанию это dev (прод от скриптов закрыт,
+@@ -147,6 +151,41 @@ WHERE t.is_active
+ ORDER BY t.course_id, t.id
+ """
+ 
++# Второй класс дефекта (tsk-761): файл к заданию ЕСТЬ и лежит в CAS, но рядом, внутри
++# текста условия, остался ИСХОДНЫЙ якорь источника — `href="/get_file?id=191284"` у
++# sdamgia или `href="ege-txt/10-260.docx"` у kpolyakov. На нашем домене такой путь ведёт
++# в никуда: ученик жмёт «Задание 26» и получает 404.
++#
++# Почему проверка выше его не видит: она признаёт задание благополучным по одному
++# наличию ссылки `/api/v1/media/...` — а здесь она есть, рабочая, в шапке. Дефект живёт
++# НЕ в отсутствии файла, а в лишней ссылке рядом с ним, поэтому нужен отдельный запрос.
++# На 2026-09-01 таких заданий на проде было 86 (курсы 153, 1381-1402).
++#
++# Что считаем битым: ссылка на файл ДАННЫХ (или sdamgia-`get_file`), которая не абсолютна
++# (`http(s)://` — чужой сайт открывается у ученика нормально, решение tsk-390 про авторские
++# файлы на victor-komlev.ru) и не ведёт в наше хранилище `/api/v1/media/`.
++SQL_DEAD_FILE_LINKS = rf"""
++WITH links AS (
++    SELECT t.id, t.course_id, t.external_uid,
++           (regexp_matches(t.task_content->>'stem', 'href="\s*([^"]+)"', 'g'))[1] AS href
++    FROM tasks t
++    WHERE t.is_active
++      AND t.task_content->>'stem' ~ 'href="'
++)
++SELECT id, course_id, external_uid, href,
++       CASE WHEN href ~* '^https?://' THEN 'на сайт-источник' ELSE 'в никуда (404)' END AS kind
++FROM links
++WHERE href !~ '^/api/v1/media/'
++  AND (
++        -- относительный путь чужого сайта: у нас это 404
++        (href !~* '^https?://' AND (href ~* '\.({DATA_EXT})$' OR href ~ '^/get_file'))
++        -- абсолютная ссылка на сайт-источник: открывается, но уводит ученика туда,
++        -- где рядом лежит решение с ответом (класс tsk-165), и зависит от чужого сайта
++        OR href ~* '^https?://[^"]*(sdamgia\.ru|kpolyakov\.spb\.ru|kompege\.ru)[^"]*(get_file|\.({DATA_EXT}))'
++      )
++ORDER BY course_id, id
++"""
++
+ 
+ def load_allowlist() -> dict[int, str]:
+     """Задания, которым файл не нужен, — с причиной у каждого.
+@@ -179,6 +218,7 @@ async def main(quiet: bool) -> int:
+             ))).mappings().first()
+             print(f"Проверяю базу: {where['db']} на {where['host'] or 'localhost'}")
+             rows = (await conn.execute(text(SQL_MISSING_ATTACHMENT))).mappings().all()
++            dead_links = (await conn.execute(text(SQL_DEAD_FILE_LINKS))).mappings().all()
+     finally:
+         await engine.dispose()
+ 
+@@ -188,11 +228,25 @@ async def main(quiet: bool) -> int:
+     if excused and not quiet:
+         print(f"Из проверки исключено (файл не нужен, см. {ALLOWLIST_PATH.name}): {len(excused)}")
+ 
+-    if not rows:
++    if dead_links:
++        print(f"\nССЫЛКА НА ФАЙЛ МИМО НАШЕГО ХРАНИЛИЩА: {len(dead_links)}")
++        by_course_dead: dict[int, int] = {}
++        for r in dead_links:
++            by_course_dead[r["course_id"]] = by_course_dead.get(r["course_id"], 0) + 1
++        for course_id, n in sorted(by_course_dead.items(), key=lambda kv: -kv[1]):
++            print(f"  курс {course_id}: {n}")
++        for r in dead_links[:10]:
++            print(f"  задание {r['id']} [{r['kind']}]: href=\"{r['href']}\"")
++        print("  чинится: scripts/tsk761_verify_links.py -> scripts/tsk761_rewrite_links.py")
++
++    if not rows and not dead_links:
+         if not quiet:
+-            print("\nOK: у всех заданий с файловым условием файл на месте.")
++            print("\nOK: у всех заданий с файловым условием файл на месте и ссылки рабочие.")
+         return 0
+ 
++    if not rows:
++        return 1
++
+     print(f"\nУСЛОВИЕ ТРЕБУЕТ ФАЙЛ, А ССЫЛКИ НА ФАЙЛ НЕТ: {len(rows)}")
+     by_course: dict[int, int] = {}
+     for r in rows:
