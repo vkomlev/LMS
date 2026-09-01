@@ -50394,6 +50394,16 @@
             "title": "Needs More Program",
             "description": "Программы осталось меньше чем на 4 недели (или её нет вовсе) — пора добавить ученику курс"
           },
+          "missed_lessons": {
+            "type": "integer",
+            "title": "Missed Lessons",
+            "description": "Занятий пропущено за окно расчёта. Перенесённые сюда НЕ входят: перенос состоится, нагонять нечего"
+          },
+          "catch_up_factor": {
+            "type": "number",
+            "title": "Catch Up Factor",
+            "description": "Во сколько раз объём увеличен, чтобы нагнать пропущенное; 1.0 — не увеличен. Потолок 1.5: пропустивший чаще всего и есть отстающий, и удвоенная выдача для него — повод бросить"
+          },
           "exam_sprint": {
             "type": "boolean",
             "title": "Exam Sprint",
@@ -50416,6 +50426,8 @@
           "quality_penalty_applied",
           "volume_per_week",
           "needs_more_program",
+          "missed_lessons",
+          "catch_up_factor",
           "exam_sprint",
           "pace_gap"
         ],

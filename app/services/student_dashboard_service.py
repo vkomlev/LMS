@@ -112,7 +112,16 @@ _ATTENDED_STATUSES = ("confirmed", "completed")
 #: Статусы, при которых занятие не входит в норматив вовсе:
 #: `rescheduled` — участие заменено другим (его место занимает целевая строка,
 #: где бы она ни оказалась), `on_break` — ученик в перерыве.
-_NOT_COUNTED_STATUSES = ("rescheduled", "on_break")
+NOT_COUNTED_STATUSES = ("rescheduled", "on_break")
+_NOT_COUNTED_STATUSES = NOT_COUNTED_STATUSES
+
+#: Ученик занятие ПРОПУСТИЛ — не пришёл и ничего взамен не выбрал. Публичное
+#: имя (tsk-741): по нему домашняя работа решает, надо ли нагонять. Переноса
+#: здесь нет намеренно — перенесённое занятие состоится, нагонять нечего, и
+#: строка `rescheduled` всё равно заменена той, куда участие переехало.
+#: На проде 130 участий `no_show` и ни одного из них с переносом — то есть эти
+#: два состояния в данных не смешиваются.
+MISSED_STATUSES = ("no_show", "declined")
 
 
 def _subtract_metrics(total: dict[str, int], subset: dict[str, int]) -> dict[str, int]:

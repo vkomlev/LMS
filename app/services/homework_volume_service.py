@@ -65,6 +65,8 @@ from app.services.learning_gaps_service import (
 )
 # tsk-741: «что вообще входит в программу» — одно правило на весь проект.
 from app.services.manual_progress_service import REQUIREMENT_LEVELS
+# tsk-741: «занятие пропущено» — тоже одно правило; перенос пропуском не считается.
+from app.services.student_dashboard_service import MISSED_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,14 @@ EXAM_SPRINT_FROM_MONTH = 3
 #: Недельная норма выпускного класса на финише: остаток времени держим за
 #: вариантами, домашняя работа становится добавкой, а не основой.
 TARGET_PER_WEEK_EXAM_SPRINT = 6
+
+#: Насколько больше задаём за КАЖДОЕ пропущенное занятие: материал, который
+#: разбирали без него, придётся пройти самому. Доля от обычного объёма.
+CATCH_UP_PER_MISSED_LESSON = 0.25
+#: Потолок нагона. Пропустивший занятия — чаще всего и есть отстающий, и
+#: удвоенная выдача для него не «нагон», а повод бросить совсем. Полтора
+#: объёма человек ещё видит выполнимым.
+MAX_CATCH_UP_FACTOR = 1.5
 
 #: Остатка программы меньше, чем на столько недель — пора добавлять курс.
 #: Сигнал поднимается заранее: «программа кончилась» узнавать в тот день, когда
@@ -153,6 +163,12 @@ class VolumePlan:
     #: True — норма снижена, потому что выпускной класс с марта отрабатывает
     #: варианты, а не проходит новое.
     exam_sprint: bool
+    #: Занятий пропущено за окно расчёта. Перенесённые сюда не входят.
+    missed_lessons: int
+    #: Во сколько раз объём увеличен, чтобы нагнать пропущенное; 1.0 — не
+    #: увеличен. Считается только по НАСТОЯЩИМ пропускам: перенёс занятие —
+    #: нагонять нечего, оно состоится.
+    catch_up_factor: float
     #: На сколько элементов в неделю человек не дотягивает до нормы своего
     #: класса; 0 — дотягивает. Это и есть сигнал преподавателю: не «завалить
     #: заданиями», а «видно, что отстаёт».
@@ -315,6 +331,20 @@ SELECT w.wk::date AS week,
  ORDER BY 1
 """
 
+#: Пропущенные занятия за то же окно. Перенос и перерыв не считаются: правило
+#: берётся из `student_dashboard_service.MISSED_STATUSES`, а не пишется заново —
+#: разъехавшись, «пропустил» на дашборде и «нагоняем» в домашней работе стали
+#: бы двумя разными числами про одно и то же.
+_MISSED_SQL = """
+SELECT count(*) AS missed
+  FROM lesson_occurrence_participant lop
+  JOIN lesson_occurrence lo ON lo.id = lop.occurrence_id
+ WHERE lop.student_id = :student_id
+   AND lo.scheduled_at >= :since
+   AND lo.scheduled_at <= :now
+   AND lop.status = ANY(:missed_statuses)
+"""
+
 #: Доля верных за то же окно — поправка на качество.
 _QUALITY_SQL = f"""
 SELECT count(*) AS total,
@@ -377,6 +407,21 @@ async def compute(
             text(_QUALITY_SQL), {"student_id": student_id, "since": since}
         )
     ).mappings().one()
+
+    missed_lessons = int(
+        (
+            await db.execute(
+                text(_MISSED_SQL),
+                {
+                    "student_id": student_id,
+                    "since": since,
+                    "now": moment,
+                    "missed_statuses": list(MISSED_STATUSES),
+                },
+            )
+        ).scalar()
+        or 0
+    )
     total_submissions = int(quality["total"] or 0)
     correct_ratio = (
         int(quality["correct"] or 0) / total_submissions
@@ -401,6 +446,19 @@ async def compute(
         raw *= QUALITY_PENALTY
 
     volume = int(round(max(min(raw, float(MAX_PER_WEEK)), float(MIN_PER_WEEK))))
+
+    # Пропустил занятия — материал, который разбирали без него, придётся
+    # пройти самому (требование оператора 02.09). Нагон применяется ПОСЛЕ
+    # ограничения «не больше, чем человек тянет»: то ограничение защищает от
+    # перегруза в обычной жизни, а здесь мы сознательно просим больше — но не
+    # вдвое, а в полтора раза максимум. Перенесённые занятия не считаются: они
+    # состоятся, нагонять нечего.
+    catch_up = min(
+        1.0 + CATCH_UP_PER_MISSED_LESSON * missed_lessons, MAX_CATCH_UP_FACTOR
+    )
+    if catch_up > 1.0:
+        volume = int(round(min(volume * catch_up, float(MAX_PER_WEEK))))
+
     # Больше, чем осталось в программе, задать нельзя — иначе выдача попросит
     # то, чего нет, и пункты в ней окажутся невыполнимыми.
     volume = min(volume, remaining)
@@ -429,6 +487,8 @@ async def compute(
         correct_ratio=round(correct_ratio, 2) if correct_ratio is not None else None,
         quality_penalty_applied=penalty,
         volume_per_week=volume,
+        missed_lessons=missed_lessons,
+        catch_up_factor=round(catch_up, 2),
         weeks_of_program_left=weeks_left,
         needs_more_program=needs_more,
         exam_sprint=sprint,

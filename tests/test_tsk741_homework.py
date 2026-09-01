@@ -398,7 +398,8 @@ async def test_volume_for_window_scales_by_days(db):
         grade=11, grade_assumed=False, exam_date=date(2027, 6, 1), weeks_to_exam=39.0,
         remaining_items=100, target_per_week=20, fact_per_week=10.0, correct_ratio=0.9,
         quality_penalty_applied=False, volume_per_week=14, weeks_of_program_left=7,
-        needs_more_program=False, exam_sprint=False, pace_gap=10,
+        needs_more_program=False, exam_sprint=False, missed_lessons=0,
+        catch_up_factor=1.0, pace_gap=10,
     )
     assert homework_volume_service.volume_for_window(plan, days=7) == 14
     assert homework_volume_service.volume_for_window(plan, days=3) == 6
@@ -918,3 +919,138 @@ async def test_reminder_survives_student_without_homework(db, db_session_factory
     assert "Занятие начинается" in content
     assert "Домашняя работа" not in content
     assert payload["homework_total"] is None
+
+
+# ============== Пропуски: нагоняем, но не за перенос ==============
+
+
+async def _lesson_with_status(
+    db, *, student_id: int, teacher_id: int, days_ago: int, status: str,
+    rescheduled_to: int | None = None,
+) -> int:
+    """Прошедшее занятие ученика в нужном статусе участия."""
+    occurrence_id = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) - timedelta(days=days_ago),
+    )
+    await db.execute(
+        text(
+            "UPDATE lesson_occurrence_participant "
+            "   SET status = :st, rescheduled_to_occurrence_id = :to "
+            " WHERE occurrence_id = :oid AND student_id = :sid"
+        ),
+        {"st": status, "to": rescheduled_to, "oid": occurrence_id, "sid": student_id},
+    )
+    await db.commit()
+    return occurrence_id
+
+
+async def _student_with_pace(db, *, tasks: int = 80, done_per_week: int = 8):
+    """Ученик с ровным темпом: столько верных сдач в каждую из трёх недель."""
+    student_id, _ = await _new_user(db)
+    course_id = await _new_course(db, "pace")
+    await _enroll(db, student_id=student_id, course_id=course_id)
+    now = datetime.now(UTC)
+    for pos in range(1, tasks + 1):
+        task_id = await _new_task(db, course_id=course_id, order_position=pos)
+        week = (pos - 1) // done_per_week
+        if week < 3:
+            await _submit(
+                db, student_id=student_id, task_id=task_id, course_id=course_id,
+                is_correct=True, at=now - timedelta(days=week * 7 + 1),
+            )
+    await _set_grade(db, student_id=student_id, grade=11)
+    return student_id, course_id
+
+
+@pytest.mark.asyncio
+async def test_missed_lesson_increases_the_volume(db):
+    """Не пришёл — материал занятия придётся пройти самому, объём растёт.
+
+    Требование оператора 02.09.
+    """
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    before = await homework_volume_service.compute(db, student_id=student_id)
+
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="no_show",
+    )
+    after = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert before.missed_lessons == 0 and before.catch_up_factor == 1.0
+    assert after.missed_lessons == 1
+    assert after.catch_up_factor == 1.25
+    assert after.volume_per_week > before.volume_per_week
+
+
+@pytest.mark.asyncio
+async def test_rescheduled_lesson_is_not_a_miss(db):
+    """Перенёс — нагонять нечего: занятие состоится.
+
+    Прямое требование оператора 02.09 и то, ради чего пропуск и перенос вообще
+    различаются. На проде все 38 переносов несут ссылку, куда участие переехало,
+    а `no_show` не несёт её ни разу — состояния в данных не смешиваются.
+    """
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    before = await homework_volume_service.compute(db, student_id=student_id)
+
+    target = await _create_occurrence(
+        db, student_id=student_id, teacher_id=teacher_id,
+        scheduled_at=datetime.now(UTC) + timedelta(days=2),
+    )
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3,
+        status="rescheduled", rescheduled_to=target,
+    )
+    after = await homework_volume_service.compute(db, student_id=student_id)
+
+    assert after.missed_lessons == 0
+    assert after.catch_up_factor == 1.0
+    assert after.volume_per_week == before.volume_per_week
+
+
+@pytest.mark.asyncio
+async def test_break_is_not_a_miss(db):
+    """Перерыв — не прогул: школа сама поставила паузу."""
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="on_break",
+    )
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.missed_lessons == 0 and plan.catch_up_factor == 1.0
+
+
+@pytest.mark.asyncio
+async def test_catch_up_has_a_ceiling(db):
+    """Нагон упирается в полтора объёма, сколько бы ни пропустил.
+
+    Пропустивший занятия — чаще всего и есть отстающий, и удвоенная выдача для
+    него не «нагон», а повод бросить совсем.
+    """
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    for days_ago in (2, 5, 9, 12, 16):
+        await _lesson_with_status(
+            db, student_id=student_id, teacher_id=teacher_id,
+            days_ago=days_ago, status="no_show",
+        )
+    plan = await homework_volume_service.compute(db, student_id=student_id)
+    assert plan.missed_lessons == 5
+    assert plan.catch_up_factor == homework_volume_service.MAX_CATCH_UP_FACTOR
+
+
+@pytest.mark.asyncio
+async def test_attended_lesson_changes_nothing(db):
+    """Пришёл — нагонять нечего."""
+    student_id, _ = await _student_with_pace(db)
+    teacher_id, _ = await _new_user(db, role="teacher", name="teach")
+    before = await homework_volume_service.compute(db, student_id=student_id)
+    await _lesson_with_status(
+        db, student_id=student_id, teacher_id=teacher_id, days_ago=3, status="confirmed",
+    )
+    after = await homework_volume_service.compute(db, student_id=student_id)
+    assert after.missed_lessons == 0
+    assert after.volume_per_week == before.volume_per_week
